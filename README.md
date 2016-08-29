@@ -3,7 +3,7 @@
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, [**fork** this repository][forking].
-1. [**Clone**][ref-clone] the repository to your computer.
+1. [**Clone**][ref-clone] the forked repository to your computer.
 1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
 1. [**Push**][ref-push]/sync the changes up to your GitHub account.
 1. [Create a **pull request**][pull-request] on this, the original, repository to turn in your final project.
