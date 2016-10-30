@@ -167,7 +167,7 @@ ggplot(by_loc, aes(x=count)) +
 
 Next, I will use descriptive statistics to characterize the rate of contamination and of positive identification. I will also look at the distribution of pathogens isolated.
 
-Of 45,767 sets taken, there are 45,752 sets included in this analysis after cleaning up the data. 426 sets were contaminated, which gives a contamination rate of 0.93%. 3,484 cultures yielded a positive identification, which gives a rate of 7.6%. There were 151 different pathogens identified (after grouping some species). The number of times a pathogen was identified ranged from 1 to 763, with a median of 3 and a mean of 23.07.
+Of 45,767 sets taken, there are 45,752 sets included in this analysis after cleaning up the data. 426 sets were contaminated, which gives a contamination rate of 0.93%. 3,484 cultures yielded a positive identification, which gives a rate of 7.6%. There were 151 different pathogens identified (after grouping some species). The number of times a pathogen was identified ranged from 1 to 763, with a median of 3 and a mean of 22.65.
 
 ```{r Descriptive statistics on isolation of pathogens}
 #Look at the frequency of contamination and of positive identification. Look at distribution of pathogens isolated.
@@ -177,11 +177,12 @@ table(cultures$Contam)
 #rate of positive identification.
 sum(cultures$Final_Report!="Ng")/length(cultures$Final_Report)
 
-#df of positive cultures only
+#df of positive cultures only that are not contamination
 cultures.pos <- cultures %>%
-  filter(Final_Report!="Ng")
+  filter(Final_Report!="Ng") %>%
+  filter(Contam=="no")
 
-#151 unique cultures
+#135 unique cultures
 length(unique(cultures.pos$Final_Report))
 
 by_isolate <- cultures.pos %>%
@@ -202,12 +203,170 @@ ggplot(by_isolate, aes(reorder(Final_Report,-count),count)) +
                                    angle=90,hjust=1)) +
   labs(x="Isolate", 
        y="Count",
-       title="Frequency of identification") +
+       title="Frequency of identification by isolate") +
   geom_vline(xintercept=median(by_isolate$count),colour="red")
 
+
+```
+
+289 out of 11,737 patients had at least 20 blood cultures taken, which is 2.46% of the population. For this subpopulation, the number of sets taken ranged from 20 to 90, with a median of 26 and a mean of 30.86.
+
+```{r Identify high utilisers}
+#get ID's for patients with more than 20 bc for FY2015
+ID_highuse <- by_ID %>%
+  filter(count>=20)
+
+#289 patients with more than 20 bc taken.
+nrow(ID_highuse$Study_ID)
+summary(ID_highuse$count)
+
+#subset FY15_deID by these ID's so that I have the Julian information
+by_ID_highuse <- FY15_deID[FY15_deID$Study_ID %in% ID_highuse$Study_ID,]
+  
+by_ID_highuse %<>%
+  group_by(Study_ID,Julian) %>%
+  summarise(count=n())
+
+
+
+#randomly sample 10 at a time from high utilisers and plot days when bc were taken
+s <- sample(by_ID_highuse$Study_ID,10,replace=F)
+df <- by_ID_highuse[by_ID_highuse$Study_ID %in% s,]
+ggplot(df,aes(Julian,Study_ID)) +
+  geom_point() +
+  scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
+
+```
+
+Since we don't have information on the length of each patient's hospital encounter, I will split the bc into 30-day periods, which is a reasonable amount of time to clear an infection and probably accounts for the duration of most hospital stays.
+
+```{r }
+by_30d <- FY15_deID
+
+```
+
+
+```{r Look at number of bc after positive identification}
+by_Jul <- FY15_deID %>%
+  group_by(Study_ID,Julian,Location) %>%
+  summarise(num_set=n()) 
+subsets <- split(by_Jul,by_Jul$Study_ID)
+
+#for each Study_ID, count the number of sets in 30d periods
+split30days <- function(df){
+  c <- cumsum(diff(df$Julian))
+  ref=1 #ref index for counting 30day periods
+  max=30 #30days from ref. initial max would be  
+  vec = rep(0,length(c))
+  g=0
+  if (length(c)>=1){
+     for (i in 1:length(c)){
+       if (c[i]<=max) {
+         vec[i] = g
+         } else {
+           ref=i+1 #set reference for next 30day period
+           max=c[i]+30 #next 30day period
+           g = g+1
+           vec[i]=g
+         }
+     }
+  }
+  df$group_30 <- 1+c(0,vec)
+  return(df)
+}
+
+bc_30d <- lapply(subsets,split30days)
+bc_30d <- as.data.frame(do.call("rbind",bc_30d)) 
+bc_30d %<>%
+  arrange(Study_ID,Julian)
+
+cultures.pos.loc <- cultures.pos %>%
+  group_by(Study_ID,Julian,Location,Final_Report) %>%
+  summarise(count=n())
+
+test <- cultures.pos.loc[cultures.pos.loc$Study_ID %in% c(7,14,4584),]
+
+test_sub <- split(test,test$Study_ID)
+
+a <- lapply(test_sub,split30days)
+
+cultures.pos.loc_subsets <- split(cultures.pos.loc,
+                                  cultures.pos.loc$Study_ID)
+
+#use split30days to group sets taken within 30d of each other
+#culturesbyLoc_30d <- lapply(culturesbyLoc_subsets,splitDates)
+cultures.pos.loc_30d <- lapply(cultures.pos.loc_subsets,split30days)
+cultures.pos.loc_30d <- as.data.frame(do.call("rbind",
+                                              cultures.pos.loc_30d))
+cultures.pos.loc_30d %<>%
+  arrange(Study_ID,Julian)
+
+#get full record of bc taken for the Study_ID's with pos ID
+by_Jul_posID <- by_Jul %>%
+  filter(Study_ID %in% cultures.pos.loc_30d$Study_ID)
+
+#get num_set after pos ID based on "group" after using split30days
+#want to make into function instead of one big for loop
+getNumSets_PosID <- function(df){
+  x<-bc_30d[bc_30d$Study_ID==df[i,"Study_ID"],]
+}
+
+
+for (i in 1:nrow(culturesbyLoc_30d)){
+  #subset by_Jul_posID so I only get the rows associated with Study_ID for the i-th row
+  x<-bc_30d[bc_30d$Study_ID==culturesbyLoc_30d[i,"Study_ID"],]
+  #get Julian date associated with pos ID
+  date <- culturesbyLoc_30d[i,"Julian"]
+  #get group associated with the Julian date assoc with pos ID
+  #get rows where Julian dates are greater than the specified Julian date within the grouping made by splitDates
+  y <- x[x$Julian>date,]
+  #runs into issues if it was polymicrobial and there are multiple entries.
+  #it puts the group for each entry into a vector
+  #i'll just take the first one since it should be the same.
+  g <- x[x$Julian==date,"group"][1]
+  z <- y[y$group==g,]
+  #add up the number of bc taken during that period
+  s <- sum(z$num_set)
+  culturesbyLoc_30d[i,"num_set_postPosID"] <- s
+}
+#test <- culturesbyLoc_30d[1:6,]
+
+
+#make new df so I see number of cultures after 1st pos ID within a 30d period rather than for each subsequent day.
+cultures.pos.loc_30d_subsets <- split(cultures.pos.loc_30d,
+                                   cultures.pos.loc_30d$Study_ID)
+
+
+getFollowUpSets <- function(df){
+  #make sure data is sorted by Study_ID and Julian day
+  df %<>% arrange(Study_ID,Julian)
+  df_sub <- split(df,df$group_30)
+  df_sub <- lapply(df_sub,function(df){
+    minDate <- min(df$Julian)
+    return(df[df$Julian==minDate,]) #get row with min Julian date for that grouping
+    #may be 2 rows if there was a polymicrobial infection
+  })
+  newDF <- as.data.frame(do.call("rbind",df_sub))
+  return(newDF)
+}
+
+numFollowUpCultures <- lapply(culturesbyLoc_30d_subsets,
+                              getFollowUpSets)
+numFollowUpCultures <- as.data.frame(do.call("rbind",numFollowUpCultures)) 
+numFollowUpCultures %<>%
+  arrange(Study_ID,Julian)
+
+numCulturesbyOrg <- numFollowUpCultures %>%
+  group_by(Final_Report) %>%
+  summarise(min=min(num_set_postPosID),
+            avg=mean(num_set_postPosID),
+            max=max(num_set_postPosID),
+            sd=sd(num_set_postPosID))
 
 
 
 ```
+
+
 
 
