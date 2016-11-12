@@ -1,0 +1,452 @@
+---
+title: "Blood Cultures Utilization at HUP"
+author: "Annie Chen"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
+
+### Overview
+In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+The goal of my project is to characterize the use and effectiveness of blood cultures for detecting bloodstream infections in patients at the Hospital for the University of Pennsylvania (HUP). I will be using data from monthly reports of blood cultures at HUP for FY2015.
+
+### Introduction 
+In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
+
+In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+Blood cultures are frequently used and are important for detecting the presence of microbes in the bloodstream. However, excessive use of blood cultures can be detrimental to patients and may not significantly contribute to patient care. Furthermore, there are different guidelines for blood culture utilization, and it is unclear to what extent health professionals are aware of these guidelines. Investigating blood culture utilization is critical for improving the practice of blood cultures, their effectiveness in detecting bloodstream infections, and patient care management. In addition, analyzing blood cultures data may reveal information on the frequency of false positives due to contamination and the prevalence of bacteremia in different patient populations. In addiiton, analysis of blood cultures utilization data may result in the dentification of low-risk populations for bacteremia, which may will help reduce unnecessary use of blood cultures. Finally, analysis of high-utilizers of blood cultures may also be useful for addressing the practice of blood cultures utilization.
+
+This is an interdisciplinary problem that draws knowledge from data science, clinical microbiology, statistics, and data visualization. I have been working with Dr. Irv Nachamkin, Director of the Divison of Laboratory Medicine at HUP. He has helped direct me to relevant analyses based on his domain knowledge of clinical microbiology. I have also met with Dr. Rebecca Hubbard, Associate Professor of Biostatistics. She gave me useful advice on conducting linear regressions on my data and visualizing the data.
+
+
+
+### Methods
+In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+I will be using monthly reports of blood cultures utilization at HUP for FY2015. This is a record that includes information for each patient who had blood drawn for a blood culture test. The report shows the number of sets of blood cultures taken per day, the location by hospital floor, whether a phlebotomist drew the culture, and the final result (ex. no growth or the name of the microbial species isolated). 
+
+I will first use descriptive statistics to look at the distribution of sets of blood cultures taken per patient and by hospital floor. I will also look at the distribution of pathogens isolated. Then, I will analyze the number of follow-up cultures taken after a positive identification to test the hypothesis that the number of sets of blood cultures taken is linked to the organism identified. I will also analyze the high utilizers to see what floors they are coming from and whether there is an association.
+
+```{r Load libraries and read in data}
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(gdata)
+library(lubridate)
+
+getwd()
+inFile <- "FY15_deidentified_data-2015-11-22-revised.txt"
+FY15_deID <- read.table(inFile,header=T, sep="\t", quote="",na.strings="")
+
+str(FY15_deID)
+
+#change Study_ID from integers to factors
+FY15_deID$Study_ID <- factor(FY15_deID$Study_ID)
+
+sum(complete.cases(FY15_deID))
+#11 not complete cases. 8 have abnormal results (ex. test reordered). 2 are missing location.
+#View(FY15_deID[!complete.cases(FY15_deID),])
+#1 is aerobic gram pos rods not listeria. Final_report should be "GPR NLIS".
+
+FY15_deID[10875,"Final_Report"] <- "GPR NLIS"
+
+#only use complete cases in analyses. 45757 cases
+FY15_deIDcomplete <- FY15_deID[complete.cases(FY15_deID),]
+
+#change Julian date so that day 1 is July 1st.
+FY15_deIDcomplete %<>%
+  mutate(Julian = ifelse(Julian >=182,Julian-181,Julian+184))
+
+#sort by Study_ID and then Julian so that it's in chronological order for each patient
+FY15_deIDcomplete %<>% arrange(Study_ID,Julian)
+
+#clean up entries for results on pathogen identification
+length(unique(FY15_deIDcomplete$Final_Report)) #168 (167 for FY15_deIDcomplete)
+length(unique(FY15_deIDcomplete$Isolate)) #173 (only 165 for FY15_deIDcomplete)
+
+cultures <- FY15_deIDcomplete %>%
+  filter(!is.na(Final_Report)) %>%
+  filter(Final_Report != "Dead") %>%
+  filter(Final_Report != "See C A-BC") %>%
+  filter(Final_Report != "See C-NBC") %>%
+  filter(Final_Report != "Corr Rpt") %>%
+  filter(Final_Report != "Dup")
+
+length(unique(cultures$Final_Report)) #162
+
+length(unique(cultures$Isolate)) #160. Bacspe and Bacil are both abbreviations for "Bacillus species". Nicrospe and Micro are both abbreviations for "Micrococcus species".
+x = 1:162
+d <- data.frame(x,unique(factor(cultures$Final_Report)))
+#write.table(d,"finalreportvalues.txt",sep="\t")
+
+x = 1:160
+d <- data.frame(x,unique(factor(cultures$Isolate)))
+#write.table(d,"isolate.txt",sep="\t")
+
+x=1:173
+d <- data.frame(x,unique(factor(FY15_deID$Isolate)))
+#write.table(d,"orig_isolate.txt",sep="\t")
+
+#Group certain species together based on Irv's suggestions
+cultures$Final_Report[cultures$Final_Report=="MRSA"] <- "SA"
+cultures$Final_Report[cultures$Final_Report=="Acispe" || cultures$Final_Report=="Actodo" || cultures$Final_Report=="Actspe"] <- "Actinomy"
+cultures$Final_Report[cultures$Final_Report=="Bacfra"] <- "BacfraG"
+cultures$Final_Report[cultures$Final_Report=="Bacil"] <- "Bacspe"
+cultures$Final_Report[cultures$Final_Report=="Gorspu"] <- "Gordo"
+cultures$Final_Report[cultures$Final_Report=="Kocrhizo"] <- "Kochrizo"
+cultures$Final_Report[cultures$Final_Report=="SalGD" || cultures$Final_Report=="SalspD"] <- "Salmo"
+cultures$Final_Report[cultures$Final_Report=="Stahomhom"] <- "Stahom"
+cultures$Final_Report[cultures$Final_Report=="Staintergp"] <- "Staint"
+cultures$Final_Report[cultures$Final_Report=="Strsalsal"] <- "Strsal"
+cultures$Final_Report[cultures$Final_Report=="Triasa"] <- "Trichosp"
+cultures$Final_Report[cultures$Final_Report=="Veill"] <- "Veillspe"
+
+length(unique(cultures$Final_Report)) #152
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+I am first looking at the overall distribution of number of blood cultures taken per patient and by location. This is a highly skewed distribution. Of 45,767 sets of blood cultures taken in FY2015, there were 11,737 different patients (based on MRN). I will be using the 45,757 complete cases (11,735 patients) for subsequent analyses. The number of sets taken ranged from 1 to 90, with a median of 2 and a mean of 3.899 sets. The number of days in between sets ranged from 0 to 364, with a median of 0 and a mean of 30.82. This is because some patients had multiple hospital visits within FY2015. Of 125 locations where patients had blood cultures taken in FY2015, the number of sets ranged from 1 to 4531, with a median of 17 and a mean of 366.1.
+
+```{r Descriptive statistics on entire dataset}
+#gives the number of sets of bc/patient and the period of time during which blood cultures were taken during the year.
+by_ID <- cultures %>%
+  group_by(Study_ID) %>%
+  summarise(count=n(),
+            Range=diff(range(Julian))) %>%
+  arrange(desc(count))
+
+nrow(by_ID)
+head(by_ID)
+
+summary(by_ID$count)
+summary(by_ID$Range)
+
+fig_freqDist <- ggplot(by_ID, aes(x=count)) +
+  geom_histogram(binwidth=1) +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/patient", y="Count",
+       title="Total number of sets taken per patient") +
+  geom_vline(xintercept=median(by_ID$count),colour="red")
+
+ggsave(file="Figures/FY15_freqDist.pdf",plot=fig_freqDist,dpi=300)
+
+by_ID20 <- by_ID %>%
+  filter(count>=20)
+
+fig_freqDist20 <- ggplot(by_ID20, aes(x=count)) +
+  geom_histogram(binwidth=1) +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/patient", y="Count",
+       title="Total number of sets for patients with at least 20 sets") +
+  geom_vline(xintercept=median(by_ID20$count),colour="red")
+
+ggsave(file="Figures/FY15_freqDist20.pdf",plot=fig_freqDist20,dpi=300)
+
+
+
+#Look at the distribution of total # of bc by location
+by_loc <- FY15_deIDcomplete %>%
+  filter(!is.na(Location)) %>%
+  group_by(Location) %>%
+  summarise(count=n()) %>%
+  arrange(desc(count))
+
+nrow(by_loc)
+head(by_loc)
+summary(by_loc$count)
+
+fig_freqDistLoc <- ggplot(by_loc, aes(x=count)) +
+  geom_histogram(binwidth=50) +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/location", 
+       y="Count",
+       title="Total number of sets taken per location") +
+  geom_vline(xintercept=median(by_loc$count),colour="red")
+
+ggsave(file="Figures/FY15_freqDistLoc.pdf",plot=fig_freqDistLoc,dpi=300)
+
+```
+
+Since we don't have information on the length of each patient's hospital encounter, I will split the bc into 30-day periods, which is a reasonable amount of time to clear an infection and probably accounts for the duration of most hospital stays. After splitting into 30-day periods, the number of bc taken ranged from 1 to 52, with a median of 2 and a mean of 3.084.
+
+```{r Split # of bc per patient into 30d periods}
+by_Jul <- FY15_deIDcomplete %>%
+  group_by(Study_ID,Julian,Location) %>%
+  summarise(num_set=n()) 
+
+by_Jul <- droplevels(by_Jul)
+
+subsets <- split(by_Jul,by_Jul$Study_ID)
+
+#for each Study_ID, count the number of sets in 30d periods
+split30days <- function(df){
+  c <- cumsum(diff(df$Julian))
+  ref=1 #ref index for counting 30day periods
+  max=30 #30days from ref. initial max would be 30
+  vec = rep(0,length(c))
+  g=0
+  if (length(c)>=1){
+     for (i in 1:length(c)){
+       if (c[i]<=max) {
+         vec[i] = g
+         } else {
+           ref=i+1 #set reference for next 30day period
+           max=c[i]+30 #next 30day period
+           g = g+1
+           vec[i]=g
+         }
+     }
+  }
+  df$group_30 <- 1+c(0,vec)
+  return(df)
+}
+#test <- subsets[4080:4085]
+#get error because Study_ID 4085 is not there. the location was missing so I removed it but somehow R still thinks this is one of the levels for Study_ID. Use droplevels() to drop factor levels in a subsetted data frame
+bc_30d <- lapply(subsets,split30days)
+bc_30d <- as.data.frame(do.call("rbind",bc_30d)) 
+bc_30d %<>%
+  arrange(Study_ID,Julian)
+
+#look at distribution of bc for patients after splitting up into 30d periods
+bc_30d_ID <- bc_30d %>%
+  group_by(Study_ID,group_30) %>%
+  summarise(count=sum(num_set),
+            Range=diff(range(Julian))) %>%
+  arrange(desc(count))
+
+summary(bc_30d_ID$count)
+
+fig_freqDist30d <- ggplot(bc_30d_ID, aes(x=count)) +
+  geom_histogram(binwidth=1) +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/patient", y="Count",
+       title="Total number of sets taken per patient") +
+  geom_vline(xintercept=median(bc_30d_ID$count),colour="red")
+
+bc_30d_ID20 <- bc_30d_ID %>%
+  filter(count>=20)
+
+ggplot(bc_30d_ID20, aes(x=count)) +
+  geom_histogram(binwidth=1) +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/patient", y="Count",
+       title="Total number of sets taken per patient") +
+  geom_vline(xintercept=median(bc_30d_ID20$count),colour="red")
+
+by_Jul_isolate <- cultures %>%
+  group_by(Study_ID,Julian,Location,Final_Report) %>%
+  summarise(num_set=n()) 
+
+by_Jul_isolate <- droplevels(by_Jul_isolate)
+
+subsets_isolate <- split(by_Jul_isolate,by_Jul_isolate$Study_ID)
+bc_30d_isolate <- lapply(subsets_isolate,split30days)
+bc_30d_isolate <- as.data.frame(do.call("rbind",bc_30d_isolate)) 
+bc_30d_isolate %<>%
+  arrange(Study_ID,Julian)
+
+
+
+```
+
+
+Next, I will use descriptive statistics to characterize the rate of contamination and of positive identification. I will also look at the distribution of pathogens isolated.
+
+Of 45,767 sets taken, there are 45,752 sets included in this analysis after cleaning up the data. 426 sets were contaminated, which gives a contamination rate of 0.93%. 3,484 cultures yielded a positive identification, which gives a rate of 7.6%. There were 151 different pathogens identified (after grouping some species). The number of times a pathogen was identified ranged from 1 to 763, with a median of 3 and a mean of 22.65.
+
+```{r Descriptive statistics on isolation of pathogens}
+#Look at the frequency of contamination and of positive identification. Look at distribution of pathogens isolated.
+#I will be using the dataframe cultures, since that has been cleaned up. I will be using the Final_Report column for ease of readability, since this contains abbreviations of the isolates, and some of the species have been grouped together for ease of analysis.
+table(cultures$Contam)
+
+#rate of positive identification.
+sum(cultures$Final_Report!="Ng")/length(cultures$Final_Report)
+
+#df of positive cultures only that are not contamination
+cultures.pos <- cultures %>%
+  filter(Final_Report!="Ng") %>%
+  filter(Contam=="no")
+
+#135 unique cultures
+length(unique(cultures.pos$Final_Report))
+
+by_isolate <- cultures.pos %>%
+  group_by(Final_Report) %>%
+  summarise(count=n()) %>%
+  arrange(desc(count))
+
+head(by_isolate$count)
+summary(by_isolate$count)
+
+#geom_histogram is for continuous data, geom_bar is for discrete data
+fig_cultures <- ggplot(by_isolate, aes(reorder(Final_Report,-count),count)) +
+  geom_bar(stat="identity") +
+  theme_bw() + 
+  scale_y_continuous(expand=c(0,0)) +
+  theme(text=element_text(size=10),
+        axis.text.x = element_text(colour="black",
+                                   angle=90,hjust=1)) +
+  labs(x="Isolate", 
+       y="Count",
+       title="Frequency of identification by isolate") +
+  geom_vline(xintercept=median(by_isolate$count),colour="red")
+
+ggsave(file="Figures/FY15_cultures.pdf",plot=fig_cultures,dpi=300)
+
+```
+
+289 out of 11,737 patients had at least 20 blood cultures taken, which is 2.46% of the population. For this subpopulation, the number of sets taken ranged from 20 to 90, with a median of 26 and a mean of 30.86.
+
+```{r Identify high utilisers}
+#get ID's for patients with more than 20 bc for FY2015
+ID_highuse <- by_ID %>%
+  filter(count>=20)
+
+#289 patients with more than 20 bc taken.
+nrow(ID_highuse$Study_ID)
+summary(ID_highuse$count)
+
+#subset FY15_deID by these ID's so that I have the Julian information
+by_ID_highuse <- FY15_deID[FY15_deID$Study_ID %in% ID_highuse$Study_ID,]
+  
+by_ID_highuse %<>%
+  group_by(Study_ID,Julian) %>%
+  summarise(count=n())
+
+
+
+#randomly sample 10 at a time from high utilisers and plot days when bc were taken
+s <- sample(by_ID_highuse$Study_ID,10,replace=F)
+df <- by_ID_highuse[by_ID_highuse$Study_ID %in% s,]
+fig_highut <- ggplot(df,aes(Julian,Study_ID)) +
+  geom_point() +
+  scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
+
+ggsave(file="Figures/FY15_highut.pdf",plot=fig_highut,dpi=300)
+
+```
+
+
+```{r Look at number of bc after positive identification}
+
+
+cultures.pos.loc <- cultures.pos %>%
+  group_by(Study_ID,Julian,Location,Final_Report) %>%
+  summarise(count=n()) %>%
+  ungroup()
+
+
+#was able to use split30days in my bloodculturesproject R project. copied and pasted and then got an error here.
+
+cultures.pos.loc_subsets <- split(cultures.pos.loc,cultures.pos.loc$Study_ID)
+
+#use split30days to group sets taken within 30d of each other
+
+cultures.pos.loc_30d <- lapply(cultures.pos.loc_subsets,split30days)
+cultures.pos.loc_30d <- as.data.frame(do.call("rbind",cultures.pos.loc_30d))
+cultures.pos.loc_30d %<>%
+  arrange(Study_ID,Julian)
+
+
+
+#why does it still say I have 11737 levels in Study_ID when there should only be 3??
+test <- cultures.pos.loc[cultures.pos.loc$Study_ID %in% c(7,14,4584),]
+
+#getting weird result...
+test_sub <- split(test,test$Study_ID)
+
+a <- lapply(test_sub,split30days)
+
+cultures.pos.loc_subsets <- split(cultures.pos.loc,
+                                cultures.pos.loc$Study_ID)
+
+#get full record of bc taken for the Study_ID's with pos ID
+by_Jul_posID <- by_Jul %>%
+  filter(Study_ID %in% cultures.pos.loc_30d$Study_ID)
+
+#get num_set after pos ID based on "group" after using split30days
+#want to make into function instead of one big for loop
+getNumSets_PosID <- function(df){
+  x<-bc_30d[bc_30d$Study_ID==df[i,"Study_ID"],]
+}
+
+
+for (i in 1:nrow(culturesbyLoc_30d)){
+  #subset by_Jul_posID so I only get the rows associated with Study_ID for the i-th row
+  x<-bc_30d[bc_30d$Study_ID==culturesbyLoc_30d[i,"Study_ID"],]
+  #get Julian date associated with pos ID
+  date <- culturesbyLoc_30d[i,"Julian"]
+  #get group associated with the Julian date assoc with pos ID
+  #get rows where Julian dates are greater than the specified Julian date within the grouping made by splitDates
+  y <- x[x$Julian>date,]
+  g <- x[x$Julian==date,"group"][1] #there are multiple entries if it's polymicrobial but the group should be the same
+  z <- y[y$group==g,]
+  #add up the number of bc taken during that period
+  s <- sum(z$num_set)
+  culturesbyLoc_30d[i,"num_set_postPosID"] <- s
+}
+#test <- culturesbyLoc_30d[1:6,]
+
+
+#make new df so I see number of cultures after 1st pos ID within a 30d period rather than for each subsequent day.
+cultures.pos.loc_30d_subsets <- split(cultures.pos.loc_30d,
+                                   cultures.pos.loc_30d$Study_ID)
+
+
+getFollowUpSets <- function(df){
+  #make sure data is sorted by Study_ID and Julian day
+  df %<>% arrange(Study_ID,Julian)
+  df_sub <- split(df,df$group_30)
+  df_sub <- lapply(df_sub,function(df){
+    minDate <- min(df$Julian)
+    return(df[df$Julian==minDate,]) #get row with min Julian date for that grouping
+    #may be 2 rows if there was a polymicrobial infection
+  })
+  newDF <- as.data.frame(do.call("rbind",df_sub))
+  return(newDF)
+}
+
+numFollowUpCultures <- lapply(culturesbyLoc_30d_subsets,
+                              getFollowUpSets)
+numFollowUpCultures <- as.data.frame(do.call("rbind",numFollowUpCultures)) 
+numFollowUpCultures %<>%
+  arrange(Study_ID,Julian)
+
+numCulturesbyOrg <- numFollowUpCultures %>%
+  group_by(Final_Report) %>%
+  summarise(min=min(num_set_postPosID),
+            avg=mean(num_set_postPosID),
+            max=max(num_set_postPosID),
+            sd=sd(num_set_postPosID))
+
+
+
+```
+
+
+
+
