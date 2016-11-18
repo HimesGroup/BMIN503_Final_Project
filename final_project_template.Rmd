@@ -335,7 +335,8 @@ dt.final <- dt.final[! is.na(term_wishes)]
 
 # now explore most predictive n1/n2 terms here and include in final sample...
 
-# remember, only do feature selection on the training set.
+# this is important:
+# remember, only do feature selection on the TRAINING set.
 # so let's make it now:
 
 # setup data partitions
@@ -415,6 +416,7 @@ save(dt.final, file = 'dt.final.rdata')
 
 Now let's build some models with this data:
 
+```{r buildmodels, eval = FALSE}
 base_vars <- c('GENDER', 'ADMISSION_TYPE', 'age_at_admit_yrs_adj', 'mod_elix_score',
                'mv_before2d','icu_txf_before2d','arrest_before2d',
                'death_or_iculos7') # and the outcome
@@ -557,7 +559,6 @@ legend('bottomright', legend = c('LR', 'LR/RCS', 'BT','RF', 'GBM', 'KNN','SVM','
 dev.off()
 
 
-
 # ------------------- train PLUS models
 mplus.lr <- train(as.numeric(death_or_iculos7) ~ ., 
                   method = 'glm',
@@ -698,89 +699,6 @@ roc.test(mbase.roc.test.lr, mbase.roc.test.gbm)
 
 roc.test(mplus.roc.test.lr, mplus.roc.test.rf)
 roc.test(mplus.roc.test.lr, mplus.roc.test.gbm)
-
-
-
-
-
-# look at calibration
-calib.data <- data.table(outcome = as.numeric(dt.final[testing,plus_vars,with=F]$death_or_iculos7),
-              pred.lr = predict(mplus.lr, dt.final[testing,plus_vars,with=F]),
-              pred.rcs = predict(mplus.rcs, dt.final[testing,plus_vars,with=F]),
-              pred.tb = predict(mplus.tb, dt.final[testing,plus_vars,with=F]),
-              pred.rf = predict(mplus.rf, dt.final[testing,plus_vars,with=F]),
-              pred.gbm = predict(mplus.gbm, dt.final[testing,plus_vars,with=F]),
-              pred.knn = predict(mplus.knn, dt.final[testing,plus_vars,with=F]),
-              pred.svm = predict(mplus.svm, dt.final[testing,plus_vars,with=F]),
-              pred.nn = predict(mplus.nn, dt.final[testing,plus_vars,with=F])[,1])
-
-calib.data %<>%
-             mutate(deciles.lr = ntile(pred.lr, 10),
-                    deciles.rcs = ntile(pred.rcs, 10),
-                    deciles.tb = ntile(pred.tb, 10),
-                    deciles.rf = ntile(pred.rf, 10),
-                    deciles.gbm = ntile(pred.gbm, 10),
-                    deciles.knn = ntile(pred.knn,10),
-                    deciles.svm = ntile(pred.svm, 10),
-                    deciles.nn = ntile(pred.nn, 10)) %>%
-            as.data.table()
-
-# now calibration plots
-calib.data %>% 
-  group_by(deciles.lr) %>% 
-  summarize(observed = mean(outcome),
-            predicted = mean(pred.lr)) %>%
-  ggplot(aes(x = deciles.lr)) +
-  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
-  geom_line(aes(y = predicted), color = 'red') +
-  theme_bw()
-calib.data %>% 
-  group_by(deciles.svm) %>% 
-  summarize(observed = mean(outcome),
-            predicted = mean(pred.svm)) %>%
-  ggplot(aes(x = deciles.svm)) +
-  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
-  geom_line(aes(y = predicted), color = 'red') +
-  theme_bw()
-calib.data %>% 
-  group_by(deciles.rf) %>% 
-  summarize(observed = mean(outcome),
-            predicted = mean(pred.rf)) %>%
-  ggplot(aes(x = deciles.rf)) +
-  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
-  geom_line(aes(y = predicted), color = 'red') +
-  theme_bw()
-
-
-# try a novel combined calibration plot with boxplots
-calib.lr <- calib.data[,.(outcome,pred.lr,deciles.lr)] %>%
-  mutate(model_type = 'lr') %>%
-  rename(preds = pred.lr, deciles = deciles.lr) %>%
-  as.data.table()
-calib.rf <- calib.data[,.(outcome,pred.rf,deciles.rf)] %>%
-  mutate(model_type = 'rf') %>%
-  rename(preds = pred.rf, deciles = deciles.rf) %>%
-  as.data.table()
-calib.svm <- calib.data[,.(outcome,pred.svm,deciles.svm)] %>%
-  mutate(model_type = 'svm') %>%
-  rename(preds = pred.svm, deciles = deciles.svm) %>%
-  as.data.table()
-calib.nn <- calib.data[,.(outcome,pred.nn,deciles.nn)] %>%
-  mutate(model_type = 'nn') %>%
-  rename(preds = pred.nn, deciles = deciles.nn) %>%
-  as.data.table()
-calib.melted <- rbind(calib.lr, calib.rf, calib.svm)
-calib.melted <- calib.melted[, mean_outcome := mean(outcome), by = .(deciles,model_type)]
-png('results/calib_plus.png', width = 800, height = 600)
-ggplot(calib.melted, aes(x = as.factor(deciles))) +
-  geom_boxplot(aes(y=preds)) +
-  geom_point(aes(y=mean_outcome), color = 'red') +
-  facet_grid(~model_type) +
-  xlab('decile') + 
-  ggtitle('calibration of predicted probabilities by decile for each model type') + 
-  theme_bw()
-dev.off()
-
 ```
 
 ```{r resultstable}
