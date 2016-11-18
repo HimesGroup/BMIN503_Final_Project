@@ -39,6 +39,925 @@ In the first paragraph, describe the data used and general methodological approa
 
 We analyzed the MIMIC-III dataset, which contains all hospitalizations with an ICU stay at Beth Israel Deaconess Medical Center, Boston, MA, from June 2001 through October 2012. Admissions with patient age ≥ 18 years, hospital length of stay (LOS) ≥ 48 hours, and those with any clinical notes in the first 48 hours were included. We built a set of “base” models using age, gender, Elixhauser score, and any mechanical ventilation, cardiac arrest, or ICU transfer within the first 48 hours as covariates. Models predicted a binary composite outcome of in-hospital death or ICU LOS ≥ 7 days. A second round of “plus” models was built using the same “base” variables, plus a set of 221 text features derived using open- and closed-vocabulary methods with natural language processing (NLP) techniques from the first 48 hours of clinical notes. Predictive models were built using the following: LR, LR with restricted cubic splines, bagged trees, random forest (RF), gradient boosted machines (GBM), k-nearest neighbors, support vector machines, and neural networks (NN). Model accuracy was evaluated via 10-fold cross-validation and a 75/25 split into training and testing samples. 
 
+The following code was used to analyze the data:
+```{r setup, eval = FALSE}
+require(data.table)
+require(medicalrisk)
+require(ggplot2)
+require(dplyr)
+require(magrittr)
+require(caret)
+require(pROC)
+require(ResourceSelection)
+require(Hmisc)
+# use parallel for model development
+require(doMC)
+registerDoMC(4) # not more than this for RAM 
+```
+
+Then we download and decompress the files:
+
+```{bash getdata, eval = FALSE}
+wget --user YOURUSERNAME --ask-password -A csv.gz -m -p -E -k -K -np https://physionet.org/works/MIMICIIIClinicalDatabase/files/
+gzip -dv *.gz
+```
+
+Then we filtered these large text files for particular fields of interest to produce more manageable text files. Here is one example:
+
+```{bash filter, eval = FALSE}
+# find cardiac arrest chart events:
+head -1 CHARTEVENTS.csv > headers.temp.txt
+awk -F, '$5 == 128 || $5 == 223758 {print}' CHARTEVENTS.csv > data.temp.txt
+cat headers.temp.txt data.temp.txt > code_status_chart_events.csv
+rm headers.temp.txt data.temp.txt
+```
+
+Now we can load all the necessary data:
+
+```{r loaddata, eval = FALSE}
+admits <- fread('~/mimic_v1.4/ADMISSIONS.csv')
+ptinfo <- fread('~/mimic_v1.4/PATIENTS.csv')
+cstatlog <- fread('~/mimic_v1.4/code_status_chart_events.csv')
+mvlog <- fread('~/mimic_v1.4/mv_status_chart_events.csv')
+icd9dxs <- fread('~/mimic_v1.4/DIAGNOSES_ICD.csv')
+icd9procs <- fread('~/mimic_v1.4/PROCEDURES_ICD.csv')
+drgcodes <- fread('~/mimic_v1.4/DRGCODES.csv')
+icustays <- fread('~/mimic_v1.4/ICUSTAYS.csv')
+noteevents <- fread('~/mimic_v1.4/NOTEEVENTS.csv', 
+                    colClasses = c('integer','integer','integer',
+                    rep('character',8)))
+labevents <- fread('~/mimic_v1.4/LABEVENTS.csv')
+outputevents <- fread('~/mimic_v1.4/OUTPUTEVENTS.csv')
+ditems <- fread('~/mimic_v1.4/D_ITEMS.csv')
+cgivers <- fread('~/mimic_v1.4/CAREGIVERS.csv')
+arrchart <- fread('~/mimic_v1.4/any_arrest_chart_events.csv') # all are real arrests (manual review)
+```
+
+Now we'll clean up the data and generate some important features:
+
+```{r basic_features, eval = FALSE}
+# we need length of stay
+admits <- admits[, admit_dt := as.POSIXct(strptime(ADMITTIME, format = '%Y-%m-%d %H:%M:%S'))]
+admits <- admits[, discharge_dt := as.POSIXct(strptime(DISCHTIME, format = '%Y-%m-%d %H:%M:%S'))]
+admits <- admits[, hosp_los_days := as.numeric(difftime(discharge_dt, admit_dt, units = 'days'))]
+
+# get gender, DOB and hence patient age at admission
+admits <- merge(admits, ptinfo[,c('SUBJECT_ID','GENDER','DOB'),with=FALSE], by = 'SUBJECT_ID', all.x = TRUE)
+admits <- admits[, dob_dt := as.POSIXct(strptime(DOB, format = '%Y-%m-%d %H:%M:%S'))]
+admits <- admits[, age_at_admit_yrs := as.numeric(difftime(admit_dt, dob_dt, units = 'days')) / 365]
+# remember to fix funny ages: think more about best value to replace with given R censoring...
+admits <- admits[, age_at_admit_yrs_adj := ifelse(age_at_admit_yrs < 90, age_at_admit_yrs, 90)]
+
+# get med/surg status
+# the DRG types are not compatible, frequently missing, so skip this step for now...
+#admits <- merge(admits, drgcodes[DRG_TYPE == 'MS',c('HADM_ID','DRG_CODE','DRG_TYPE'),with=FALSE],
+                #by = 'HADM_ID', all.x = TRUE)
+#admits <- merge(admits, drg.crosswalk, all.x = TRUE, by.x = 'DRG_CODE', by.y = 'drg_ms')
+
+# fix datestamps in noteevents and cstatlog an arrest times
+noteevents <- noteevents[, chartdate_dt := as.POSIXct(strptime(CHARTDATE, format = '%Y-%m-%d'))]
+noteevents <- noteevents[, charttime_dt := as.POSIXct(strptime(CHARTTIME, format = '%Y-%m-%d'))]
+cstatlog <- cstatlog[, charttime_dt := as.POSIXct(strptime(CHARTTIME, format = '%Y-%m-%d %H:%M:%S'))]
+cstatlog <- cstatlog[, chartdate_dt := as.Date(charttime_dt)]
+arrchart <- arrchart[, arresttime_dt := as.POSIXct(strptime(CHARTTIME, format = '%Y-%m-%d %H:%M:%S'))]
+arrchart <- arrchart[, arrestdate_dt := as.Date(arresttime_dt)]
+# FLAG THE FIRST ARREST FOR EACH PERSON
+arrchart <- arrchart[, first_arrest := arresttime_dt == min(arresttime_dt), by = HADM_ID]
+mvlog <- mvlog[, charttime_dt := as.POSIXct(strptime(CHARTTIME, format = '%Y-%m-%d %H:%M:%S'))]
+firstmv <- mvlog[, list(first_mv_dt = min(charttime_dt)), by = HADM_ID]
+firstmv <- firstmv[, first_mv_date := as.Date(first_mv_dt)]
+icustays <- icustays[, intime_dt := as.POSIXct(strptime(INTIME, format = '%Y-%m-%d %H:%M:%S'))]
+icustays <- icustays[, is_first_icu_txf := min(intime_dt) == intime_dt, by = HADM_ID ]
+# fix up religion status indiator
+admit <- admits[, religion_adj := RELIGION]
+admits <- admits[RELIGION %in% c('','UNOBTAINABLE'), religion_adj := 'UNKNOWN']
+
+# Clean up code status definitions
+# i.e. either FULL CODE, or there is SOME limitation on life-sustaining therapy
+# exclude entries that don't have information
+cstatlog <- cstatlog[! VALUE %in% c('','Other/Remarks')]
+cstatlog <- cstatlog[, fullcode_tf := ifelse(grepl('full code', VALUE, ignore.case = TRUE),
+                                             TRUE, FALSE)]
+cstatlog <- cstatlog[, comfortcare_tf := ifelse(grepl('comfort measures', VALUE, ignore.case = TRUE), 
+                                                TRUE, FALSE)]
+
+# get a modified Elixhauser comorbidity score with the Van Walraven modification
+# NB. we don't have present-on-admission identifiers, thus limiting the validity
+# of this measurement
+# remember to alter format for the medicalrisk package
+dt.dxs <- data.table(HADM_ID = icd9dxs$HADM_ID,
+                     icd9cm = paste0('D',icd9dxs$ICD9_CODE))
+dt.procs <- data.table(HADM_ID = icd9procs$HADM_ID,
+                     icd9cm = paste0('P',icd9procs$ICD9_CODE))
+dt.icd9.all <- rbind(dt.dxs,dt.procs)
+# NB we are using the Quan approach here to account for similar comorbidities
+dt.risk.adj <- dt.icd9.all[, icd9cm_elixhauser_quan(icd9 = unique(icd9cm)), by = HADM_ID]
+# now use the vanwalraven adjustment
+# see table 1 of van walraven paper
+vanwalraven <- function(df) {
+  
+  with(df, sum(
+          7 * any(chf),
+          5 * any(arrhythmia),
+          -1 * any(valve),
+          4 * any(pulmcirc),
+          2 * any(perivasc),
+          7 * any(para), 
+          6 * any(neuro),
+          3 * any(chrnlung),
+          5 * any(renlfail),
+          11 * any(liver),
+          12 * any(mets),
+          4 * any(tumor),
+          3 * any(coag),
+          -4 * any(obese),
+          6 * any(wghtloss),
+          5 * any(lytes), 
+          -2 * any(bldloss),
+          -2 * any(anemdef),
+          -7 * any(drug),
+          -3 * any(depress)
+  ))
+  
+}
+dt.risk.adj <- dt.risk.adj[, mod_elix_score := vanwalraven(.SD), by = HADM_ID]
+admits <- merge(admits, dt.risk.adj[,list(mod_elix_score = max(mod_elix_score)),by=HADM_ID], 
+                all.x = TRUE, by = 'HADM_ID')
+```
+
+Now some exclusions and additional features:
+
+```{r exclusions }
+# importance of considering admissions WITHOUT a documented code status, too
+# dt.final <- admits[HADM_ID %in% cstatlog$HADM_ID]
+dt.final <- admits
+dt.final <- dt.final[, ever_any_cstat := HADM_ID %in% cstatlog$HADM_ID]
+dt.final <- dt.final[age_at_admit_yrs >= 18]
+dt.final <- dt.final[hosp_los_days >= 2]
+# TODO: LOOK AT INDEX ADMISSIONS ONLY!!!!! - added here for the next round
+dt.final <- dt.final[, is_index := ADMITTIME == min(ADMITTIME), by = SUBJECT_ID]
+dt.final <- dt.final[is_index == TRUE]
+
+# pare down the large report file
+noteevents <- noteevents[HADM_ID %in% dt.final$HADM_ID]
+cstatlog <- cstatlog[HADM_ID %in% dt.final$HADM_ID]
+# exclude those whose FIRST code status report is FULL CODE, UNLESS 
+# it occurs > 72 hours after admission
+cstatlog <- merge(cstatlog, dt.final[,c('HADM_ID','admit_dt'),with = FALSE], 
+                  all.x = TRUE, by = 'HADM_ID')
+
+cstatlog <- cstatlog[, list(time_to_first_cs_days = as.numeric(difftime(min(chartdate_dt), 
+                                                            admit_dt, units = 'days')),
+                first_cs_is_fc = fullcode_tf[which.min(chartdate_dt)],
+                any_non_fc = any(fullcode_tf == FALSE),
+                time_to_first_NOT_fc_days = 
+                  as.numeric(difftime(min(.SD[fullcode_tf == FALSE]$chartdate_dt),
+                                      admit_dt, units = 'days')),
+                first_chart_NOT_fc_dt = min(.SD[fullcode_tf == FALSE]$chartdate_dt)),
+         by = HADM_ID]
+# restrict those to only with an initial code status
+#cstatlog <- cstatlog[first_cs_is_fc == TRUE]
+# now keep only those of interest
+# dt.final <- dt.final[HADM_ID %in% cstatlog$HADM_ID]
+noteevents <- noteevents[HADM_ID %in% dt.final$HADM_ID]
+noteevents <- noteevents[, any_cstat := HADM_ID %in% cstatlog$HADM_ID]
+noteevents <- merge(noteevents, 
+                    cstatlog[!duplicated(HADM_ID),
+                             c('HADM_ID', 'first_chart_NOT_fc_dt'),with=FALSE],
+                    all.x = TRUE, by = 'HADM_ID')
+noteevents <- merge(noteevents,
+                    dt.final[,.(HADM_ID, admit_dt)],
+                    all.x = TRUE, by = 'HADM_ID')
+
+# get the outcome to dt.final; i.e. was there a change in code status?
+dt.final <- merge(dt.final, 
+                  cstatlog[!duplicated(HADM_ID),
+                           c('HADM_ID', 'any_non_fc', 'time_to_first_NOT_fc_days', 'first_cs_is_fc'),with=FALSE], 
+                  all.x = TRUE, by = 'HADM_ID')
+dt.final <- dt.final[HADM_ID %in% noteevents$HADM_ID]
+
+# now create feature for time to event
+dt.final <- dt.final[, cal_days_to_LOLST_or_DC := ifelse(time_to_first_NOT_fc_days == Inf, 
+                                               hosp_los_days, time_to_first_NOT_fc_days)]
+
+# now flag all the notes that occur only in the first 72h of the hospital stay
+# or first 3 calendar days
+# originally just up until the day before the new LOLST
+# noteevents <- noteevents[, prior_to_new_lolst := as.Date(chartdate_dt) < first_chart_NOT_fc_dt][prior_to_new_lolst == TRUE]
+noteevents <- noteevents[ as.numeric(difftime(as.Date(charttime_dt), as.Date(admit_dt)), 
+                                     units = 'days') <= 2]
+
+# now write these notes to file for analysis in Python
+note_cats <- c('General', 'Nursing', 'Nursing/other', 'Nutrition', 'Physician ',
+               'Respiratory ')
+# clean up file/dirs prior to regenerating text
+file.remove(list.files('corpus_txt/', full.names = TRUE))
+(noteevents[CATEGORY %in% note_cats, 
+           writeLines(TEXT, paste0('corpus_txt/',HADM_ID,'.txt')),by = HADM_ID])
+
+# merge arrest information
+dt.final <- merge(dt.final, arrchart[first_arrest==TRUE,.(HADM_ID,arresttime_dt,arrestdate_dt)],
+                  all.x = TRUE, by = 'HADM_ID')
+dt.final <- dt.final[, any_arrest := HADM_ID %in% arrchart$HADM_ID]
+dt.final <- dt.final[, cal_days_to_arrest_or_DC := ifelse(is.na(arrestdate_dt), 
+                                               hosp_los_days, 
+                                               as.numeric(difftime(arrestdate_dt,
+                                                            as.Date(admit_dt)),
+                                                          units = 'days'))]
+
+# add MV info
+dt.final <- dt.final[, any_mv := HADM_ID %in% firstmv$HADM_ID]
+dt.final <- merge(dt.final, firstmv, all.x = TRUE, by = 'HADM_ID')
+dt.final <- dt.final[, cal_days_to_mv_or_DC := ifelse(is.na(first_mv_date), 
+                                               hosp_los_days, 
+                                               as.numeric(difftime(first_mv_date,
+                                                            as.Date(admit_dt)),
+                                                          units = 'days'))]
+
+# add first Icu transfer info
+dt.final <- dt.final[, any_icu := HADM_ID %in% firsticu$HADM_ID]
+dt.final <- merge(dt.final, icustays[is_first_icu_txf==TRUE], 
+            all.x = TRUE, by = 'HADM_ID')
+setnames(dt.final,'LOS','tot_icu_los_days')
+
+dt.final <- dt.final[, cal_days_to_first_ICU_txf_or_DC := ifelse(is.na(first_icu_txf_date), 
+                                               hosp_los_days, 
+                                               as.numeric(difftime(first_icu_txf_date,
+                                                            as.Date(admit_dt)),
+                                                          units = 'days'))]
+
+# now that we have the outcomes, note somehow the eligibility
+# based on timing of the outcomes after 72h
+# NB this first one is only relevant for people who ever had any code status
+# and for those whom the first was full code
+dt.final <- dt.final[ever_any_cstat == TRUE & first_cs_is_fc == TRUE, 
+                     new_LOLST_or_DC_after3d := cal_days_to_LOLST_or_DC > 3] # generates NAs
+dt.final <- dt.final[, arrest_or_DC_after3d := cal_days_to_arrest_or_DC > 3]
+dt.final <- dt.final[, mv_or_DC_after3d := cal_days_to_mv_or_DC > 3]
+dt.final <- dt.final[, icu_txf_or_DC_after3d := cal_days_to_first_ICU_txf_or_DC > 3] #NB only around 3400
+
+# look at things in the first 48h period
+dt.final <- dt.final[, arrest_before2d := cal_days_to_arrest_or_DC <= 2]
+dt.final <- dt.final[, mv_before2d := cal_days_to_mv_or_DC <= 2]
+dt.final <- dt.final[, icu_txf_before2d := cal_days_to_first_ICU_txf_or_DC <= 2] 
+
+# some other features:
+dt.final <- dt.final[, hosp_los_gte14days := hosp_los_days >= 14]
+dt.final <- dt.final[, hosp_los14_or_death := hosp_los_gte14days | HOSPITAL_EXPIRE_FLAG == 1]
+dt.final <- dt.final[, death_or_iculos14 := tot_icu_los_days >= 14 | HOSPITAL_EXPIRE_FLAG == 1]
+dt.final <- dt.final[, death_or_iculos7 := tot_icu_los_days >= 7 | HOSPITAL_EXPIRE_FLAG == 1]
+
+# exclude a few admissions (n=302) without LOS data
+dt.final <- dt.final[! is.na(tot_icu_los_days)]
+```
+
+Now run the Python component of the workflow to analyze text data:
+
+```{r runpython, eval = FALSE}
+system("python3 text_analysis_main.py")
+```
+
+Now that we have structered features derived from the text data as output from the Python script, let's load them, choose which ones we're going to use, and merge them into our working data:
+
+```{r mergetextdata, eval = FALSE}
+keyterm_text_results <- fread('text_results_keyterms.csv')
+# fix up the names a bit to work with R dataframes
+names(keyterm_text_results)[-1] <- paste0('term_',
+                                  gsub('[[:punct:]]|[[:space:]]','', 
+                                names(keyterm_text_results)[-1]))
+# and merge back together
+dt.final <- merge(dt.final, keyterm_text_results, by = 'HADM_ID', all.x = TRUE)
+## TODO: check to make sure no missing data here after this merge....
+# there were some admissions without relevant text notes, so should be removed
+dt.final <- dt.final[! is.na(term_wishes)]
+
+# now describe final analytic sample...
+
+# now explore most predictive n1/n2 terms here and include in final sample...
+
+# remember, only do feature selection on the training set.
+# so let's make it now:
+
+# setup data partitions
+set.seed(12152016)
+training <- createDataPartition(dt.final$death_or_iculos7, p=0.75, list=FALSE)[,1]
+testing <- (1:nrow(dt.final))[-training]
+
+# select features for plus models:
+# just do single words for now, worry about n2 and n3 for manuscript
+n1_dtm <- fread('n1_dtm.csv')
+# an inner join since there were some subsequent exclusions...
+n1_dtm <- merge(n1_dtm, dt.final[,.(HADM_ID,death_or_iculos7)], by = 'HADM_ID', 
+          all = FALSE)
+
+# TOOD: CLEAN UP DUPLICATES HADM_ID in dt.final
+
+library(glmnet)
+
+# build data.table with all text features and the outcome: TRAINING SET ONLY!
+# see vignette: https://cran.r-project.org/web/packages/glmnet/vignettes/glmnet_beta.html#log
+
+
+x <- n1_dtm[HADM_ID %in% dt.final[training]$HADM_ID]
+x <- x[order(HADM_ID)]
+x$death_or_iculos7 <- NULL
+x$HADM_ID <- NULL
+y <- dt.final[training][order(HADM_ID)]$death_or_iculos7
+term_select <- cv.glmnet(as.matrix(x), y, family = 'binomial')
+# use cv.glmnet for CV in the future...
+# then get the coefficients using: 
+terms_coeff <- coef(term_select, s = "lambda.min")[,1] # FOR CV ONLY
+terms_coeff_filt <- names(sort(terms_coeff[terms_coeff>0], decreasing = T))[1:100]
+
+n2_dtm <- fread('n2_dtm.csv')
+n2_dtm <- merge(n2_dtm, dt.final[,.(HADM_ID,death_or_iculos7)], by = 'HADM_ID', 
+          all = FALSE)
+x2 <- n2_dtm[HADM_ID %in% dt.final[training]$HADM_ID]
+x2 <- x2[order(HADM_ID)]
+x2$death_or_iculos7 <- NULL
+x2$HADM_ID <- NULL
+y2 <- dt.final[training][order(HADM_ID)]$death_or_iculos7
+term_select_2 <- cv.glmnet(as.matrix(x2), y2, family = 'binomial')
+# then get the coefficients using: 
+terms_coeff_2 <- coef(term_select_2, s = "lambda.min")[,1] # FOR CV ONLY
+terms_coeff_filt_2 <- names(sort(terms_coeff_2[terms_coeff_2>0], decreasing = T))[1:100]
+
+# now get variable name list and merge with dt.train
+add_terms_1 <- n1_dtm[, c('HADM_ID',terms_coeff_filt), with = F] 
+names(add_terms_1)[-1] <- paste0('term_', names(add_terms_1)[-1])
+add_terms_2 <- n2_dtm[, c('HADM_ID',terms_coeff_filt_2), with = F] 
+names(add_terms_2)[-1] <- paste0('term_',
+                                  gsub(' ','_', 
+                                names(add_terms_2)[-1]))
+
+# transform values to binary integers rather than counts
+# for very large documents in the future consider c_t = sqrt(t)
+colrange1 <- which(names(add_terms_1) != 'HADM_ID')
+add_terms_1[,colrange,with=F] <- sapply(add_terms_1[,colrange,with=F], function(cc) as.integer(cc >0))
+colrange2 <- which(names(add_terms_2) != 'HADM_ID')
+add_terms_2[,colrange,with=F] <- sapply(add_terms_2[,colrange,with=F], function(cc) as.integer(cc >0))
+
+
+# now merge
+dt.final <- merge(dt.final, add_terms_1, by = 'HADM_ID', all.x = TRUE)
+dt.final <- merge(dt.final, add_terms_2, by = 'HADM_ID', all.x = TRUE)
+
+plus_vars <- c(base_vars, # variables from structured fields
+               grep('term_', names(dt.final), value = TRUE)) # unstructured data
+
+# confirm no duplicates
+
+if (length(plus_vars) != length(unique(plus_vars))) print("STOP: DUPLICATE FEATURES!!")
+  
+# save to file for easy loading later...
+save(dt.final, file = 'dt.final.rdata')
+```
+
+Now let's build some models with this data:
+
+base_vars <- c('GENDER', 'ADMISSION_TYPE', 'age_at_admit_yrs_adj', 'mod_elix_score',
+               'mv_before2d','icu_txf_before2d','arrest_before2d',
+               'death_or_iculos7') # and the outcome
+
+
+# validation details and error function
+fitControl <- trainControl(## 10-fold repeated CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 3,
+                           verboseIter = TRUE)
+svmGrid <- expand.grid(sigma = seq(0,1,.25),
+                       C = c(0.1, 0.5, 1, 5, 10))
+rfGrid <- data.frame(mtry = 1:8 * 2)
+
+# ----- train base models
+mbase.lr <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'glm',
+                  family = 'binomial', 
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.lr, file = 'models/mbaselr_los7.rdata')
+mbase.rcs <- train(as.numeric(death_or_iculos7) ~ GENDER + 
+                     rcspline.eval(age_at_admit_yrs_adj,nk=3) +
+                     rcspline.eval(mod_elix_score,nk=3), 
+                  method = 'glm',
+                  family = 'binomial', 
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.rcs, file = 'models/mbasercs_los7.rdata')
+mbase.tb <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'treebag',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.tb, file = 'models/mbasetb_los7.rdata')
+mbase.rf <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'rf',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.rf, file = 'models/mbaserf_los7.rdata')
+mbase.gbm <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'gbm',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.gbm, file = 'models/mbasegbm_los7.rdata')
+mbase.knn <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'knn',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.knn, file = 'models/mbaseknn_los7.rdata')
+mbase.svm <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'svmRadial',
+                  trControl = fitControl,
+                  tuneGrid = svmGrid,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.svm, file = 'models/mbasesvm_los7.rdata')
+mbase.nn <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'nnet',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,base_vars,with=F])
+save(mbase.nn, file = 'models/mbasenn_los7.rdata')
+
+
+# training performance
+lrbase.probs.train <- predict(mbase.lr, dt.final[training,base_vars,with=F])
+rcsbase.probs.train <- predict(mbase.rcs, dt.final[training,base_vars,with=F])
+tbbase.probs.train <- predict(mbase.tb, dt.final[training,base_vars,with=F])
+rfbase.probs.train <- predict(mbase.rf, dt.final[training,base_vars,with=F])
+gbmbase.probs.train <- predict(mbase.gbm, dt.final[training,base_vars,with=F])
+knnbase.probs.train <- predict(mbase.knn, dt.final[training,base_vars,with=F])
+svmbase.probs.train <- predict(mbase.svm, dt.final[training,base_vars,with=F])
+nnbase.probs.train <- as.numeric(predict(mbase.nn, dt.final[training,base_vars,with=F]))
+Ybase.train = dt.final[training,base_vars,with=F]$death_or_iculos7
+
+# ROC of base models in derivation set
+# ------------------------------ now how do these models do with the training set
+mbase.roc.train.lr <- roc(predictor = lrbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.rcs <- roc(predictor = rcsbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.tb <- roc(predictor = tbbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.rf <- roc(predictor = rfbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.gbm <- roc(predictor = gbmbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.knn <- roc(predictor = knnbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.svm <- roc(predictor = svmbase.probs.train, response = Ybase.train , ci = TRUE)
+mbase.roc.train.nn <- roc(predictor = nnbase.probs.train, response = Ybase.train , ci = TRUE)
+# now plot
+png('results/compare_roc_train_base.png', width = 8, height = 8, units = 'in', res = 1200)
+plot(mbase.roc.train.lr, print.auc = TRUE, main = 'Discrimination of BASE models \nwith training data')
+plot(mbase.roc.train.rcs, col = 'brown', add = TRUE, print.auc = TRUE, print.auc.y = 0.45)
+plot(mbase.roc.train.tb, col = 'navyblue', add = TRUE, print.auc = TRUE, print.auc.y = 0.40)
+plot(mbase.roc.train.rf, col = 'red', add = TRUE, print.auc = TRUE, print.auc.y = 0.35)
+plot(mbase.roc.train.gbm, col = 'orange', add = TRUE, print.auc = TRUE, print.auc.y = 0.30)
+plot(mbase.roc.train.knn, col = 'purple', add = TRUE, print.auc = TRUE, print.auc.y = 0.25)
+plot(mbase.roc.train.svm, col = 'forestgreen', add = TRUE, print.auc = TRUE, print.auc.y = 0.20)
+plot(mbase.roc.train.nn, col = 'pink', add = TRUE, print.auc = TRUE, print.auc.y = 0.15)
+legend('bottomright', legend = c('LR', 'LR/RCS', 'BT','RF', 'GBM', 'KNN','SVM','NN'),
+       col = c('black','brown','navyblue','red','orange','purple',
+               'forestgreen','pink'), lwd = 2, cex = .8)
+dev.off()
+
+# testing performance
+lrbase.probs.test <- predict(mbase.lr, dt.final[testing,base_vars,with=F])
+rcsbase.probs.test <- predict(mbase.rcs, dt.final[testing,base_vars,with=F])
+tbbase.probs.test <- predict(mbase.tb, dt.final[testing,base_vars,with=F])
+rfbase.probs.test <- predict(mbase.rf, dt.final[testing,base_vars,with=F])
+gbmbase.probs.test <- predict(mbase.gbm, dt.final[testing,base_vars,with=F])
+knnbase.probs.test <- predict(mbase.knn, dt.final[testing,base_vars,with=F])
+svmbase.probs.test <- predict(mbase.svm, dt.final[testing,base_vars,with=F])
+nnbase.probs.test <- predict(mbase.nn, dt.final[testing,base_vars,with=F])
+Ybase.test = as.numeric(dt.final[testing,base_vars,with=F]$death_or_iculos7)
+# ROC of base models in test set
+# ------------------------------ now how do these models do with the testing set
+mbase.roc.test.lr <- roc(predictor = lrbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.rcs <- roc(predictor = rcsbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.tb <- roc(predictor = tbbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.rf <- roc(predictor = rfbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.gbm <- roc(predictor = gbmbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.knn <- roc(predictor = knnbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.svm <- roc(predictor = svmbase.probs.test, response = Ybase.test , ci = TRUE)
+mbase.roc.test.nn <- roc(predictor = nnbase.probs.test, response = Ybase.test , ci = TRUE)
+# now plot
+png('results/compare_roc_test_base.png', width = 8, height = 8, units = 'in', res = 1200)
+plot(mbase.roc.test.lr, print.auc = TRUE, main = 'Discrimination of BASE models \nwith testing data')
+plot(mbase.roc.test.rcs, col = 'brown', add = TRUE, print.auc = TRUE, print.auc.y = 0.45)
+plot(mbase.roc.test.tb, col = 'navyblue', add = TRUE, print.auc = TRUE, print.auc.y = 0.40)
+plot(mbase.roc.test.rf, col = 'red', add = TRUE, print.auc = TRUE, print.auc.y = 0.35)
+plot(mbase.roc.test.gbm, col = 'orange', add = TRUE, print.auc = TRUE, print.auc.y = 0.30)
+plot(mbase.roc.test.knn, col = 'purple', add = TRUE, print.auc = TRUE, print.auc.y = 0.25)
+plot(mbase.roc.test.svm, col = 'forestgreen', add = TRUE, print.auc = TRUE, print.auc.y = 0.20)
+plot(mbase.roc.test.nn, col = 'pink', add = TRUE, print.auc = TRUE, print.auc.y = 0.15)
+legend('bottomright', legend = c('LR', 'LR/RCS', 'BT','RF', 'GBM', 'KNN','SVM','NN'),
+       col = c('black','brown','navyblue','red','orange','purple',
+               'forestgreen','pink'), lwd = 2, cex = .8)
+dev.off()
+
+
+
+# ------------------- train PLUS models
+mplus.lr <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'glm',
+                  family = 'binomial', 
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.lr, file = 'models/mpluslr_los7.rdata')
+
+rcsplus.form <- as.formula(paste("as.numeric(death_or_iculos7) ~ GENDER  + 
+                     rcspline.eval(age_at_admit_yrs_adj,nk=3) +
+                     rcspline.eval(mod_elix_score,nk=3)+",paste0(
+                     grep('^term_',plus_vars,value=T),collapse='+'))) 
+mplus.rcs <- train(rcsplus.form, 
+                  method = 'glm',
+                  family = 'binomial', 
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.rcs, file = 'models/mplusrcs_los7.rdata')
+mplus.tb <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'treebag',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.tb, file = 'models/mplustb_los7.rdata')
+mplus.rf <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'rf',
+                  trControl = fitControl,
+                  #tuneLength = 5, # made 5 not 20 for time reasons for abstract!
+                  tuneGrid = rfGrid,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.rf, file = 'models/mplusrf_los7.rdata')
+mplus.gbm <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'gbm',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.gbm, file = 'models/mplusgbm_los7.rdata')
+mplus.knn <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'knn',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.knn, file = 'models/mplusknn_los7.rdata')
+mplus.svm <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'svmRadial',
+                  trControl = fitControl,
+                  tuneGrid = svmGrid,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.svm, file = 'models/mplussvm_los7.rdata')
+mplus.nn <- train(as.numeric(death_or_iculos7) ~ ., 
+                  method = 'nnet',
+                  trControl = fitControl,
+                  tuneLength = 20,
+                  data = dt.final[training,plus_vars,with=F])
+save(mplus.nn, file = 'models/mplusnn_los7.rdata')
+
+# training performance of PLUS models
+lrplus.probs.train <- predict(mplus.lr, dt.final[training,plus_vars,with=F])
+rcsplus.probs.train <- predict(mplus.rcs, dt.final[training,plus_vars,with=F])
+tbplus.probs.train <- predict(mplus.tb, dt.final[training,plus_vars,with=F])
+rfplus.probs.train <- predict(mplus.rf, dt.final[training,plus_vars,with=F])
+gbmplus.probs.train <- predict(mplus.gbm, dt.final[training,plus_vars,with=F])
+knnplus.probs.train <- predict(mplus.knn, dt.final[training,plus_vars,with=F])
+svmplus.probs.train <- predict(mplus.svm, dt.final[training,plus_vars,with=F])
+nnplus.probs.train <- as.vector(predict(mplus.nn, dt.final[training,plus_vars,with=F]))
+Yplus.train = as.numeric(dt.final[training,plus_vars,with=F]$death_or_iculos7)
+
+# ROC of bus models in derivation set
+# ------------------------------ now how do these models do with the training set
+mplus.roc.train.lr <- roc(predictor = lrplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.rcs <- roc(predictor = rcsplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.tb <- roc(predictor = tbplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.rf <- roc(predictor = rfplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.gbm <- roc(predictor = gbmplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.knn <- roc(predictor = knnplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.svm <- roc(predictor = svmplus.probs.train, response = Yplus.train , ci = TRUE)
+mplus.roc.train.nn <- roc(predictor = nnplus.probs.train, response = Yplus.train , ci = TRUE)
+
+# now plot
+png('results/compare_roc_train_plus.png', width = 8, height = 8, units = 'in', res = 1200)
+plot(mplus.roc.train.lr, print.auc = TRUE, main = 'Discrimination of PLUS models \nwith training data')
+plot(mplus.roc.train.rcs, col = 'brown', add = TRUE, print.auc = TRUE, print.auc.y = 0.45)
+plot(mplus.roc.train.tb, col = 'navyblue', add = TRUE, print.auc = TRUE, print.auc.y = 0.40)
+plot(mplus.roc.train.rf, col = 'red', add = TRUE, print.auc = TRUE, print.auc.y = 0.35)
+plot(mplus.roc.train.gbm, col = 'orange', add = TRUE, print.auc = TRUE, print.auc.y = 0.30)
+plot(mplus.roc.train.knn, col = 'purple', add = TRUE, print.auc = TRUE, print.auc.y = 0.25)
+plot(mplus.roc.train.svm, col = 'forestgreen', add = TRUE, print.auc = TRUE, print.auc.y = 0.20)
+plot(mplus.roc.train.nn, col = 'pink', add = TRUE, print.auc = TRUE, print.auc.y = 0.15)
+legend('bottomright', legend = c('LR', 'LR/RCS', 'BT','RF', 'GBM', 'KNN','SVM','NN'),
+       col = c('black','brown','navyblue','red','orange','purple',
+               'forestgreen','pink'), lwd = 2, cex = .8)
+dev.off()
+
+# testing performance of PLUS models
+lrplus.probs.test <- predict(mplus.lr, dt.final[testing,plus_vars,with=F])
+rcsplus.probs.test <- predict(mplus.rcs, dt.final[testing,plus_vars,with=F])
+tbplus.probs.test <- predict(mplus.tb, dt.final[testing,plus_vars,with=F])
+rfplus.probs.test <- predict(mplus.rf, dt.final[testing,plus_vars,with=F])
+gbmplus.probs.test <- predict(mplus.gbm, dt.final[testing,plus_vars,with=F])
+knnplus.probs.test <- predict(mplus.knn, dt.final[testing,plus_vars,with=F])
+svmplus.probs.test <- predict(mplus.svm, dt.final[testing,plus_vars,with=F])
+nnplus.probs.test <- as.vector(predict(mplus.nn, dt.final[testing,plus_vars,with=F]))
+Yplus.test = as.numeric(dt.final[testing,plus_vars,with=F]$death_or_iculos7)
+# ROC of plus models in test set
+# ------------------------------ now how do these models do with the testing set
+mplus.roc.test.lr <- roc(predictor = lrplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.rcs <- roc(predictor = rcsplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.tb <- roc(predictor = tbplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.rf <- roc(predictor = rfplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.gbm <- roc(predictor = gbmplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.knn <- roc(predictor = knnplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.svm <- roc(predictor = svmplus.probs.test, response = Yplus.test , ci = TRUE)
+mplus.roc.test.nn <- roc(predictor = nnplus.probs.test, response = Yplus.test , ci = TRUE)
+# now plot
+png('results/compare_roc_test_plus.png', width = 8, height = 8, units = 'in', res = 1200)
+plot(mplus.roc.test.lr, print.auc = TRUE, main = 'Discrimination of PLUS models \nwith testing data')
+plot(mplus.roc.test.rcs, col = 'brown', add = TRUE, print.auc = TRUE, print.auc.y = 0.45)
+plot(mplus.roc.test.tb, col = 'navyblue', add = TRUE, print.auc = TRUE, print.auc.y = 0.40)
+plot(mplus.roc.test.rf, col = 'red', add = TRUE, print.auc = TRUE, print.auc.y = 0.35)
+plot(mplus.roc.test.gbm, col = 'orange', add = TRUE, print.auc = TRUE, print.auc.y = 0.30)
+plot(mplus.roc.test.knn, col = 'purple', add = TRUE, print.auc = TRUE, print.auc.y = 0.25)
+plot(mplus.roc.test.svm, col = 'forestgreen', add = TRUE, print.auc = TRUE, print.auc.y = 0.20)
+plot(mplus.roc.test.nn, col = 'pink', add = TRUE, print.auc = TRUE, print.auc.y = 0.15)
+legend('bottomright', legend = c('LR', 'LR/RCS', 'BT','RF', 'GBM', 'KNN','SVM','NN'),
+       col = c('black','brown','navyblue','red','orange','purple',
+               'forestgreen','pink'), lwd = 2, cex = .8)
+dev.off()
+
+
+
+# other performance metrics
+# some comparisons between models:
+roc.test(mbase.roc.test.lr, mbase.roc.test.rf)
+roc.test(mbase.roc.test.lr, mbase.roc.test.nn)
+roc.test(mbase.roc.test.lr, mbase.roc.test.gbm)
+
+roc.test(mplus.roc.test.lr, mplus.roc.test.rf)
+roc.test(mplus.roc.test.lr, mplus.roc.test.gbm)
+
+
+
+
+
+# look at calibration
+calib.data <- data.table(outcome = as.numeric(dt.final[testing,plus_vars,with=F]$death_or_iculos7),
+              pred.lr = predict(mplus.lr, dt.final[testing,plus_vars,with=F]),
+              pred.rcs = predict(mplus.rcs, dt.final[testing,plus_vars,with=F]),
+              pred.tb = predict(mplus.tb, dt.final[testing,plus_vars,with=F]),
+              pred.rf = predict(mplus.rf, dt.final[testing,plus_vars,with=F]),
+              pred.gbm = predict(mplus.gbm, dt.final[testing,plus_vars,with=F]),
+              pred.knn = predict(mplus.knn, dt.final[testing,plus_vars,with=F]),
+              pred.svm = predict(mplus.svm, dt.final[testing,plus_vars,with=F]),
+              pred.nn = predict(mplus.nn, dt.final[testing,plus_vars,with=F])[,1])
+
+calib.data %<>%
+             mutate(deciles.lr = ntile(pred.lr, 10),
+                    deciles.rcs = ntile(pred.rcs, 10),
+                    deciles.tb = ntile(pred.tb, 10),
+                    deciles.rf = ntile(pred.rf, 10),
+                    deciles.gbm = ntile(pred.gbm, 10),
+                    deciles.knn = ntile(pred.knn,10),
+                    deciles.svm = ntile(pred.svm, 10),
+                    deciles.nn = ntile(pred.nn, 10)) %>%
+            as.data.table()
+
+# now calibration plots
+calib.data %>% 
+  group_by(deciles.lr) %>% 
+  summarize(observed = mean(outcome),
+            predicted = mean(pred.lr)) %>%
+  ggplot(aes(x = deciles.lr)) +
+  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
+  geom_line(aes(y = predicted), color = 'red') +
+  theme_bw()
+calib.data %>% 
+  group_by(deciles.svm) %>% 
+  summarize(observed = mean(outcome),
+            predicted = mean(pred.svm)) %>%
+  ggplot(aes(x = deciles.svm)) +
+  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
+  geom_line(aes(y = predicted), color = 'red') +
+  theme_bw()
+calib.data %>% 
+  group_by(deciles.rf) %>% 
+  summarize(observed = mean(outcome),
+            predicted = mean(pred.rf)) %>%
+  ggplot(aes(x = deciles.rf)) +
+  geom_bar(aes(y = observed), stat = 'identity', fill = 'lightblue') +
+  geom_line(aes(y = predicted), color = 'red') +
+  theme_bw()
+
+
+# try a novel combined calibration plot with boxplots
+calib.lr <- calib.data[,.(outcome,pred.lr,deciles.lr)] %>%
+  mutate(model_type = 'lr') %>%
+  rename(preds = pred.lr, deciles = deciles.lr) %>%
+  as.data.table()
+calib.rf <- calib.data[,.(outcome,pred.rf,deciles.rf)] %>%
+  mutate(model_type = 'rf') %>%
+  rename(preds = pred.rf, deciles = deciles.rf) %>%
+  as.data.table()
+calib.svm <- calib.data[,.(outcome,pred.svm,deciles.svm)] %>%
+  mutate(model_type = 'svm') %>%
+  rename(preds = pred.svm, deciles = deciles.svm) %>%
+  as.data.table()
+calib.nn <- calib.data[,.(outcome,pred.nn,deciles.nn)] %>%
+  mutate(model_type = 'nn') %>%
+  rename(preds = pred.nn, deciles = deciles.nn) %>%
+  as.data.table()
+calib.melted <- rbind(calib.lr, calib.rf, calib.svm)
+calib.melted <- calib.melted[, mean_outcome := mean(outcome), by = .(deciles,model_type)]
+png('results/calib_plus.png', width = 800, height = 600)
+ggplot(calib.melted, aes(x = as.factor(deciles))) +
+  geom_boxplot(aes(y=preds)) +
+  geom_point(aes(y=mean_outcome), color = 'red') +
+  facet_grid(~model_type) +
+  xlab('decile') + 
+  ggtitle('calibration of predicted probabilities by decile for each model type') + 
+  theme_bw()
+dev.off()
+
+```
+
+```{r resultstable}
+# Now also make a table to reflect some important results
+mytable1 <- data.table(Variable = c('Admissions (n)', 
+                                    'Hospital LOS (days), median',
+                                    'Female gender (n)',
+                                    'Age at admission (years), median',
+                                    'Modified Elixhauser score, median',
+                                    'Death or ICU > 7d'),
+                       Value = c(nrow(dt.final),
+                                 sprintf('%1.1f',median(dt.final$hosp_los_days)),
+                                 paste0(sum(dt.final$GENDER == 'F')),
+                                 sprintf('%2.1f',median(dt.final$age_at_admit_yrs_adj)),
+                                 sprintf('%1.1f',median(dt.final$mod_elix_score)),
+                                 sum(dt.final$death_or_iculos7)))
+save(mytable1, file = 'results/mytable1_los7.rdata')
+
+# everything brier: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3575184/
+brier <- function(pred, obs, num = FALSE) {
+      bs <- mean( (pred - obs)^2)
+      ifelse(num, bs , sprintf('%2.2f', bs))
+}
+# what if you just guessed the mean every time? briermax (ie. noninformative model)
+briermax <- function(obs) mean((mean(obs) - obs)^2)
+# NB the definition of scaled brier here EXCLUDES the 1- term
+brierscaled <- function(pred, obs) 1 - (brier(pred,obs,num=T)/ briermax(obs))
+
+# NB all numbers are against the test set
+# TOOD: confidence intervals around results
+
+printCstat <- function(mod) sprintf('%2.2f (%2.2f - %2.2f)', 
+                                    mod$auc[1], mod$ci[1], mod$ci[3])
+
+printOCs <- function(preds, obs, thresh = 0.5) {
+
+  cf <- confusionMatrix(ifelse(preds >= thresh, T, F), obs, positive = 'TRUE')
+  sapply(cf$byClass[1:4], function(n) sprintf ('%2.2f',n))
+}
+
+printHL <- function(preds,obs) {
+  hl <- hoslem.test(obs,preds)
+  sprintf('%4.2f (%1.3f)', hl$statistic, hl$p.value)
+}
+
+mytable2.base <- data.table(Measure = c('Sensitivity', 'Specificity', 'PPV',
+                                        'NPV', 'C-statistic', 'Hosmer-Lemeshow X2 (p)',
+                                        'Brier score'),
+                            LRb = c(printOCs(mbase.cf.test.lr), 
+                                    printCstat(mbase.roc.lr), 
+                                    printHL(mbase.hl.test.lr), 
+                                    brier(lrbase.probs.test,Y)),
+                            RCSb = c(printOCs(mbase.cf.test.rcs), 
+                                    printCstat(mbase.roc.rcs), 
+                                    printHL(mbase.hl.test.rcs), 
+                                    brier(rcsbase.probs.test,Y)),
+                            BTb = c(printOCs(mbase.cf.test.tb), 
+                                    printCstat(mbase.roc.tb), 
+                                    printHL(mbase.hl.test.tb), 
+                                    brier(tbbase.probs.test,Y)),
+                            RFb = c(printOCs(mbase.cf.test.rf), 
+                                    printCstat(mbase.roc.rf), 
+                                    printHL(mbase.hl.test.rf), 
+                                    brier(rfbase.probs.test,Y)),
+                            GBMb = c(printOCs(mbase.cf.test.gbm), 
+                                    printCstat(mbase.roc.gbm), 
+                                    printHL(mbase.hl.test.gbm), 
+                                    brier(gbmbase.probs.test,Y)),
+                            KNNb = c(printOCs(mbase.cf.test.knn), 
+                                    printCstat(mbase.roc.knn), 
+                                    printHL(mbase.hl.test.knn), 
+                                    brier(knnbase.probs.test,Y)),
+                            SVMb = c(printOCs(mbase.cf.test.svm), 
+                                     printCstat(mbase.roc.svm), 
+                                     printHL(mbase.hl.test.svm), 
+                                     brier(svmbase.probs.test,Y)),
+                            NNb = c(printOCs(mbase.cf.test.nn), 
+                                    printCstat(mbase.roc.nn), 
+                                    printHL(mbase.hl.test.nn), 
+                                    brier(nnbase.probs.test,Y)))
+
+mytable2.plus <- data.table(Measure = c('Sensitivity', 'Specificity', 'PPV',
+                                        'NPV', 'C-statistic', 'Hosmer-Lemeshow X2 (p)',
+                                        'Brier score'),
+                            LRp = c(printOCs(mplus.cf.test.lr), 
+                                    printCstat(mplus.roc.lr), 
+                                    printHL(mplus.hl.test.lr), 
+                                    brier(lrplus.probs.test,Y)),
+                            RCSp = c(printOCs(mplus.cf.test.rcs), 
+                                    printCstat(mplus.roc.rcs), 
+                                    printHL(mplus.hl.test.rcs), 
+                                    brier(rcsplus.probs.test,Y)),
+                            BTp = c(printOCs(mplus.cf.test.tb), 
+                                    printCstat(mplus.roc.tb), 
+                                    printHL(mplus.hl.test.tb), 
+                                    brier(tbplus.probs.test,Y)),
+                            RFp = c(printOCs(mplus.cf.test.rf), 
+                                    printCstat(mplus.roc.rf), 
+                                    printHL(mplus.hl.test.rf), 
+                                    brier(rfplus.probs.test,Y)),
+                            GBMp = c(printOCs(mplus.cf.test.gbm), 
+                                    printCstat(mplus.roc.gbm), 
+                                    printHL(mplus.hl.test.gbm), 
+                                    brier(gbmplus.probs.test,Y)),
+                            KNNp = c(printOCs(mplus.cf.test.knn), 
+                                    printCstat(mplus.roc.knn), 
+                                    printHL(mplus.hl.test.knn), 
+                                    brier(knnplus.probs.test,Y)),
+                            SVMp = c(printOCs(mplus.cf.test.svm), 
+                                     printCstat(mplus.roc.svm), 
+                                     printHL(mplus.hl.test.svm), 
+                                     brier(svmplus.probs.test,Y)),
+                            NNp = c(printOCs(mplus.cf.test.nn), 
+                                    printCstat(mplus.roc.nn), 
+                                    printHL(mplus.hl.test.nn), 
+                                    brier(nnplus.probs.test,Y)))
+
+save(mytable2.base, file = 'results/mytable2_los7.base.rdata')
+save(mytable2.plus, file = 'results/mytable2_los7.plus.rdata')
+
+
+# And a table about the prevalence of unstructered features
+mytable3.text <- data.table(Term = names(sapply(grep('term',names(dt.final[new_LOLST_or_DC_after3d == TRUE]),value=TRUE), function(x) unlist(strsplit('_',x))[2])),
+                            N = colSums(dt.final[new_LOLST_or_DC_after3d == TRUE][,grep('term',names(dt.final[new_LOLST_or_DC_after3d == TRUE])),with=FALSE]),
+                            Prop = sprintf('%0.3f',colMeans(dt.final[new_LOLST_or_DC_after3d == TRUE][,grep('term',names(dt.final[new_LOLST_or_DC_after3d == TRUE])),with=FALSE])))
+
+save(mytable3.text, file = 'results/mytable3_los7.text.rdata')
+```
+
+And for documentation purposes, good to know what we're working with here:
+
+```{r sessioninfo, eval = FALSE}
+sessionInfo()
+```
+
+```
+R version 3.3.1 (2016-06-21)
+Platform: x86_64-pc-linux-gnu (64-bit)
+Running under: Ubuntu 16.04.1 LTS
+
+locale:
+ [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
+ [3] LC_TIME=en_US.UTF-8        LC_COLLATE=en_US.UTF-8    
+ [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=en_US.UTF-8   
+ [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
+ [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+[11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
+
+attached base packages:
+[1] parallel  stats     graphics  grDevices utils     datasets  methods  
+[8] base     
+
+other attached packages:
+ [1] doMC_1.3.4              iterators_1.0.8         foreach_1.4.3          
+ [4] Hmisc_3.17-4            Formula_1.2-1           survival_2.39-4        
+ [7] ResourceSelection_0.2-6 pROC_1.8                caret_6.0-71           
+[10] lattice_0.20-33         magrittr_1.5            dplyr_0.5.0            
+[13] ggplot2_2.1.0           medicalrisk_1.2         data.table_1.9.6       
+
+loaded via a namespace (and not attached):
+ [1] Rcpp_0.12.7         RColorBrewer_1.1-2  nloptr_1.0.4       
+ [4] plyr_1.8.4          tools_3.3.1         rpart_4.1-10       
+ [7] lme4_1.1-12         tibble_1.2          nlme_3.1-128       
+[10] gtable_0.2.0        mgcv_1.8-13         Matrix_1.2-6       
+[13] DBI_0.5             SparseM_1.7         gridExtra_2.2.1    
+[16] knitr_1.14          cluster_2.0.4       stringr_1.1.0      
+[19] MatrixModels_0.4-1  stats4_3.3.1        grid_3.3.1         
+[22] nnet_7.3-12         R6_2.1.3            hash_2.2.6         
+[25] foreign_0.8-66      latticeExtra_0.6-28 minqa_1.2.4        
+[28] reshape2_1.4.1      car_2.1-3           scales_0.4.0       
+[31] codetools_0.2-8     MASS_7.3-45         splines_3.3.1      
+[34] assertthat_0.1      pbkrtest_0.4-6      colorspace_1.2-6   
+[37] quantreg_5.29       stringi_1.1.1       acepack_1.3-3.3    
+[40] munsell_0.4.3       chron_2.3-47   
+```
+
+
 ### Results
 <!--
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
