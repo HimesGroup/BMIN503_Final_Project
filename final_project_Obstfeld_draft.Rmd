@@ -1,0 +1,342 @@
+---
+title: "EPID 600 Project Template"
+author: "Amrom Obstfeld"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+# Predicting Screening Coagulation Studies Using Coagulation Factor Results
+
+### By Amrom Obstfeld
+
+## Overview
+The interpretation of coagulation studies in clinical practice can be hampered by lack of understanding of the relationship between screening coagulation studies and followup coagulation factor results that are ordered in order to expain abnormalities in these studies. In order to allucidate these relationships I will acquire deideintified laboratory results from CHOP and HUP data warehouses and use statistical and machine learning tools. My ultimate goal is to use these tools in clinical practice to guide clinicians towards appropriate coagulation tests.
+
+## Introduction
+Screening coagulation studies such as the partial thromboplastin time (PTT) and the prothrombin time (PT) are used to assess the risk of bleeding patients. When abnormalities are seen in one or both of these, additional testing is performed to identify the specific blood  coagulation factors that are abnormal. The univariate relationships between the screening studies and the specific factors have been elucidated using empiric laboratory evidence. However these relationships have not been validated using real patient data. Furthermore the multivariate relationships are more difficult to assess in the laboratory. Using accurate real-world models will allow hematologists and coagulation laboratories to better assess the bleeding risk of patients and suggest additional studies when screening results are inconsistent with the results of the coagulation factor levels.
+
+Addressing this problem requires a multidisciplinary approach. Specifically, in depth knowledge of the pathophysiology of several hematological disorders is necessary in order to steer clear of patients with data that wouuld obscure this relationship. For instance, patients with elevated PTT levels as a results of anti-phospholipid antibodies would confound results due to the kinetics of the antibodies present in this situation. Input from pathology and laboratory medicine brings an in depth knowledge of the way the data was generated and allows the project to avoid additional potential confounding variables. For instance, the precise relationship between screening studies and coagulation factor levels may be impacted by changes in reagent manufactururers, changes in lots, or changes in instrumentation. Finally, data scientists provide insight into the process of exploring data and using knowledge of the data, such as its size, quality, and nature, to inform the classifier development approach. 
+
+
+### Methods
+In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+Two independent datasets containing results from coagulation testing were obtained. The first of these data sets was obtained from a clinical laboratory data repository maintained by the Department of Pathology at Penn Medicine. The second of these datasets was exported out of the CHOP Data warehouse. 
+
+```{r}
+library(readr)
+penn <- read_csv("~/Rprojects/EPID600_Final_Project/coag_res.csv", 
+     col_types = cols(drawn_date = col_datetime(format = "%m/%d/%Y %H:%M"), 
+         ord_date = col_datetime(format = "%m/%d/%Y %H:%M"), 
+         pat_adm_dt = col_datetime(format = "%m/%d/%Y %H:%M"), 
+         result = col_character()))
+```
+
+Summary views of the data were reviewed
+
+```{r}
+str(penn)
+summary(penn)
+#May want to explore how NA's are correlate, may want to see how the two value fields relate to each other and to the result.
+```
+Columns of relavence were selected
+```{r}
+library(dplyr)
+cols<-c(5,7,10:12,17)
+penn<-penn%>%select(cols)
+```
+Task_name represents the variable that holds the test name. Need to filter dataset to tests relavent to the PT and PTT screening tests
+
+```{r}
+table(penn$task_name)
+#filter out extraneous testing pulled out of warehouse
+penn%>%filter(!task_name %in% c('Factor XIII', 'PT 0 Patient',  'PT 30 Patient','PT TEMP','PTT 0 Patient', 'PTT 30 Patient','PTT 60 Patient','TTI','PT WB'))%>%select(task_name)%>%table
+penn<-penn%>%filter(!task_name %in% c('Factor XIII', 'PT 0 Patient',  'PT 30 Patient','PT TEMP','PTT 0 Patient', 'PTT 30 Patient','PTT 60 Patient','TTI','PT WB'))
+```
+
+
+All 'result' values should be numeric, need to explore results that are non-numeric.
+```{r}
+#Index by na's introduced by as.numeric coercion
+table(penn$result[is.na(as.numeric(penn$result))])
+
+#Explore weird results
+penn%>%filter(result=='>1400')#makes sense, Fibringoen gives high results.
+penn%>%filter(result=='<150.0')#likely typo
+penn$result<-gsub("<150.0", ">150.0", penn$result)
+penn%>%filter(result=='<45')#makes sense, Fibringoen low end of AMR is 45.
+#Replace with NA those results without numbers
+penn$result[grepl("[:alpha:]",penn$result)]<-NA
+penn$result[grepl("[:a-z:]",penn$result)]<-NA
+penn$result[grepl("[:A-Z:]",penn$result)]<-NA
+#Results that are 'greater than' a number (such as 150, 90, etc) should be replaced with that number. 
+penn$result<-gsub(">", "", penn$result) 
+#Less than with a small number should be replaced by 0. 
+penn$result<-gsub("<1", "0", penn$result)
+penn$result<-gsub("<5.0", "0", penn$result)
+penn$result<-gsub("<45", "45", penn$result)
+#Text results should be filtered out of dataset.
+penn<-penn%>%filter(!is.na(result))
+#Convert result variable to numeric
+penn$result<-as.numeric(penn$result)
+#confirm removal of all non-numeric results
+penn%>%filter(is.na(result))%>%count%>%as.numeric
+
+```
+
+A histogram was created in order to see the amount  of each kind of result in the dataset. The plot demonstrates that the vast majority of tests included only screening tests and not individuals factors. These will have to be filtered from the data set (see below).
+
+```{r}
+library(ggplot2)
+ggplot(penn)+
+  geom_bar(aes(x=task_name))+
+  scale_y_log10()
+
+
+```
+
+
+
+The accession number is essentially the order number. This number groups labs that were performed on the same sample. This is the unit upon which we will group the dependent and independent variables. The 'empi' is also important as it represents the patient identifier in this de-identified data set.
+To facilitate analysis, the data was reshaped to a spread format, such that the independent and dependent variables now present in the 'task_name' variables are spread out in there own columns. Results are grouped by accession number. Before doing so, data cleaning was performed.
+
+```{r}
+library(tidyr)
+#Before spreading data need to ensure that all entries are unique
+dblresults<-penn%>%group_by(accession,task_name)%>%summarise(n=n())%>%filter(n>1)
+dupresults<-penn%>%group_by(accession,task_name,result)%>%summarise(n=n())%>%filter(n>1)
+
+```
+
+There were `r nrow(dupresults)` entries with duplicated data. There were `r nrow(dblresults)-nrow(dupresults)`. The accessions with two different result values for the same test were further evaluated.
+
+```{r}
+acc<-anti_join(dblresults,dupresults, by='accession')%>%ungroup()%>%select(accession)%>%unlist()
+penn%>%filter(accession %in% acc)%>%filter(task_name %in% c('PT','PTT','Fibrinogen'))
+```
+
+Overall the number of duplications are fairly small. This appears to be due to duplication of a screening test (PT, PTT, or fibrinogen) off of an identical draw time. The percent difference between these was calculated. 
+
+```{r}
+penn%>%group_by(accession,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
+```
+
+None of these differences were greater than 10%. As a result the agreement was considered close enough for the analysis in this project and these values were replaced with the average of these two results. The following dataframe accounts for this correction and spreads variables within task_name across new column fields with values coming from 
+
+
+```{r}
+penndf<-penn%>%group_by(empi,accession,task_name)%>%summarise(result=mean(result))%>%spread(task_name,result)
+str(penndf)
+summary(penndf)
+```
+
+Most of these orders only have PT or PTT, the screening test and the dependent variables in this analysis, as such these need to be filtered out since they will not contribute to the analysis. 
+
+is.na(penndf[1,])
+```{r}
+library(ggplot2)
+#The following lines labels all rows with NAs in every independent predicting variable as a '10', any number less than 10 means that there is at least one 
+penndf[,15]<-as.numeric()
+names(penndf)[15]<-"allna"
+
+for(i in c(1:nrow(penndf))){
+  penndf[i,15]<-sum(sapply(penndf[i,c(3:11,14)],is.na))
+}
+#Plot distribution of number of results for each acccession
+ggplot(penndf)+
+  geom_bar(aes(x=allna))+
+  scale_y_log10()+
+  ggtitle("Distribution of number of missing data per entry")+
+  labs(x="Number of factor assays missing",y="Number of entries (log)",title="Distribution of number of missing data per entry")
+table(penndf)
+
+#create final dataset. 
+penndf<-penndf%>%filter(allna<10)
+summary(penndf)
+str(penndf)
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+It is helpful when performing regression analysis to have a distribution of results. The Distributions of results were explored with histograms of screening lab results and specific coagulation factors (Figure 1). 
+
+```{r}
+library(gridExtra)
+
+myplots <- list()  # new empty list
+for (i in 1:length(colnames(penndf))) {
+    p1 <- eval(substitute(
+        ggplot(data=data.frame(penndf),aes(x=penndf[,i]))+ 
+          geom_histogram(fill="grey") +
+          xlab(colnames(penndf)[ i])
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    myplots[[i]] <- p1  # add each plot into plot list
+}
+
+
+grid.arrange(myplots[[3]], 
+             myplots[[4]],
+             myplots[[5]],
+             myplots[[6]],
+             myplots[[7]],
+             myplots[[8]],
+             myplots[[9]],
+             myplots[[10]],
+             myplots[[11]],
+             myplots[[12]],
+             myplots[[13]],
+             myplots[[14]],
+             nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
+#In the future suggest adding normal range vertical bars
+
+```
+The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. Dependent lab results had a unimodal gaussian distribution, centered around the normal range for these measures (?).
+
+```{r}
+library(gtools)
+
+bxpt <- list()  # new empty list
+for (i in c(3:11,14)) {
+    p1 <- eval(substitute(
+        ggplot(penndf)+
+          geom_boxplot(aes(x=quantcut(as.numeric(unlist(penndf[,i])),na.rm = TRUE),y=PT)) +
+          xlab(colnames(penndf)[ i]) +
+          ylim(0,25)
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    bxpt[[i]] <- p1  # add each plot into plot list
+}
+
+
+grid.arrange(bxpt[[3]], 
+             bxpt[[4]],
+             bxpt[[5]],
+             bxpt[[6]],
+             bxpt[[7]],
+             bxpt[[8]],
+             bxpt[[9]],
+             bxpt[[10]],
+             bxpt[[11]],
+             bxpt[[14]],
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and Prothrombin Time",  bottom="Figure 2")
+
+
+bxptt <- list()  # new empty list
+for (i in c(3:11,14)) {
+    p1 <- eval(substitute(
+        ggplot(penndf)+
+          geom_boxplot(aes(x=quantcut(as.numeric(unlist(penndf[,i])),na.rm = TRUE),y=PTT)) +
+          xlab(colnames(penndf)[ i])
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    bxptt[[i]] <- p1  # add each plot into plot list
+}
+
+grid.arrange(bxptt[[3]], 
+             bxptt[[4]],
+             bxptt[[5]],
+             bxptt[[6]],
+             bxptt[[7]],
+             bxptt[[8]],
+             bxptt[[9]],
+             bxptt[[10]],
+             bxptt[[11]],
+             bxptt[[14]],
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
+
+
+
+```
+
+
+
+To further explore the relationships amongst these measures, bivariate plots were created.
+```{r}
+
+mypts <- list()  # new empty list
+for (i in c(3:11,14)) {
+    p1 <- eval(substitute(
+        ggplot(data=data.frame(penndf),aes(y=PT, x=penndf[,i]))+ 
+          geom_point(fill="grey") +
+          xlab(colnames(penndf)[ i]) +
+          ylim(0,25)
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    mypts[[i]] <- p1  # add each plot into plot list
+}
+
+
+grid.arrange(mypts[[3]], 
+             mypts[[4]],
+             mypts[[5]],
+             mypts[[6]],
+             mypts[[7]],
+             mypts[[8]],
+             mypts[[9]],
+             mypts[[10]],
+             mypts[[11]],
+             mypts[[14]],
+             nrow=3, ncol=4,top="Scatterplots of independent variables vs Prothrombin Time",  bottom="Figure 4")
+#In the future suggest adding normal range vertical bars
+```
+
+```{r}
+
+myptts <- list()  # new empty list
+for (i in c(3:11,14)) {
+    p1 <- eval(substitute(
+        ggplot(data=data.frame(penndf),aes(y=PTT, x=penndf[,i]))+ 
+          geom_point(fill="grey") +
+          xlab(colnames(penndf)[ i])
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    myptts[[i]] <- p1  # add each plot into plot list
+}
+
+
+grid.arrange(myptts[[3]], 
+             myptts[[4]],
+             myptts[[5]],
+             myptts[[6]],
+             myptts[[7]],
+             myptts[[8]],
+             myptts[[9]],
+             myptts[[10]],
+             myptts[[11]],
+             myptts[[14]],
+             nrow=3, ncol=4,top="Scatterplots of independent variables vs Prothrombin Time",  bottom="Figure 5")
+#In the future suggest adding normal range vertical bars
+```
+
+A seperate analysis was performed specifically on the reptilase time as it itself is considered a screen for a fibrinogen abnormality. This was again performed using boxplots and bivariate scatterplots.
+
+```{r}
+
+p1<-ggplot(penndf)+
+  geom_boxplot(aes(y=`Reptilase Test`, x=quantcut(penndf$Fibrinogen,na.rm = TRUE)))
+
+p2<-ggplot(penndf)+
+  geom_point(aes(y=`Reptilase Test`, x=penndf$Fibrinogen))
+
+grid.arrange(p1,p2,nrow=1)
+
+```
+
+```{r}
+lm(PT~'Factor II',  date=penndf)
+?lm()
+```
+
