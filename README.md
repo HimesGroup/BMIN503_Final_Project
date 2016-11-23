@@ -7,8 +7,6 @@ The interpretation of coagulation studies in clinical practice can be hampered b
 
  
 ###File Information
-`iso.txt` contains the conversion table for country names to ISO2 format.  
-
 `EPID600_Final_Project.Rproj`	is the project file for R
 
 `Instructions.md`	Contains the original project instructions
