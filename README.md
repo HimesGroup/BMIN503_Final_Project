@@ -1,6 +1,6 @@
 # EPID600 Final Project
 
-The file file_project_Chen.Rmd is the markdown file that contains the code for analyzing blood cultures utilization data at HUP. I have not uploaded the raw data because I'm not sure if that can be shared. 
+The file final_project_Chen.Rmd is the markdown file that contains the code for analyzing blood cultures utilization data at HUP. I have not uploaded the raw data because I'm not sure if that can be shared. 
 
 Using blood cultures data from FY2015, I have used descriptive statistics and data visualization techniques to identify trends in the use of blood cultures. I am also analyzing the population of high utilizers to identify characteristics unique to that population. In addition, I am analyzing the relationship between pathogen identification and follow-up cultures to identify patterns in clinical practice.
 
