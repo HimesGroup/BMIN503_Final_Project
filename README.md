@@ -1,17 +1,7 @@
 # EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
-
-1. To start, [**fork** this EPID600_Final_Project repository][forking].
-1. [**Clone**][ref-clone] the forked repository to your computer.
-1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
-1. [**Push**][ref-push]/sync the changes up to your GitHub account.
-1. [Create a **pull request**][pull-request] on this, the original EPID600_Final_Project, repository to turn in your final project.
-
-
-DUE DATE FOR FINAL VERSION: 12/9/16 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
+This repository is dedicated to my project on wrist worn heart rate monitors and their use as probably patient monitoring devices. I am extracting the data from two devices - FitBit Surge band and Bitalino ECG device as a positive control.
+My project involves heart rate measurement, data extraction, signal processing and statistical analysis. The repository consists of the RMD file with the code, data files from both devices, pictures of the devices, and ECG data images.
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 [ref-clone]: http://gitref.org/creating/#clone
