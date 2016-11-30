@@ -1,0 +1,248 @@
+---
+title: "bitalino"
+author: "Avantika"
+date: "November 2, 2016"
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+#source("http://bioconductor.org/biocLite.R")
+#biocLite("rhdf5")
+library(rhdf5)
+# install.packages("fitbitScraper")
+#install.packages("XML")
+#install.packages("RHRV", dependencies = TRUE)
+#library(RHRV)
+library(fitbitScraper)
+library(plyr)
+library(dplyr)
+library(lubridate)
+library(XML)
+library(BlandAltmanLeh)
+#install.packages("BlandAltmanLeh")
+#setwd("C:/Users/Avantika/Desktop/CHOP/Consumer band-ECG project/")
+```
+
+### Overview
+The main focus of this project is to investigate the use of commercial wearables as possible patient monitoring devices by testing the precision of heart rate measurement by a wrist worn heart rate monitor (FitBit) against a portable ECG-based heart rate computer (Bitalino). The project will involve a statistical model to test the accuracy of the FitBit band.
+
+
+### Introduction 
+Wearable devices are being studied and explored for use as diagnostic monitors replacing the current complicated and expensive medical devices. Heart rate variation can be used for stress response detection due to behavioural, bacterial or other abnormalities. Now-a-days, wrist monitors like FitBit, Apple and Samsung are popular in the market. These devices use photoplethysmography which detects blood racing through the veins by optical sensors. Majority of the limited literature review proves that the bands are mostly accurate in heart rate measurement with few abnormalities at high bpm. 
+    The problem addressed in this project covers the field of diagnostics, biomedical devices and data analysis. The project layout consists of device set up and measurement of heart rate at different physiological conditions. The main barrier is the extraction of data from the two devices. The data extracted has to be filtered and converted so that both variables are in same units. The statistical model will involve Wilcoxon signed-rank test or one sample t-test depending upon the distribution. The measurements will be quantified by Bland-Altman plots and correlation coefficients will be calculated. I met Mr. Jeff Pennington from Children's Hospital of Philadelphia who is providing the devices used in this project. CHOP is interested in exploring the use of wearable devices and this project may aid them in determining the accuracy of these devices. 
+
+
+### Methods
+My project includes the set up, data acquisition, data extraction, signal processing, mathematical conversions and analysis of data from devices - FitBit and Bitalino ECG device. 
+
+#Data Extraction
+I am using R package fitbitscraper to extract data from the fitbit cloud. The data extracted consists of multiple variables but the ones I am interested in is the bpm (beats per minute data). The FitBit band measures data every 5 seconds but allows us to extract data at the interval of 5 minutes only. They are currently working on the plug-in to give access to the entire heart rate data. (I contacted them)
+
+##FitBit
+Constructing the login cookie for accessing fibit data from cloud and extracted heart rate data (bpm within 5 minute intervals)
+```{r, message=FALSE, warning=FALSE}
+cookie = login("penningtonjeff@yahoo.com","wearable10", rememberMe = TRUE)
+startdate = as.Date("2016-11-23", format="%Y-%m-%d")
+#enddate = as.Date("2016-10-30",format="%Y-%m-%d")
+#s= seq(startdate, enddate, by="days")
+
+my.hrdata <- get_intraday_data(cookie,what="heart-rate",date=sprintf("%s",startdate))
+
+#Printing out bpm for the measured time period. Rest all are zeros.
+newdata <- my.hrdata[c(144:152),-c(6)]
+newdata
+
+#Adding frequency and time
+my.hrdata$freq <- sapply(my.hrdata$bpm,function(x) x/60)
+newdata$seconds <- c("00","00","00","00","00","00","180","480","780")
+
+#Plotting the data
+plot( newdata$time,newdata$bpm, type="l",xlab="time",ylab="bpm",main="Heart rate (bpm) after 5 min intervals for 9th October 2016")
+
+```
+
+##Bitalino 
+For the Bitalino, I am using the Opensignals software to take measurements using the device. 
+#Bitalino data extraction
+```{r}
+library(rhdf5)
+h5f = H5Fopen("./testing.h5")
+#h5f
+
+my.bitdata <- c(h5f$"20:15:10:26:64:88")
+#head(my.bitdata)
+
+bitalino.df <- data.frame(my.bitdata$raw)
+head(bitalino.df)
+
+my.data <- read.table("demo.txt")
+names(my.data) <- c("nSeq","I1","I2","I3","I4","EEG")
+head(my.data)
+```
+
+##Data conversion/cleaning
+The data received from the Bitalino device needs to be converted into the standard units of measurement, which in this case is Volts.I am converting the ECG values obtained from bitalino into appropriate values by the formula: ECGV = (ECGB * Vcc / 2^n - Vcc / 2) / GECG 
+
+Where: 
+ECGV – ECG value in Volts (V)
+ECGmV - ECG value in miliVolts (mV)
+ECGB – ECG value obtained from BITalino
+Vcc – Operating Voltage (V) 
+n – number of bits (bit) 
+GECG – ECG Sensor Gain 
+
+Values: 
+Vcc = 3.3 (V)
+GECG = 1100 
+n= 10 (for Channel 3)
+
+```{r}
+#Converting to ECG data in V
+my.data$ECG <- sapply(my.data$EEG,function(x)(x*3.3/2^10 - 3.3/2)/1100)
+head(my.data$ECG,)
+
+#Write in file for Kubios
+ecgdatalist <- c(my.data$ECG)
+write.table(ecgdatalist,file="ecgdata.txt")
+```
+
+##Signal processing
+I have added a code referred from the internet to process the ECG data obtained from Bitalino to pass low and high pass filters to visualize the data.
+
+```{r eval=TRUE}
+
+#Transform the real and imaginary portions of the 
+#FFT into magnitude and phase. The argument
+#ff should be the output of the fft function
+amplitude <- function( x ) { sqrt(Re(x)^2+Im(x)^2) }
+phase     <- function( x ) { atan(Im(x)/Re(x)) }
+
+#sinc function of frequency f
+sinc      <- function( x, f ) { ifelse(x==0, 2*pi*f, sin(2*pi*f*x)/x) }
+
+#Blackman window from 0..m
+Blackman  <- function( m ) { 0.42-0.5*cos(2*pi*(0:m)/m)+0.08*cos(4*pi*(0:m)/m) }
+
+#Hamming window from 0..m
+Hamming   <- function( m ) { 0.54-0.46*cos(2*pi*(0:m)/m) }
+
+#simple low pass filter
+#y - vector to filter
+#t - time interval between measurements (s)
+#f - low pass frequency (Hz)
+lpf <- function( y, t, f ) {
+  rc <- 1 / ( 2 * pi * f )
+  a  <- t / ( t + rc )
+  n  <- length( y )
+  yf <- y
+  for( i in 2:length(y) ) {
+    yf[i] <- a * y[i] + (1-a) * yf[i-1]
+  }
+  return( yf )
+}  
+
+#windowed sinc low pass filter
+#y - vector to filter
+#t - time interval between measurements (s)
+#f - low pass frequency (Hz)
+wlpf <- function( y, t, f ) {
+  m  <- min(floor(length(y)/2), 500)
+  #generate the sinc kernel
+  rk <- sinc(-m:m, f*t)  
+  #apply the Blackman window
+  bk <- Blackman(2*m) * rk
+  #pad the filter with zeros
+  k  <- c(bk, rep(0,length(y)-length(bk)))
+  #convolve y with the filter kernel
+  fy  <- fft(fft(k)*fft(y), inverse=TRUE)
+  return(Re(fy))
+}
+
+dat  <- scan(file="/Users/diwadkara/Desktop/Final Project/ECGconverted.csv")
+dat  <- (dat - mean(dat)) / sd(dat)
+
+#filter high frequency noise
+fdat <- wlpf(dat, 1/100, 30)
+fdat <- (fdat-mean(fdat))/sd(fdat)
+
+#isolate respiration bias
+rdat <- wlpf(dat, 1/1000, 1)
+rdat <- (rdat-mean(rdat))/sd(rdat)
+
+#subtract respiration bias from ecg signal
+edat <- fdat - rdat
+
+require(lattice)
+xplot <- rep((0:(length(dat)-1))/1000,4)
+yplot <- c(dat, fdat, rdat, edat)
+gplot <- c(rep("Raw",length(dat)),
+           rep("High Frequency Filter",length(dat)),
+           rep("Low Frequency Filter",length(dat)),
+           rep("ECG",length(dat)))
+tp <- xyplot(yplot~xplot|gplot,type="l",layout=c(1,4), xlab="Time", ylab="V")
+
+#uncomment the following to save an image
+#trellis.device(png, file="ecgfilter.png", height=750, width=750)
+print(tp)
+#dev.off()
+
+```
+##Kubios
+Kubios is a software that is used to calculate heart rate variation. I inputted the ecgdata.txt file into the software to convert the ECG data into RR intervals.
+
+#Convert Bitalino data to RR interval - Kubios
+```{r}
+hrv.kubios <- read.csv("ecg_hrv.csv")
+names(hrv.kubios) <- c("Time","RR Interval","Frequency","PSD","Frequency1","PSD")
+hrv.kubios
+
+```
+##Data cleaning and conversion
+The main problem I am currently addressing is the convertion of the mV data from Bitalino to beats per minute.
+
+```{r}
+
+
+
+```
+
+
+### Results
+The converted results can be analysed by plotting BlandAltman plots to check the accuracy of the measurements. The plots show
+
+#BlandAltman Plots
+```{r eval=FALSE}
+bland.altman.plot(newdata$freq, hrv.kubios$Frequency)
+bland.altman.plot(newdata$bpm, my.data$ECG)
+
+```
+
+The data can be visualized to check overall trend
+#visualization
+```{r}
+plot(hrv.kubios$`RR Interval`)
+plot(newdata$bpm)
+```
+
+We can check for correlation between the two measurements. Other statistics calculated are as follows:
+726 287
+#correlation
+```{r eval=FALSE}
+cor(hrv.kubios$`RR Interval`, my.hrdata$bpm, use='complete.obs')
+```
+
+
+The results prove that there is considerable accuracy for heart rate measurement using Fitbit. The HRV can be also used to determine outcome of psychological conditions like Autism and other behavioural conditions. It can also be used to detect the outcome of a bacterial or behavioural abnormality before the patient actually shows indications of it. 
+
+
+
+
+
+
+
+
+
+
+
+
