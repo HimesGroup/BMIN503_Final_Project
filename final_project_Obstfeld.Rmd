@@ -145,13 +145,42 @@ Nine of these differences were greater than 20%. As a result the agreement was c
 
 
 ```{r}
-penndf<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
-  group_by(empi,accession,task_name)%>%summarise(result=mean(result))%>%spread(task_name,result)
+# penndf1<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
+#   group_by(empi,accession,task_name)%>%summarise(result=mean(result))
+# 
+# penndf1<-left_join(penndf1,penn,by=c('accession' = 'accession', 'task_name' = 'task_name'))
+# penndf1<-penndf1%>%ungroup()%>%select(c(1:4,6))
+# penndf1$recvd_dt_tm<-as.Date(penndf1$recvd_dt_tm)
+# penndf1<-penndf1%>%distinct()
+# penndf1<-penndf1%>%select(-c(2))
+# penndf1<-penndf1%>%group_by(empi.x,recvd_dt_tm,task_name)%>%spread(task_name,result.x)
+# penndf1%>%slice(c(254310,254314))
+
+
+penn<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
+group_by(empi,accession,task_name)%>%summarise(result=mean(result))
+
+#Now spread tests across column names for use during regression
+penndf<-penn%>%spread(task_name,result)
+
+
 str(penndf)
 summary(penndf)
+
 ```
 
-Most of these orders only have PT or PTT, the screening test and the dependent variables in this analysis, as such these need to be filtered out since they will not contribute to the analysis. 
+
+
+```{r}
+# Want to insert normal values here as well. Multiple normal values present so will use the ones most frequently in the dataset.
+normals<-penn%>%select(4,6,7)%>%group_by(task_name,normal_low,normal_high)%>%summarize(n=n())%>%ungroup()%>%group_by(task_name)%>%filter(n==max(n))
+normals$task_name<-gsub(" ","",normals$task_name)
+
+```
+
+
+
+Most of these orders will likely only have PT or PTT, the screening test and the dependent variables in this analysis, as such these need to be filtered out since they will not contribute to the analysis. 
 
 ```{r}
 #The following lines labels all rows with NAs in every independent predicting variable as a '10', any number less than 10 means that there is at least one 
@@ -178,100 +207,121 @@ names(penndf)<-gsub(" ","",names(penndf))
 penndf<-penndf%>%filter(allna<10)
 summary(penndf)
 str(penndf)
+
+knitr::kable(penndf%>%gather('task_name','result',3:14)%>%filter(result!='NA')%>%group_by(task_name)%>%summarise(n=n())%>%arrange(desc(n)))
 ```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
+The first goal of this project is to validate many of the assumptions and data found within published literature as well as clinical practice in the field of laboratory coagulation testing. These assumptions include (1) the range of results in a normal population, and (2) the dependence of the PT and PTT on the individual factor assays.  Since the PT, PTT, and fibrinogen tests are using as screening tests, the dataset contains many of these tests and may be used to investigate the validity of the high and low normal range limits used in clinical practice in this lab. In contrast, the individual factor assays are only used when there is a high pre-test probability of an abnormality (generally there is already an abnormal screening test).
+
+```{r}
+tests<-c('PT','PTT','Fibrinogen')
+for (i in tests){
+p<-ggplot(filter(penn,task_name == i)) +
+  geom_density(aes(result), fill = 'gray') +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[3])) +
+  xlab(paste0('Distribution of values for ',i)) +
+  labs(caption = 'Vertical lines represent high and low end of normal range') +
+  theme_bw()
+print(p)
+}
+```
+The results indicate that the PTT normal range values match the distribution of results relatievly well, however the upper limit of normal may need to be reevaluated. The distribution of fibinrogen results demonstrate a peak at approximately 450, representing the results that were converted from >450 to 450 during the data preperation step. The consequencce of this clinically is minimal given that the low end of the normal range is more medically meaningful. Finally, there seems to be a discrepency between the normal range for the PT test and the distribution in this data. The results may be signnificantly biased as the PT is frequently used for monitoring of warfarin therapy. Future work will need to investigate these trends subsetted on individuals not on biasing medications. 
+
+To investigate the association of individual factors to the screening PT and PTTs, bivariate plots and univariate regression was performed.
+
 It is helpful when performing regression analysis to have a distribution of results. The Distributions of results were explored with histograms of screening lab results and specific coagulation factors (Figure 1). 
 
 ```{r}
 library(gridExtra)
-
-myplots <- list()  # new empty list
+myhists <- list()  # new empty list
 for (i in 1:length(colnames(penndf))) {
     p1 <- eval(substitute(
         ggplot(data=data.frame(penndf),aes(x=penndf[,i]))+ 
           geom_histogram(fill="grey") +
-          xlab(colnames(penndf)[ i])
+          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[2]))+
+          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[3]))+
+          xlab(paste0('Distribution of values for ',names(penndf)[i]))+
+          labs(caption='Vertical lines represent high and low end of normal range')+
+          theme_bw()
     ,list(i = i)))
     #print(i)
     #print(p1)
-    myplots[[i]] <- p1  # add each plot into plot list
+    myhists[[i]] <- p1  # add each plot into plot list
+    names(myhists)[[i]]<-names(penndf)[i]
 }
 
 
-grid.arrange(myplots[[3]], 
-             myplots[[4]],
-             myplots[[5]],
-             myplots[[6]],
-             myplots[[7]],
-             myplots[[8]],
-             myplots[[9]],
-             myplots[[10]],
-             myplots[[11]],
-             myplots[[12]],
-             myplots[[13]],
-             myplots[[14]],
+grid.arrange(myhists[[3]], 
+             myhists[[4]],
+             myhists[[5]],
+             myhists[[6]],
+             myhists[[7]],
+             myhists[[8]],
+             myhists[[9]],
+             myhists[[10]],
+             myhists[[11]],
+             myhists[[12]],
+             myhists[[13]],
+             myhists[[14]],
              nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
 #In the future suggest adding normal range vertical bars
 
 ```
-The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. Dependent lab results had a unimodal gaussian distribution, centered around the normal range for these measures (?).
+The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. 
 
 ```{r}
 library(gtools)
 
-bxpt <- list()  # new empty list
-for (i in c(3:11,14)) {
-    p1 <- eval(substitute(
-        ggplot(penndf)+
-          geom_boxplot(aes(x=quantcut(as.numeric(unlist(penndf[,i])),na.rm = TRUE),y=PT)) +
-          xlab(colnames(penndf)[ i]) +
-          ylim(0,25)
-    ,list(i = i)))
-    #print(i)
+
+makebx.pt<-function(x,y){
+    df<-na.omit(penndf[,c(x,y)])
+    df[,x]<-quantcut(as.matrix(df[,x]))
+    df<-as.data.frame(df)
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_boxplot() +
+          xlab(names(df)[1])
     #print(p1)
-    bxpt[[i]] <- p1  # add each plot into plot list
-}
+    #bxpt[[x]] <- p1# add each plot into plot list
+    #x<-x+1
+    #gg
+    }
+bxpt<-lapply(tests,y='PT',makebx.pt)
+names(bxpt)<-tests
 
 
-grid.arrange(bxpt[[3]], 
-             bxpt[[4]],
-             bxpt[[5]],
-             bxpt[[6]],
-             bxpt[[7]],
-             bxpt[[8]],
-             bxpt[[9]],
-             bxpt[[10]],
-             bxpt[[11]],
-             bxpt[[14]],
+grid.arrange(bxpt$FactorII, 
+             bxpt$FactorV,
+             bxpt$FactorX,
+             bxpt$FactorVII,
+             bxpt$FactorVIII,
+             bxpt$FactorIX,
+             bxpt$FactorXI,
+             bxpt$FactorXII,
+             bxpt$Fibrinogen,
              nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and Prothrombin Time",  bottom="Figure 2")
+```
+
+```{r}
+
+bxptt<-lapply(tests,y='PTT',makebx.pt)
+names(bxptt)<-tests
 
 
-bxptt <- list()  # new empty list
-for (i in c(3:11,14)) {
-    p1 <- eval(substitute(
-        ggplot(penndf)+
-          geom_boxplot(aes(x=quantcut(as.numeric(unlist(penndf[,i])),na.rm = TRUE),y=PTT)) +
-          xlab(colnames(penndf)[ i])
-    ,list(i = i)))
-    #print(i)
-    #print(p1)
-    bxptt[[i]] <- p1  # add each plot into plot list
-}
-
-grid.arrange(bxptt[[3]], 
-             bxptt[[4]],
-             bxptt[[5]],
-             bxptt[[6]],
-             bxptt[[7]],
-             bxptt[[8]],
-             bxptt[[9]],
-             bxptt[[10]],
-             bxptt[[11]],
-             bxptt[[14]],
+grid.arrange(bxptt$FactorII, 
+             bxptt$FactorV,
+             bxptt$FactorX,
+             bxptt$FactorVII,
+             bxptt$FactorVIII,
+             bxptt$FactorIX,
+             bxptt$FactorXI,
+             bxptt$FactorXII,
+             bxptt$Fibrinogen,
              nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
+
 
 
 
@@ -282,60 +332,50 @@ grid.arrange(bxptt[[3]],
 To further explore the relationships amongst these measures, bivariate plots were created.
 ```{r}
 
-mypts <- list()  # new empty list
-for (i in c(3:11,14)) {
-    p1 <- eval(substitute(
-        ggplot(data=data.frame(penndf),aes(y=PT, x=penndf[,i]))+ 
-          geom_point(fill="grey") +
-          xlab(colnames(penndf)[ i]) +
-          ylim(0,25)
-    ,list(i = i)))
-    #print(i)
+makedot.pt<-function(x,y){
+    df<-na.omit(penndf[,c(x,y)])
+    df<-as.data.frame(df)
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_point(alpha=0.5) +
+          theme_bw()+
+          xlab(names(df)[1])
     #print(p1)
-    mypts[[i]] <- p1  # add each plot into plot list
-}
+    #bxpt[[x]] <- p1# add each plot into plot list
+    #x<-x+1
+    #gg
+    }
+dotpt<-lapply(tests,y='PT',makedot.pt)
+names(dotpt)<-tests
 
 
-grid.arrange(mypts[[3]], 
-             mypts[[4]],
-             mypts[[5]],
-             mypts[[6]],
-             mypts[[7]],
-             mypts[[8]],
-             mypts[[9]],
-             mypts[[10]],
-             mypts[[11]],
-             mypts[[14]],
-             nrow=3, ncol=4,top="Scatterplots of independent variables vs Prothrombin Time",  bottom="Figure 4")
-#In the future suggest adding normal range vertical bars
+grid.arrange(dotpt$FactorII, 
+             dotpt$FactorV,
+             dotpt$FactorX,
+             dotpt$FactorVII,
+             dotpt$FactorVIII,
+             dotpt$FactorIX,
+             dotpt$FactorXI,
+             dotpt$FactorXII,
+             dotpt$Fibrinogen,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")#In the future suggest adding normal range vertical bars
 ```
 
 ```{r}
 
-myptts <- list()  # new empty list
-for (i in c(3:11,14)) {
-    p1 <- eval(substitute(
-        ggplot(data=data.frame(penndf),aes(y=PTT, x=penndf[,i]))+ 
-          geom_point(fill="grey") +
-          xlab(colnames(penndf)[ i])
-    ,list(i = i)))
-    #print(i)
-    #print(p1)
-    myptts[[i]] <- p1  # add each plot into plot list
-}
+dotptt<-lapply(tests,y='PTT',makedot.pt)
+names(dotptt)<-tests
 
 
-grid.arrange(myptts[[3]], 
-             myptts[[4]],
-             myptts[[5]],
-             myptts[[6]],
-             myptts[[7]],
-             myptts[[8]],
-             myptts[[9]],
-             myptts[[10]],
-             myptts[[11]],
-             myptts[[14]],
-             nrow=3, ncol=4,top="Scatterplots of independent variables vs Prothrombin Time",  bottom="Figure 5")
+grid.arrange(dotptt$FactorII, 
+             dotptt$FactorV,
+             dotptt$FactorX,
+             dotptt$FactorVII,
+             dotptt$FactorVIII,
+             dotptt$FactorIX,
+             dotptt$FactorXI,
+             dotptt$FactorXII,
+             dotptt$Fibrinogen,
+             nrow=3, ncol=4,top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
 #In the future suggest adding normal range vertical bars
 ```
 
@@ -344,10 +384,10 @@ A seperate analysis was performed specifically on the reptilase time as it itsel
 ```{r}
 
 p1<-ggplot(penndf)+
-  geom_boxplot(aes(y=`Reptilase Test`, x=quantcut(penndf$Fibrinogen,na.rm = TRUE)))
+  geom_boxplot(aes(y=`ReptilaseTest`, x=quantcut(penndf$Fibrinogen,na.rm = TRUE)))
 
 p2<-ggplot(penndf)+
-  geom_point(aes(y=`Reptilase Test`, x=penndf$Fibrinogen))
+  geom_point(aes(y=`ReptilaseTest`, x=penndf$Fibrinogen))
 
 grid.arrange(p1,p2,nrow=1)
 
@@ -380,9 +420,10 @@ arsquare<-lapply(cols, arsquared.f)
 lmresults.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
 lmresults.pt[2:4]<-sapply(lmresults.pt[2:4],as.numeric)
 
+penndf[penndf==0]<-1
 
 #perofrm lm for pt on log of dependent variable and store as list
-ptlg.lm<-lapply( penndfx[,-1], function(x) summary(lm(penndf$PT ~ log(x))))
+ptlg.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PT ~ log(x))))
 #Extract relavent parameters and store as dataframe lmresults.pt
 variable<-names(ptlg.lm)
 cols<-as.list(c(1:14))
