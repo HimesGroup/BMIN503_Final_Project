@@ -5,8 +5,16 @@
 ## Overview
 The interpretation of coagulation studies in clinical practice can be hampered by lack of understanding of the relationship between screening coagulation studies and followup coagulation factor results that are ordered in order to expain abnormalities in these studies. In order to allucidate these relationships I will acquire deideintified laboratory results from CHOP and HUP data warehouses and use statistical and machine learning tools. My ultimate goal is to use these tools in clinical practice to guide clinicians towards appropriate coagulation tests.
 
-## Introduction
-Screening coagulation studies such as the partial thromboplastin time (PTT) and the prothrombin time (PT) are used to assess the risk of bleeding patients. When abnormalities are seen in one or both of these, additional testing is performed to identify the specific blood  coagulation factors that are abnormal. The univariate relationships between the screening studies and the specific factors have been elucidated using empiric laboratory evidence. However these relationships have not been validated using real patient data. Furthermore the multivariate relationships are more difficult to assess in the laboratory. Using accurate real-world models will allow hematologists and coagulation laboratories to better assess the bleeding risk of patients and suggest additional studies when screening results are inconsistent with the results of the coagulation factor levels.
+ 
+###File Information
+`EPID600_Final_Project.Rproj`	is the project file for R
 
-Addressing this problem requires a multidisciplinary approach. Specifically, in depth knowledge of the pathophysiology of several hematological disorders is necessary in order to steer clear of patients with data that wouuld obscure this relationship. For instance, patients with elevated PTT levels as a results of anti-phospholipid antibodies would confound results due to the kinetics of the antibodies present in this situation. Input from pathology and laboratory medicine brings an in depth knowledge of the way the data was generated and allows the project to avoid additional potential confounding variables. For instance, the precise relationship between screening studies and coagulation factor levels may be impacted by changes in reagent manufactururers, changes in lots, or changes in instrumentation. Finally, data scientists provide insight into the process of exploring data and using knowledge of the data, such as its size, quality, and nature, to inform the classifier development approach. 
+`Instructions.md`	Contains the original project instructions
 
+`README.md`	contains project information
+
+`final_project_Obstfeld.Rmd`	Is working version of project .RMD
+
+`final_project_Obstfeld_draft.Rmd`	Is the 'draft' version of the project that was the state as of 11/22 23:59
+
+`final_project_template.Rmd` is the original project template
