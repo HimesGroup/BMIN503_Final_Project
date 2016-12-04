@@ -124,7 +124,7 @@ I am first looking at the overall distribution of number of blood cultures taken
 
 ```{r Descriptive statistics on entire dataset}
 #gives the number of sets of bc/patient and the period of time during which blood cultures were taken during the year.
-by_ID <- cultures %>%
+by_ID <- FY15_deIDcomplete %>%
   group_by(Study_ID) %>%
   summarise(count=n(),
             Range=diff(range(Julian))) %>%
@@ -136,19 +136,22 @@ head(by_ID)
 summary(by_ID$count)
 summary(by_ID$Range)
 
-ggplot(by_ID, aes(x=count)) +
+fig1 <- ggplot(by_ID, aes(x=count)) +
   geom_histogram(binwidth=1) +
-  theme_bw() + 
+  theme_bw() +
+  theme(text=element_text(size=14)) +
   scale_y_continuous(expand=c(0,0)) +
   scale_x_continuous(expand=c(0,0)) +
   labs(x="Number of blood cultures/patient", y="Count",
        title="Total number of sets taken per patient") +
   geom_vline(xintercept=median(by_ID$count),colour="red")
 
-by_ID20 <- by_ID %>%
-  filter(count>=20)
+ggsave(file="Figures/fig1-freqdist.pdf",plot=fig1)
 
-ggplot(by_ID20, aes(x=count)) +
+by_IDtop <- by_ID %>%
+  filter(count>=quantile(count,0.99))
+
+ggplot(by_IDtop, aes(x=count)) +
   geom_histogram(binwidth=1) +
   theme_bw() + 
   scale_y_continuous(expand=c(0,0)) +
@@ -162,11 +165,12 @@ by_loc <- FY15_deIDcomplete %>%
   filter(!is.na(Location)) %>%
   group_by(Location,Study_ID) %>%
   summarise(count=n()) %>%
-  arrange(desc(count))
+  arrange(Location)
 
+#use n() to count number of rows for each Location
 by_loc_avg <- by_loc %>%
   group_by(Location) %>%
-  summarise(avg=sum(count)/nrow(Location))
+  summarise(avg=sum(count)/n())
 
 nrow(by_loc)
 head(by_loc)
@@ -195,6 +199,9 @@ ggplot(by_loc, aes(reorder(Location,-count),count)) +
        y="Count",
        title="Distribution of number of sets/patient by location")
 
+
+#rate of blood drawn by phlebotomist. 19079/(26678+19079)=41.7%
+table(FY15_deIDcomplete$Phleb)
 ```
 
 Since we don't have information on the length of each patient's hospital encounter, I will split the bc into 30-day periods, which is a reasonable amount of time to clear an infection and probably accounts for the duration of most hospital stays. After splitting into 30-day periods, the number of bc taken ranged from 1 to 52, with a median of 2 and a mean of 3.084.
@@ -236,6 +243,7 @@ bc_30d <- lapply(subsets,split30days)
 bc_30d <- as.data.frame(do.call("rbind",bc_30d)) 
 bc_30d %<>%
   arrange(Study_ID,Julian)
+bc_30d$group_30 <- as.factor(bc_30d$group_30)
 
 #look at distribution of bc for patients after splitting up into 30d periods
 bc_30d_ID <- bc_30d %>%
@@ -315,7 +323,9 @@ Of 45,767 sets taken, there are 45,752 sets included in this analysis after clea
 #I will be using the dataframe cultures, since that has been cleaned up. I will be using the Final_Report column for ease of readability, since this contains abbreviations of the isolates, and some of the species have been grouped together for ease of analysis.
 table(cultures$Contam)
 
-#rate of positive identification.
+#rate of contam is 426/(45324+426)=0.93%
+
+#rate of positive identification. 7.6%
 sum(cultures$Final_Report!="Ng")/length(cultures$Final_Report)
 
 #df of positive cultures only that are not contamination
@@ -406,7 +416,14 @@ for (i in 1:nrow(cultures.pos.loc_30d)){
   z <- y[y$group_30==g,]
   #add up the number of bc taken during that period
   s <- sum(z$num_set)
+  #want to keep track of no follow-up's too.
+  if (nrow(z)==0) {
+    s <- 0
+    days <- 0
+  }
+  days <- nrow(z)
   cultures.pos.loc_30d[i,"num_set_postPosID"] <- s
+  cultures.pos.loc_30d[i,"num_days_postPosID"] <- days
 }
 #test <- culturesbyLoc_30d[1:6,]
 
@@ -434,6 +451,7 @@ numFollowUpCultures <- lapply(cultures.pos.loc_30d_subsets,
 numFollowUpCultures <- as.data.frame(do.call("rbind",numFollowUpCultures)) 
 numFollowUpCultures %<>%
   arrange(Study_ID,Julian)
+
 
 #test whether number of follow-up cultures is linked to pathogen identified.
 numCulturesbyOrg <- numFollowUpCultures %>%
@@ -467,6 +485,116 @@ summary(fit_loc)
 
 fit_loc_aov <- aov(count ~ Location,data=by_loc)
 summary(fit_loc_aov)
+
+
+#make binary variable for num follow-up greater than average (5): 
+mean(numFollowUpCultures$num_set_postPosID)
+numFollowUpCultures %<>%
+  mutate(aboveAverage = factor(ifelse(num_set_postPosID<5,0,1),levels=c(0,1),labels=c("low","high")))
+
+
+#63 levels for Location, 128 levels for Final_Report
+#do some data compression
+nLoc <- numFollowUpCultures %>%
+  group_by(Location) %>%
+  summarise(num=n()) %>%
+  arrange(desc(num))
+
+nLoc_10 <- nLoc %>%
+  slice(1:10)
+
+nLoc_10 <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Location %in% nLoc_10$Location)
+nLoc_10 <- droplevels(nLoc_10)
+
+other <- numFollowUpCultures %>%
+  filter(!(numFollowUpCultures$Location %in% nLoc_20$Location))
+other <- droplevels(other)
+#combine levels
+levels(other$Location) <- rep("Other",nlevels(other$Location))
+
+culturesLoc <- rbind(nLoc_10,other)
+
+ggplot(culturesLoc,aes(Location,num_set_postPosID)) +
+  #geom_jitter() +
+  #geom_violin() +
+  geom_boxplot() +
+  theme_bw() +
+  theme(text=element_text(size=10),
+        axis.text.x = element_text(colour="black"),
+        axis.line = element_line(0.75)) +
+  labs(x="Location", 
+       y="Number of follow-up cultures",
+       title="Distribution of follow-up cultures by location")
+
+fit_loc <- glm(num_set_postPosID ~ Location,data=culturesLoc)
+summary(fit_loc)
+
+fit_loc_aov <- aov(num_set_postPosID ~ Location,data=culturesLoc)
+summary(fit_loc_aov)
+
+
+fit_loc <- glm((aboveAverage=="high") ~ Location,data=numFollowUpCultures,family="binomial")
+summary(fit_loc) #none of the locations are significant
+
+
+
+#why does this give me a significant result??
+chisq.test(table(loc=numFollowUpCultures$Location,followUp=numFollowUpCultures$aboveAverage))
+
+ggplot(numFollowUpCultures,aes(Location)) +
+  geom_bar(aes(fill=aboveAverage),position="dodge")
+
+chisq.test(table(loc=culturesLoc$Location,followUp=culturesLoc$aboveAverage))
+
+fit_loc <- glm(aboveAverage ~ Location,data=culturesLoc,family="binomial")
+#RP3, RP6, RP7,S10, and Other are significant. doesn't look like it should be though.
+summary(fit_loc)
+
+ggplot(culturesLoc,aes(Location))+
+  geom_bar(aes(fill=aboveAverage),position="dodge")
+
+
+#category compression for pathogens
+nPath <- culturesLoc %>%
+  group_by(Final_Report) %>%
+  summarise(num=n()) %>%
+  arrange(desc(num))
+
+nPath_10 <- nPath %>%
+  arrange(desc(num)) %>%
+  slice(1:10)
+
+nPath_10 <- culturesLoc %>%
+  filter(culturesLoc$Final_Report %in% nPath_10$Final_Report)
+nPath_10 <- droplevels(nPath_10)
+
+other <- culturesLoc %>%
+  filter(!(culturesLoc$Final_Report %in% nPath_10$Final_Report))
+#combine levels
+levels(other$Final_Report) <- rep("Other",nlevels(other$Final_Report))
+
+culturesLocPath <- rbind(nPath_10,other)
+
+
+ggplot(culturesLocPath,aes(Final_Report)) +
+  geom_bar(aes(fill=aboveAverage),position="dodge")
+
+fit_path <- glm((aboveAverage=="low") ~ (Final_Report=="SA"),data=culturesLocPath,family="binomial")
+summary(fit_path)
+#EC is significant. I think in having lower follow-ups.
+
+fit_path <- glm(num_set_postPosID ~ Final_Report,data=culturesLocPath)
+summary(fit_path) #SA is significant
+
+fit_path <- glm(num_days_postPosID ~ Final_Report,data=culturesLocPath)
+summary(fit_path) #SA is even more significant
+
+fit_path <- glm((aboveAverage=="high")~Final_Report,
+                 data=culturesLoc,family="binomial")
+summary(fit_path)
+
+chisq.test(table(aboveAvg=culturesLocPath$aboveAverage,path=culturesLocPath$Final_Report))
 ```
 
 
@@ -552,25 +680,97 @@ bc_30d_ID20 <- as.data.frame(bc_30d_ID20)
 
 List <- list()
 #get entries within 30d for highuse patients
-#NEED TO FIX. Missing Study_ID 4163 in bc_30d_ID20_highuse and maybe others.
-#bc_30d_ID20[43, "Study_ID"] gives 4163.
-#which(bc_30d[,"Study_ID"] %in% bc_30d_ID20[i, "Study_ID"]) gives 9786
-#bc_30d[9786,"Study_ID"] gives 4162...I don't get it.
-#somehow this got fixed after I converted bc_30d_ID20 to a dataframe rather than a grouped_df, tbl_df, tbl, and data.frame (output of using dplyr)
 for (i in 1:nrow(bc_30d_ID20)){
   #which() gives which indices are true
   x <- bc_30d[bc_30d$Study_ID %in% bc_30d_ID20[i,"Study_ID"],]
- # x <- bc_30d[which(bc_30d[,"Study_ID"] %in% bc_30d_ID20[i, "Study_ID"]),]
   #get only the rows within the same 30d grouping
   y <- x[which(x[,"group_30"] %in% bc_30d_ID20[i,"group_30"]),]
   List[[i]] <- y
 }
 
 bc_30d_ID20_highuse = do.call(rbind, List)
+bc_30d_ID20_highuse <- droplevels(bc_30d_ID20_highuse)
 
-# x <- do.call(rbind,Listx)
-# y <- do.call(rbind,Listy)
+#change Julian days so it goes from 1 to 30 for each of the high utilizers
+highuse_subset <- split(bc_30d_ID20_highuse,bc_30d_ID20_highuse$Study_ID)
+test <- lapply(highuse_subset,function(df){
+  if(nlevels(df$group_30)>1){
+    df <- droplevels(df)
+    lst <- split(df,df$group_30)
+    return(lst)
+  }
+  else return(df)
+})
 
+test <- unlist(test,recursive=FALSE)
+normalizeDate <- function(df) {
+  Jul <- df$Julian
+  ref <- Jul[1]
+  vec=sapply(Jul,function(x) x-ref+1)
+  df$Julian <- vec
+  return(df)
+}
+highuse <- lapply(test,normalizeDate)
+highuse <- as.data.frame(do.call("rbind",highuse)) 
+highuse %<>%
+  arrange(Study_ID,Julian)
+
+#make heatmap to look for patterns
+ggplot(highuse, aes(Julian, Study_ID)) + 
+  geom_tile(aes(fill = num_set),colour = "lightblue") + 
+  scale_fill_gradient(low = "lightblue",high = "steelblue")
+
+#randomly sample 50 at a time
+s <- sample(highuse$Study_ID,50,replace=FALSE)
+df <- highuse[highuse$Study_ID %in% s,]
+ggplot(df, aes(Julian, Study_ID,fill=num_set)) + 
+  geom_tile() + 
+  scale_fill_gradient(low = "#deebf7",high = "#3182bd") +
+  scale_x_continuous(expand=c(0,0),breaks=c(1:31)) +
+  scale_y_discrete(expand = c(0, 0))
+
+#compare to random sample of non high-utilizers
+lowuse <- bc_30d_ID %>%
+  filter(count<20) %>%
+  arrange(Study_ID)
+lowuse <- as.data.frame(lowuse)
+
+List <- list()
+#get entries within 30d for low-use patients
+for (i in 1:nrow(lowuse)){
+  #which() gives which indices are true
+  x <- bc_30d[bc_30d$Study_ID %in% lowuse[i,"Study_ID"],]
+  #get only the rows within the same 30d grouping
+  y <- x[which(x[,"group_30"] %in% lowuse[i,"group_30"]),]
+  List[[i]] <- y
+}
+
+lowuse = do.call(rbind, List)
+lowuse <- droplevels(lowuse)
+
+lowuse_subset <- split(lowuse,lowuse$Study_ID)
+test <- lapply(lowuse_subset,function(df){
+  if(nlevels(df$group_30)>1){
+    df <- droplevels(df)
+    lst <- split(df,df$group_30)
+    return(lst)
+  }
+  else return(df)
+})
+
+test <- unlist(test,recursive=FALSE)
+lowuse <- lapply(test,normalizeDate)
+lowuse <- as.data.frame(do.call("rbind",lowuse)) 
+lowuse %<>%
+  arrange(Study_ID,Julian)
+
+s <- sample(lowuse$Study_ID,50,replace=FALSE)
+df <- lowuse[lowuse$Study_ID %in% s,]
+ggplot(df, aes(Julian, Study_ID,fill=num_set)) + 
+  geom_tile() + 
+  scale_fill_gradient(low = "#deebf7",high = "#3182bd") +
+  scale_x_continuous(expand=c(0,0),breaks=c(1:31)) +
+  scale_y_discrete(expand = c(0, 0))
 
 #randomly sample 10 at a time from high utilisers and plot days when bc were taken
 s <- sample(bc_30d_ID20_highuse$Study_ID,10,replace=F)
