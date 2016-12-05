@@ -495,7 +495,7 @@ arsquare<-lapply(cols, arsquared.f)
 
 lmresultslg.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
 lmresultslg.pt[2:4]<-sapply(lmresultslg.pt[2:4],as.numeric)
-lmresults.pt<-bind_rows(lmresults.pt,lmresultslg.pt)
+lmresults.pt<-bind_rows(lmresults.pt,lmresultslg.pt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
 
 knitr::kable(arrange(lmresults.pt,variable))
 ```
@@ -554,7 +554,7 @@ arsquare<-lapply(cols, arsquared.f)
 
 lmresultslg.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
 lmresultslg.ptt[2:4]<-sapply(lmresultslg.ptt[2:4],as.numeric)
-lmresults.ptt<-bind_rows(lmresults.ptt,lmresultslg.ptt)
+lmresults.ptt<-bind_rows(lmresults.ptt,lmresultslg.ptt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
 knitr::kable(arrange(lmresults.ptt,variable))
 
 ```
@@ -567,7 +567,9 @@ ggplot()+
   geom_bar(stat='identity',aes(x=variable,y=beta,fill=log),position='dodge')+
   geom_hline(yintercept=0.05)+
   theme(axis.text.x = element_text(angle=60, hjust=1))
+```
 
+```{r}
 lmresults.ptt%>%filter(!variable %in% c('PT','PTT','accession','allna'))%>%filter(pvalue<0.05)%>%
 ggplot()+
   geom_bar(stat='identity',aes(x=variable,y=beta,fill=log),position='dodge')+
@@ -587,7 +589,9 @@ library(tidyr)
 library('randomForest')
 library('caret')
 
-ptt.df<-penndf%>%filter( !is.na(FactorVIII)   & !is.na(PTT))
+
+ptt.df<-penndf[!with(penndf,is.na(FactorVIII)| is.na(FactorIX)| is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorXI)| is.na(FactorV)| is.na(FactorII)),]
+                  
 
 #K-Fold Cross Validation
 N = nrow(ptt.df)
@@ -617,26 +621,42 @@ for(i in 1:K){
     offset <- offset + length(ptt.df$s[ptt.df$s==i])
 }
 
-predictions<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions<-predictions%>%
+predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+predictions.ptt<-predictions.ptt%>%
   mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs)
-  
-ggplot(data=predictions,aes(obs_outputs)) +
-    geom_hline(yintercept = 0) +
-    geom_point(aes(y=residual.lm),color='blue') +
-    stat_smooth(method = "loess",aes(y=residual.lm),color='blue') +
-    geom_point(aes(y=residual.rf),color='red') +
-    stat_smooth(method = "loess",aes(y=residual.rf),color='red') +
-    theme_minimal()
+  residual.rf = pred_outputs.rf - obs_outputs,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
 
-rs <- predictions %>%na.omit()%>%
+rs.ptt <- predictions.ptt %>%na.omit()%>%
   summarise(
     sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
     sse.lm = sum(residual.lm^2),
     r.squared.lm = 1 -( sse.lm / sst),
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
+  
+  
+ggplot(data=predictions.ptt,aes(obs_outputs)) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                           keyheight = 1,
+                                           label.position = "left"))+
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[3])) +
+  theme_minimal()+
+  labs(title = "Regression Models for PTT",
+       subtitle= paste("The R-squared for the LM is",round(rs.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.ptt$r.squared.rf,2)),
+       x="Observed PTT (s)",
+       y="Residuals")
+
+
 
 
 ```
@@ -651,7 +671,8 @@ library(tidyr)
 library('randomForest')
 library('caret')
 
-pt.df<-penndf%>%filter( !is.na(FactorVII)   & !is.na(PT))
+pt.df<-penndf[!with(penndf,is.na(FactorVII)|  is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorV)| is.na(FactorII)),]
+                
 
 #K-Fold Cross Validation
 N = nrow(pt.df)
@@ -684,17 +705,11 @@ for(i in 1:K){
 predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
 predictions.pt<-predictions.pt%>%
   mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs)
-  
-ggplot(data=predictions.pt,aes(obs_outputs)) +
-    geom_hline(yintercept = 0) +
-    geom_point(aes(y=residual.lm),color='blue') +
-    stat_smooth(method = "loess",aes(y=residual.lm),color='blue') +
-    geom_point(aes(y=residual.rf),color='red') +
-    stat_smooth(method = "loess",aes(y=residual.rf),color='red') +
-    theme_minimal()
+  residual.rf = pred_outputs.rf - obs_outputs,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
 
-rs <- predictions.pt %>%na.omit()%>%
+
+rs.pt <- predictions.pt %>%na.omit()%>%
   summarise(
     sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
     sse.lm = sum(residual.lm^2),
@@ -702,18 +717,36 @@ rs <- predictions.pt %>%na.omit()%>%
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
 
+  
+ggplot(data=predictions.pt,aes(obs_outputs)) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                           keyheight = 1,
+                                           label.position = "left"))+
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
+  theme_minimal()+
+  labs(title = "Regression Models for PT",
+       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
+       x="Observed PT (s)",
+       y="Residuals")
+
+
+
 
 ```
 
 
 
 ```{r}
-#LIkely having problem with multivariate analysis as a result of missing data. Will need to analyse missing data, consider imputation and or regression that can deal with missing data.
-mlm.pt<-lm(PT~log(FactorVII)+log(FactorX)+Fibrinogen+ReptilaseTest)
-summary(mlm.pt)
 
-mlm.ptt<-lm(PTT~log(FactorVIII)+log(FactorXI)+Fibrinogen+ReptilaseTest)
-summary(mlm.ptt)
 
 ```
 
