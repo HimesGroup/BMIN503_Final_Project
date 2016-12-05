@@ -176,29 +176,36 @@ nrow(by_loc)
 head(by_loc)
 summary(by_loc$count)
 
-#I don't think this graph is informative
-ggplot(by_loc, aes(x=count)) +
-  geom_histogram(binwidth=1) +
-  theme_bw() + 
-  theme(panel.grid.major=element_line(colour="gray")) +
-  theme(axis.text.x = element_text(colour="black", hjust=1)) +
-  scale_y_continuous(expand=c(0,0)) +
-  scale_x_continuous(expand=c(0,0)) +
-  labs(x="Number of blood cultures/location", 
-       y="Count",
-       title="Distribution of number of sets/patient by location") +
-  geom_vline(xintercept=median(by_loc$count),colour="red")
-
-ggplot(by_loc, aes(reorder(Location,-count),count)) +
+fig2 <- ggplot(by_loc, aes(reorder(Location,-count),count)) +
   geom_boxplot() +
   theme_bw() + 
   theme(panel.grid.major=element_line(colour="gray")) +
-  theme(axis.text.x = element_text(colour="black",angle=90, hjust=1)) +
-  scale_y_continuous(expand=c(0,0)) +
-  labs(x="Number of blood cultures/location", 
-       y="Count",
-       title="Distribution of number of sets/patient by location")
+  theme(text=element_text(size=14),
+        axis.text.x = element_text(colour="black",angle=90, hjust=1)) +
+  scale_y_continuous(expand=c(0,0),limit=c(0,80)) +
+  labs(x="Location", 
+       y="Number of sets/patient")
+ggsave(file="Figures/fig2-freqdistloc.pdf",plot=fig2,width=8,height=6)
 
+
+#frequency distribution by Julian day
+by_day <- FY15_deIDcomplete %>%
+  group_by(Julian) %>%
+  summarise(count=n())
+by_day$Julian <- as.factor(by_day$Julian)
+
+summary(by_day$count)
+
+#sets taken seem to be evenly spread out throughout the year
+ggplot(by_day,aes(Julian,count)) +
+  geom_bar(stat="identity") +
+  theme_bw() + 
+  theme(panel.grid.major=element_line(colour="gray")) +
+  theme(text=element_text(size=14),
+        axis.text.x = element_blank()) +
+  scale_y_continuous(expand=c(0,0),limit=c(0,200)) +
+  labs(x="Julian day", 
+       y="Number of sets")
 
 #rate of blood drawn by phlebotomist. 19079/(26678+19079)=41.7%
 table(FY15_deIDcomplete$Phleb)
@@ -253,6 +260,7 @@ bc_30d_ID <- bc_30d %>%
   arrange(desc(count))
 
 summary(bc_30d_ID$count)
+quantile(bc_30d_ID$count,c(.1,.2,.3,.4,.5,.6,.7,.8,.95))
 
 ggplot(bc_30d_ID, aes(x=count)) +
   geom_histogram(binwidth=1) +
@@ -301,6 +309,7 @@ by_loc_avg_isolate <- by_loc_isolate %>%
             avg=sum(count)/n(),
             max=max(count))
 
+#freq dist of sets/patient in a 30d period by location
 ggplot(by_loc_isolate,aes(reorder(Location,-count),count)) +
   geom_boxplot() +
   theme_bw() +
@@ -336,6 +345,7 @@ cultures.pos <- cultures %>%
 #135 unique cultures
 length(unique(cultures.pos$Final_Report))
 
+#lump sum of sets where a pathogen was identified
 by_isolate <- cultures.pos %>%
   group_by(Final_Report) %>%
   summarise(count=n()) %>%
@@ -343,6 +353,46 @@ by_isolate <- cultures.pos %>%
 
 head(by_isolate$count)
 summary(by_isolate$count)
+
+fig3 <- ggplot(by_isolate,aes(reorder(Final_Report,-count),count)) +
+  geom_bar(stat="identity") +
+  theme_bw() +
+  theme(text=element_text(size=14),
+        axis.text.x = element_text(colour="black",angle=90, hjust=1)) +
+  scale_y_continuous(expand=c(0,0),limits = c(0,800)) +
+  scale_x_discrete(expand=c(0,0)) +
+  labs(x="Isolate", y="Count") +
+  geom_vline(xintercept=median(by_isolate$count),colour="red")
+
+ggsave(file="Figures/fig3-freqdistpath.pdf",plot=fig3,width=8,height=6)
+
+
+#count number of pathogens by Study_ID and Julian to parse out repeated measures
+isolate_perIDday <- cultures.pos %>%
+  group_by(Study_ID, Julian, Final_Report) %>%
+  summarise(count=n()) %>%
+  arrange(desc(count))
+
+isolate <- isolate_perIDday %>%
+  group_by(Final_Report) %>%
+  summarise(count=n())
+
+ggplot(isolate,aes(reorder(Final_Report,-count),count)) +
+  geom_bar(stat="identity") +
+  theme_bw() +
+  theme(text=element_text(size=14),
+        axis.text.x = element_text(colour="black",angle=90, hjust=1)) +
+  scale_y_continuous(expand=c(0,0),limits = c(0,600)) +
+  scale_x_discrete(expand=c(0,0)) +
+  labs(x="Isolate", y="Count") +
+  geom_vline(xintercept=median(isolate$count),colour="red")
+
+
+hist(isolate$count,breaks=100)
+quantile(isolate$count,c(0.1,.2,.3,.4,.5,.6,.7,.8,.9)) 
+#only 14 pathogens in top 10th percentile
+
+barplot(prop.table(table(isolate_perIDday$Final_Report)))
 
 #geom_histogram is for continuous data, geom_bar is for discrete data
 ggplot(by_isolate, aes(reorder(Final_Report,-count),count)) +
@@ -487,10 +537,31 @@ fit_loc_aov <- aov(count ~ Location,data=by_loc)
 summary(fit_loc_aov)
 
 
-#make binary variable for num follow-up greater than average (5): 
+#Characterize distribution of follow-up sets
+qplot(data=numFollowUpCultures,y=num_set_postPosID)
+summary(numFollowUpCultures$num_set_postPosID) #mean 4.979, 3rd quartile 7
+summary(numFollowUpCultures$num_days_postPosID) #mean 2.932, 3rd quartile 4
+quantile(numFollowUpCultures$num_set_postPosID,.9) #11
+quantile(numFollowUpCultures$num_days_postPosID,.9) #7
+
+#Distribution of follow-up days and sets
+pdf("Figures/fig4a-followupsets.pdf")
+hist(numFollowUpCultures$num_set_postPosID,breaks=100,xlab="Number of follow-up sets",
+     ylab="Count",main="Number of follow-up sets")
+dev.off()
+
+pdf("Figures/fig4b-followupdays.pdf")
+hist(numFollowUpCultures$num_days_postPosID,breaks=30,xlab="Number of follow-up days",
+     ylab="Count",main="Number of follow-up days")
+dev.off()
+
+#make binary variable for num follow-up: 
 mean(numFollowUpCultures$num_set_postPosID)
 numFollowUpCultures %<>%
-  mutate(aboveAverage = factor(ifelse(num_set_postPosID<5,0,1),levels=c(0,1),labels=c("low","high")))
+  mutate(highSets = factor(ifelse(num_set_postPosID<11,0,1),levels=c(0,1),labels=c("low","high")),
+         highDays = factor(ifelse(num_days_postPosID<7,0,1),levels=c(0,1),labels=c("low","high")))
+
+
 
 
 #63 levels for Location, 128 levels for Final_Report
@@ -500,23 +571,37 @@ nLoc <- numFollowUpCultures %>%
   summarise(num=n()) %>%
   arrange(desc(num))
 
-nLoc_10 <- nLoc %>%
-  slice(1:10)
+nLoc_top <- nLoc %>%
+  slice(1:16) #take top 25%
 
-nLoc_10 <- numFollowUpCultures %>%
-  filter(numFollowUpCultures$Location %in% nLoc_10$Location)
-nLoc_10 <- droplevels(nLoc_10)
+topLocNames <- droplevels(nLoc_top$Location)
+
+nLoc_top <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Location %in% nLoc_top$Location)
+nLoc_top <- droplevels(nLoc_top)
 
 other <- numFollowUpCultures %>%
-  filter(!(numFollowUpCultures$Location %in% nLoc_20$Location))
+  filter(!(numFollowUpCultures$Location %in% nLoc_top$Location))
 other <- droplevels(other)
 #combine levels
 levels(other$Location) <- rep("Other",nlevels(other$Location))
 
-culturesLoc <- rbind(nLoc_10,other)
+nLoc_top <- rbind(nLoc_top,other)
 
-ggplot(culturesLoc,aes(Location,num_set_postPosID)) +
-  #geom_jitter() +
+ggplot(nLoc_top,aes(reorder(Location,-num_set_postPosID),num_set_postPosID)) +
+  #geom_jitter(width=0.1) +
+  geom_violin() +
+ # geom_boxplot() +
+  theme_bw() +
+  theme(text=element_text(size=10),
+        axis.text.x = element_text(colour="black"),
+        axis.line = element_line(0.75)) +
+  labs(x="Location", 
+       y="Number of follow-up cultures",
+       title="Distribution of follow-up cultures by location")
+
+ggplot(nLoc_top,aes(reorder(Location,-num_days_postPosID),num_days_postPosID)) +
+  #geom_jitter(width=0.1) +
   #geom_violin() +
   geom_boxplot() +
   theme_bw() +
@@ -527,10 +612,10 @@ ggplot(culturesLoc,aes(Location,num_set_postPosID)) +
        y="Number of follow-up cultures",
        title="Distribution of follow-up cultures by location")
 
-fit_loc <- glm(num_set_postPosID ~ Location,data=culturesLoc)
+fit_loc <- glm(num_set_postPosID ~ Location,data=nLoc_10)
 summary(fit_loc)
 
-fit_loc_aov <- aov(num_set_postPosID ~ Location,data=culturesLoc)
+fit_loc_aov <- aov(num_set_postPosID ~ Location,data=nLoc_10)
 summary(fit_loc_aov)
 
 
@@ -545,56 +630,268 @@ chisq.test(table(loc=numFollowUpCultures$Location,followUp=numFollowUpCultures$a
 ggplot(numFollowUpCultures,aes(Location)) +
   geom_bar(aes(fill=aboveAverage),position="dodge")
 
-chisq.test(table(loc=culturesLoc$Location,followUp=culturesLoc$aboveAverage))
+chisq.test(table(loc=nLoc_top$Location,followUp=nLoc_top$aboveAverage))
 
-fit_loc <- glm(aboveAverage ~ Location,data=culturesLoc,family="binomial")
+fit_loc <- glm(aboveAverage ~ Location,data=nLoc_top,family="binomial")
 #RP3, RP6, RP7,S10, and Other are significant. doesn't look like it should be though.
 summary(fit_loc)
 
-ggplot(culturesLoc,aes(Location))+
+ggplot(nLoc_top,aes(Location))+
   geom_bar(aes(fill=aboveAverage),position="dodge")
 
 
 #category compression for pathogens
-nPath <- culturesLoc %>%
+nPath <- numFollowUpCultures %>%
   group_by(Final_Report) %>%
   summarise(num=n()) %>%
   arrange(desc(num))
 
-nPath_10 <- nPath %>%
+hist(nPath$num,breaks=50)
+summary(nPath$num)
+quantile(nPath$num,.75)
+
+nPath_top <- nPath %>%
   arrange(desc(num)) %>%
-  slice(1:10)
+  slice(1:30) #take top 25%
 
-nPath_10 <- culturesLoc %>%
-  filter(culturesLoc$Final_Report %in% nPath_10$Final_Report)
-nPath_10 <- droplevels(nPath_10)
+topPathNames <- droplevels(nPath_top$Final_Report)
 
-other <- culturesLoc %>%
-  filter(!(culturesLoc$Final_Report %in% nPath_10$Final_Report))
+nPath_top <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Final_Report %in% nPath_top$Final_Report)
+nPath_top <- droplevels(nPath_top)
+
+other <- numFollowUpCultures %>%
+  filter(!(numFollowUpCultures$Final_Report %in% nPath_top$Final_Report))
 #combine levels
 levels(other$Final_Report) <- rep("Other",nlevels(other$Final_Report))
 
-culturesLocPath <- rbind(nPath_10,other)
+nPath_top <- rbind(nPath_top,other)
+
+#Combined category compression for Locations and pathogens
+nLocPath_top <- numFollowUpCultures %>%
+  filter(Location %in% topLocNames) %>%
+  filter(Final_Report %in% topPathNames)
+nLocPath_top <- droplevels(nLocPath_top)
+
+#same
+nPathLoc_top <- numFollowUpCultures %>%
+  filter(Final_Report %in% topPathNames) %>%
+  filter(Location %in% topLocNames)
+nPathLoc_top <- droplevels(nPathLoc_top)
 
 
-ggplot(culturesLocPath,aes(Final_Report)) +
+
+
+ggplot(nLoc_topPath,aes(Final_Report)) +
   geom_bar(aes(fill=aboveAverage),position="dodge")
 
-fit_path <- glm((aboveAverage=="low") ~ (Final_Report=="SA"),data=culturesLocPath,family="binomial")
+fit_path <- glm((aboveAverage=="low") ~ (Final_Report=="SA"),data=nLoc_topPath,family="binomial")
 summary(fit_path)
 #EC is significant. I think in having lower follow-ups.
 
-fit_path <- glm(num_set_postPosID ~ Final_Report,data=culturesLocPath)
+fit_path <- glm(num_set_postPosID ~ Final_Report,data=nLoc_topPath)
 summary(fit_path) #SA is significant
 
-fit_path <- glm(num_days_postPosID ~ Final_Report,data=culturesLocPath)
+fit_path <- glm(num_days_postPosID ~ Final_Report,data=nLoc_topPath)
 summary(fit_path) #SA is even more significant
 
 fit_path <- glm((aboveAverage=="high")~Final_Report,
-                 data=culturesLoc,family="binomial")
+                 data=nLoc_top,family="binomial")
 summary(fit_path)
 
-chisq.test(table(aboveAvg=culturesLocPath$aboveAverage,path=culturesLocPath$Final_Report))
+chisq.test(table(aboveAvg=nLoc_topPath$aboveAverage,path=nLoc_topPath$Final_Report))
+
+
+```
+
+Objective: Conduct statistical tests to determine whether follow-up is associated wtih the pathogen identified or hospital location.
+```{r Statistical Tests}
+#1. Number of follow up sets ~ Location (all)
+#should I run a linear regression?
+#no significant results
+lm_loc <- lm(num_set_postPosID ~ Location,data=numFollowUpCultures)
+summary(lm_loc)
+
+
+aov_loc <- aov(num_set_postPosID ~ Location,data=numFollowUpCultures)
+summary(aov_loc)
+
+#2. Number of follow up sets ~ Location (compressed)
+#MICA, RP3, RP6, RP7, S10 significant when there's only 10
+#S10 is the only significant one. D6S was missing in summary. I always get n-1 locations in the summary...
+#number of locations that are significant differs depending on the number I include.
+#R-squared value is really low
+lm_loc <- lm(num_set_postPosID ~ Location,data=nLoc_top)
+summary(lm_loc)
+
+aov_loc <- aov(num_set_postPosID ~ Location,data=nLoc_top)
+summary(aov_loc)
+
+#3. number of follow up days ~ Location
+#Location S4S Silver 4 is significant
+fit_loc <- lm(num_days_postPosID ~ Location,data=numFollowUpCultures)
+summary(fit_loc)
+
+#4. number of follow up days ~ Location (compressed)
+#S10, RP6 significant. R-squared value is really low
+fit_loc <- lm(num_days_postPosID ~ Location,data=nLoc_top)
+summary(fit_loc)
+
+#5. binary outcome low/high number of follow up sets ~ Location (compressed)
+#PCH2 HemOnc2, RP6, RP7, S10 significant. 
+#Only S10 is significant when aboveAverage is changed to >=11 (90th percentile)
+fit_loc <- glm(highSets ~ Location,nLoc_top,family="binomial")
+summary(fit_loc)
+
+#6. binary outcome for low/high number of follow up days ~ Location (compressed)
+#only S10 is significant
+fit_loc <- glm(highDays ~ Location,nLoc_top,family="binomial")
+summary(fit_loc)
+
+library(randomForest)
+nLoc_top.rf <- randomForest(highDays~Location, data=nLoc_top, ntree=100, importance=TRUE)
+#not a good model. misclassified all of the high's.
+nLoc_top.rf
+
+#check how good the model is
+glm.pred <- predict(fit_loc, nLoc_top, type="response")
+#K-Fold Cross Validation
+N = nrow(nLoc_top)
+K = 10
+set.seed(1234)
+#assign each value in dataset into 1 of 10 groups
+s = sample(1:K, size=N, replace=T)
+#make vectors of length N
+pred_outputs.glm <- vector(mode="numeric", length=N)
+#pred_outputs.rf <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+#put i=1 in console then run through for loop each command at a time.
+for(i in 1:K){
+	train <- filter(nLoc_top, s != i) #return rows in remaining 9 groups other than those in group i
+	test <- filter(nLoc_top, s == i) #test set is group i
+	#put survived status for those in group i into obs_outputs.
+  obs_outputs[1:length(s[s==i]) + offset] <- test$highDays
+    
+    #GLM train/test
+	glm <- glm(highDays~Location, data=train, family=binomial(logit))
+    glm.pred.curr <- predict(glm, test, type="response")
+    #put predicted glm outputs into vector
+    pred_outputs.glm[1:length(s[s==i]) + offset] <- glm.pred.curr
+
+    #RF train/test
+    #rf <- randomForest(survived~., data=train, ntree=100)
+#	rf.pred.curr <- predict(rf, newdata=test, type="prob") #gives matrix for prediction error estimate of dying/living. want column 2 because that corresponds to the prediction error estimates for surviving.
+#	pred_outputs.rf[1:length(s[s==i]) + offset] <- rf.pred.curr[,2]
+  #offset by length of group i so that you add the data in the right spots in the vectors.
+	offset <- offset + length(s[s==i])
+}
+
+library(pROC)
+#glm.pred was the logistic regression model
+plot.roc(nLoc_top$highDays, glm.pred, ci=TRUE) #Fitted logistic regression
+plot.roc(obs_outputs, pred_outputs.glm, ci=TRUE, col="darkblue", add=TRUE) #Cross-validation of glm
+
+
+```
+
+```{r Statistical tests for association with pathogen}
+#1. number of follow up sets ~ Pathogen
+#Acispe, Bacova, Cankru, Cantro, Raoorn, Rhoequ, SA, SerliqStacapi, Stalug, Stawar, Sv are significant
+fit_path <- lm(num_set_postPosID ~ Final_Report,data=numFollowUpCultures)
+summary(fit_path)
+
+#2. number of follow up sets ~ Pathogen (compressed)
+#Cantro, SA, and Stacapi are significant
+fit_path <- lm(num_set_postPosID ~ Final_Report,data=nPath_top)
+summary(fit_path)
+
+aov_path <- aov(num_set_postPosID ~ Final_Report,data=nPath_top)
+summary(aov_path)
+
+#3. number of follow-up days ~ Pathogen (comopressed)
+#Cantro, Entfaeca, Entfaeci, SA, Stacapi, Staepi are significant
+fit_path <- lm(num_days_postPosID ~ Final_Report,data=nPath_top)
+summary(fit_path)
+
+#4. binary outcome for follow up sets ~ Pathogen (compressed)
+#nothing was significant
+fit_path <- glm(highSets ~ Final_Report,data=nPath_top,family="binomial")
+summary(fit_path)
+
+#5. binary outcome for follow up days ~ Pathogen (compressed)
+#nothing was significant
+fit_path <- glm(highDays ~ Final_Report,data=nPath_top,family="binomial")
+summary(fit_path)
+
+```
+
+```{r Statistical Tests to look at Location and Pathogen in same model}
+#Combined category compression for Locations and pathogens
+nLocPath_top <- numFollowUpCultures %>%
+  filter(Location %in% topLocNames) %>%
+  filter(Final_Report %in% topPathNames)
+nLocPath_top <- droplevels(nLocPath_top)
+
+other <- numFollowUpCultures %>%
+  filter(!(Location %in% topLocNames) | !(Final_Report %in% topPathNames))
+levels(other$Final_Report) <- rep("Other",nlevels(other$Final_Report))
+levels(other$Location) <- rep("Other",nlevels(other$Location))
+
+nLocPath_top <- rbind(nLocPath_top,other)
+nLocPath_top <- droplevels(nLocPath_top)
+
+#1. number of follow up sets ~ Location + Pathogen
+fit <- glm(num_set_postPosID ~ Location + Final_Report,data=nLocPath_top)
+summary(fit)
+
+fit <- aov(num_set_postPosID ~ Location + Final_Report,data=nLocPath_top)
+summary(fit)
+
+
+#2. binary highDays ~ Location + Pathogen
+#nothing was significant
+fit <- glm(highDays ~ Location + Final_Report,data=nLocPath_top,family="binomial")
+summary(fit)
+confint(fit)
+
+```
+
+```{r Identify variables of interest in predicting high follow up}
+N=ncol(numFollowUpCultures)-1
+pvalues <- data.frame(colnames(numFollowUpCultures)[-1],rep(0,N))
+colnames(pvalues) <- c("variable","pvalue")
+for (i in 2:(ncol(numFollowUpCultures))){
+  variable=numFollowUpCultures[,i]
+  numFollowUpCultures.glm <- glm(numFollowUpCultures$highDays~variable,family="binomial")
+  pvalues[i-1,2] <- coef(summary(numFollowUpCultures.glm))[2,4]
+}
+
+sig_pvalues <- pvalues %>%
+  filter(pvalue<0.05) %>%
+  arrange(pvalue)
+
+sig_pvalues
+#aboveAverage, highSets, num_set_postPosID, count are significant
+#highDays is highly correlated with aboveAverage, highSets, and num_set_postPosID
+#only one of interest is count I think.
+
+
+#check with compressed Location and Final_Report values
+N=ncol(numFollowUpCultures)-1
+pvalues <- data.frame(colnames(numFollowUpCultures)[-1],rep(0,N))
+colnames(pvalues) <- c("variable","pvalue")
+for (i in 2:(ncol(numFollowUpCultures))){
+  variable=numFollowUpCultures[,i]
+  numFollowUpCultures.glm <- glm(numFollowUpCultures$highDays~variable,family="binomial")
+  pvalues[i-1,2] <- coef(summary(numFollowUpCultures.glm))[2,4]
+}
+
+sig_pvalues <- pvalues %>%
+  filter(pvalue<0.05) %>%
+  arrange(pvalue)
+
+sig_pvalues
 ```
 
 
@@ -639,39 +936,54 @@ ggplot(top20,aes(reorder(Final_Report,-num_set_postPosID),num_set_postPosID)) +
        title="Distribution of follow-up cultures for top 20 pathogens")
 
 
-
 ```
 
 
 289 out of 11,737 patients had at least 20 blood cultures taken, which is 2.46% of the population. For this subpopulation, the number of sets taken ranged from 20 to 90, with a median of 26 and a mean of 30.86.
 
 ```{r Identify high utilisers}
-#get ID's for patients with more than 20 bc for FY2015
-ID_highuse <- by_ID %>%
-  filter(count>=20)
+hist(by_ID$count,breaks=100)
+quantile(by_ID$count,c(.1,.2,.3,.4,.5,.6,.7,.8,.9,.95)) #95th percentile is 13 sets.
 
-#289 patients with more than 20 bc taken.
-nrow(ID_highuse$Study_ID)
+#get ID's for patients with more than 13 bc for FY2015
+ID_highuse <- by_ID %>%
+  filter(count>13)
+ID_highuse <- as.data.frame(ID_highuse)
+
+#546 patients with more than 13 bc taken.
+nrow(ID_highuse)
 summary(ID_highuse$count)
 
 #subset FY15_deID by these ID's so that I have the Julian information
-by_ID_highuse <- FY15_deID[FY15_deID$Study_ID %in% ID_highuse$Study_ID,]
+by_ID_highuse <- FY15_deIDcomplete[FY15_deIDcomplete$Study_ID %in% ID_highuse$Study_ID,]
   
 by_ID_highuse %<>%
   group_by(Study_ID,Julian) %>%
   summarise(count=n())
 
-#randomly sample 10 at a time from high utilisers and plot days when bc were taken
-s <- sample(by_ID_highuse$Study_ID,10,replace=F)
-df <- by_ID_highuse[by_ID_highuse$Study_ID %in% s,]
+#calculate number of days for high utilizers for the year
+highuse_Jul <- by_ID_highuse %>%
+  group_by(Study_ID) %>%
+  summarise(days=n())
+str(highuse_Jul)
+hist(highuse_Jul$days,breaks=30)
+summary(highuse_Jul$days)
 
-ggplot(df,aes(Julian,Study_ID)) +
-  theme_bw() + 
-  labs(x="Julian day", 
-       y="Study_ID",
-       title="Sets of bc taken per day for high utilizers") +
-  geom_point(aes(alpha=count)) +
-  scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
+#Compare followup cultures for high utilizers
+hu_followup <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Study_ID %in% highuse_Jul$Study_ID)
+summary(hu_followup$num_set_postPosID)
+
+#number of followup cultures is greater for high utilizers by 3-4 sets
+t.test(hu_followup$num_set_postPosID,numFollowUpCultures$num_set_postPosID,alternative="two.sided")
+plot(density(hu_followup$num_set_postPosID))
+plot(density(numFollowUpCultures$num_set_postPosID))
+
+#number of days of follow up is greater by about 2 days
+t.test(hu_followup$num_days_postPosID,numFollowUpCultures$num_days_postPosID,alternative="two.sided")
+plot(density(hu_followup$num_days_postPosID))
+plot(density(numFollowUpCultures$num_days_postPosID))
+
 
 #look at high utilizers for those with at least 20 bc in a 30day period
 #use bc_30d_ID20
@@ -693,7 +1005,7 @@ bc_30d_ID20_highuse <- droplevels(bc_30d_ID20_highuse)
 
 #change Julian days so it goes from 1 to 30 for each of the high utilizers
 highuse_subset <- split(bc_30d_ID20_highuse,bc_30d_ID20_highuse$Study_ID)
-test <- lapply(highuse_subset,function(df){
+lst <- lapply(highuse_subset,function(df){
   if(nlevels(df$group_30)>1){
     df <- droplevels(df)
     lst <- split(df,df$group_30)
@@ -702,7 +1014,7 @@ test <- lapply(highuse_subset,function(df){
   else return(df)
 })
 
-test <- unlist(test,recursive=FALSE)
+lst <- unlist(lst,recursive=FALSE)
 normalizeDate <- function(df) {
   Jul <- df$Julian
   ref <- Jul[1]
@@ -710,15 +1022,41 @@ normalizeDate <- function(df) {
   df$Julian <- vec
   return(df)
 }
-highuse <- lapply(test,normalizeDate)
+highuse <- lapply(lst,normalizeDate)
 highuse <- as.data.frame(do.call("rbind",highuse)) 
 highuse %<>%
   arrange(Study_ID,Julian)
+
+#calculate number of days that blood was taken for high utilizers within 30d
+highuse_Jul_30d <- highuse %>%
+  group_by(Study_ID,group_30) %>%
+  summarise(days=n())
+str(highuse_Jul_30d)
+hist(highuse_Jul_30d$days,breaks=30)
+summary(highuse_Jul_30d$days)
+
+hu_followup_30d <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Study_ID %in% highuse_Jul_30d$Study_ID)
+summary(hu_followup_30d$num_set_postPosID)
+
+#number of followup cultures is greater for high utilizers by about 10 sets
+t.test(hu_followup_30d$num_set_postPosID,numFollowUpCultures$num_set_postPosID,alternative="two.sided")
+plot(density(hu_followup_30d$num_set_postPosID))
+plot(density(numFollowUpCultures$num_set_postPosID))
+
+#number of days of follow up is greater by about 5 days
+t.test(hu_followup_30d$num_days_postPosID,numFollowUpCultures$num_days_postPosID,alternative="two.sided")
+plot(density(hu_followup_30d$num_days_postPosID))
+plot(density(numFollowUpCultures$num_days_postPosID))
+
+
 
 #make heatmap to look for patterns
 ggplot(highuse, aes(Julian, Study_ID)) + 
   geom_tile(aes(fill = num_set),colour = "lightblue") + 
   scale_fill_gradient(low = "lightblue",high = "steelblue")
+
+
 
 #randomly sample 50 at a time
 s <- sample(highuse$Study_ID,50,replace=FALSE)
@@ -783,6 +1121,10 @@ ggplot(df,aes(Julian,Study_ID)) +
        title="Sets of bc taken within 30-day period for high utilizers") +
   scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
 
+#calculate waiting times?
+
+
+
 #look at distribution of locations for high utilizers to determine whether they are clustered on a certain floor. Divide by the total number of patients on that floor.
 #by_loc has number of patients by location
 #bc_30d_ID20_highuse shows the location for each high utilizer
@@ -826,6 +1168,36 @@ ggplot(highuse_loc,aes(reorder(Location,-prop_highuse),
   labs(x="Location", 
        y="Propotion of high utilizers",
        title="Distribution of high utilizers") 
+
+```
+
+```{r Deleted code}
+
+#I don't think this graph is informative
+ggplot(by_loc, aes(x=count)) +
+  geom_histogram(binwidth=1) +
+  theme_bw() + 
+  theme(panel.grid.major=element_line(colour="gray")) +
+  theme(axis.text.x = element_text(colour="black", hjust=1)) +
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  labs(x="Number of blood cultures/location", 
+       y="Count",
+       title="Distribution of number of sets/patient by location") +
+  geom_vline(xintercept=median(by_loc$count),colour="red")
+
+
+#randomly sample 10 at a time from high utilisers and plot days when bc were taken
+s <- sample(by_ID_highuse$Study_ID,10,replace=F)
+df <- by_ID_highuse[by_ID_highuse$Study_ID %in% s,]
+
+ggplot(df,aes(Julian,Study_ID)) +
+  theme_bw() + 
+  labs(x="Julian day", 
+       y="Study_ID",
+       title="Sets of bc taken per day for high utilizers") +
+  geom_point(aes(alpha=count)) +
+  scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
 
 ```
 
