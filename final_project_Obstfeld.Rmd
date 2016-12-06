@@ -218,15 +218,16 @@ The first goal of this project is to validate many of the assumptions and data f
 
 ```{r}
 tests<-c('PT','PTT','Fibrinogen')
+f1<-list()
 for (i in tests){
-p<-ggplot(filter(penn,task_name == i)) +
+f1[[i]]<-penn%>%filter(task_name==i)%>%
+  ggplot() +
   geom_density(aes(result), fill = 'gray') +
   geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[2])) +
   geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[3])) +
   xlab(paste0('Distribution of values for ',i)) +
   labs(caption = 'Vertical lines represent high and low end of normal range') +
   theme_bw()
-print(p)
 }
 ```
 The results indicate that the PTT normal range values match the distribution of results relatievly well, however the upper limit of normal may need to be reevaluated. The distribution of fibinrogen results demonstrate a peak at approximately 450, representing the results that were converted from >450 to 450 during the data preperation step. The consequencce of this clinically is minimal given that the low end of the normal range is more medically meaningful. Finally, there seems to be a discrepency between the normal range for the PT test and the distribution in this data. The results may be signnificantly biased as the PT is frequently used for monitoring of warfarin therapy. Future work will need to investigate these trends subsetted on individuals not on biasing medications. 
@@ -244,8 +245,7 @@ for (i in 1:length(colnames(penndf))) {
           geom_histogram(fill="grey") +
           geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[2]))+
           geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[3]))+
-          xlab(paste0('Distribution of values for ',names(penndf)[i]))+
-          labs(caption='Vertical lines represent high and low end of normal range')+
+          xlab(paste0(names(penndf)[i]))+
           theme_bw()
     ,list(i = i)))
     #print(i)
@@ -268,7 +268,7 @@ grid.arrange(myhists[[3]],
              myhists[[13]],
              myhists[[14]],
              nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
-#In the future suggest adding normal range vertical bars
+
 
 ```
 The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. 
@@ -288,7 +288,8 @@ makebx.pt<-function(x,y){
     #bxpt[[x]] <- p1# add each plot into plot list
     #x<-x+1
     #gg
-    }
+}
+tests<-names(penndf)
 bxpt<-lapply(tests,y='PT',makebx.pt)
 names(bxpt)<-tests
 
@@ -561,7 +562,7 @@ knitr::kable(arrange(lmresults.ptt,variable))
 
 ```{r}
 
-#Two plots to look at the distribution of the lm statistics
+#Two plots to look at the distribution of the lm statistics CONSIDER SCATTERPLOTS INSTEAD
 lmresults.pt%>%filter(!variable %in% c('PT','PTT','accession','allna'))%>%filter(pvalue<0.05)%>%
 ggplot()+
   geom_bar(stat='identity',aes(x=variable,y=beta,fill=log),position='dodge')+
@@ -590,7 +591,264 @@ library('randomForest')
 library('caret')
 
 
-ptt.df<-penndf[!with(penndf,is.na(FactorVIII)| is.na(FactorIX)| is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorXI)| is.na(FactorV)| is.na(FactorII)),]
+ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI) |is.na(FactorV)| is.na(FactorII)),]
+
+  
+  #K-Fold Cross Validation
+  N = nrow(ptt.df)
+  K = 5
+  
+  ptt.df$s = sample(1:K, size=N, replace=T)
+  pred_outputs.lm <- vector(mode="numeric", length=N)
+  pred_outputs.rf <- vector(mode="numeric", length=N)
+  obs_outputs <- vector(mode="numeric", length=N)
+  offset <- 0
+  
+  for(i in 1:K){
+     
+      train <- ptt.df%>%filter(s != i)
+      test <-  ptt.df%>%filter(s == i)
+      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
+      
+      #LM train/test
+      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorV)+log(FactorII), data=train)
+      lm.pred.curr <- predict(lm, test)
+      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
+  
+      #RF train/test
+      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorV)+(FactorII),ntree=100, data=train,na.action = na.omit)
+      rf.pred.curr <- predict(rf, newdata=test) 
+      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
+  
+      offset <- offset + length(ptt.df$s[ptt.df$s==i])
+  }
+  
+  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+  predictions.ptt<-predictions.ptt%>%
+    mutate(residual.lm = pred_outputs.lm - obs_outputs,
+    residual.rf = pred_outputs.rf - obs_outputs,
+    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+  
+  rs.ptt <- predictions.ptt %>%na.omit()%>%
+    summarise(
+      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+   rs.ptt
+  
+ggplot(data=predictions.ptt,aes(obs_outputs)) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                          keyheight = 1,
+                                          label.position = "left"))+
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[3])) +
+  theme_minimal(base_size = 20)+
+  #theme(legend.position = c(0.75, .85))+
+  labs(title = "Regression Models for PTT",
+       subtitle= paste("The R-squared for the LM is",round(rs.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.ptt$r.squared.rf,2)),
+       x="Observed PTT (s)",
+       y="Residuals")+
+  xlim(20,100)
+
+
+
+
+```
+
+
+
+```{r}
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('caret')
+library(e1071)
+
+
+pt.df<-penndf[!with(penndf,is.na(FactorVII)|  is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorV)| is.na(FactorII)),]
+                
+
+#K-Fold Cross Validation
+N = nrow(pt.df)
+K = 5
+
+pt.df$s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+#pred_outputs.rsvm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+
+for(i in 1:K){
+    train <- filter(pt.df, s != i)
+    test <- filter(pt.df, s == i)
+    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
+    
+    #LM train/test
+    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV)+log(Fibrinogen), data=train)
+    lm.pred.curr <- predict(lm, test)
+    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
+
+    #RF train/test
+    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,na.action = na.omit, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test) 
+    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
+
+    #RF train/test
+    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
+    # rsvmbest <- rsvm$best.model
+    # rsvm.pred.curr <- predict(rsvmbest, test) 
+    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
+
+    
+    
+    # #Lasso train/test
+    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
+    # x=as.matrix(trainlas[,1:5])
+    # y=as.numeric(unlist(trainlas[,6]))
+    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
+    # x.test=as.matrix(test[,c(3,5,6,8,11)])
+    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
+    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
+
+    offset <- offset + length(pt.df$s[pt.df$s==i])
+} 
+
+predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+predictions.pt<-predictions.pt%>%
+  mutate(residual.lm = pred_outputs.lm - obs_outputs,
+  residual.rf = pred_outputs.rf - obs_outputs,
+  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+
+
+rs.pt <- predictions.pt %>%na.omit()%>%
+  summarise(
+    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+    sse.lm = sum(residual.lm^2),
+    r.squared.lm = 1 -( sse.lm / sst),
+    sse.rf = sum(residual.rf^2),
+    r.squared.rf = 1 - (sse.rf / sst))
+
+  
+ggplot(data=predictions.pt,aes(obs_outputs)) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
+  theme_minimal(base_size = 20)+
+  theme(legend.position = c(0.75, .85))+
+  labs(title = "Regression Models for PT",
+       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
+       x="Observed PT (s)",
+       y="Residuals")+
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                           keyheight = 1,
+                                           label.position = "left"))
+
+
+
+
+```
+
+
+
+```{r}
+
+library(readr)
+chop <- read_csv("~/Rprojects/EPID600_Final_Project/factorsxlsx.csv", 
+   col_types = cols(`Patient Date of Birth` = col_character()))
+names(chop)<-c('empi','task_name','result','dob','ordcre','ordpl','col')
+chop$ordcre<-as.POSIXct(chop$ordcre,format = "%m/%d/%y %H:%M")
+chop$ordpl<-as.POSIXct(chop$ordpl,format = "%m/%d/%y %H:%M")
+chop$col<-as.POSIXct(chop$col,format = "%m/%d/%y %H:%M")
+
+table(chop$task_name)
+#filter out extraneous testing pulled out of warehouse
+chop<-chop%>%filter(!task_name %in% c('INHIBITOR SCREEN', 'Procedure Name','FACTOR XIII'))
+
+chop[grep("FACTOR II", chop$task_name), 'task_name']<-'FactorII'
+chop[grep("FACTOR V", chop$task_name), 'task_name']<-'FactorV'
+chop[grep("FACTOR VII", chop$task_name), 'task_name']<-'FactorVII'
+chop[grep("FACTOR VIII", chop$task_name), 'task_name']<-'FactorVIII'
+chop[grep("FACTOR IX", chop$task_name), 'task_name']<-'FactorIX'
+chop[grep("FACTOR X", chop$task_name), 'task_name']<-'FactorX'
+chop[grep("FACTOR XI", chop$task_name), 'task_name']<-'FactorXI'
+chop[grep("FACTOR XII ASSAY", chop$task_name), 'task_name']<-'FactorXII'
+chop[grep("PT/INR", chop$task_name), 'task_name']<-'PT'
+chop[grep("PARTIAL THROMBOPLASTIN TIME", chop$task_name), 'task_name']<-'PTT'
+chop[grep("PTT PROFILE", chop$task_name), 'task_name']<-'PTT'
+chop[grep("FIBRINOGEN", chop$task_name), 'task_name']<-'Fibrinogen'
+
+
+```
+
+```{r}
+#Index by na's introduced by as.numeric coercion
+chop%>%select(2,3)%>%filter(is.na(as.numeric(result)))%>%table
+```
+All textbased comments in the result field indicate fundamental issues with the result and should be filtered out. Many of the remainder are due to a measurement being out of range high or low. most of these can be kept and replaced with the numeric value indicated in the field for the purposes of this analysis
+```{r}
+#Explore weird results
+#Replace with NA those results without numbers
+chop$result<-gsub("@L", "", chop$result) 
+chop$result[grepl("[:alpha:]",chop$result)]<-NA
+chop$result[grepl("[:a-z:]",chop$result)]<-NA
+chop$result[grepl("[:A-Z:]",chop$result)]<-NA
+#Results that are 'greater than' a number (such as 150, 90, etc) should be replaced with that number. 
+chop$result<-gsub(">", "", chop$result) 
+#Less than with a small number should be replaced by 0. 
+chop$result<-gsub("<", "", chop$result)
+#Text results should be filtered out of dataset.
+chop<-chop%>%filter(!is.na(result))
+#Convert result variable to numeric
+chop$result<-as.numeric(chop$result)
+#confirm removal of all non-numeric results
+chop%>%filter(is.na(result))%>%count%>%as.numeric
+```
+
+```{r}
+library(tidyr)
+library(lubridate)
+#Before spreading data need to ensure that all entries are unique
+dblresults<-chop%>%group_by(empi,col,task_name)%>%summarise(n=n())%>%ungroup()%>%filter(n>1)
+chop<-anti_join(chop,dblresults,by='col')
+chopdf<-chop%>%mutate(coldt=as.Date(col))%>%select(c(1,2,3,8))
+dblresults<-chopdf%>%group_by(empi,coldt,task_name)%>%summarise(n=n())%>%ungroup()%>%filter(n>1)
+chopdf<-anti_join(chopdf,dblresults,by=c('coldt' = 'coldt', 'empi' = 'empi'))
+chopdfxx<-chopdf%>%spread(task_name,result)
+
+chopptt.df<-chopdfxx[!with(chopdfxx,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)),]
+```
+
+```{r}
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('caret')
+
+
+ptt.df<-penndf[!with(penndf,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)),]
                   
 
 #K-Fold Cross Validation
@@ -609,12 +867,12 @@ for(i in 1:K){
     obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
     
     #LM train/test
-    lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI)+log(FactorX)+log(FactorII)+log(FactorV)+log(Fibrinogen), data=ptt.df)
+    lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
     lm.pred.curr <- predict(lm, test)
     pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
 
     #RF train/test
-    rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI)+(FactorX)+(FactorII)+FactorV+Fibrinogen, data=ptt.df, ntree=100,na.action = na.omit)
+    rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
     rf.pred.curr <- predict(rf, newdata=test) 
     pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
 
@@ -634,123 +892,19 @@ rs.ptt <- predictions.ptt %>%na.omit()%>%
     r.squared.lm = 1 -( sse.lm / sst),
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
-  
-  
-ggplot(data=predictions.ptt,aes(obs_outputs)) +
-  geom_hline(yintercept = 0) +
-  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
-  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
-  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
-  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
-  geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
-  scale_colour_manual(values = c("blue","red"),
-                      guide = guide_legend(title = "Regression Models",
-                                           keywidth = 3, 
-                                           keyheight = 1,
-                                           label.position = "left"))+
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[2])) +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[3])) +
-  theme_minimal()+
-  labs(title = "Regression Models for PTT",
-       subtitle= paste("The R-squared for the LM is",round(rs.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.ptt$r.squared.rf,2)),
-       x="Observed PTT (s)",
-       y="Residuals")
 
-
-
-
-```
-
-
-
-```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
-
-pt.df<-penndf[!with(penndf,is.na(FactorVII)|  is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorV)| is.na(FactorII)),]
-                
-
-#K-Fold Cross Validation
-N = nrow(pt.df)
-K = 5
-
-pt.df$s = sample(1:K, size=N, replace=T)
-pred_outputs.lm <- vector(mode="numeric", length=N)
-pred_outputs.rf <- vector(mode="numeric", length=N)
-obs_outputs <- vector(mode="numeric", length=N)
-offset <- 0
-
-for(i in 1:K){
-    train <- filter(pt.df, s != i)
-    test <- filter(pt.df, s == i)
-    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
-    
-    #LM train/test
-    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV)+log(Fibrinogen), data=pt.df)
+#Build final rf and lm for test
+lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
     lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
+    pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
 
     #RF train/test
-    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,na.action = na.omit, data=pt.df, ntree=100)
-    rf.pred.curr <- predict(rf, newdata=test) 
-    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    offset <- offset + length(pt.df$s[pt.df$s==i])
-}
-
-predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions.pt<-predictions.pt%>%
-  mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs,
-  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-
-
-rs.pt <- predictions.pt %>%na.omit()%>%
-  summarise(
-    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-    sse.lm = sum(residual.lm^2),
-    r.squared.lm = 1 -( sse.lm / sst),
-    sse.rf = sum(residual.rf^2),
-    r.squared.rf = 1 - (sse.rf / sst))
-
-  
-ggplot(data=predictions.pt,aes(obs_outputs)) +
-  geom_hline(yintercept = 0) +
-  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
-  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
-  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
-  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
-  geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
-  scale_colour_manual(values = c("blue","red"),
-                      guide = guide_legend(title = "Regression Models",
-                                           keywidth = 3, 
-                                           keyheight = 1,
-                                           label.position = "left"))+
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
-  theme_minimal()+
-  labs(title = "Regression Models for PT",
-       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
-       x="Observed PT (s)",
-       y="Residuals")
-
-
-
+    rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
 
 ```
 
 
 
-```{r}
-
-
-```
-
-```{r}
 #impute data for multivariate regression
 library('mice')
 ptt.df<-ptt.df%>%select(4,7,9,13)
