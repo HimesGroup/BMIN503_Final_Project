@@ -161,6 +161,27 @@ ggplot(by_IDtop, aes(x=count)) +
   geom_vline(xintercept=median(by_ID20$count),colour="red")
 
 #Look at the distribution of total # of bc by location
+loc <- FY15_deIDcomplete %>%
+  filter(!is.na(Location)) %>%
+  group_by(Location) %>%
+  summarise(count=n()) %>%
+  arrange(Location)
+
+summary(loc$count)
+
+fig2a <- ggplot(loc,aes(reorder(Location,-count),count)) +
+  geom_bar(stat="identity") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle=90,hjust=1)) +
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_discrete(expand=c(0,0)) +
+  labs(x="Location", y="Number of sets",
+       title="Total number of sets/location") +
+  geom_vline(xintercept=median(loc$count),colour="red")
+
+ggsave(file="Figures/fig2a-loc.pdf",plot=fig2a,width=8,height=6)
+  
+#Look at the distribution of # bc/pat by location
 by_loc <- FY15_deIDcomplete %>%
   filter(!is.na(Location)) %>%
   group_by(Location,Study_ID) %>%
@@ -537,7 +558,7 @@ summary(fit_loc_aov)
 
 
 #Characterize distribution of follow-up sets
-qplot(data=numFollowUpCultures,y=num_set_postPosID)
+hist(numFollowUpCultures$num_set_postPosID)
 summary(numFollowUpCultures$num_set_postPosID)
 summary(numFollowUpCultures$num_days_postPosID)
 quantile(numFollowUpCultures$num_set_postPosID,.9) #11
@@ -572,7 +593,7 @@ nLoc <- numFollowUpCultures %>%
 
 hist(nLoc$num,breaks=50)
 summary(nLoc$num)
-quantile(nLoc$num,.75)
+quantile(nLoc$num,c(.1,.2,.3,.4,.5,.6,.7,.8,.9,1))
 
 nLoc_top <- nLoc %>%
   slice(1:16) #take top 25%
@@ -597,8 +618,8 @@ nLoc_top %<>%
 
 fig5a <- ggplot(nLoc_top,aes(reorder(Location,-num_set_postPosID),num_set_postPosID)) +
   #geom_jitter(width=0.3) +
-  geom_violin() +
- # geom_boxplot() +
+  #geom_violin() +
+  geom_boxplot() +
   theme_bw() +
   theme(text=element_text(size=10),
         axis.text.x = element_text(colour="black",angle=90,hjust=1),
@@ -610,8 +631,8 @@ ggsave(file="Figures/fig5a.pdf",plot=fig5a,width=5)
 
 fig5b <- ggplot(nLoc_top,aes(reorder(Location,-num_days_postPosID),num_days_postPosID)) +
   #geom_jitter(width=0.1) +
-  geom_violin() +
-  #geom_boxplot() +
+  #geom_violin() +
+  geom_boxplot() +
   theme_bw() +
   theme(text=element_text(size=10),
         axis.text.x = element_text(colour="black",angle=90,hjust=1),
@@ -629,7 +650,7 @@ nPath <- numFollowUpCultures %>%
 
 hist(nPath$num,breaks=50)
 summary(nPath$num)
-quantile(nPath$num,.75)
+quantile(nPath$num,c(.1,.2,.3,.4,.5,.6,.7,.8,.9,1))
 
 nPath_top <- nPath %>%
   arrange(desc(num)) %>%
@@ -672,6 +693,9 @@ fig6b <- ggplot(nPath_top,aes(reorder(Final_Report,-num_days_postPosID),num_days
        y="Number of days of follow-up")
 ggsave(file="Figures/fig6b.pdf",plot=fig6b,width=5)
 
+ggplot(nPath_top,aes(Final_Report,highSets)) +
+  geom_boxplot(aes(fill=highSets))
+
 #Combined category compression for Locations and pathogens
 nLocPath_top <- numFollowUpCultures %>%
   filter(Location %in% topLocNames) %>%
@@ -690,6 +714,7 @@ lm_loc <- lm(num_set_postPosID ~ Location,data=numFollowUpCultures)
 summary(lm_loc)
 
 #Hosmer Lemeshow goodness of fit test
+#greater than 0.05 means there is no evidence of poor fit
 library(ResourceSelection)
 hoslem.test(numFollowUpCultures$num_set_postPosID,fitted(lm_loc))
 
@@ -703,6 +728,7 @@ summary(aov_loc)
 #R-squared value is really low
 lm_loc <- lm(num_set_postPosID ~ Location,data=nLoc_top)
 summary(lm_loc)
+
 
 aov_loc <- aov(num_set_postPosID ~ Location,data=nLoc_top)
 summary(aov_loc)
@@ -720,6 +746,7 @@ summary(fit_loc)
 #5. binary outcome low/high number of follow up sets ~ Location (compressed)
 #PCH2 HemOnc2, RP6, RP7, S10 significant. 
 #Only S10 is significant when aboveAverage is changed to >=11 (90th percentile)
+#nLoc_top$Location <- relevel(nLoc_top$Location,"Other")
 fit_loc <- glm(highSets ~ Location,nLoc_top,family="binomial")
 summary(fit_loc)
 #goodness of fit. model fits. 
@@ -774,6 +801,8 @@ library(pROC)
 #glm.pred was the logistic regression model
 plot.roc(nLoc_top$highDays, glm.pred, ci=TRUE) #Fitted logistic regression
 plot.roc(obs_outputs, pred_outputs.glm, ci=TRUE, col="darkblue", add=TRUE) #Cross-validation of glm
+
+chisq.test(table(nLoc_top$highDays,nLoc_top$Location))
 
 #7. var(nLoc_top$num_set_postPosID) is 27, and mean is 4.9
 var(nLoc_top$sqrt_sets)
@@ -837,10 +866,15 @@ summary(fit_path)
 fit_path <- glm(highSets ~ Final_Report,data=nPath_top,family="binomial")
 summary(fit_path)
 
+chisq.test(table(nPath_top$highSets,nPath_top$Final_Report))
+
 #5. binary outcome for follow up days ~ Pathogen (compressed)
 #nothing was significant
 fit_path <- glm(highDays ~ Final_Report,data=nPath_top,family="binomial")
 summary(fit_path)
+
+chisq.test(table(nPath_top$highDays,nPath_top$Final_Report))
+
 
 ```
 
@@ -1095,6 +1129,11 @@ fig7b <- ggplot(numFollowUpCultures,aes(highuse,
 
 ggsave(file="Figures/fig7b.pdf",plot=fig7b)
 
+#chisq test with highSets and highDays against highuse
+chisq.test(table(numFollowUpCultures$highSets,numFollowUpCultures$highuse))
+
+chisq.test(table(numFollowUpCultures$highDays,numFollowUpCultures$highuse))
+
 
 #make heatmap to look for patterns
 ggplot(highuse, aes(Julian, Study_ID)) + 
@@ -1179,36 +1218,84 @@ highuse_loc <- bc_30d_ID20_highuse %>%
   group_by(Location) %>%
   summarise(count=n_distinct(Study_ID,group_30))
 
-a <- bc_30d_ID20_highuse %>%
-  group_by(Study_ID,group_30) %>%
-  summarise(a=n())
-nrow(a) #120
-
-b <- bc_30d_ID20 %>%
-  group_by(Study_ID,group_30) %>%
-  summarise(a=n())
-
-nrow(b) #120 rows. 7 had multiple entries for group_30 (mostly 2, 1 had 3)
-
-c <- anti_join(b,a,by=c("Study_ID","group_30"))
-
 #calculate proportion of high utilizers/total for each location
 highuse_loc <- inner_join(highuse_loc,by_loc_numpat) 
 highuse_loc %<>%
   mutate(prop_highuse = count/num_pat)
 
-ggplot(highuse_loc,aes(reorder(Location,-prop_highuse),
+highuse_toploc <- highuse_loc %>%
+  filter(highuse_loc$Location %in% nLoc_top$Location)
+
+fig10a <- ggplot(highuse_loc,aes(reorder(Location,-prop_highuse),
                        prop_highuse)) +
   geom_bar(stat="identity") +
   theme_bw() +
-  theme(text=element_text(size=10),
-        axis.text.x = element_text(colour="black",
+  theme(axis.text.x = element_text(colour="black",
                                    angle=90,hjust=1)) +
   labs(x="Location", 
-       y="Propotion of high utilizers",
-       title="Distribution of high utilizers") 
+       y="Propotion of high utilizers") 
+ggsave(file="Figures/fig10a.pdf",plot=fig10a)
+
+#only look at locations in nLoc_top
+fig10b <- ggplot(highuse_toploc,aes(reorder(Location,
+                                            -prop_highuse),
+                       prop_highuse)) +
+  geom_bar(stat="identity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(colour="black",
+                                   angle=90,hjust=1)) +
+  labs(x="Location", 
+       y="Propotion of high utilizers") 
+ggsave(file="Figures/fig10b.pdf",plot=fig10b)
+
+prop.test(highuse_toploc$count,highuse_toploc$num_pat)
+
+
+#total number of patients per Final_Report is in nPath
+#Final_Reports of high utilizers
+hu_isolate <- numFollowUpCultures %>%
+  filter(numFollowUpCultures$Study_ID %in% highuse$Study_ID) %>%
+  group_by(Final_Report) %>%
+  summarise(count=n())
+
+
+#calculate proportion of high utilizers/total for each location
+hu_isolate <- inner_join(hu_isolate,nPath) 
+hu_isolate %<>%
+  mutate(prop_highuse = count/num)
+
+hu_topisolate <- hu_isolate %>%
+  filter(hu_isolate$Final_Report %in% nPath_top$Final_Report)
+
+fig11a <- ggplot(hu_isolate,aes(reorder(Final_Report,-prop_highuse),
+                       prop_highuse)) +
+  geom_bar(stat="identity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(colour="black",
+                                   angle=90,hjust=1)) +
+  labs(x="Isolate", 
+       y="Propotion of high utilizers") 
+ggsave(file="Figures/fig11a.pdf",plot=fig11a)
+
+#only include top isolates
+fig11b <- ggplot(hu_topisolate,aes(reorder(Final_Report,-prop_highuse),
+                       prop_highuse)) +
+  geom_bar(stat="identity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(colour="black",
+                                   angle=90,hjust=1)) +
+  labs(x="Isolate", 
+       y="Propotion of high utilizers") 
+ggsave(file="Figures/fig11b.pdf",plot=fig11b)
+
+prop.test(hu_topisolate$count,hu_topisolate$num)
 
 ```
+
+```{r Statistical test high utilizers with location}
+summary(glm(prop_highuse ~ Location,data=highuse_loc))
+```
+
 
 ```{r Deleted code}
 
@@ -1295,6 +1382,19 @@ ggplot(df,aes(Julian,Study_ID)) +
        y="Study_ID",
        title="Sets of bc taken within 30-day period for high utilizers") +
   scale_x_continuous(breaks=c(0,50,100,150,200,250,300,350,400))
+
+a <- bc_30d_ID20_highuse %>%
+  group_by(Study_ID,group_30) %>%
+  summarise(a=n())
+nrow(a) #120
+
+b <- bc_30d_ID20 %>%
+  group_by(Study_ID,group_30) %>%
+  summarise(a=n())
+
+nrow(b) #120 rows. 7 had multiple entries for group_30 (mostly 2, 1 had 3)
+
+c <- anti_join(b,a,by=c("Study_ID","group_30"))
 
 ```
 
