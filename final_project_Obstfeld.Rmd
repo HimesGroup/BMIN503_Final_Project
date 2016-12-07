@@ -582,6 +582,18 @@ ggplot()+
 
 Like the results of the linear regression models for the prothrombin time, the results for the partial thromboplastin time confirm many common assumptions about the relationships between these factors and provide some surprising results. By far the best predictors are factors VIII and XI, particularly the log transformed values. THese are both coagulation factors in the intrinsic pathway that are known to have a strong impact partial thromboplastin times. Amongst the factors that were not found to be associated with PTT were the common pathway factors, despite the fact that the common pathway is required for coagulation testing using the PTT. This result is most likely due to a combination of a relatively weak impact of these factors on PTT clotting times as well as the limitations in the number of datapoints in the dataset.    
 
+
+#Imputation of Penn data
+```{r}
+
+
+penndf$facna<-rowSums(apply(is.na(penndf[,c(4,7,9)]), 2, as.numeric))
+penndf.ii<-penndf%>%filter(facna<3)%>%filter(!is.na(PTT))%>%data.frame
+penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(penndf.ii)]))
+
+```
+
+#Models for Penn PTT
 ```{r}
 library(modelr)
 library(purrr)
@@ -590,9 +602,7 @@ library(tidyr)
 library('randomForest')
 library('caret')
 
-
-ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI)|is.na(FactorIX)),]
-
+ptt.df<-penndf.ii
   
   #K-Fold Cross Validation
   N = nrow(ptt.df)
@@ -602,6 +612,7 @@ ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI)|is.na(FactorIX)),]
   pred_outputs.lm <- vector(mode="numeric", length=N)
   pred_outputs.rf <- vector(mode="numeric", length=N)
   obs_outputs <- vector(mode="numeric", length=N)
+  accession<-vector(mode="numeric", length=N)
   offset <- 0
   
   for(i in 1:K){
@@ -609,21 +620,25 @@ ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI)|is.na(FactorIX)),]
       train <- ptt.df%>%filter(s != i)
       test <-  ptt.df%>%filter(s == i)
       obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
+      accession[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$accession
       
       #LM train/test
-      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX), data=train)
+      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
+               , data=train)
       lm.pred.curr <- predict(lm, test)
       pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
   
       #RF train/test
-      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX),ntree=100, data=train,na.action = na.omit)
+      rf <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
+                         +(FactorX)+FactorII+FactorV+FactorXII
+                         , ntree=100, data=train , na.action = na.omit)
       rf.pred.curr <- predict(rf, newdata=test) 
       pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
   
       offset <- offset + length(ptt.df$s[ptt.df$s==i])
   }
   
-  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+  predictions.ptt<-data.frame(accession,obs_outputs,pred_outputs.lm,pred_outputs.rf)
   predictions.ptt<-predictions.ptt%>%
     mutate(residual.lm = pred_outputs.lm - obs_outputs,
     residual.rf = pred_outputs.rf - obs_outputs,
@@ -657,15 +672,21 @@ ggplot(data=predictions.ptt,aes(obs_outputs)) +
   labs(title = "Regression Models for PTT",
        subtitle= paste("The R-squared for the LM is",round(rs.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.ptt$r.squared.rf,2)),
        x="Observed PTT (s)",
-       y="Residuals")+
-  xlim(20,100)
+       y="Residuals")
 
 
 
 
 ```
 
+```{r}
 
+
+penndf$facna<-rowSums(apply(is.na(penndf[,c(3,5,6,8)]), 2, as.numeric))
+penndf.ii<-penndf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(penndf.ii)]))
+
+```
 
 ```{r}
 library(modelr)
@@ -676,9 +697,7 @@ library('randomForest')
 library('caret')
 library(e1071)
 
-
-pt.df<-penndf[!with(penndf,is.na(FactorVII)|  is.na(Fibrinogen)| is.na(FactorX)| is.na(FactorV)| is.na(FactorII)),]
-                
+pt.df<-penndf.ii           
 
 #K-Fold Cross Validation
 N = nrow(pt.df)
@@ -697,12 +716,12 @@ for(i in 1:K){
     obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
     
     #LM train/test
-    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV)+log(Fibrinogen), data=train)
+    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
     lm.pred.curr <- predict(lm, test)
     pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
 
     #RF train/test
-    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,na.action = na.omit, data=train, ntree=100)
+    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
     rf.pred.curr <- predict(rf, newdata=test) 
     pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
 
@@ -741,8 +760,10 @@ rs.pt <- predictions.pt %>%na.omit()%>%
     r.squared.lm = 1 -( sse.lm / sst),
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
+rs.pt
+```  
 
-  
+```{r}
 ggplot(data=predictions.pt,aes(obs_outputs)) +
   geom_hline(yintercept = 0) +
   geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
@@ -770,7 +791,7 @@ ggplot(data=predictions.pt,aes(obs_outputs)) +
 ```
 
 
-
+#Bring in CHOP data
 ```{r}
 
 # library(readr)
@@ -868,7 +889,7 @@ chop.fc%>%group_by(empi,colday,task_name)%>%summarise(n=n())%>%filter(n>1)
 ```{r}
 #Now spread for further analysis
 table(chop.fc$task_name)
-chopdf<-chop.fc%>%spread(task_name,result)
+chopdf<-chop.fc%>%spread(task_name,result)%>%ungroup
 
 
 str(chopdf)
@@ -1027,6 +1048,220 @@ grid.arrange(dotptt$FactorII,
 chopptt.df<-chopdfxx[!with(chopdfxx,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)| is.na(PTT)),]
 ```
 
+#Get Univariate correlations for CHOP data PTT
+```{r}
+
+attach(chopdf)
+chopdf.lm<-chopdf%>%ungroup%>%select(3:13)
+#perofrm lm and store as list
+ptt.chop.lm<-lapply( chopdf.lm[,-2], function(x) summary(lm(chopdf.lm$PTT ~ x)) )
+#Extract relavent parameters and store as dataframe lmresults.ptt
+variable<-names(ptt.chop.lm)
+cols<-as.list(c(1:11))
+beta.f<-function(x){
+  ptt.chop.lm[x][[1]][[4]][2,1]
+}
+pvalue.f<-function(x){
+  ptt.chop.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  ptt.chop.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmres.chop.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
+lmres.chop.ptt[2:4]<-sapply(lmres.chop.ptt[2:4],as.numeric)
+
+columns<-names(chopdf.lm)[1:11]
+#perofrm lm for ptt on log of dependent variable and store as list
+pttlg.chop.lm<-lapply( chopdf.lm[,-2], function(x) summary(lm(chopdf.lm$PTT ~ log(x))))
+#Extract relavent parameters and store as dataframe lmres.chop.ptt
+variable<-names(pttlg.chop.lm)
+cols<-as.list(c(1:10))
+beta.f<-function(x){
+  pttlg.chop.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  pttlg.chop.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  pttlg.chop.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmres.chop.lg.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
+lmres.chop.lg.ptt[2:4]<-sapply(lmres.chop.lg.ptt[2:4],as.numeric)
+lmres.chop.ptt<-bind_rows(lmres.chop.ptt,lmres.chop.lg.ptt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
+knitr::kable(arrange(lmres.chop.ptt,variable))
+```
+
+#Get Univariate correlations for CHOP data PT
+```{r}
+
+attach(chopdf.lm)
+#perofrm lm and store as list
+pt.chop.lm<-lapply( chopdf.lm[,-1], function(x) summary(lm(chopdf.lm$PT ~ x)) )
+#Extract relavent parameters and store as dataframe lmresults.pt
+variable<-names(pt.chop.lm)
+cols<-as.list(c(1:10))
+beta.f<-function(x){
+  pt.chop.lm[x][[1]][[4]][2,1]
+}
+pvalue.f<-function(x){
+  pt.chop.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  pt.chop.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmres.chop.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
+lmres.chop.pt[2:4]<-sapply(lmres.chop.pt[2:4],as.numeric)
+
+columns<-names(chopdf.lm)[1:11]
+#perofrm lm for pt on log of dependent variable and store as list
+ptlg.chop.lm<-lapply( chopdf.lm[,-1], function(x) summary(lm(chopdf.lm$PT ~ log(x))))
+#Extract relavent parameters and store as dataframe lmres.chop.pt
+variable<-names(ptlg.chop.lm)
+cols<-as.list(c(1:10))
+beta.f<-function(x){
+  ptlg.chop.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  ptlg.chop.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  ptlg.chop.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmres.chop.lg.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
+lmres.chop.lg.pt[2:4]<-sapply(lmres.chop.lg.pt[2:4],as.numeric)
+lmres.chop.pt<-bind_rows(lmres.chop.pt,lmres.chop.lg.pt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
+knitr::kable(arrange(lmres.chop.pt,variable))
+
+```
+
+#Impute CHop data for PT
+```{r}
+
+
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(3,5,6,8)]), 2, as.numeric))
+chopdf.ii<-chopdf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))
+
+```
+
+
+#Train and cross validate multivariate models for PT CHOP
+```{r}
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('caret')
+library(e1071)
+
+
+pt.df<-chopdf.ii
+
+#K-Fold Cross Validation
+N = nrow(pt.df)
+K = 5
+
+pt.df$s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+#pred_outputs.rsvm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+
+for(i in 1:K){
+    train <- filter(pt.df, s != i)
+    test <- filter(pt.df, s == i)
+    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
+    
+    #LM train/test
+    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
+    lm.pred.curr <- predict(lm, test)
+    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
+
+    #RF train/test
+    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test) 
+    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
+
+    #RF train/test
+    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
+    # rsvmbest <- rsvm$best.model
+    # rsvm.pred.curr <- predict(rsvmbest, test) 
+    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
+
+    
+    
+    # #Lasso train/test
+    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
+    # x=as.matrix(trainlas[,1:5])
+    # y=as.numeric(unlist(trainlas[,6]))
+    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
+    # x.test=as.matrix(test[,c(3,5,6,8,11)])
+    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
+    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
+
+    offset <- offset + length(pt.df$s[pt.df$s==i])
+} 
+
+predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+predictions.pt<-predictions.pt%>%
+  mutate(residual.lm = pred_outputs.lm - obs_outputs,
+  residual.rf = pred_outputs.rf - obs_outputs,
+  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+
+
+rs.pt <- predictions.pt %>%na.omit()%>%
+  summarise(
+    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+    sse.lm = sum(residual.lm^2),
+    r.squared.lm = 1 -( sse.lm / sst),
+    sse.rf = sum(residual.rf^2),
+    r.squared.rf = 1 - (sse.rf / sst))
+rs.pt
+
+```
+
+
+#Impute CHop data for PTT
+```{r}
+
+
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(4,7,9)]), 2, as.numeric))
+chopdf.ii<-chopdf%>%filter(facna<2)%>%filter(!is.na(PT))%>%data.frame
+chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))
+
+```
+
+
+#BuildPTT Models CHOP
 ```{r}
 library(modelr)
 library(purrr)
@@ -1036,57 +1271,300 @@ library('randomForest')
 library('caret')
 
 
-ptt.df<-penndf[!with(penndf,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)),]
-                  
+ptt.df<-chopdf.ii
+  
+  #K-Fold Cross Validation
+  N = nrow(ptt.df)
+  K = 2
+  
+  ptt.df$s = sample(1:K, size=N, replace=T)
+  pred_outputs.lm <- vector(mode="numeric", length=N)
+  pred_outputs.rf <- vector(mode="numeric", length=N)
+  obs_outputs <- vector(mode="numeric", length=N)
+  offset <- 0
+  
+  for(i in 1:K){
+     
+      train <- ptt.df%>%filter(s != i)
+      test <-  ptt.df%>%filter(s == i)
+      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
+      
+      #LM train/test
+      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorXII)+log(FactorIX), data=train)
+      lm.pred.curr <- predict(lm, test)
+      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
+  
+      #RF train/test
+      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)
+                         +FactorV+FactorII
+                         ,ntree=100, data=train,na.action = na.omit)
+      rf.pred.curr <- predict(rf, newdata=test) 
+      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
+  
+      offset <- offset + length(ptt.df$s[ptt.df$s==i])
+  }
+  
+  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+  predictions.ptt<-predictions.ptt%>%
+    mutate(residual.lm = pred_outputs.lm - obs_outputs,
+    residual.rf = pred_outputs.rf - obs_outputs,
+    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+  
+  rs.ptt <- predictions.ptt %>%na.omit()%>%
+    summarise(
+      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+   rs.ptt
+```   
 
-#Build final rf and lm for test
-lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
-        #RF train/test
-rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
+#Create one unified data
+```{r}
+penndf.u<-penndf%>%ungroup%>%select(-c(accession,allna,ReptilaseTest))%>%mutate(hos='HUP')
+chopdf.u<-chopdf%>%ungroup%>%select(-colday)%>%mutate(hos='CHOP')
 
- lm.pred.chop <- predict(lm, chopptt.df)
- rf.pred.chop <- predict(rf,newdata=chopptt.df)
+df.u<-union(penndf.u, chopdf.u)
+df.u$hos<-as.factor(df.u$hos)
+```
 
- 
-chop.pred.ptt<-data.frame(chopptt.df$PTT, lm.pred.chop,rf.pred.chop)
-chop.pred.ptt<-chop.pred.ptt%>%
-  mutate(residual.lm =  lm.pred.chop - chopptt.df.PTT,
-  residual.rf =  rf.pred.chop - chopptt.df.PTT,
+
+#Impute union data for PT
+```{r}
+df.u$facna<-rowSums(apply(is.na(df.u[,c(2,4,5,7)]), 2, as.numeric))
+df.u.ii<-df.u%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+df.u.ii[is.na(df.u.ii)]<-rnorm(mean = 90, sd=10, n=length(df.u.ii[is.na(df.u.ii)]))
+
+```
+
+
+#Train and cross validate multivariate models for PT Union
+```{r}
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('caret')
+library(e1071)
+
+
+pt.df<-df.u.ii
+
+#K-Fold Cross Validation
+N = nrow(pt.df)
+K = 5
+
+pt.df$s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+#pred_outputs.rsvm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+i=1
+for(i in 1:K){
+    train <- filter(pt.df, s != i)
+    test <- filter(pt.df, s == i)
+    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
+    
+    #LM train/test
+    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
+    lm.pred.curr <- predict(lm, test)
+    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
+
+    #RF train/test
+    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test) 
+    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
+
+    #RF train/test
+    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
+    # rsvmbest <- rsvm$best.model
+    # rsvm.pred.curr <- predict(rsvmbest, test) 
+    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
+
+    
+    
+    # #Lasso train/test
+    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
+    # x=as.matrix(trainlas[,1:5])
+    # y=as.numeric(unlist(trainlas[,6]))
+    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
+    # x.test=as.matrix(test[,c(3,5,6,8,11)])
+    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
+    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
+
+    offset <- offset + length(pt.df$s[pt.df$s==i])
+} 
+
+predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+predictions.pt<-predictions.pt%>%
+  mutate(residual.lm = pred_outputs.lm - obs_outputs,
+  residual.rf = pred_outputs.rf - obs_outputs,
   #residual.rsvm = pred_outputs.rsvm - obs_outputs,
   better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
 
 
-rs.chop.ptt <- chop.pred.ptt %>%na.omit()%>%
+rs.pt <- predictions.pt %>%na.omit()%>%
   summarise(
-    meanobs=mean(chopptt.df.PTT),
-    sst = sum((chopptt.df.PTT - meanobs) ^ 2),
+    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
     sse.lm = sum(residual.lm^2),
     r.squared.lm = 1 -( sse.lm / sst),
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
+rs.pt
 
+```
+
+
+#Impute Union data for PTT
+```{r}
+
+
+df.u$facna<-rowSums(apply(is.na(df.u[,c(3,6,8)]), 2, as.numeric))
+df.u.ii<-df.u%>%filter(facna<2)%>%filter(!is.na(PT))%>%data.frame
+df.u.ii[is.na(df.u.ii)]<-rnorm(mean = 90, sd=10, n=length(df.u.ii[is.na(df.u.ii)]))
+
+```
+
+
+#BuildPTT Models CHOP
+```{r}
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('caret')
+
+
+ptt.df<-df.u.ii
   
-ggplot(data=chop.pred.ptt,aes(chopptt.df.PTT,rf.pred.chop)) +geom_point()
-  geom_hline(yintercept = 0) +
-  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
-  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
-  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
-  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
-  #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
-  theme_minimal(base_size = 20)+
-  theme(legend.position = c(0.75, .85))+
-  labs(title = "Regression Models for PT",
-       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
-       x="Observed PT (s)",
-       y="Residuals")+
-  scale_colour_manual(values = c("blue","red"),
-                      guide = guide_legend(title = "Regression Models",
-                                           keywidth = 3, 
-                                           keyheight = 1,
-                                           label.position = "left"))
- 
+  #K-Fold Cross Validation
+  N = nrow(ptt.df)
+  K = 4
+  
+  ptt.df$s = sample(1:K, size=N, replace=T)
+  pred_outputs.lm <- vector(mode="numeric", length=N)
+  pred_outputs.rf <- vector(mode="numeric", length=N)
+  obs_outputs <- vector(mode="numeric", length=N)
+  offset <- 0
+  
+  for(i in 1:K){
+     
+      train <- ptt.df%>%filter(s != i)
+      test <-  ptt.df%>%filter(s == i)
+      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
+      
+      #LM train/test
+      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorXII)+log(FactorIX)
+               +log(FactorV)+log(FactorII)+log(FactorX)
+               , data=train)
+      lm.pred.curr <- predict(lm, test)
+      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
+  
+      #RF train/test
+      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)
+                         +FactorV+FactorII+FactorX
+                         ,ntree=100, data=train,na.action = na.omit)
+      rf.pred.curr <- predict(rf, newdata=test) 
+      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
+  
+      offset <- offset + length(ptt.df$s[ptt.df$s==i])
+  }
+  
+  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
+  predictions.ptt<-predictions.ptt%>%
+    mutate(residual.lm = pred_outputs.lm - obs_outputs,
+    residual.rf = pred_outputs.rf - obs_outputs,
+    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+  
+  rs.ptt <- predictions.ptt %>%na.omit()%>%
+    summarise(
+      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+   rs.ptt
+```
+
+
+
+
+
+
+#Build model off Penn data and test against chop data
+```{r}
+ptt.df<-penndf.ii
+      lm.ptt <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
+               , data=ptt.df)
+      rf <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
+                         +(FactorX)+FactorII+FactorV+FactorXII
+                         , ntree=1000, data=ptt.df , na.action = na.omit)
+
+   lm.pt <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
+    rf.pt <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=pt.df, ntree=100)
+```
+
+
+#Predict PTT for CHOP data on cliassifer trained on  HUP data
+```{r}
+
+            
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(4,7,9)]), 2, as.numeric))
+chopdf.ii<-chopdf%>%filter(facna<3)%>%filter(!is.na(PTT))%>%data.frame
+chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))            
+
+ptt.lm.pred<-predict(lm.ptt,chopdf.ii)
+ptt.rf.pred<-predict(rf,chopdf.ii)
+
+
+chop.pred.ptt<-data.frame(chopdf.ii$PTT, ptt.lm.pred,ptt.rf.pred)
+chop.pred.ptt<-chop.pred.ptt%>%
+  mutate(residual.lm =  ptt.lm.pred - chopdf.ii.PTT,
+  residual.rf =  ptt.rf.pred - chopdf.ii.PTT,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+
+
+rs.chop.ptt <- chop.pred.ptt %>%
+  summarise(
+ sst = sum((chopdf.ii.PTT - mean(chopdf.ii.PTT)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+            
+```
+
+#Predict PT for CHOP data on cliassifer trained on  HUP data
+```{r}
+
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(3,5,6,8)]), 2, as.numeric))
+chopdf.ii<-chopdf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))
+
+pt.lm.pred<-predict(lm.pt,chopdf.ii)
+pt.rf.pred<-predict(rf.pt,chopdf.ii)
+
+
+
+chop.pred.pt<-data.frame(chopdf.ii$PT, pt.lm.pred,pt.rf.pred)
+chop.pred.pt<-chop.pred.pt%>%
+  mutate(residual.lm =  pt.lm.pred - chopdf.ii.PT,
+  residual.rf =  pt.rf.pred - chopdf.ii.PT,
+  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+
+
+rs.chop.pt <- chop.pred.pt %>%
+  summarise(
+ sst = sum((chopdf.ii.PT - mean(chopdf.ii.PT)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+
 
 ```
 
@@ -1106,7 +1584,7 @@ combine.pt <- pool(fit.imp.pt)
 summary(combine.pt)
 
 
-penndf.ptt<-penndf%>%select(4,8,10,14)
+chopdf.ptt<-penndf%>%select(4,8,10,14)
 imp.ptt <- mice(penndf.ptt, m=5, maxit = 50, method = 'pmm', seed = 500)
 fit.imp.ptt <- with(data = imp.ptt, exp = lm(PTT ~ log(FactorIX)+log(FactorVIII)+log(FactorXI))) 
 
