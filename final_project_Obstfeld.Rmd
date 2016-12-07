@@ -591,12 +591,12 @@ library('randomForest')
 library('caret')
 
 
-ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI) |is.na(FactorV)| is.na(FactorII)),]
+ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI)|is.na(FactorIX)),]
 
   
   #K-Fold Cross Validation
   N = nrow(ptt.df)
-  K = 5
+  K = 4
   
   ptt.df$s = sample(1:K, size=N, replace=T)
   pred_outputs.lm <- vector(mode="numeric", length=N)
@@ -611,12 +611,12 @@ ptt.df<-penndf[!with(penndf,is.na(FactorVIII)|is.na(FactorXI) |is.na(FactorV)| i
       obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
       
       #LM train/test
-      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorV)+log(FactorII), data=train)
+      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX), data=train)
       lm.pred.curr <- predict(lm, test)
       pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
   
       #RF train/test
-      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorV)+(FactorII),ntree=100, data=train,na.action = na.omit)
+      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX),ntree=100, data=train,na.action = na.omit)
       rf.pred.curr <- predict(rf, newdata=test) 
       pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
   
@@ -773,29 +773,34 @@ ggplot(data=predictions.pt,aes(obs_outputs)) +
 
 ```{r}
 
-library(readr)
-chop <- read_csv("~/Rprojects/EPID600_Final_Project/factorsxlsx.csv", 
-   col_types = cols(`Patient Date of Birth` = col_character()))
-names(chop)<-c('empi','task_name','result','dob','ordcre','ordpl','col')
-chop$ordcre<-as.POSIXct(chop$ordcre,format = "%m/%d/%y %H:%M")
-chop$ordpl<-as.POSIXct(chop$ordpl,format = "%m/%d/%y %H:%M")
-chop$col<-as.POSIXct(chop$col,format = "%m/%d/%y %H:%M")
+# library(readr)
+# chop <- read_csv("~/Rprojects/EPID600_Final_Project/factorsxlsx.csv", 
+#    col_types = cols(`Patient Date of Birth` = col_character()))
+# names(chop)<-c('empi','task_name','result','dob','ordcre','ordpl','col')
+# chop$ordcre<-as.POSIXct(chop$ordcre,format = "%m/%d/%y %H:%M")
+# chop$ordpl<-as.POSIXct(chop$ordpl,format = "%m/%d/%y %H:%M")
+# chop$col<
+chop<-file.choose()
+load(chop)
+chop<-cdwdata
+names(chop)[7]<-'task_name'
+names(chop)[1]<-'empi'
+names(chop)[2]<-'col'
+names(chop)[15]<-'result'
 
 table(chop$task_name)
-#filter out extraneous testing pulled out of warehouse
-chop<-chop%>%filter(!task_name %in% c('INHIBITOR SCREEN', 'Procedure Name','FACTOR XIII'))
 
+chop[grep("FACTOR XII ASSAY", chop$task_name), 'task_name']<-'FactorXII'
+chop[grep("FACTOR VIII", chop$task_name), 'task_name']<-'FactorVIII'
+chop[grep("FACTOR VII", chop$task_name), 'task_name']<-'FactorVII'
 chop[grep("FACTOR II", chop$task_name), 'task_name']<-'FactorII'
 chop[grep("FACTOR V", chop$task_name), 'task_name']<-'FactorV'
-chop[grep("FACTOR VII", chop$task_name), 'task_name']<-'FactorVII'
-chop[grep("FACTOR VIII", chop$task_name), 'task_name']<-'FactorVIII'
 chop[grep("FACTOR IX", chop$task_name), 'task_name']<-'FactorIX'
-chop[grep("FACTOR X", chop$task_name), 'task_name']<-'FactorX'
 chop[grep("FACTOR XI", chop$task_name), 'task_name']<-'FactorXI'
-chop[grep("FACTOR XII ASSAY", chop$task_name), 'task_name']<-'FactorXII'
-chop[grep("PT/INR", chop$task_name), 'task_name']<-'PT'
+chop[grep("FACTOR X", chop$task_name), 'task_name']<-'FactorX'
+
+chop[grep("PROTHROMBIN TIME", chop$task_name), 'task_name']<-'PT'
 chop[grep("PARTIAL THROMBOPLASTIN TIME", chop$task_name), 'task_name']<-'PTT'
-chop[grep("PTT PROFILE", chop$task_name), 'task_name']<-'PTT'
 chop[grep("FIBRINOGEN", chop$task_name), 'task_name']<-'Fibrinogen'
 
 
@@ -803,7 +808,7 @@ chop[grep("FIBRINOGEN", chop$task_name), 'task_name']<-'Fibrinogen'
 
 ```{r}
 #Index by na's introduced by as.numeric coercion
-chop%>%select(2,3)%>%filter(is.na(as.numeric(result)))%>%table
+chop%>%select(task_name,result)%>%filter(is.na(as.numeric(result)))%>%table
 ```
 All textbased comments in the result field indicate fundamental issues with the result and should be filtered out. Many of the remainder are due to a measurement being out of range high or low. most of these can be kept and replaced with the numeric value indicated in the field for the purposes of this analysis
 ```{r}
@@ -826,17 +831,200 @@ chop%>%filter(is.na(result))%>%count%>%as.numeric
 ```
 
 ```{r}
+#Filter out to tests for patients that have had factor testing done.
+empi<-chop%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))%>%select(empi)
+chop.fc<-semi_join(chop,empi,by='empi')
+
+
+```
+
+```{r}
 library(tidyr)
 library(lubridate)
-#Before spreading data need to ensure that all entries are unique
-dblresults<-chop%>%group_by(empi,col,task_name)%>%summarise(n=n())%>%ungroup()%>%filter(n>1)
-chop<-anti_join(chop,dblresults,by='col')
-chopdf<-chop%>%mutate(coldt=as.Date(col))%>%select(c(1,2,3,8))
-dblresults<-chopdf%>%group_by(empi,coldt,task_name)%>%summarise(n=n())%>%ungroup()%>%filter(n>1)
-chopdf<-anti_join(chopdf,dblresults,by=c('coldt' = 'coldt', 'empi' = 'empi'))
-chopdfxx<-chopdf%>%spread(task_name,result)
+#Remove results thatfrom the same collection data/time that are discordant,ones that areconcortant, average together
+dblresults<-chop.fc%>%group_by(empi,col,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
+remresults<-dblresults%>%filter(cv>0.1)
+chop.fc<-anti_join(chop.fc,remresults,by=c('col' = 'col', 'empi' = 'empi'))
+chop.fc<-chop.fc%>%ungroup%>%group_by(empi,col,task_name)%>%summarise(result=mean(result))
+```
 
-chopptt.df<-chopdfxx[!with(chopdfxx,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)),]
+```{r}
+#filter to just empi and col days that have a factor. first need day which factor is drawn
+fac.day<-chop.fc%>%mutate(colday=as.Date(substr(col,1,10),format='%Y-%m-%d'))%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))
+chop.fc<-chop.fc%>%mutate(colday=as.Date(substr(col,1,10),format='%Y-%m-%d'))
+chop.fc<-semi_join(chop.fc,fac.day,by=c('colday' = 'colday', 'empi' = 'empi'))
+#Now filter to empi and collection days that have a screening test as well.
+sc.day<-chop.fc%>%ungroup%>%filter(task_name %in% c('PTT','PT'))
+chop.fc<-semi_join(chop.fc,sc.day,by=c('colday' = 'colday', 'empi' = 'empi'))
+
+#chop.fc contains just screening tests that were drawn on the same day as a factor test, down to 60k tests. Now need to look at dup test by date to facilitate the spread. Will remove any days worth of data if there were greater than 2 test results on that day or if the cv for the day was greater than 10%
+dblresults<-chop.fc%>%group_by(empi,colday,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
+remresults<-dblresults%>%filter(cv>0.1 | n>2)
+chop.fc<-anti_join(chop.fc,remresults,by=c('colday' = 'colday', 'empi' = 'empi',"task_name" = "task_name"))
+chop.fc<-chop.fc%>%ungroup%>%group_by(empi,colday,task_name)%>%summarise(result=mean(result))
+chop.fc%>%group_by(empi,colday,task_name)%>%summarise(n=n())%>%filter(n>1)
+```
+
+```{r}
+#Now spread for further analysis
+table(chop.fc$task_name)
+chopdf<-chop.fc%>%spread(task_name,result)
+
+
+str(chopdf)
+summary(chopdf)
+
+
+```
+
+
+```{r}
+library(gridExtra)
+myhists <- list()  # new empty list
+for (i in 1:length(colnames(chopdf))) {
+    p1 <- eval(substitute(
+        ggplot(data=data.frame(chopdf),aes(x=chopdf[,i]))+ 
+          geom_histogram(fill="grey") +
+          #geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[2]))+
+          #geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[3]))+
+          xlab(paste0(names(chopdf)[i]))+
+          theme_bw()
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    myhists[[i]] <- p1  # add each plot into plot list
+    names(myhists)[[i]]<-names(penndf)[i]
+}
+
+
+grid.arrange(myhists[[3]], 
+             myhists[[4]],
+             myhists[[5]],
+             myhists[[6]],
+             myhists[[7]],
+             myhists[[8]],
+             myhists[[9]],
+             myhists[[10]],
+             myhists[[11]],
+             myhists[[12]],
+             myhists[[13]],
+             nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
+
+
+```
+The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. 
+
+```{r}
+library(gtools)
+
+makebx.pt<-function(x,y){
+    df<-na.omit(chopdf[,c(x,y)])
+    df[,x]<-quantcut(as.matrix(df[,x]))
+    df<-as.data.frame(df)
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_boxplot() +
+          xlab(names(df)[1])
+    #print(p1)
+    #bxpt[[x]] <- p1# add each plot into plot list
+    #x<-x+1
+    #gg
+}
+tests<-as.list(names(chopdf)[c(3:11)])
+bxpt<-lapply(tests,y='PT',makebx.pt)
+names(bxpt)<-tests
+
+
+grid.arrange(bxpt$FactorII, 
+             bxpt$FactorV,
+             bxpt$FactorX,
+             bxpt$FactorVII,
+             bxpt$FactorVIII,
+             bxpt$FactorIX,
+             bxpt$FactorXI,
+             bxpt$FactorXII,
+             bxpt$Fibrinogen,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and Prothrombin Time",  bottom="Figure 2")
+```
+
+```{r}
+
+bxptt<-lapply(tests,y='PTT',makebx.pt)
+names(bxptt)<-tests
+
+
+grid.arrange(bxptt$FactorII, 
+             bxptt$FactorV,
+             bxptt$FactorX,
+             bxptt$FactorVII,
+             bxptt$FactorVIII,
+             bxptt$FactorIX,
+             bxptt$FactorXI,
+             bxptt$FactorXII,
+             bxptt$Fibrinogen,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
+
+
+
+
+```
+
+
+
+To further explore the relationships amongst these measures, bivariate plots were created.
+```{r}
+
+makedot.pt<-function(x,y){
+    df<-na.omit(penndf[,c(x,y)])
+    df<-as.data.frame(df)
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_point(alpha=0.5) +
+          theme_bw()+
+          xlab(names(df)[1])+
+          scale_y_log10()+
+          scale_x_log10()
+    #print(p1)
+    #bxpt[[x]] <- p1# add each plot into plot list
+    #x<-x+1
+    #gg
+    }
+dotpt<-lapply(tests,y='PT',makedot.pt)
+names(dotpt)<-tests
+
+
+grid.arrange(dotpt$FactorII, 
+             dotpt$FactorV,
+             dotpt$FactorX,
+             dotpt$FactorVII,
+             dotpt$FactorVIII,
+             dotpt$FactorIX,
+             dotpt$FactorXI,
+             dotpt$FactorXII,
+             dotpt$Fibrinogen,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")#In the future suggest adding normal range vertical bars
+```
+
+```{r}
+
+dotptt<-lapply(tests,y='PTT',makedot.pt)
+names(dotptt)<-tests
+
+
+grid.arrange(dotptt$FactorII, 
+             dotptt$FactorV,
+             dotptt$FactorX,
+             dotptt$FactorVII,
+             dotptt$FactorVIII,
+             dotptt$FactorIX,
+             dotptt$FactorXI,
+             dotptt$FactorXII,
+             dotptt$Fibrinogen,
+             nrow=3, ncol=4,top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
+
+
+
+
+
+chopptt.df<-chopdfxx[!with(chopdfxx,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)| is.na(PTT)),]
 ```
 
 ```{r}
@@ -851,55 +1039,54 @@ library('caret')
 ptt.df<-penndf[!with(penndf,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)),]
                   
 
-#K-Fold Cross Validation
-N = nrow(ptt.df)
-K = 5
+#Build final rf and lm for test
+lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
+        #RF train/test
+rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
 
-ptt.df$s = sample(1:K, size=N, replace=T)
-pred_outputs.lm <- vector(mode="numeric", length=N)
-pred_outputs.rf <- vector(mode="numeric", length=N)
-obs_outputs <- vector(mode="numeric", length=N)
-offset <- 0
+ lm.pred.chop <- predict(lm, chopptt.df)
+ rf.pred.chop <- predict(rf,newdata=chopptt.df)
 
-for(i in 1:K){
-    train <- ptt.df%>%filter(s != i)
-    test <-  ptt.df%>%filter(s == i)
-    obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
-    
-    #LM train/test
-    lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
-    lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
-
-    #RF train/test
-    rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
-    rf.pred.curr <- predict(rf, newdata=test) 
-    pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    offset <- offset + length(ptt.df$s[ptt.df$s==i])
-}
-
-predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions.ptt<-predictions.ptt%>%
-  mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs,
+ 
+chop.pred.ptt<-data.frame(chopptt.df$PTT, lm.pred.chop,rf.pred.chop)
+chop.pred.ptt<-chop.pred.ptt%>%
+  mutate(residual.lm =  lm.pred.chop - chopptt.df.PTT,
+  residual.rf =  rf.pred.chop - chopptt.df.PTT,
+  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
   better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
 
-rs.ptt <- predictions.ptt %>%na.omit()%>%
+
+rs.chop.ptt <- chop.pred.ptt %>%na.omit()%>%
   summarise(
-    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+    meanobs=mean(chopptt.df.PTT),
+    sst = sum((chopptt.df.PTT - meanobs) ^ 2),
     sse.lm = sum(residual.lm^2),
     r.squared.lm = 1 -( sse.lm / sst),
     sse.rf = sum(residual.rf^2),
     r.squared.rf = 1 - (sse.rf / sst))
 
-#Build final rf and lm for test
-lm <- lm(PTT ~ log(FactorVIII)+log(FactorIX)+log(FactorXI), data=ptt.df)
-    lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
-
-    #RF train/test
-    rf <- randomForest(PTT ~(FactorVIII)+(FactorIX)+(FactorXI), data=ptt.df, ntree=100,na.action = na.omit)
+  
+ggplot(data=chop.pred.ptt,aes(chopptt.df.PTT,rf.pred.chop)) +geom_point()
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
+  theme_minimal(base_size = 20)+
+  theme(legend.position = c(0.75, .85))+
+  labs(title = "Regression Models for PT",
+       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
+       x="Observed PT (s)",
+       y="Residuals")+
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                           keyheight = 1,
+                                           label.position = "left"))
+ 
 
 ```
 
