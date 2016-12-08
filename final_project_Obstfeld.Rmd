@@ -583,6 +583,97 @@ ggplot()+
 Like the results of the linear regression models for the prothrombin time, the results for the partial thromboplastin time confirm many common assumptions about the relationships between these factors and provide some surprising results. By far the best predictors are factors VIII and XI, particularly the log transformed values. THese are both coagulation factors in the intrinsic pathway that are known to have a strong impact partial thromboplastin times. Amongst the factors that were not found to be associated with PTT were the common pathway factors, despite the fact that the common pathway is required for coagulation testing using the PTT. This result is most likely due to a combination of a relatively weak impact of these factors on PTT clotting times as well as the limitations in the number of datapoints in the dataset.    
 
 
+#Modeling
+
+```{r}
+
+library(modelr)
+library(purrr)
+library(broom)
+library(tidyr)
+library('randomForest')
+library('dplyr')
+#df=chopdf.i,k=5,pptt = 'PT'))i=1
+modeling<-function(df,k,pptt){
+
+#K-Fold Cross Validation
+N = nrow(df)
+K = k
+ptptt.df<-df
+ptptt.df$s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+identifier<-vector(mode="numeric", length=N)
+offset <- 0
+
+for(i in 1:K){
+  
+  train <- ptptt.df%>%filter(s != i)
+  test <-  ptptt.df%>%filter(s == i)
+
+if("accession" %in% colnames(test)){
+  identifier[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- test$accession
+}else{
+  identifier[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- test$empi
+}
+  
+  if(pptt=='PTT'){
+    obs_outputs[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- test$PTT
+  #LM train/test
+  lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
+           , data=train)
+  lm.pred.curr <- predict(lm, test)
+  pred_outputs.lm[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- lm.pred.curr
+
+    
+  #RF train/test
+  rf <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
+                     +(FactorX)+FactorII+FactorV+FactorXII
+                     , ntree=100, data=train , na.action = na.omit)
+  rf.pred.curr <- predict(rf, newdata=test) 
+  pred_outputs.rf[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- (rf.pred.curr)
+  }
+  if(pptt=='PT'){
+    obs_outputs[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- test$PT
+    #LM train/test
+    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
+    lm.pred.curr <- predict(lm, test)
+    pred_outputs.lm[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- lm.pred.curr
+
+    #RF train/test
+    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test) 
+    pred_outputs.rf[1:length(ptptt.df$s[ptptt.df$s==i]) + offset] <- (rf.pred.curr)
+    
+    }
+  offset <- offset + length(ptptt.df$s[ptptt.df$s==i])
+}
+predict<-data.frame(identifier,obs_outputs,pred_outputs.lm,pred_outputs.rf)
+
+predict%>%
+    mutate(residual.lm = pred_outputs.lm - obs_outputs,
+    residual.rf = pred_outputs.rf - obs_outputs,
+    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))
+
+}
+
+
+
+resids<-function(df){  
+df %>%na.omit()%>%
+    summarise(
+      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
+      sse.lm = sum(residual.lm^2),
+      r.squared.lm = 1 -( sse.lm / sst),
+      sse.rf = sum(residual.rf^2),
+      r.squared.rf = 1 - (sse.rf / sst))
+}
+
+
+
+```
+
 #Imputation of Penn data
 ```{r}
 
@@ -593,67 +684,16 @@ penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(pe
 
 ```
 
+
 #Models for Penn PTT
 ```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
 
-ptt.df<-penndf.ii
+
+predictions.p.ptt<-modeling(df=penndf.ii,k=5,pptt='PTT')
+
+rs.p.ptt<-resids(predictions.p.ptt)
   
-  #K-Fold Cross Validation
-  N = nrow(ptt.df)
-  K = 4
-  
-  ptt.df$s = sample(1:K, size=N, replace=T)
-  pred_outputs.lm <- vector(mode="numeric", length=N)
-  pred_outputs.rf <- vector(mode="numeric", length=N)
-  obs_outputs <- vector(mode="numeric", length=N)
-  accession<-vector(mode="numeric", length=N)
-  offset <- 0
-  
-  for(i in 1:K){
-     
-      train <- ptt.df%>%filter(s != i)
-      test <-  ptt.df%>%filter(s == i)
-      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
-      accession[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$accession
-      
-      #LM train/test
-      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
-               , data=train)
-      lm.pred.curr <- predict(lm, test)
-      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
-  
-      #RF train/test
-      rf <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
-                         +(FactorX)+FactorII+FactorV+FactorXII
-                         , ntree=100, data=train , na.action = na.omit)
-      rf.pred.curr <- predict(rf, newdata=test) 
-      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
-  
-      offset <- offset + length(ptt.df$s[ptt.df$s==i])
-  }
-  
-  predictions.ptt<-data.frame(accession,obs_outputs,pred_outputs.lm,pred_outputs.rf)
-  predictions.ptt<-predictions.ptt%>%
-    mutate(residual.lm = pred_outputs.lm - obs_outputs,
-    residual.rf = pred_outputs.rf - obs_outputs,
-    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-  
-  rs.ptt <- predictions.ptt %>%na.omit()%>%
-    summarise(
-      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-      sse.lm = sum(residual.lm^2),
-      r.squared.lm = 1 -( sse.lm / sst),
-      sse.rf = sum(residual.rf^2),
-      r.squared.rf = 1 - (sse.rf / sst))
-   rs.ptt
-  
-ggplot(data=predictions.ptt,aes(obs_outputs)) +
+ggplot(data=predictions.p.ptt,aes(obs_outputs)) +
   geom_hline(yintercept = 0) +
   geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
   stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
@@ -670,7 +710,7 @@ ggplot(data=predictions.ptt,aes(obs_outputs)) +
   theme_minimal(base_size = 20)+
   #theme(legend.position = c(0.75, .85))+
   labs(title = "Regression Models for PTT",
-       subtitle= paste("The R-squared for the LM is",round(rs.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.ptt$r.squared.rf,2)),
+       subtitle= paste("The R-squared for the LM is",round(rs.p.ptt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.p.ptt$r.squared.rf,2)),
        x="Observed PTT (s)",
        y="Residuals")
 
@@ -683,21 +723,17 @@ ggplot(data=predictions.ptt,aes(obs_outputs)) +
 
 
 penndf$facna<-rowSums(apply(is.na(penndf[,c(3,5,6,8)]), 2, as.numeric))
-penndf.ii<-penndf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
-penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(penndf.ii)]))
+penndf.i<-penndf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+penndf.i[is.na(penndf.i)]<-rnorm(mean = 90, sd=10, n=length(penndf.i[is.na(penndf.i)]))
 
 ```
 
 ```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
-library(e1071)
 
-pt.df<-penndf.ii           
+pt.df<-penndf.i           
+
+predictions.p.pt<- modeling(df=penndf.i,k=5,pptt = 'PT')
+rs.p.pt<-resids(predictions.p.pt)
 
 #K-Fold Cross Validation
 N = nrow(pt.df)
@@ -724,23 +760,6 @@ for(i in 1:K){
     rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
     rf.pred.curr <- predict(rf, newdata=test) 
     pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    #RF train/test
-    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
-    # rsvmbest <- rsvm$best.model
-    # rsvm.pred.curr <- predict(rsvmbest, test) 
-    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
-
-    
-    
-    # #Lasso train/test
-    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
-    # x=as.matrix(trainlas[,1:5])
-    # y=as.numeric(unlist(trainlas[,6]))
-    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
-    # x.test=as.matrix(test[,c(3,5,6,8,11)])
-    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
-    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
 
     offset <- offset + length(pt.df$s[pt.df$s==i])
 } 
@@ -1165,8 +1184,8 @@ knitr::kable(arrange(lmres.chop.pt,variable))
 
 
 chopdf$facna<-rowSums(apply(is.na(chopdf[,c(3,5,6,8)]), 2, as.numeric))
-chopdf.ii<-chopdf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
-chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))
+chopdf.i<-chopdf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
+chopdf.i[is.na(chopdf.i)]<-rnorm(mean = 90, sd=10, n=length(chopdf.i[is.na(chopdf.i)]))
 
 ```
 
@@ -1181,6 +1200,8 @@ library('randomForest')
 library('caret')
 library(e1071)
 
+predictions.c.pt<-modeling(chopdf.i,k=5,pptt='PT')
+resids(predictions.c.pt)
 
 pt.df<-chopdf.ii
 
@@ -1271,6 +1292,10 @@ library('randomForest')
 library('caret')
 
 
+predictions.c.ptt<-modeling(chopdf.ii,k=5,pptt='PTT')
+resids(predictions.c.ptt)
+
+
 ptt.df<-chopdf.ii
   
   #K-Fold Cross Validation
@@ -1295,9 +1320,9 @@ ptt.df<-chopdf.ii
       pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
   
       #RF train/test
-      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)
-                         +FactorV+FactorII
-                         ,ntree=100, data=train,na.action = na.omit)
+      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)+FactorV+FactorII,ntree=100, data=train,na.action = na.omit)
+                         
+                         
       rf.pred.curr <- predict(rf, newdata=test) 
       pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
   
@@ -1429,7 +1454,7 @@ df.u.ii[is.na(df.u.ii)]<-rnorm(mean = 90, sd=10, n=length(df.u.ii[is.na(df.u.ii)
 ```
 
 
-#BuildPTT Models CHOP
+#BuildPTT Models union
 ```{r}
 library(modelr)
 library(purrr)
