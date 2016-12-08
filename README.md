@@ -4,14 +4,22 @@ This repository is dedicated to my project on wrist worn heart rate monitors for
 
 The repository consist of the following files -
 
-1) heart_rate_monitors.Rmd : This is the main project file with description and all the R code
-2) heart_rate_monitors.html: This is the html version of the same file
-3) sample1.txt - The ECG output from the Bitalino OpenSignals software for the Sample1
-4) sample2.txt - The ECG output from the Bitalino OpenSignals software for the Sample2
+1) heart_rate_monitors.Rmd : This is the main project file with description and all the R code.
+
+2) heart_rate_monitors.html: This is the html version of the same file.
+
+3) sample1.txt - The ECG output from the Bitalino OpenSignals software for the Sample1.
+
+4) sample2.txt - The ECG output from the Bitalino OpenSignals software for the Sample2.
+
 5) ecgdata1.txt - The ECG raw output converted to Volts using transfer function for Sample 1. This was the input file for Kubios software.
-6) ecgdata2.txt - The ECG raw output converted to Volts using transfer function for Sample 2. This was the input file for Kubios software
+
+6) ecgdata2.txt - The ECG raw output converted to Volts using transfer function for Sample 2. This was the input file for Kubios software.
+
 7) ecgdata2.csv - The ecgdata2.txt file in csv format to be used for visualization by signal processing in the code given in the Rmd file.
+
 8) ecghrv1.csv - This is the output file from Kubios for Sample 1 with the RR intervals. This was used to calculate beats per minute.
+
 9) ecghrv2.csv - This is the output file from Kubios for Sample 2 with the RR intervals. This was used to calculate beats per minute.
 
 Collaborators:
