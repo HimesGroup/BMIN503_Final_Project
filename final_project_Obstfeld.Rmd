@@ -9,6 +9,12 @@ output:
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
 ***
 
 # Predicting Screening Coagulation Studies Using Coagulation Factor Results
@@ -51,7 +57,8 @@ penn <-
       result = col_character()
     )
   )
-
+save(penn,file='penndata.Rdata')
+load('penndata.Rdata')
 ```
 
 Summary views of the data were reviewed
@@ -79,7 +86,7 @@ penn<-penn%>%filter(!task_name %in% c('Factor XIII', 'PT 0 Patient',  'PT 30 Pat
 All 'result' values should be numeric, need to explore results that are non-numeric.
 ```{r}
 #Index by na's introduced by as.numeric coercion
-penn%>%select(2,4)%>%filter(is.na(as.numeric(result)))%>%table
+penn%>%select(4,5)%>%filter(is.na(as.numeric(result)))%>%table
 ```
 All textbased comments in the result field indicate fundamental issues with the result and should be filtered out. Many of the remainder are due to a measurement being out of range high or low. most of these can be kept and replaced with the numeric value indicated in the field for the purposes of this analysis
 ```{r}
@@ -109,7 +116,7 @@ library(ggplot2)
 ggplot(penn)+
   geom_bar(aes(x=task_name))+
   scale_y_log10()
-knitr::kable(penn%>%group_by(task_name)%>%summarise(n=n())%>%arrange(desc(n)))
+knitr::kable(penn%>%group_by(task_name)%>%summarise(n=n())%>%arrange(desc(n)),col.names = c('Test','Number'))
 
 ```
 
@@ -123,45 +130,33 @@ library(tidyr)
 library(lubridate)
 #Before spreading data need to ensure that all entries are unique
 dblresults<-penn%>%group_by(accession,task_name)%>%summarise(n=n())%>%ungroup()%>%filter(n>1)
+table(dblresults$task_name)
+```
+```{r}
 dupresults<-penn%>%group_by(accession,task_name,result)%>%summarise(n=n())%>%select(1,2,4)%>%ungroup()%>%filter(n>1)
+table(dupresults$task_name)
 ```
 
-There were `r nrow(dupresults)` entries with duplicated data. There were `r nrow(dblresults)-nrow(dupresults)` with two results for the same test in the same accession. The accessions with two different result values for the same test were further evaluated.
+There were `r nrow(dupresults)` entries with duplicated data. There were `r nrow(dblresults)-nrow(dupresults)` with two results for the same test in the same accession. 
+
+Overall the number of duplications are fairly small. This appears to be due to duplication of a screening test (PT, PTT, or fibrinogen) off of an identical draw time. The percent difference between these was calculated and results filtered for tests discordant by more than a CV of 20%. A 20% CV would be considered a signifiacnt difference betewen lab results in the field of clinical coagulation.
 
 ```{r}
 acc<-left_join(dblresults,penn, by=c('accession' = 'accession', 'task_name' = 'task_name'))
+acc%>%group_by(accession,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)%>%filter(cv>0.2)
 ```
 
-Overall the number of duplications are fairly small. This appears to be due to duplication of a screening test (PT, PTT, or fibrinogen) off of an identical draw time. The percent difference between these was calculated. 
+Nine of these differences were greater than 20%. As a result the agreement was considered close enough for the analysis in this project and these values were replaced with the average of these results. The following dataframe accounts for this correction and spreads variables within task_name across new column fields with values coming from 
+
 
 ```{r}
-
-acc%>%group_by(accession,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
-
 acc.rm<-acc%>%group_by(accession,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)%>%filter(cv>.2)
-```
 
-Nine of these differences were greater than 20%. As a result the agreement was considered close enough for the analysis in this project and these values were replaced with the average of these two results. The following dataframe accounts for this correction and spreads variables within task_name across new column fields with values coming from 
-
-
-```{r}
-# penndf1<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
-#   group_by(empi,accession,task_name)%>%summarise(result=mean(result))
-# 
-# penndf1<-left_join(penndf1,penn,by=c('accession' = 'accession', 'task_name' = 'task_name'))
-# penndf1<-penndf1%>%ungroup()%>%select(c(1:4,6))
-# penndf1$recvd_dt_tm<-as.Date(penndf1$recvd_dt_tm)
-# penndf1<-penndf1%>%distinct()
-# penndf1<-penndf1%>%select(-c(2))
-# penndf1<-penndf1%>%group_by(empi.x,recvd_dt_tm,task_name)%>%spread(task_name,result.x)
-# penndf1%>%slice(c(254310,254314))
-
-
-penn<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
+penndf<-anti_join(penn,acc.rm,by=c('accession' = 'accession', 'task_name' = 'task_name'))%>%
 group_by(empi,accession,task_name)%>%summarise(result=mean(result))
 
 #Now spread tests across column names for use during regression
-penndf<-penn%>%spread(task_name,result)
+penndf<-penndf%>%spread(task_name,result)
 
 
 str(penndf)
@@ -170,12 +165,12 @@ summary(penndf)
 ```
 
 
-
+Normal results were pulled form the original data set for future analyses
 ```{r}
 # Want to insert normal values here as well. Multiple normal values present so will use the ones most frequently in the dataset.
-normals<-penn%>%select(4,6,7)%>%group_by(task_name,normal_low,normal_high)%>%summarize(n=n())%>%ungroup()%>%group_by(task_name)%>%filter(n==max(n))
+normals<-penn%>%select(4,6,7)%>%group_by(task_name,normal_low,normal_high)%>%summarize(n=n())%>%ungroup()%>%group_by(task_name)%>%filter(n==max(n))%>%select(-n)
 normals$task_name<-gsub(" ","",normals$task_name)
-
+normals
 ```
 
 
@@ -184,6 +179,7 @@ Most of these orders will likely only have PT or PTT, the screening test and the
 
 ```{r}
 #The following lines labels all rows with NAs in every independent predicting variable as a '10', any number less than 10 means that there is at least one 
+
 penndf[,15]<-as.numeric()
 names(penndf)[15]<-"allna"
 
@@ -198,393 +194,131 @@ ggplot(penndf)+
   labs(x="Number of factor assays missing",y="Number of entries (log)",title="Distribution of number of missing data per entry")
 ```
 
-As a result of the uselessness of having numerous accessions with dependent vairables but without the predictors these have been dropped. 
+As a result of the uselessness of having numerous accessions with dependent vairables but without the predictors or vice versa these have been dropped. 
 ```{r}
 
 #create final dataset with filtering. Rename variables to remove spaces
+penndf<-penndf%>%filter(!(is.na(PT) & is.na(PTT)))
 
-names(penndf)<-gsub(" ","",names(penndf))
 penndf<-penndf%>%filter(allna<10)
+#change names because easier to work without space
+names(penndf)<-gsub(" ","",names(penndf))
 summary(penndf)
-str(penndf)
-
-knitr::kable(penndf%>%gather('task_name','result',3:14)%>%filter(result!='NA')%>%group_by(task_name)%>%summarise(n=n())%>%arrange(desc(n)))
+```
+These are the final numbers of tests for the analysis
+```{r}
+knitr::kable(penndf%>%gather('task_name','result',3:14)%>%filter(result!='NA')%>%group_by(task_name)%>%summarise(n=n())%>%arrange(desc(n)),col.names = c('Test','Numbber'))
 ```
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
-The first goal of this project is to validate many of the assumptions and data found within published literature as well as clinical practice in the field of laboratory coagulation testing. These assumptions include (1) the range of results in a normal population, and (2) the dependence of the PT and PTT on the individual factor assays.  Since the PT, PTT, and fibrinogen tests are using as screening tests, the dataset contains many of these tests and may be used to investigate the validity of the high and low normal range limits used in clinical practice in this lab. In contrast, the individual factor assays are only used when there is a high pre-test probability of an abnormality (generally there is already an abnormal screening test).
-
+##CHOP data
+Additional CHOP data was brough in to confirm that the general approach was tenable in other datasets, to combine for a larger analysis, and as a second set of data to use so that models trained with each set can be tested against the other. The data from CHOP conatins many more factor assays, however the results come from over a decade of testing, possibly introducing a confounder. 
 ```{r}
-tests<-c('PT','PTT','Fibrinogen')
-f1<-list()
-for (i in tests){
-f1[[i]]<-penn%>%filter(task_name==i)%>%
-  ggplot() +
-  geom_density(aes(result), fill = 'gray') +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[2])) +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[3])) +
-  xlab(paste0('Distribution of values for ',i)) +
-  labs(caption = 'Vertical lines represent high and low end of normal range') +
-  theme_bw()
-}
-```
-The results indicate that the PTT normal range values match the distribution of results relatievly well, however the upper limit of normal may need to be reevaluated. The distribution of fibinrogen results demonstrate a peak at approximately 450, representing the results that were converted from >450 to 450 during the data preperation step. The consequencce of this clinically is minimal given that the low end of the normal range is more medically meaningful. Finally, there seems to be a discrepency between the normal range for the PT test and the distribution in this data. The results may be signnificantly biased as the PT is frequently used for monitoring of warfarin therapy. Future work will need to investigate these trends subsetted on individuals not on biasing medications. 
+load('cdwdata.RData')
+chop<-cdwdata
+names(chop)[2]<-'task_name'
+names(chop)[1]<-'col'
+names(chop)[10]<-'result'
 
-To investigate the association of individual factors to the screening PT and PTTs, bivariate plots and univariate regression was performed.
+table(chop$task_name)
 
-It is helpful when performing regression analysis to have a distribution of results. The Distributions of results were explored with histograms of screening lab results and specific coagulation factors (Figure 1). 
+chop[grep("FACTOR XII ASSAY", chop$task_name), 'task_name']<-'FactorXII'
+chop[grep("FACTOR VIII", chop$task_name), 'task_name']<-'FactorVIII'
+chop[grep("FACTOR VII", chop$task_name), 'task_name']<-'FactorVII'
+chop[grep("FACTOR II", chop$task_name), 'task_name']<-'FactorII'
+chop[grep("FACTOR V", chop$task_name), 'task_name']<-'FactorV'
+chop[grep("FACTOR IX", chop$task_name), 'task_name']<-'FactorIX'
+chop[grep("FACTOR XI", chop$task_name), 'task_name']<-'FactorXI'
+chop[grep("FACTOR X", chop$task_name), 'task_name']<-'FactorX'
 
-```{r}
-library(gridExtra)
-myhists <- list()  # new empty list
-for (i in 1:length(colnames(penndf))) {
-    p1 <- eval(substitute(
-        ggplot(data=data.frame(penndf),aes(x=penndf[,i]))+ 
-          geom_histogram(fill="grey") +
-          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[2]))+
-          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[3]))+
-          xlab(paste0(names(penndf)[i]))+
-          theme_bw()
-    ,list(i = i)))
-    #print(i)
-    #print(p1)
-    myhists[[i]] <- p1  # add each plot into plot list
-    names(myhists)[[i]]<-names(penndf)[i]
-}
-
-
-grid.arrange(myhists[[3]], 
-             myhists[[4]],
-             myhists[[5]],
-             myhists[[6]],
-             myhists[[7]],
-             myhists[[8]],
-             myhists[[9]],
-             myhists[[10]],
-             myhists[[11]],
-             myhists[[12]],
-             myhists[[13]],
-             myhists[[14]],
-             nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
-
-
-```
-The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. 
-
-```{r}
-library(gtools)
-
-
-makebx.pt<-function(x,y){
-    df<-na.omit(penndf[,c(x,y)])
-    df[,x]<-quantcut(as.matrix(df[,x]))
-    df<-as.data.frame(df)
-    ggplot(df,aes_string(x=x ,y=y))+
-          geom_boxplot() +
-          xlab(names(df)[1])
-    #print(p1)
-    #bxpt[[x]] <- p1# add each plot into plot list
-    #x<-x+1
-    #gg
-}
-tests<-names(penndf)
-bxpt<-lapply(tests,y='PT',makebx.pt)
-names(bxpt)<-tests
-
-
-grid.arrange(bxpt$FactorII, 
-             bxpt$FactorV,
-             bxpt$FactorX,
-             bxpt$FactorVII,
-             bxpt$FactorVIII,
-             bxpt$FactorIX,
-             bxpt$FactorXI,
-             bxpt$FactorXII,
-             bxpt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and Prothrombin Time",  bottom="Figure 2")
-```
-
-```{r}
-
-bxptt<-lapply(tests,y='PTT',makebx.pt)
-names(bxptt)<-tests
-
-
-grid.arrange(bxptt$FactorII, 
-             bxptt$FactorV,
-             bxptt$FactorX,
-             bxptt$FactorVII,
-             bxptt$FactorVIII,
-             bxptt$FactorIX,
-             bxptt$FactorXI,
-             bxptt$FactorXII,
-             bxptt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
-
-
+chop[grep("PROTHROMBIN TIME", chop$task_name), 'task_name']<-'PT'
+chop[grep("PARTIAL THROMBOPLASTIN TIME", chop$task_name), 'task_name']<-'PTT'
+chop[grep("FIBRINOGEN", chop$task_name), 'task_name']<-'Fibrinogen'
 
 
 ```
 
-
-
-To further explore the relationships amongst these measures, bivariate plots were created.
+Non-numeric results were explored as above.
 ```{r}
+#Index by na's introduced by as.numeric coercion
+chop%>%select(task_name,result)%>%filter(is.na(as.numeric(result)))%>%table
+```
+All textbased comments in the result field indicate fundamental issues with the result and should be filtered out. Many of the remainder are due to a measurement being out of range high or low. most of these can be kept and replaced with the numeric value indicated in the field for the purposes of this analysis
+```{r}
+#Explore weird results
+#Replace with NA those results without numbers
+chop$result<-gsub("@L", "", chop$result) 
+chop$result[grepl("[:alpha:]",chop$result)]<-NA
+chop$result[grepl("[:a-z:]",chop$result)]<-NA
+chop$result[grepl("[:A-Z:]",chop$result)]<-NA
+chop$result[chop$result==""]<-NA
+#Results that are 'greater than' a number (such as 150, 90, etc) should be replaced with that number. 
+chop$result<-gsub(">", "", chop$result) 
+#Less than with a small number should be replaced by 0. 
+chop$result<-gsub("<", "", chop$result)
+#Text results should be filtered out of dataset.
+chop<-chop%>%filter(!is.na(result))
 
-makedot.pt<-function(x,y){
-    df<-na.omit(penndf[,c(x,y)])
-    df<-as.data.frame(df)
-    ggplot(df,aes_string(x=x ,y=y))+
-          geom_point(alpha=0.5) +
-          theme_bw()+
-          xlab(names(df)[1])
-    #print(p1)
-    #bxpt[[x]] <- p1# add each plot into plot list
-    #x<-x+1
-    #gg
-    }
-dotpt<-lapply(tests,y='PT',makedot.pt)
-names(dotpt)<-tests
+#Convert result variable to numeric
+chop$result<-as.numeric(chop$result)
+#confirm removal of all non-numeric results
+chop%>%filter(is.na(result))%>%count%>%as.numeric
+```
+Below is a table of the available results
+```{r}
+table(chop$task_name)
+```
+The CHOP data did not have a single identifier to indicate a single blood draw upon which testing was performed. To begin to select patients of interest, the dataset was limited to patients who had ever had factor testing.
+```{r}
+#Filter out to tests for patients that have had factor testing done.
+empi<-chop%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))%>%select(empi)%>%distinct()
+chop.fc<-semi_join(chop,empi,by='empi')
 
 
-grid.arrange(dotpt$FactorII, 
-             dotpt$FactorV,
-             dotpt$FactorX,
-             dotpt$FactorVII,
-             dotpt$FactorVIII,
-             dotpt$FactorIX,
-             dotpt$FactorXI,
-             dotpt$FactorXII,
-             dotpt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")#In the future suggest adding normal range vertical bars
 ```
 
+Since no accession number was available to identify uniqe blood draws, samples were grouped based on patient and date of collection. Duplications of tests within days were explored.
 ```{r}
-
-dotptt<-lapply(tests,y='PTT',makedot.pt)
-names(dotptt)<-tests
-
-
-grid.arrange(dotptt$FactorII, 
-             dotptt$FactorV,
-             dotptt$FactorX,
-             dotptt$FactorVII,
-             dotptt$FactorVIII,
-             dotptt$FactorIX,
-             dotptt$FactorXI,
-             dotptt$FactorXII,
-             dotptt$Fibrinogen,
-             nrow=3, ncol=4,top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
-#In the future suggest adding normal range vertical bars
+#Remove results thatfrom the same collection date/time that are discordant,ones that areconcortant, average together
+dblresults<-chop.fc%>%group_by(empi,col,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
+table(dblresults$task_name)
+```
+Results for tests that were drawn on a single day and had CV greater than 20% were removed.
+```{r}
+remresults<-dblresults%>%filter(cv>0.2)
+chop.fc<-anti_join(chop.fc,remresults,by=c('col' = 'col', 'empi' = 'empi','task_name'='task_name'))
+chop.fc<-chop.fc%>%ungroup%>%group_by(empi,col,task_name)%>%summarise(result=mean(result))
 ```
 
+Next samples where no screening test or factor test was performed were removed. 
 ```{r}
-library(RColorBrewer)
-bl<-brewer.pal(7,'Blues')[4:7]
-gr<-brewer.pal(7,'Greens')[4:7]
-re<-brewer.pal(1,'Reds')
-cols<-c(bl,'red',gr)
-cols[7]<-'red'
-cols[5]<-"#41AB5D"
+#filter to just empi and col days that have a factor. first need day which factor is drawn
+chop.fc<-chop.fc%>%mutate(colday=as.Date(substr(col,1,10),format='%Y-%m-%d'))
 
-ggplot(penndf)+
-  geom_smooth(aes(x=FactorVII,y=PT,color='FactorVII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=Fibrinogen,y=PT,color='Fibrinogen'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorV,y=PT,color='FactorV'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorII,y=PT,color='FactorII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorX,y=PT,color='FactorX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorVIII,y=PT,color='Factor VIII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorIX,y=PT,color='Factor IX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorXI,y=PT,color='Factor XI'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorXII,y=PT,color='Factor XII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  scale_colour_manual(name="legend", values=cols)+
-  geom_hline(yintercept = as.numeric(normals$normal_low[10])) +
-  geom_hline(yintercept = as.numeric(normals$normal_high[10]))+
-  theme_bw()+
-  xlim(0,150)
+fac.day<-chop.fc%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))
 
-
-ggplot(penndf)+
-  geom_smooth(aes(x=FactorVII,y=PTT,color='FactorVII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=Fibrinogen,y=PTT,color='Fibrinogen'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorV,y=PTT,color='FactorV'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorII,y=PTT,color='FactorII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorX,y=PTT,color='FactorX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorVIII,y=PTT,color='Factor VIII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorIX,y=PTT,color='Factor IX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorXI,y=PTT,color='Factor XI'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  geom_smooth(aes(x=FactorXII,y=PTT,color='Factor XII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
-  scale_colour_manual(name="legend", values=cols)+                     
-  geom_hline(yintercept = as.numeric(normals$normal_low[10])) +
-  geom_hline(yintercept = as.numeric(normals$normal_high[10]))+
-  theme_bw()+
-  xlim(0,150)
-
-  scale_colour_manual(name="legend",
-                      breaks=c('Fibrinogen','FactorII','FactorV','FactorX','FactorVIII','FactorIX','FactorXI','FactorXII','FactorVII'),
-                      labels=c('Fibrinogen','FactorII','FactorV','FactorX','FactorVIII','Factor IX','Factor XI','Factor XII','Factor VII')values=c("red",'#00FF33','#33CC33','#00CC00','#006600','#0000FF','#0000CC','#3399CC','#3366CC'))+
-```
-
-
-A seperate analysis was performed specifically on the reptilase time as it itself is considered a screen for a fibrinogen abnormality. This was again performed using boxplots and bivariate scatterplots.
-
-
-
-```{r}
-
-p1<-ggplot(penndf)+
-  geom_boxplot(aes(y=`ReptilaseTest`, x=quantcut(penndf$Fibrinogen,na.rm = TRUE)))
-
-p2<-ggplot(penndf)+
-  geom_point(aes(y=`ReptilaseTest`, x=penndf$Fibrinogen))
-
-grid.arrange(p1,p2,nrow=1)
+chop.fc<-semi_join(chop.fc,fac.day,by=c('colday' = 'colday', 'empi' = 'empi'))
+#Now filter to empi and collection days that have a screening test as well.
+sc.day<-chop.fc%>%ungroup%>%filter(task_name %in% c('PTT','PT'))
+chop.fc<-semi_join(chop.fc,sc.day,by=c('colday' = 'colday', 'empi' = 'empi'))
 
 ```
 
 ```{r}
-attach(penndf)
-
-#perofrm lm and store as list
-pt.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PT ~ x)) )
-#Extract relavent parameters and store as dataframe lmresults.pt
-variable<-names(pt.lm)
-cols<-as.list(c(1:14))
-beta.f<-function(x){
-  pt.lm[x][[1]][[4]][2,1]
-}
-
-pvalue.f<-function(x){
-  pt.lm[x][[1]][[4]][2,4]
-}
-
-arsquared.f<-function(x){
-  pt.lm[x][[1]][[9]]
-}
-
-beta<-lapply(cols, beta.f)
-pvalue<-lapply(cols, pvalue.f)
-arsquare<-lapply(cols, arsquared.f)
-
-lmresults.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
-lmresults.pt[2:4]<-sapply(lmresults.pt[2:4],as.numeric)
-
-penndf[penndf==0]<-1
-
-#perofrm lm for pt on log of dependent variable and store as list
-ptlg.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PT ~ log(x))))
-#Extract relavent parameters and store as dataframe lmresults.pt
-variable<-names(ptlg.lm)
-cols<-as.list(c(1:14))
-beta.f<-function(x){
-  ptlg.lm[x][[1]][[4]][2,1]
-}
-
-pvalue.f<-function(x){
-  ptlg.lm[x][[1]][[4]][2,4]
-}
-
-arsquared.f<-function(x){
-  ptlg.lm[x][[1]][[9]]
-}
-
-beta<-lapply(cols, beta.f)
-pvalue<-lapply(cols, pvalue.f)
-arsquare<-lapply(cols, arsquared.f)
-
-lmresultslg.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
-lmresultslg.pt[2:4]<-sapply(lmresultslg.pt[2:4],as.numeric)
-lmresults.pt<-bind_rows(lmresults.pt,lmresultslg.pt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
-
-knitr::kable(arrange(lmresults.pt,variable))
-```
-
-The results of the univariate regression support much of the information and conventional wisdom in the literature. The most significant predictor of the prothrombin time are common pathway and extrinsic pathway coagulation factors (Factors X,II,VII). Interestingly, the logarithmic model produces the most robust predictors. Unexpectadly, two common pathway factors had little impact on the Prothrombin time, Factor V and Fibrinogen. The literature suggests that biologically, very little  Factor V activity is required for coagulation, which supports the results of this analysis. The lack of association with fibrinogen is somewhat surprusing given thatn the Reptilase time, which is solely dependent on fibrinogen is correlated with Prothrombin time. This may be because the fibrinogen quantification, which is assayed in diluted plasma, is less sensitivie to the inhibitors, such as fibrin split products, than the reptilase time, which is performed undiluted.  
+#Now spread for further analysis
+table(chop.fc$task_name)
+chopdf<-chop.fc%>%spread(task_name,result)%>%ungroup
 
 
-```{r}
-attach(penndf)
+summary(chopdf)
 
-#perofrm lm and store as list
-ptt.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PTT ~ x)) )
-#Extract relavent parameters and store as dataframe lmresults.ptt
-variable<-names(ptt.lm)
-cols<-as.list(c(1:14))
-beta.f<-function(x){
-  ptt.lm[x][[1]][[4]][2,1]
-}
-
-pvalue.f<-function(x){
-  ptt.lm[x][[1]][[4]][2,4]
-}
-
-arsquared.f<-function(x){
-  ptt.lm[x][[1]][[9]]
-}
-
-beta<-lapply(cols, beta.f)
-pvalue<-lapply(cols, pvalue.f)
-arsquare<-lapply(cols, arsquared.f)
-
-lmresults.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
-lmresults.ptt[2:4]<-sapply(lmresults.ptt[2:4],as.numeric)
-
-
-#perofrm lm for ptt on log of dependent variable and store as list
-pttlg.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PTT ~ log(x))))
-#Extract relavent parameters and store as dataframe lmresults.ptt
-variable<-names(pttlg.lm)
-cols<-as.list(c(1:14))
-beta.f<-function(x){
-  pttlg.lm[x][[1]][[4]][2,1]
-}
-
-pvalue.f<-function(x){
-  pttlg.lm[x][[1]][[4]][2,4]
-}
-
-arsquared.f<-function(x){
-  pttlg.lm[x][[1]][[9]]
-}
-
-beta<-lapply(cols, beta.f)
-pvalue<-lapply(cols, pvalue.f)
-arsquare<-lapply(cols, arsquared.f)
-
-lmresultslg.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
-lmresultslg.ptt[2:4]<-sapply(lmresultslg.ptt[2:4],as.numeric)
-lmresults.ptt<-bind_rows(lmresults.ptt,lmresultslg.ptt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
-knitr::kable(arrange(lmresults.ptt,variable))
 
 ```
 
-```{r}
-
-#Two plots to look at the distribution of the lm statistics CONSIDER SCATTERPLOTS INSTEAD
-lmresults.pt%>%filter(!variable %in% c('PT','PTT','accession','allna'))%>%filter(pvalue<0.05)%>%
-ggplot()+
-  geom_bar(stat='identity',aes(x=variable,y=beta,fill=log),position='dodge')+
-  geom_hline(yintercept=0.05)+
-  theme(axis.text.x = element_text(angle=60, hjust=1))
-```
-
-```{r}
-lmresults.ptt%>%filter(!variable %in% c('PT','PTT','accession','allna'))%>%filter(pvalue<0.05)%>%
-ggplot()+
-  geom_bar(stat='identity',aes(x=variable,y=beta,fill=log),position='dodge')+
-  geom_hline(yintercept=0.05)+
-  theme(axis.text.x = element_text(angle=60, hjust=1))
-
-```
-
-
-Like the results of the linear regression models for the prothrombin time, the results for the partial thromboplastin time confirm many common assumptions about the relationships between these factors and provide some surprising results. By far the best predictors are factors VIII and XI, particularly the log transformed values. THese are both coagulation factors in the intrinsic pathway that are known to have a strong impact partial thromboplastin times. Amongst the factors that were not found to be associated with PTT were the common pathway factors, despite the fact that the common pathway is required for coagulation testing using the PTT. This result is most likely due to a combination of a relatively weak impact of these factors on PTT clotting times as well as the limitations in the number of datapoints in the dataset.    
 
 
 #Modeling
-
+The following functions were used for the multivariate models. 5-fold cross validation was performed for each model.
 ```{r}
 
 library(modelr)
@@ -674,10 +408,394 @@ df %>%na.omit()%>%
 
 ```
 
-#Imputation of Penn data
+### Results
+The first goal of this project is to validate many of the assumptions and data found within published literature as well as clinical practice in the field of laboratory coagulation testing. These assumptions include (1) the range of results in a normal population, and (2) the dependence of the PT and PTT on the individual factor assays.  Since the PT and PTT tests are used as screening tests, the dataset contains many of these tests and may be used to investigate the validity of the high and low normal range limits used in clinical practice in this lab. In contrast, the individual factor assays are only used when there is a high pre-test probability of an abnormality (generally there is already an abnormal screening test).
+
+```{r}
+tests<-c('PT','PTT')
+f1<-list()
+for (i in tests){
+f1[[i]]<-penn%>%filter(task_name==i)%>%
+  ggplot() +
+  geom_density(aes(result), fill = 'gray') +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == i)[3])) +
+  xlab(paste0('Distribution of values for ',i)) +
+  labs(caption = 'Vertical lines represent high and low end of normal range') +
+  theme_bw()
+}
+
+f1[[2]]
+```
+The results indicate that the PTT normal range values match the distribution of results relatievly well, however the upper limit of normal may need to be reevaluated. 
+
+```{r}
+f1[[1]]
+```
+Finally, there seems to be a discrepency between the normal range for the PT test and the distribution in this data. The results may be signnificantly biased as the PT is frequently used for monitoring of warfarin therapy. Future work will need to investigate these trends subsetted on individuals not on biasing medications. 
+
+To investigate the association of individual factors to the screening PT and PTTs, bivariate plots and univariate regression was performed.
+
+It is helpful when performing regression analysis to have a distribution of results. The Distributions of results were explored with histograms of screening lab results and specific coagulation factors (Figure 1). 
+
+```{r}
+library(gridExtra)
+myhists <- list()  # new empty list
+for (i in 1:length(colnames(penndf))) {
+    p1 <- eval(substitute(
+        ggplot(data=data.frame(penndf),aes(x=penndf[,i]))+ 
+          geom_histogram(fill="grey") +
+          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[2]))+
+          geom_vline(xintercept = as.numeric(filter(normals,task_name==names(penndf)[i])[3]))+
+          xlab(paste0(names(penndf)[i]))+
+          theme_bw()
+    ,list(i = i)))
+    #print(i)
+    #print(p1)
+    myhists[[i]] <- p1  # add each plot into plot list
+    names(myhists)[[i]]<-names(penndf)[i]
+}
+
+
+grid.arrange(myhists[[3]], 
+             myhists[[4]],
+             myhists[[5]],
+             myhists[[6]],
+             myhists[[7]],
+             myhists[[8]],
+             myhists[[9]],
+             myhists[[10]],
+             myhists[[11]],
+             myhists[[12]],
+             myhists[[13]],
+             myhists[[14]],
+             nrow=3, ncol=4,top="Distribution of lab results in data set",  bottom="Figure 1")
+
+
+```
+The data demonstrates that there is a relatively evenly distributed set of results for predictors lab values. For many of the factor assays there seems to be a bias towards the low end of the measurement range, likely indicating the heavily biased tested population, with a high pre-test probability of disease.
+
+
+To validate that the relationship between factors and their screening tests were present in the data, boxplots were used to depict the relationship between normal and low factor levels (<25%) and the screening test. 
+```{r}
+library(gtools)
+
+makebx.pt<-function(x,y){
+    df<-na.omit(penndf[,c(x,y)])
+    z<-as.matrix(df[,x])
+    df[,x]<-ifelse(z>25,'Normal',"Low")
+
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_boxplot() +
+          xlab(names(df)[1])
+}
+tests<-names(penndf)
+bxpt<-lapply(tests,y='PT',makebx.pt)
+names(bxpt)<-tests
+
+grid.arrange(bxpt$FactorII, 
+             bxpt$FactorV,
+             bxpt$FactorX,
+             bxpt$FactorVII,
+             bxpt$FactorVIII,
+             bxpt$FactorIX,
+             bxpt$FactorXI,
+             bxpt$FactorXII,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factors and Prothrombin Time",  bottom="Figure 2")
+```
+These plots validate our biological understanding that the PT is associated with levels of factors 2,5,10 and factor 7, but no other factors in the intrinsic pathway.
+
+
+Similar plots were created for factors against PTT.
 ```{r}
 
+bxptt<-lapply(tests,y='PTT',makebx.pt)
+names(bxptt)<-tests
 
+
+grid.arrange(bxptt$FactorII, 
+             bxptt$FactorV,
+             bxptt$FactorX,
+             bxptt$FactorVII,
+             bxptt$FactorVIII,
+             bxptt$FactorIX,
+             bxptt$FactorXI,
+             bxptt$FactorXII,
+             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
+
+
+
+
+```
+The results wre somewhat surprusing in that there appeared to be a relationship in these univariate plots between PTT and factor 7, and a lack of relationship with factor 9. These 
+
+
+To further explore the relationships amongst these measures, factor levels were plotted against screening tests.
+```{r}
+
+makedot.pt<-function(x,y){
+    df<-na.omit(penndf[,c(x,y)])
+    df<-as.data.frame(df)
+    ggplot(df,aes_string(x=x ,y=y))+
+          geom_point(alpha=0.5,size=0.5) +
+          geom_smooth(color='gray',method = 'lm')+
+          theme_bw()+
+          xlab(names(df)[1])+
+          scale_y_log10()+
+          scale_x_log10()
+      
+    #print(p1)
+    #bxpt[[x]] <- p1# add each plot into plot list
+    #x<-x+1
+    #gg
+    }
+dotpt<-lapply(tests,y='PT',makedot.pt)
+names(dotpt)<-tests
+
+
+grid.arrange(dotpt$FactorII, 
+             dotpt$FactorV,
+             dotpt$FactorX,
+             dotpt$FactorVII,
+             dotpt$FactorVIII,
+             dotpt$FactorIX,
+             dotpt$FactorXI,
+             dotpt$FactorXII,
+             nrow=3, ncol=3,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")#In the future suggest adding normal range vertical bars
+```
+
+As was indicated in the box plots a relationship exists in the data between PTfactor 7 and common factors with the prothrombin time, but not with factors of the intrinsic pathway.
+
+
+```{r}
+
+dotptt<-lapply(tests,y='PTT',makedot.pt)
+names(dotptt)<-tests
+
+
+grid.arrange(dotptt$FactorII, 
+             dotptt$FactorV,
+             dotptt$FactorX,
+             dotptt$FactorVII,
+             dotptt$FactorVIII,
+             dotptt$FactorIX,
+             dotptt$FactorXI,
+             dotptt$FactorXII,
+             nrow=3, ncol=3, top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
+#In the future suggest adding normal range vertical bars
+```
+
+The resulting plots against the PTT indicate relatinshups with PTTintrinsic and common factors, though quantitatively there appeared to be less of a relatniship with factor 9. 
+
+```{r}
+#Considered plotting all the smooths together on one plot per screening test, not sure it makes sense.
+# library(RColorBrewer)
+# bl<-brewer.pal(7,'Blues')[4:7]
+# gr<-brewer.pal(7,'Greens')[4:7]
+# re<-brewer.pal(1,'Reds')
+# cols<-c(bl,'red',gr)
+# cols[7]<-'red'
+# cols[5]<-"#41AB5D"
+# 
+# ggplot(penndf)+
+#   geom_smooth(aes(x=FactorVII,y=PT,color='FactorVII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=Fibrinogen,y=PT,color='Fibrinogen'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorV,y=PT,color='FactorV'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorII,y=PT,color='FactorII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorX,y=PT,color='FactorX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorVIII,y=PT,color='Factor VIII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorIX,y=PT,color='Factor IX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorXI,y=PT,color='Factor XI'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorXII,y=PT,color='Factor XII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   scale_colour_manual(name="legend", values=cols)+
+#   geom_hline(yintercept = as.numeric(normals$normal_low[10])) +
+#   geom_hline(yintercept = as.numeric(normals$normal_high[10]))+
+#   theme_bw()+
+#   xlim(0,150)
+# 
+# 
+# ggplot(penndf)+
+#   geom_smooth(aes(x=FactorVII,y=PTT,color='FactorVII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=Fibrinogen,y=PTT,color='Fibrinogen'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorV,y=PTT,color='FactorV'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorII,y=PTT,color='FactorII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorX,y=PTT,color='FactorX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorVIII,y=PTT,color='Factor VIII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorIX,y=PTT,color='Factor IX'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorXI,y=PTT,color='Factor XI'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   geom_smooth(aes(x=FactorXII,y=PTT,color='Factor XII'),method = "lm", formula = y ~ log(x),show.legend = TRUE,se=FALSE)+
+#   scale_colour_manual(name="legend", values=cols)+                     
+#   geom_hline(yintercept = as.numeric(normals$normal_low[10])) +
+#   geom_hline(yintercept = as.numeric(normals$normal_high[10]))+
+#   theme_bw()+
+#   xlim(0,150)
+# 
+#   scale_colour_manual(name="legend",
+#                       breaks=c('Fibrinogen','FactorII','FactorV','FactorX','FactorVIII','FactorIX','FactorXI','FactorXII','FactorVII'),
+#                       labels=c('Fibrinogen','FactorII','FactorV','FactorX','FactorVIII','Factor IX','Factor XI','Factor XII','Factor VII')values=c("red",'#00FF33','#33CC33','#00CC00','#006600','#0000FF','#0000CC','#3399CC','#3366CC'))+
+# ```
+
+
+A seperate analysis was performed specifically on the reptilase time as it itself is considered a screen for a fibrinogen abnormality. This was again performed using boxplots and bivariate scatterplots.
+
+
+
+```{r}
+
+p1<-ggplot(penndf)+
+  geom_boxplot(aes(y=`ReptilaseTest`, x=quantcut(penndf$Fibrinogen,na.rm = TRUE)))
+
+p2<-ggplot(penndf)+
+  geom_point(aes(y=`ReptilaseTest`, x=penndf$Fibrinogen))
+
+grid.arrange(p1,p2,nrow=1)
+
+```
+
+
+To quantitatively assess these relationships linear models were created.
+```{r}
+attach(penndf)
+
+#perofrm lm and store as list
+pt.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PT ~ x)) )
+#Extract relavent parameters and store as dataframe lmresults.pt
+variable<-names(pt.lm)
+cols<-as.list(c(1:14))
+beta.f<-function(x){
+  pt.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  pt.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  pt.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmresults.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
+lmresults.pt[2:4]<-sapply(lmresults.pt[2:4],as.numeric)
+
+penndf[penndf==0]<-1
+
+#perofrm lm for pt on log of dependent variable and store as list
+ptlg.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PT ~ log(x))))
+#Extract relavent parameters and store as dataframe lmresults.pt
+variable<-names(ptlg.lm)
+cols<-as.list(c(1:14))
+beta.f<-function(x){
+  ptlg.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  ptlg.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  ptlg.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmresultslg.pt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
+lmresultslg.pt[2:4]<-sapply(lmresultslg.pt[2:4],as.numeric)
+lmresults.pt<-bind_rows(lmresults.pt,lmresultslg.pt)%>%filter(!variable %in% c('accession','allna','PT','PTT','ReptilaseTest'))
+
+knitr::kable(arrange(lmresults.pt,variable))
+```
+
+```{r}
+library(ggrepel)
+ggplot(lmresults.pt, aes(x=beta,y=arsquare,color=log,label=variable))+
+  geom_point()+
+  geom_text_repel(hjust = 0, nudge_x = 0.06,show.legend = FALSE)+
+  theme_bw()
+
+```
+The results of the univariate regression support much of the information and conventional wisdom in the literature. The most significant predictor of the prothrombin time are common pathway and extrinsic pathway coagulation factors (Factors X,II,VII). Interestingly, the logarithmic model produces the most robust predictors. Unexpectadly, two common pathway factors had little impact on the Prothrombin time, Factor V and Fibrinogen. The literature suggests that biologically, very little  Factor V activity is required for coagulation, which supports the results of this analysis. 
+
+
+```{r}
+attach(penndf)
+
+#perofrm lm and store as list
+ptt.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PTT ~ x)) )
+#Extract relavent parameters and store as dataframe lmresults.ptt
+variable<-names(ptt.lm)
+cols<-as.list(c(1:14))
+beta.f<-function(x){
+  ptt.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  ptt.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  ptt.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmresults.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='linear'),stringsAsFactors = FALSE)
+lmresults.ptt[2:4]<-sapply(lmresults.ptt[2:4],as.numeric)
+
+
+#perofrm lm for ptt on log of dependent variable and store as list
+pttlg.lm<-lapply( penndf[,-1], function(x) summary(lm(penndf$PTT ~ log(x))))
+#Extract relavent parameters and store as dataframe lmresults.ptt
+variable<-names(pttlg.lm)
+cols<-as.list(c(1:14))
+beta.f<-function(x){
+  pttlg.lm[x][[1]][[4]][2,1]
+}
+
+pvalue.f<-function(x){
+  pttlg.lm[x][[1]][[4]][2,4]
+}
+
+arsquared.f<-function(x){
+  pttlg.lm[x][[1]][[9]]
+}
+
+beta<-lapply(cols, beta.f)
+pvalue<-lapply(cols, pvalue.f)
+arsquare<-lapply(cols, arsquared.f)
+
+lmresultslg.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(beta),pvalue=unlist(pvalue),arsquare=unlist(arsquare),log='log'),stringsAsFactors = FALSE)
+lmresultslg.ptt[2:4]<-sapply(lmresultslg.ptt[2:4],as.numeric)
+lmresults.ptt<-bind_rows(lmresults.ptt,lmresultslg.ptt)%>%filter(!variable %in% c('accession','allna','PT','PTT','ReptilaseTest'))
+knitr::kable(arrange(lmresults.ptt,variable))
+
+```
+
+```{r}
+ggplot(lmresults.ptt, aes(x=beta,y=arsquare,color=log,label=variable))+
+  geom_point()+
+  geom_text_repel(hjust = 0, nudge_x = 0.06,show.legend = FALSE)+
+  theme_bw()
+
+```
+
+
+Like the results of the linear regression models for the prothrombin time, the results for the partial thromboplastin time confirm many common assumptions about the relationships between these factors and provide some surprising results. By far the best predictors are factors VIII and XI, particularly the log transformed values. THese are both coagulation factors in the intrinsic pathway that are known to have a strong impact partial thromboplastin times. Amongst the factors that were not found to be associated with PTT were the common pathway factors, despite the fact that the common pathway is required for coagulation testing using the PTT. This result is most likely due to a combination of a relatively weak impact of these factors on PTT clotting times as well as the limitations in the number of datapoints in the dataset.    
+
+
+
+##Imputation of Penn data
+To perform multivariate analyses the data set was imputed with data the simulates results in the normal range for each missing factor assay. Imputations were performed seperately for PT and PTT based models in order to account for different factor requirements in each. PTT based models included data points with at least 1/3 intrinsic factors. PT based models included at least 1/4 extrinsic or common pathway factors.
+```{r}
+
+#Impute for PTT anallysis
 penndf$facna<-rowSums(apply(is.na(penndf[,c(4,7,9)]), 2, as.numeric))
 penndf.ii<-penndf%>%filter(facna<3)%>%filter(!is.na(PTT))%>%data.frame
 penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(penndf.ii)]))
@@ -685,19 +803,25 @@ penndf.ii[is.na(penndf.ii)]<-rnorm(mean = 90, sd=10, n=length(penndf.ii[is.na(pe
 ```
 
 
-#Models for Penn PTT
+##Models for Penn PTT
+Results for PTT based linear models and random forest are depicted below
 ```{r}
 
 
 predictions.p.ptt<-modeling(df=penndf.ii,k=5,pptt='PTT')
 
 rs.p.ptt<-resids(predictions.p.ptt)
-  
+kable(rs.p.ptt,col.names = c('SST','SSE for LM', 'r^2 for LM','SSE for RF','r^2 for RF'))
+```
+
+
+A plot of residuals was created as well.
+```{r}  
 ggplot(data=predictions.p.ptt,aes(obs_outputs)) +
   geom_hline(yintercept = 0) +
-  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3,size=0.4) +
   stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
-  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.3,size=0.4) +
   stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
   #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
   scale_colour_manual(values = c("blue","red"),
@@ -719,6 +843,10 @@ ggplot(data=predictions.p.ptt,aes(obs_outputs)) +
 
 ```
 
+The R squared for the linear model and random forest model were consistently 0.5 and close to 0.7 after imputation. 
+
+
+Similar models were created for the prediction of PT values after imputation.
 ```{r}
 
 
@@ -734,194 +862,48 @@ pt.df<-penndf.i
 
 predictions.p.pt<- modeling(df=penndf.i,k=5,pptt = 'PT')
 rs.p.pt<-resids(predictions.p.pt)
-
-#K-Fold Cross Validation
-N = nrow(pt.df)
-K = 5
-
-pt.df$s = sample(1:K, size=N, replace=T)
-pred_outputs.lm <- vector(mode="numeric", length=N)
-pred_outputs.rf <- vector(mode="numeric", length=N)
-#pred_outputs.rsvm <- vector(mode="numeric", length=N)
-obs_outputs <- vector(mode="numeric", length=N)
-offset <- 0
-
-for(i in 1:K){
-    train <- filter(pt.df, s != i)
-    test <- filter(pt.df, s == i)
-    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
-    
-    #LM train/test
-    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
-    lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
-
-    #RF train/test
-    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
-    rf.pred.curr <- predict(rf, newdata=test) 
-    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    offset <- offset + length(pt.df$s[pt.df$s==i])
-} 
-
-predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions.pt<-predictions.pt%>%
-  mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs,
-  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
-  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
+kable(rs.p.pt,col.names = c('SST','SSE for LM', 'r^2 for LM','SSE for RF','r^2 for RF'))
+```
 
 
-rs.pt <- predictions.pt %>%na.omit()%>%
-  summarise(
-    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-    sse.lm = sum(residual.lm^2),
-    r.squared.lm = 1 -( sse.lm / sst),
-    sse.rf = sum(residual.rf^2),
-    r.squared.rf = 1 - (sse.rf / sst))
-rs.pt
-```  
-
-```{r}
-ggplot(data=predictions.pt,aes(obs_outputs)) +
+A plot of residuals was created as well.
+```{r}  
+ggplot(data=predictions.p.pt,aes(obs_outputs)) +
   geom_hline(yintercept = 0) +
-  geom_point(aes(y=residual.lm),color='blue',alpha=0.3) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3,size=0.5) +
   stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
-  geom_point(aes(y=residual.rf),color='red',alpha=0.5) +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.3,size=0.5) +
   stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
   #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[2])) +
-  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PT')[3])) +
-  theme_minimal(base_size = 20)+
-  theme(legend.position = c(0.75, .85))+
-  labs(title = "Regression Models for PT",
-       subtitle= paste("The R-squared for the LM is",round(rs.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.pt$r.squared.rf,2)),
-       x="Observed PT (s)",
-       y="Residuals")+
   scale_colour_manual(values = c("blue","red"),
                       guide = guide_legend(title = "Regression Models",
                                            keywidth = 3, 
-                                           keyheight = 1,
-                                           label.position = "left"))
+                                          keyheight = 1,
+                                          label.position = "left"))+
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[2])) +
+  geom_vline(xintercept = as.numeric(filter(normals, task_name == 'PTT')[3])) +
+  theme_minimal(base_size = 20)+
+  #theme(legend.position = c(0.75, .85))+
+  labs(title = "Regression Models for PT",
+       subtitle= paste("The R-squared for the LM is",round(rs.p.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.p.pt$r.squared.rf,2)),
+       x="Observed PT (s)",
+       y="Residuals")
 
 
 
 
 ```
 
+The models performed adequately providing R-squared in the range of 0.48 for the linear model and 0.54 for the random forest.
 
-#Bring in CHOP data
-```{r}
-
-# library(readr)
-# chop <- read_csv("~/Rprojects/EPID600_Final_Project/factorsxlsx.csv", 
-#    col_types = cols(`Patient Date of Birth` = col_character()))
-# names(chop)<-c('empi','task_name','result','dob','ordcre','ordpl','col')
-# chop$ordcre<-as.POSIXct(chop$ordcre,format = "%m/%d/%y %H:%M")
-# chop$ordpl<-as.POSIXct(chop$ordpl,format = "%m/%d/%y %H:%M")
-# chop$col<
-chop<-file.choose()
-load(chop)
-chop<-cdwdata
-names(chop)[7]<-'task_name'
-names(chop)[1]<-'empi'
-names(chop)[2]<-'col'
-names(chop)[15]<-'result'
-
-table(chop$task_name)
-
-chop[grep("FACTOR XII ASSAY", chop$task_name), 'task_name']<-'FactorXII'
-chop[grep("FACTOR VIII", chop$task_name), 'task_name']<-'FactorVIII'
-chop[grep("FACTOR VII", chop$task_name), 'task_name']<-'FactorVII'
-chop[grep("FACTOR II", chop$task_name), 'task_name']<-'FactorII'
-chop[grep("FACTOR V", chop$task_name), 'task_name']<-'FactorV'
-chop[grep("FACTOR IX", chop$task_name), 'task_name']<-'FactorIX'
-chop[grep("FACTOR XI", chop$task_name), 'task_name']<-'FactorXI'
-chop[grep("FACTOR X", chop$task_name), 'task_name']<-'FactorX'
-
-chop[grep("PROTHROMBIN TIME", chop$task_name), 'task_name']<-'PT'
-chop[grep("PARTIAL THROMBOPLASTIN TIME", chop$task_name), 'task_name']<-'PTT'
-chop[grep("FIBRINOGEN", chop$task_name), 'task_name']<-'Fibrinogen'
+Given the success of modeling PT and PTT values with Penn data, I was curious to see if similar results cold be obtained with CHOP coagulation lab data. This data is somewhat different form the penn data in regards to the far more heterogenous patient population, differences in ordering patters, as well as analytical differences.
 
 
-```
-
-```{r}
-#Index by na's introduced by as.numeric coercion
-chop%>%select(task_name,result)%>%filter(is.na(as.numeric(result)))%>%table
-```
-All textbased comments in the result field indicate fundamental issues with the result and should be filtered out. Many of the remainder are due to a measurement being out of range high or low. most of these can be kept and replaced with the numeric value indicated in the field for the purposes of this analysis
-```{r}
-#Explore weird results
-#Replace with NA those results without numbers
-chop$result<-gsub("@L", "", chop$result) 
-chop$result[grepl("[:alpha:]",chop$result)]<-NA
-chop$result[grepl("[:a-z:]",chop$result)]<-NA
-chop$result[grepl("[:A-Z:]",chop$result)]<-NA
-#Results that are 'greater than' a number (such as 150, 90, etc) should be replaced with that number. 
-chop$result<-gsub(">", "", chop$result) 
-#Less than with a small number should be replaced by 0. 
-chop$result<-gsub("<", "", chop$result)
-#Text results should be filtered out of dataset.
-chop<-chop%>%filter(!is.na(result))
-#Convert result variable to numeric
-chop$result<-as.numeric(chop$result)
-#confirm removal of all non-numeric results
-chop%>%filter(is.na(result))%>%count%>%as.numeric
-```
-
-```{r}
-#Filter out to tests for patients that have had factor testing done.
-empi<-chop%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))%>%select(empi)
-chop.fc<-semi_join(chop,empi,by='empi')
-
-
-```
-
-```{r}
-library(tidyr)
-library(lubridate)
-#Remove results thatfrom the same collection data/time that are discordant,ones that areconcortant, average together
-dblresults<-chop.fc%>%group_by(empi,col,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
-remresults<-dblresults%>%filter(cv>0.1)
-chop.fc<-anti_join(chop.fc,remresults,by=c('col' = 'col', 'empi' = 'empi'))
-chop.fc<-chop.fc%>%ungroup%>%group_by(empi,col,task_name)%>%summarise(result=mean(result))
-```
-
-```{r}
-#filter to just empi and col days that have a factor. first need day which factor is drawn
-fac.day<-chop.fc%>%mutate(colday=as.Date(substr(col,1,10),format='%Y-%m-%d'))%>%filter(!task_name %in% c('PTT','PT','Fibrinogen'))
-chop.fc<-chop.fc%>%mutate(colday=as.Date(substr(col,1,10),format='%Y-%m-%d'))
-chop.fc<-semi_join(chop.fc,fac.day,by=c('colday' = 'colday', 'empi' = 'empi'))
-#Now filter to empi and collection days that have a screening test as well.
-sc.day<-chop.fc%>%ungroup%>%filter(task_name %in% c('PTT','PT'))
-chop.fc<-semi_join(chop.fc,sc.day,by=c('colday' = 'colday', 'empi' = 'empi'))
-
-#chop.fc contains just screening tests that were drawn on the same day as a factor test, down to 60k tests. Now need to look at dup test by date to facilitate the spread. Will remove any days worth of data if there were greater than 2 test results on that day or if the cv for the day was greater than 10%
-dblresults<-chop.fc%>%group_by(empi,colday,task_name)%>%summarise(n=n(),mean=mean(result),stdev=sd(result),cv=sd(result)/mean(result))%>%filter(n>1)
-remresults<-dblresults%>%filter(cv>0.1 | n>2)
-chop.fc<-anti_join(chop.fc,remresults,by=c('colday' = 'colday', 'empi' = 'empi',"task_name" = "task_name"))
-chop.fc<-chop.fc%>%ungroup%>%group_by(empi,colday,task_name)%>%summarise(result=mean(result))
-chop.fc%>%group_by(empi,colday,task_name)%>%summarise(n=n())%>%filter(n>1)
-```
-
-```{r}
-#Now spread for further analysis
-table(chop.fc$task_name)
-chopdf<-chop.fc%>%spread(task_name,result)%>%ungroup
-
-
-str(chopdf)
-summary(chopdf)
-
-
-```
-
-
+Histograms of results distributions wer again explored.
 ```{r}
 library(gridExtra)
 myhists <- list()  # new empty list
-for (i in 1:length(colnames(chopdf))) {
+for (i in 4:length(colnames(chopdf))) {
     p1 <- eval(substitute(
         ggplot(data=data.frame(chopdf),aes(x=chopdf[,i]))+ 
           geom_histogram(fill="grey") +
@@ -933,12 +915,11 @@ for (i in 1:length(colnames(chopdf))) {
     #print(i)
     #print(p1)
     myhists[[i]] <- p1  # add each plot into plot list
-    names(myhists)[[i]]<-names(penndf)[i]
+    names(myhists)[[i]]<-names(chopdf)[i]
 }
 
 
-grid.arrange(myhists[[3]], 
-             myhists[[4]],
+grid.arrange(myhists[[4]],
              myhists[[5]],
              myhists[[6]],
              myhists[[7]],
@@ -959,11 +940,13 @@ library(gtools)
 
 makebx.pt<-function(x,y){
     df<-na.omit(chopdf[,c(x,y)])
-    df[,x]<-quantcut(as.matrix(df[,x]))
+    z<-as.matrix(df[,x])
+    df[,x]<-ifelse(z>25,'Normal',"Low")
     df<-as.data.frame(df)
     ggplot(df,aes_string(x=x ,y=y))+
           geom_boxplot() +
-          xlab(names(df)[1])
+          xlab(names(df)[1])+
+          scale_y_log10()
     #print(p1)
     #bxpt[[x]] <- p1# add each plot into plot list
     #x<-x+1
@@ -982,9 +965,10 @@ grid.arrange(bxpt$FactorII,
              bxpt$FactorIX,
              bxpt$FactorXI,
              bxpt$FactorXII,
-             bxpt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and Prothrombin Time",  bottom="Figure 2")
+              nrow=3, ncol=3,top="Box plots depicting relationship of coagulation factors and Prothrombin Time",  bottom="Figure 2")
 ```
+
+As with the Penn data, the results confirm that the known biological relationships are present within this clinical data as well.
 
 ```{r}
 
@@ -1000,24 +984,24 @@ grid.arrange(bxptt$FactorII,
              bxptt$FactorIX,
              bxptt$FactorXI,
              bxptt$FactorXII,
-             bxptt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
+             nrow=3, ncol=3,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")
 
 
 
 
 ```
-
+As with the PT data, extrinsic and common pathway factors appear to be related to PTT. Againa relationship appears to exist between PTT and factor 7 for unclear reasons.
 
 
 To further explore the relationships amongst these measures, bivariate plots were created.
 ```{r}
 
 makedot.pt<-function(x,y){
-    df<-na.omit(penndf[,c(x,y)])
+    df<-na.omit(chopdf[,c(x,y)])
     df<-as.data.frame(df)
     ggplot(df,aes_string(x=x ,y=y))+
-          geom_point(alpha=0.5) +
+          geom_point(alpha=0.5,size=0.5) +
+          geom_smooth(color='gray',method = 'lm')+
           theme_bw()+
           xlab(names(df)[1])+
           scale_y_log10()+
@@ -1039,8 +1023,7 @@ grid.arrange(dotpt$FactorII,
              dotpt$FactorIX,
              dotpt$FactorXI,
              dotpt$FactorXII,
-             dotpt$Fibrinogen,
-             nrow=3, ncol=4,top="Box plots depicting relationship of coagulation factor quantiles and partial thromboplastin time",bottom="Figure 3")#In the future suggest adding normal range vertical bars
+             nrow=3, ncol=3,top="Scatter plots depicting relationship of coagulation factors and PT",bottom="Figure 3")#In the future suggest adding normal range vertical bars
 ```
 
 ```{r}
@@ -1057,21 +1040,17 @@ grid.arrange(dotptt$FactorII,
              dotptt$FactorIX,
              dotptt$FactorXI,
              dotptt$FactorXII,
-             dotptt$Fibrinogen,
-             nrow=3, ncol=4,top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
-
-
-
-
-
-chopptt.df<-chopdfxx[!with(chopdfxx,is.na(FactorVIII)| is.na(FactorIX)| is.na(FactorXI)| is.na(PTT)),]
+             nrow=3, ncol=3,top="Scatterplots of independent variables vs PTT",  bottom="Figure 5")
 ```
 
-#Get Univariate correlations for CHOP data PTT
+These results confirm the impression created by the box plots that the data contains the relationship between screening assays and their depedent factors.
+
+##Univariate correlations for CHOP data and PTT
+These were followed up with linear models to quantify these relationships.
 ```{r}
 
 attach(chopdf)
-chopdf.lm<-chopdf%>%ungroup%>%select(3:13)
+chopdf.lm<-chopdf%>%ungroup%>%select(4:14)
 #perofrm lm and store as list
 ptt.chop.lm<-lapply( chopdf.lm[,-2], function(x) summary(lm(chopdf.lm$PTT ~ x)) )
 #Extract relavent parameters and store as dataframe lmresults.ptt
@@ -1121,6 +1100,14 @@ lmres.chop.lg.ptt<-as.data.frame(cbind(variable=unlist(variable),beta=unlist(bet
 lmres.chop.lg.ptt[2:4]<-sapply(lmres.chop.lg.ptt[2:4],as.numeric)
 lmres.chop.ptt<-bind_rows(lmres.chop.ptt,lmres.chop.lg.ptt)%>%filter(!variable %in% c('accession','allna','PT','PTT'))
 knitr::kable(arrange(lmres.chop.ptt,variable))
+```
+
+```{r}
+ggplot(lmres.chop.ptt, aes(x=beta,y=arsquare,color=log,label=variable))+
+  geom_point()+
+  geom_text_repel(hjust = 0, nudge_x = 0.06,show.legend = FALSE)+
+  theme_bw()
+
 ```
 
 #Get Univariate correlations for CHOP data PT
@@ -1179,11 +1166,25 @@ knitr::kable(arrange(lmres.chop.pt,variable))
 
 ```
 
-#Impute CHop data for PT
+```{r}
+ggplot(lmres.chop.pt, aes(x=beta,y=arsquare,color=log,label=variable))+
+  geom_point()+
+  geom_text_repel(hjust = 0, nudge_x = 0.06,show.legend = FALSE)+
+  theme_bw()
+
+```
+
+The results are somewhat surprising in that there appears in the data to be a correlation of almost factors with PTT, after log transformation, including factor VII. On the other hand far fewer factors are relateed to PT values, though the ones that are correlated include those that would be assumed based on biology.
+
+
+
+##Creating multivariate models for CHOP
+
+Before constructing multivariate models for the CHOP data imputation of normal values was performed on a dataset limited to include at least one intrinsic or one common/extrinsic factors for the PTT and PT models respectively.
 ```{r}
 
-
-chopdf$facna<-rowSums(apply(is.na(chopdf[,c(3,5,6,8)]), 2, as.numeric))
+#Imputation for PT models
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(4,6,7,9)]), 2, as.numeric))
 chopdf.i<-chopdf%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
 chopdf.i[is.na(chopdf.i)]<-rnorm(mean = 90, sd=10, n=length(chopdf.i[is.na(chopdf.i)]))
 
@@ -1192,90 +1193,44 @@ chopdf.i[is.na(chopdf.i)]<-rnorm(mean = 90, sd=10, n=length(chopdf.i[is.na(chopd
 
 #Train and cross validate multivariate models for PT CHOP
 ```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
-library(e1071)
 
 predictions.c.pt<-modeling(chopdf.i,k=5,pptt='PT')
-resids(predictions.c.pt)
-
-pt.df<-chopdf.ii
-
-#K-Fold Cross Validation
-N = nrow(pt.df)
-K = 5
-
-pt.df$s = sample(1:K, size=N, replace=T)
-pred_outputs.lm <- vector(mode="numeric", length=N)
-pred_outputs.rf <- vector(mode="numeric", length=N)
-#pred_outputs.rsvm <- vector(mode="numeric", length=N)
-obs_outputs <- vector(mode="numeric", length=N)
-offset <- 0
-
-for(i in 1:K){
-    train <- filter(pt.df, s != i)
-    test <- filter(pt.df, s == i)
-    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
-    
-    #LM train/test
-    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
-    lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
-
-    #RF train/test
-    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
-    rf.pred.curr <- predict(rf, newdata=test) 
-    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    #RF train/test
-    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
-    # rsvmbest <- rsvm$best.model
-    # rsvm.pred.curr <- predict(rsvmbest, test) 
-    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
-
-    
-    
-    # #Lasso train/test
-    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
-    # x=as.matrix(trainlas[,1:5])
-    # y=as.numeric(unlist(trainlas[,6]))
-    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
-    # x.test=as.matrix(test[,c(3,5,6,8,11)])
-    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
-    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
-
-    offset <- offset + length(pt.df$s[pt.df$s==i])
-} 
-
-predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions.pt<-predictions.pt%>%
-  mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs,
-  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
-  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-
-
-rs.pt <- predictions.pt %>%na.omit()%>%
-  summarise(
-    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-    sse.lm = sum(residual.lm^2),
-    r.squared.lm = 1 -( sse.lm / sst),
-    sse.rf = sum(residual.rf^2),
-    r.squared.rf = 1 - (sse.rf / sst))
-rs.pt
-
+rs.c.pt<-resids(predictions.c.pt)
+kable(rs.c.pt,col.names = c('SST','SSE for LM', 'r^2 for LM','SSE for RF','r^2 for RF'))
 ```
 
+
+A plot of residuals was created as well.
+```{r}  
+ggplot(data=predictions.c.pt,aes(obs_outputs)) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes(y=residual.lm),color='blue',alpha=0.3,size=0.4) +
+  stat_smooth(method = "loess",aes(y=residual.lm),color='blue',fill='blue') +
+  geom_point(aes(y=residual.rf),color='red',alpha=0.3,size=0.4) +
+  stat_smooth(method = "loess",aes(y=residual.rf),color='red',fill='red') +
+  #geom_segment(aes(x = obs_outputs, y = residual.lm, xend = obs_outputs, yend = residual.rf, colour = better),arrow=arrow(length = unit(0.01, "npc")),alpha=0.3)+ 
+  scale_colour_manual(values = c("blue","red"),
+                      guide = guide_legend(title = "Regression Models",
+                                           keywidth = 3, 
+                                          keyheight = 1,
+                                          label.position = "left"))+
+  theme_minimal(base_size = 20)+
+  #theme(legend.position = c(0.75, .85))+
+  labs(title = "Regression Models for PTT",
+       subtitle= paste("The R-squared for the LM is",round(rs.c.pt$r.squared.lm,2),"and the R-squared for the Randomforest is",round(rs.c.pt$r.squared.rf,2)),
+       x="Observed PT (s)",
+       y="Residuals")
+
+
+
+
+```
 
 #Impute CHop data for PTT
 ```{r}
 
 
-chopdf$facna<-rowSums(apply(is.na(chopdf[,c(4,7,9)]), 2, as.numeric))
+chopdf$facna<-rowSums(apply(is.na(chopdf[,c(5,8,10)]), 2, as.numeric))
 chopdf.ii<-chopdf%>%filter(facna<2)%>%filter(!is.na(PT))%>%data.frame
 chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(chopdf.ii)]))
 
@@ -1284,248 +1239,30 @@ chopdf.ii[is.na(chopdf.ii)]<-rnorm(mean = 90, sd=10, n=length(chopdf.ii[is.na(ch
 
 #BuildPTT Models CHOP
 ```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
 
 
 predictions.c.ptt<-modeling(chopdf.ii,k=5,pptt='PTT')
-resids(predictions.c.ptt)
+rs.c.ptt<-resids(predictions.c.ptt)
 
 
-ptt.df<-chopdf.ii
-  
-  #K-Fold Cross Validation
-  N = nrow(ptt.df)
-  K = 2
-  
-  ptt.df$s = sample(1:K, size=N, replace=T)
-  pred_outputs.lm <- vector(mode="numeric", length=N)
-  pred_outputs.rf <- vector(mode="numeric", length=N)
-  obs_outputs <- vector(mode="numeric", length=N)
-  offset <- 0
-  
-  for(i in 1:K){
-     
-      train <- ptt.df%>%filter(s != i)
-      test <-  ptt.df%>%filter(s == i)
-      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
-      
-      #LM train/test
-      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorXII)+log(FactorIX), data=train)
-      lm.pred.curr <- predict(lm, test)
-      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
-  
-      #RF train/test
-      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)+FactorV+FactorII,ntree=100, data=train,na.action = na.omit)
-                         
-                         
-      rf.pred.curr <- predict(rf, newdata=test) 
-      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
-  
-      offset <- offset + length(ptt.df$s[ptt.df$s==i])
-  }
-  
-  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-  predictions.ptt<-predictions.ptt%>%
-    mutate(residual.lm = pred_outputs.lm - obs_outputs,
-    residual.rf = pred_outputs.rf - obs_outputs,
-    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-  
-  rs.ptt <- predictions.ptt %>%na.omit()%>%
-    summarise(
-      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-      sse.lm = sum(residual.lm^2),
-      r.squared.lm = 1 -( sse.lm / sst),
-      sse.rf = sum(residual.rf^2),
-      r.squared.rf = 1 - (sse.rf / sst))
-   rs.ptt
 ```   
 
-#Create one unified data
-```{r}
-penndf.u<-penndf%>%ungroup%>%select(-c(accession,allna,ReptilaseTest))%>%mutate(hos='HUP')
-chopdf.u<-chopdf%>%ungroup%>%select(-colday)%>%mutate(hos='CHOP')
-
-df.u<-union(penndf.u, chopdf.u)
-df.u$hos<-as.factor(df.u$hos)
-```
 
 
-#Impute union data for PT
-```{r}
-df.u$facna<-rowSums(apply(is.na(df.u[,c(2,4,5,7)]), 2, as.numeric))
-df.u.ii<-df.u%>%filter(facna<4)%>%filter(!is.na(PT))%>%data.frame
-df.u.ii[is.na(df.u.ii)]<-rnorm(mean = 90, sd=10, n=length(df.u.ii[is.na(df.u.ii)]))
-
-```
-
-
-#Train and cross validate multivariate models for PT Union
-```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
-library(e1071)
-
-
-pt.df<-df.u.ii
-
-#K-Fold Cross Validation
-N = nrow(pt.df)
-K = 5
-
-pt.df$s = sample(1:K, size=N, replace=T)
-pred_outputs.lm <- vector(mode="numeric", length=N)
-pred_outputs.rf <- vector(mode="numeric", length=N)
-#pred_outputs.rsvm <- vector(mode="numeric", length=N)
-obs_outputs <- vector(mode="numeric", length=N)
-offset <- 0
-i=1
-for(i in 1:K){
-    train <- filter(pt.df, s != i)
-    test <- filter(pt.df, s == i)
-    obs_outputs[1:length(pt.df$s[pt.df$s==i]) + offset] <- test$PT
-    
-    #LM train/test
-    lm <- lm(PT ~ log(FactorVII)+log(FactorX)+log(FactorII)+log(FactorV), data=train)
-    lm.pred.curr <- predict(lm, test)
-    pred_outputs.lm[1:length(pt.df$s[pt.df$s==i]) + offset] <- lm.pred.curr
-
-    #RF train/test
-    rf <- randomForest(PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV,na.action = na.omit, data=train, ntree=100)
-    rf.pred.curr <- predict(rf, newdata=test) 
-    pred_outputs.rf[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rf.pred.curr)
-
-    #RF train/test
-    # rsvm<-tune(svm, PT ~(FactorVII)+(FactorX)+(FactorII)+FactorV+Fibrinogen,  data = train,ranges = list(epsilon = seq(0,0.2,0.01), cost = 2^(2:9)))
-    # rsvmbest <- rsvm$best.model
-    # rsvm.pred.curr <- predict(rsvmbest, test) 
-    # pred_outputs.rsvm[1:length(pt.df$s[pt.df$s==i]) + offset] <- (rsvm.pred.curr)
-
-    
-    
-    # #Lasso train/test
-    # trainlas<-na.omit(train[,c(3,5,6,8,11,12)])
-    # x=as.matrix(trainlas[,1:5])
-    # y=as.numeric(unlist(trainlas[,6]))
-    # las <- cv.glmnet(x, y, family="gaussian", alpha=1)
-    # x.test=as.matrix(test[,c(3,5,6,8,11)])
-    # las.pred.curr <- predict(las, s = las$lambda.min,newx=x.test)
-    # pred_outputs.las[1:length(pt.df$s[pt.df$s==i]) + offset] <- (las.pred.curr)
-
-    offset <- offset + length(pt.df$s[pt.df$s==i])
-} 
-
-predictions.pt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-predictions.pt<-predictions.pt%>%
-  mutate(residual.lm = pred_outputs.lm - obs_outputs,
-  residual.rf = pred_outputs.rf - obs_outputs,
-  #residual.rsvm = pred_outputs.rsvm - obs_outputs,
-  better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-
-
-rs.pt <- predictions.pt %>%na.omit()%>%
-  summarise(
-    sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-    sse.lm = sum(residual.lm^2),
-    r.squared.lm = 1 -( sse.lm / sst),
-    sse.rf = sum(residual.rf^2),
-    r.squared.rf = 1 - (sse.rf / sst))
-rs.pt
-
-```
-
-
-#Impute Union data for PTT
-```{r}
-
-
-df.u$facna<-rowSums(apply(is.na(df.u[,c(3,6,8)]), 2, as.numeric))
-df.u.ii<-df.u%>%filter(facna<2)%>%filter(!is.na(PT))%>%data.frame
-df.u.ii[is.na(df.u.ii)]<-rnorm(mean = 90, sd=10, n=length(df.u.ii[is.na(df.u.ii)]))
-
-```
-
-
-#BuildPTT Models union
-```{r}
-library(modelr)
-library(purrr)
-library(broom)
-library(tidyr)
-library('randomForest')
-library('caret')
-
-
-ptt.df<-df.u.ii
-  
-  #K-Fold Cross Validation
-  N = nrow(ptt.df)
-  K = 4
-  
-  ptt.df$s = sample(1:K, size=N, replace=T)
-  pred_outputs.lm <- vector(mode="numeric", length=N)
-  pred_outputs.rf <- vector(mode="numeric", length=N)
-  obs_outputs <- vector(mode="numeric", length=N)
-  offset <- 0
-  
-  for(i in 1:K){
-     
-      train <- ptt.df%>%filter(s != i)
-      test <-  ptt.df%>%filter(s == i)
-      obs_outputs[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- test$PTT
-      
-      #LM train/test
-      lm <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorXII)+log(FactorIX)
-               +log(FactorV)+log(FactorII)+log(FactorX)
-               , data=train)
-      lm.pred.curr <- predict(lm, test)
-      pred_outputs.lm[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- lm.pred.curr
-  
-      #RF train/test
-      rf <- randomForest(PTT ~(FactorVIII)+(FactorXI)+(FactorIX)+(FactorXII)
-                         +FactorV+FactorII+FactorX
-                         ,ntree=100, data=train,na.action = na.omit)
-      rf.pred.curr <- predict(rf, newdata=test) 
-      pred_outputs.rf[1:length(ptt.df$s[ptt.df$s==i]) + offset] <- (rf.pred.curr)
-  
-      offset <- offset + length(ptt.df$s[ptt.df$s==i])
-  }
-  
-  predictions.ptt<-data.frame(obs_outputs,pred_outputs.lm,pred_outputs.rf)
-  predictions.ptt<-predictions.ptt%>%
-    mutate(residual.lm = pred_outputs.lm - obs_outputs,
-    residual.rf = pred_outputs.rf - obs_outputs,
-    better=ifelse(abs(residual.lm)>abs(residual.rf),'Random Forest','Linear Model'))%>%na.omit
-  
-  rs.ptt <- predictions.ptt %>%na.omit()%>%
-    summarise(
-      sst = sum((obs_outputs - mean(obs_outputs)) ^ 2),
-      sse.lm = sum(residual.lm^2),
-      r.squared.lm = 1 -( sse.lm / sst),
-      sse.rf = sum(residual.rf^2),
-      r.squared.rf = 1 - (sse.rf / sst))
-   rs.ptt
-```
+The data demonstrate fairly good performance when modeling PT values with a LM model R^2 of 0.47 and RF model R^2 of 0.65.
+On the other hand the data demonstrate somewhat poorer performance than what was seen in with Penn data with a LM model R^2 of 0.36 and RF model R^2 of 0.45 when modeling PTT.  
 
 
 
 
 
-
-#Build model off Penn data and test against chop data
+##Performance of trained models against test data from opposing hospital
+Finally the performance of moels created with data from each institutionw as tested against the data from the opposing institutitn.
 ```{r}
 ptt.df<-penndf.ii
-      lm.ptt <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
+      lm.p.ptt <- lm(PTT ~ log(FactorVIII)+log(FactorXI)+log(FactorIX) +log(FactorXII)+log(FactorII)+log(FactorV)+log(FactorX)
                , data=ptt.df)
-      rf <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
+      rf.p.ptt <- randomForest(PTT ~ (FactorVIII)+(FactorIX)+(FactorXI)
                          +(FactorX)+FactorII+FactorV+FactorXII
                          , ntree=1000, data=ptt.df , na.action = na.omit)
 
@@ -1593,34 +1330,5 @@ rs.chop.pt <- chop.pred.pt %>%
 
 ```
 
-
-
-#impute data for multivariate regression
-library('mice')
-ptt.df<-ptt.df%>%select(4,7,9,13)
-imp.ptt <- mice(ptt.df, m=5, maxit = 50, method = 'pmm', seed = 500)
-summary(imp.ptt)
-
-stripplot(imp.ptt, pch = 20, cex = 1.2)
-fit.imp.pt <- with(data = imp.ptt, lm(PT ~ log(FactorVIII) + log(FactorIX) + log(FactorXI))) 
-
-#combine results of all 5 models
-combine.pt <- pool(fit.imp.pt)
-summary(combine.pt)
-
-
-chopdf.ptt<-penndf%>%select(4,8,10,14)
-imp.ptt <- mice(penndf.ptt, m=5, maxit = 50, method = 'pmm', seed = 500)
-fit.imp.ptt <- with(data = imp.ptt, exp = lm(PTT ~ log(FactorIX)+log(FactorVIII)+log(FactorXI))) 
-
-summary(pool(fit.imp.ptt))
-
-#combine results of all 5 models
-combine.ptt <- pool(fit.imp.ptt)
-summary(combine.ptt)
-names(combine.ptt)
-combine.ptt$nmis
-
-```
 
 The results indicate an association of the predictor variables that were identified in univariate analysis, however the multivariate will likely require additional data without as many missing values. 
