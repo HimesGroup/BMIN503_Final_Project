@@ -18,3 +18,5 @@ The interpretation of coagulation studies in clinical practice can be hampered b
 `final_project_Obstfeld_draft.Rmd`	Is the 'draft' version of the project that was the state as of 11/22 23:59
 
 `final_project_template.Rmd` is the original project template
+
+`Deriving Clinical Coagulation Test Relationships From Clinical Laboratory.pptx	` is the presented presentation
