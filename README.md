@@ -20,3 +20,5 @@ The interpretation of coagulation studies in clinical practice can be hampered b
 `final_project_template.Rmd` is the original project template
 
 `Deriving Clinical Coagulation Test Relationships From Clinical Laboratory.pptx	` is the presented presentation
+
+`EPID 600 Final Project Obstfeld.html` Contains the HTML output of the `final_project_Obstfeld.Rmd`	 file
