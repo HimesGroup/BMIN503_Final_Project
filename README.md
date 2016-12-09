@@ -1,20 +1,24 @@
-# EPID600 Final Project
+# Predicting Screening Coagulation Studies Using Coagulation Factor Results
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+### By Amrom Obstfeld
 
-1. To start, [**fork** this EPID600_Final_Project repository][forking].
-1. [**Clone**][ref-clone] the forked repository to your computer.
-1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
-1. [**Push**][ref-push]/sync the changes up to your GitHub account.
-1. [Create a **pull request**][pull-request] on this, the original EPID600_Final_Project, repository to turn in your final project.
+## Overview
+The interpretation of coagulation studies in clinical practice can be hampered by lack of understanding of the relationship between screening coagulation studies and followup coagulation factor results that are ordered in order to expain abnormalities in these studies. In order to allucidate these relationships I will acquire deideintified laboratory results from CHOP and HUP data warehouses and use statistical and machine learning tools. My ultimate goal is to use these tools in clinical practice to guide clinicians towards appropriate coagulation tests.
 
+ 
+###File Information
+`EPID600_Final_Project.Rproj`	is the project file for R
 
-DUE DATE FOR FINAL VERSION: 12/9/16 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+`Instructions.md`	Contains the original project instructions
 
+`README.md`	contains project information
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-[ref-clone]: http://gitref.org/creating/#clone
-[ref-commit]: http://gitref.org/basic/#commit
-[ref-push]: http://gitref.org/remotes/#push
-[pull-request]: https://help.github.com/articles/creating-a-pull-request
+`final_project_Obstfeld.Rmd`	Is working version of project .RMD
+
+`final_project_Obstfeld_draft.Rmd`	Is the 'draft' version of the project that was the state as of 11/22 23:59
+
+`final_project_template.Rmd` is the original project template
+
+`Deriving Clinical Coagulation Test Relationships From Clinical Laboratory.pptx	` is the presented presentation
+
+`EPID 600 Final Project Obstfeld.html` Contains the HTML output of the `final_project_Obstfeld.Rmd`	 file
