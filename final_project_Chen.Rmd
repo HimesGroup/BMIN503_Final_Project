@@ -34,6 +34,7 @@ suppressMessages(library(dplyr))
 suppressMessages(library(magrittr))
 suppressMessages(library(gdata))
 suppressMessages(library(lubridate))
+library(pheatmap)
 
 getwd()
 inFile <- "FY15_deidentified_data-2015-11-22-revised.txt"
@@ -214,7 +215,7 @@ ggplot(by_day,aes(Julian,count)) +
 table(FY15_deIDcomplete$Phleb)
 ```
 ####Splitting number of sets/patient into 30d periods
-Since we don't have information on the length of each patient's hospital encounter, I will split the number of sets/patient into 30-day periods, which is a reasonable amount of time to clear an infection and probably accounts for the duration of most hospital stays. After splitting into 30-day periods, the number of blood cultures taken ranged from 1 to 52, with a median of 2 and a mean of 3.084.
+Since we don't have information on the length of each patient's hospital encounter, I will split the number of sets/patient into 30-day periods, which is a reasonable amount of time to clear an infection and probably accounts for the duration of most hospital stays. After splitting into 30-day periods, the number of blood cultures taken ranged from 1 to 52, with a median of 2 and a mean of 3.084 (should be 3.112?).
 
 ```{r Split # of bc per patient into 30d periods}
 by_Jul <- FY15_deIDcomplete %>%
@@ -893,6 +894,7 @@ v <- numFollowUpCultures$Study_ID %in% highuse_Jul_30d$Study_ID
 #create highuse binary variable
 numFollowUpCultures %<>%
   mutate(highuse=ifelse(v,"highuse","not_highuse"))
+numFollowUpCultures$highuse <- as.factor(numFollowUpCultures$highuse)
 
 #number of followup cultures is greater for high utilizers by about 10 sets
 t.test(hu_followup_30d$num_set_postPosID,not_hu$num_set_postPosID,alternative="two.sided")
@@ -937,21 +939,163 @@ chisq.test(table(numFollowUpCultures$highDays,numFollowUpCultures$highuse))
 #heatmap of all high utilizers within 30d period
 ggplot(highuse, aes(Julian, Study_ID)) + 
   geom_tile(aes(fill = num_set),colour = "lightblue") + 
-  scale_fill_gradient(low = "lightblue",high = "steelblue") +
+  scale_fill_gradientn(colours=c("white","yellow","blue")) +
   scale_x_continuous(expand=c(0,0)) +
   scale_y_discrete(breaks=NULL)
 
 #randomly sample 50 high utilizers at a time
-s <- sample(highuse$Study_ID,50,replace=FALSE)
+s <- sample(unique(highuse$Study_ID),50,replace=FALSE)
+s <- droplevels(s)
 df <- highuse[highuse$Study_ID %in% s,]
+df <- droplevels(df)
 fig8 <- ggplot(df, aes(Julian, Study_ID,fill=num_set)) + 
   geom_tile() + 
-  scale_fill_gradient(low = "#deebf7",high = "#3182bd") +
+  scale_fill_gradientn(colours=c("white","yellow","blue")) +
   scale_x_continuous(expand=c(0,0)) +
   scale_y_discrete(expand = c(0, 0),breaks=NULL)
 fig8
 #ggsave(file="Figures/fig8.pdf",plot=fig8,width=5)
 
+#trying to use pheatmap to make heatmap
+mat <- data.frame(matrix(0,nrow=50,ncol=31))
+colnames(mat) <- 1:31
+rownames(mat) <- names(df_sub)
+
+fillMatrix <- function(df) {
+  df_sub <- split(df,df$Study_ID)
+  for (i in 1:length(df_sub)){
+    df_test <- as.data.frame(df_sub[i])
+    for (j in 1:nrow(df_test)) {
+      mat[i,df_test[j,2]] <- df_test[j,4]
+  }
+  }
+  return(mat)
+}
+
+mat <- fillMatrix(df)
+
+pheatmap(mat, 
+         main = "High utilizers",
+         cluster_rows = F, cluster_cols = F,
+         cellwidth = 20, cellheight = 20, fontsize = 20,
+         border_color = "grey", 
+       #  gaps_col = c(4, 8, 10, 13, 17, 21, 23, 25, 28, 32, #I manually determined where it would make sense to split up the columns into groups and added gaps in those positions
+        #              36, 40, 44, 48, 50, 54, 58, 62, 66, 70, 
+         #             72, 75, 79),
+         color = colorRampPalette(c("white","black"))(150),
+         #annotation_col = annotations[,1:2], #Only want to annotate based on 2 of the variables in the annotation dataframe
+        # annotation_colors = ann_colors, 
+         drop_levels = TRUE,
+         filename="~/scripts/EPID600_Final_Project/Figures/heatmap.pdf")
+
+
+
+
+
+
+```
+
+
+```{r Organism-specific heatmaps}
+#Make heatmap for people with SA infection and group by high vs low utilizers
+SA <- numFollowUpCultures %>%
+  filter(Final_Report=="SA")
+SA <- droplevels(SA)
+
+by_isolate <- cultures %>%
+  group_by(Study_ID,Julian,Final_Report) %>%
+  summarise(num_set=n()) 
+by_isolate <- droplevels(by_isolate)
+by_isolate <- as.data.frame(by_isolate)
+
+#only works after I've converted by_isolate to a data frame
+SA_fullrecord <- by_isolate %>%
+  filter(by_isolate$Study_ID %in% SA$Study_ID)
+
+SA_hu <- SA %>%
+  select(c(Study_ID,highuse))
+
+SA_fullrecord <- merge(SA_fullrecord,SA_hu)
+SA_fullrecord %<>%
+  arrange(Study_ID,Julian)
+SA_fullrecord <- droplevels(SA_fullrecord)
+
+#Need to specify 30d periods
+subsets <- split(SA_fullrecord,SA_fullrecord$Study_ID)
+bc_30d_FR <- lapply(subsets,split30days)
+bc_30d_FR <- as.data.frame(do.call("rbind",bc_30d_FR)) 
+bc_30d_FR %<>%
+  arrange(Study_ID,Julian)
+bc_30d_FR$group_30 <- as.factor(bc_30d_FR$group_30)
+
+List=list()
+for (i in 1:nrow(SA)){
+  x<-bc_30d_FR[bc_30d_FR$Study_ID==SA[i,"Study_ID"],]
+  date <- SA[i,"Julian"]
+  g <- x[x$Julian==date,"group_30"][1]
+  y <- x[x$Julian>date,]
+  y <- y[y$group_30==g,]
+  List[[i]] <- y
+}
+
+bc_30d_SA = do.call(rbind, List)
+bc_30d_SA <- droplevels(bc_30d_SA)
+
+
+SA_subset <- split(bc_30d_SA,bc_30d_SA$Study_ID)
+lst <- lapply(SA_subset,function(df){
+  if(nlevels(df$group_30)>1){
+    df <- droplevels(df)
+    lst <- split(df,df$group_30)
+    return(lst)
+  }
+  else return(df)
+})
+lst <- unlist(lst,recursive=FALSE)
+
+SA_normalizeDate <- lapply(lst,normalizeDate)
+SA_normalizeDate <- as.data.frame(do.call("rbind",SA_normalizeDate)) 
+#dataframe with high utilizers (at least 20 sets) within 30d
+SA_normalizeDate %<>%
+  arrange(Study_ID,Julian)
+
+SA_high <- SA_normalizeDate %>%
+  filter(highuse=="highuse")
+
+SA_low <- SA_normalizeDate %>%
+  filter(highuse=="not_highuse")
+
+s <- sample(SA_high$Study_ID,50,replace=FALSE)
+df <- SA_high[SA_high$Study_ID %in% s,]
+#df_levels <- levels(df$highuse)
+ggplot(df,aes(Julian,Study_ID,fill=num_set)) +
+  geom_tile() +
+  scale_fill_gradientn(colours=c("white","yellow","blue")) +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_discrete(expand = c(0, 0),breaks=NULL) +
+  geom_point(aes(size=ifelse(Final_Report=="Ng", "no_dot", "dot"))) +
+  scale_size_manual(values=c(dot=2, no_dot=NA), guide="none") 
+
+s <- sample(SA_low$Study_ID,50,replace=FALSE)
+df <- SA_low[SA_low$Study_ID %in% s,]
+#df_levels <- levels(df$highuse)
+ggplot(df,aes(Julian,Study_ID,fill=num_set)) +
+  geom_tile() +
+  scale_fill_gradientn(colours=c("white","yellow","blue")) +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_discrete(expand = c(0, 0),breaks=NULL) +
+  geom_point(aes(size=ifelse(Final_Report=="Ng", "no_dot", "dot"))) +
+  scale_size_manual(values=c(dot=2, no_dot=NA), guide="none") 
+
+
+
+
+
+```
+
+
+####Heatmaps of low-utilizers
+```{r Heatmaps of low-utilizers}
 #compare to random sample of non high-utilizers
 lowuse <- bc_30d_ID %>%
   filter(count<20) %>%
@@ -999,6 +1143,8 @@ fig9
 #ggsave(file="Figures/fig9.pdf",plot=fig9)
 
 ```
+
+
 
 ####Analysis of proportion of high utilizers by location
 I found a statistically significant difference in the proportion of high utilizers among the most common locations based on a proportion test.
