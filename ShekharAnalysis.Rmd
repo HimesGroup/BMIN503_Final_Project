@@ -1,0 +1,70 @@
+---
+title: "Shekhar Data"
+author: "Nico"
+date: "September 28, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+```
+
+Starting by loading required libraries and setting the work directory to a suitable location
+
+```{r eval=TRUE,results='hide'}
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(cowplot)
+setwd("~/10X_mouse_retina_new/")
+```
+
+The data is stated to be mediumm normalized and log transformed, so I am not going to run lognormalize on the dataset.
+
+```{r eval=TRUE}
+shekhar.data=read.table(paste0("Retinal Bipolar Neurons/exp_matrix.txt"),header = TRUE,row.names = 1)
+shekhar=CreateSeuratObject(raw.data = shekhar.data)
+shekhar.mito.genes=grep(pattern = "mt-",x = rownames(x = shekhar@raw.data),value = TRUE)
+shekhar.mito=colSums(shekhar@raw.data[shekhar.mito.genes,])/colSums(shekhar@raw.data)
+shekhar=AddMetaData(object = shekhar,metadata = shekhar.mito,col.name = "percent.mito")
+VlnPlot(object = shekhar,features.plot = c("nGene","nUMI","percent.mito"),nCol = 3)
+par(mfrow=c(1,2))
+GenePlot(object = shekhar,gene1 = "nUMI",gene2 = "percent.mito")
+GenePlot(object = shekhar,gene1="nUMI",gene2 = "nGene")
+shekhar=FilterCells(object = shekhar,subset.names = c("nGene","percent.mito"),low.thresholds = c(200,-Inf),high.thresholds = c(4000,0.2))
+```
+
+```{r eval=TRUE}
+shekhar=FindVariableGenes(object = shekhar,mean.function = ExpMean,dispersion.function = LogVMR,x.low.cutoff = 0.0125,x.high.cutoff = 3,y.cutoff = 0.5)
+length(shekhar@var.genes)
+shekhar=ScaleData(object = shekhar,vars.to.regress = c("nUMI","percent.mito"))
+shekhar=RunPCA(object = shekhar,pc.genes = shekhar@var.genes,do.print = FALSE, pcs.print = 1:5,genes.print = 5,pcs.compute = 30)
+PrintPCA(object = shekhar,pcs.print = 1:5, genes.print=5, use.full = FALSE)
+VizPCA(object = shekhar,pcs.use = 1:2)
+PCAPlot(object = shekhar, dim.1=1,dim.2=2)
+shekhar=ProjectPCA(object = shekhar,do.print = FALSE)
+PCHeatmap(object = shekhar,pc.use = 1,cells.use = 500,do.balanced = TRUE,label.columns = FALSE)
+PCHeatmap(object = shekhar,pc.use = 1:5,cells.use = 500,do.balanced = TRUE,label.columns = FALSE,use.full = FALSE)
+```
+
+```{r eval=TRUE}
+shekhar=JackStraw(object = shekhar,num.replicate = 100,do.print = FALSE)
+JackStrawPlot(object = shekhar,PCs = 1:20)
+PCElbowPlot(object = shekhar)
+shekhar=FindClusters(object = shekhar,reduction.type = "pca",dims.use = 1:30,resolution = 0.6,print.output = 0,save.SNN = TRUE)
+PrintFindClustersParams(object = shekhar)
+shekhar=RunTSNE(object = shekhar,dims.use = 1:10,do.fast = TRUE)
+TSNEPlot(object = shekhar)
+```
+
+```{r eval=TRUE}
+shekhar.markers=FindAllMarkers(object = shekhar,only.pos = TRUE,min.pct = 0.25,thresh.use = 0.25)
+shekhar.markers %>% group_by(cluster) %>% top_n(2,avg_diff)
+VlnPlot(object = shekhar,features.plot = c("Spc25","Rlbp1"))
+VlnPlot(object = shekhar,features.plot = c("Spc25","Rlbp1"),use.raw=TRUE,y.log=TRUE)
+FeaturePlot(object = shekhar, features.plot = c("Spc25","Rlbp1", "Dbi","Fxyd1","Clu","Prph2","Pdc","Mef2c","Sag"), cols.use = c("grey", "blue"), reduction.use = "tsne")
+top10=shekhar.markers %>% group_by(cluster) %>% top_n(10,avg_diff)
+DoHeatmap(object = shekhar, genes.use = top10$gene,slim.col.label = TRUE,remove.key = TRUE)
+
+```
+
