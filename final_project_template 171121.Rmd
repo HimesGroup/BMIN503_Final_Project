@@ -1,0 +1,349 @@
+---
+title: "BMIN503/EPID600 Final Project"
+author: "Rob Wilson"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
+
+### Overview
+In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+I will analyze the NHANES data from 1999-2000 for 7386 participants in a study of the tuberculin skin test (TST), also known as the purified protein derivative (PPD) test, for Latent TB Infection (LTBI). The goal is to understand better the implications of the size (i.e., the diameter, measured in millimeters) of the reaction in individuals who are reactive and whether the traditional cut-off for positivity of 10 mm makes sense from a medical perspective. Faculty I have spoken with comprise:
+
+Shane Jensen,
+Associate Professor,
+Statistics
+
+Amy Behrman,
+Associate Professor,
+Emergency Medicine
+
+Larry Singh,
+Senior Scientist (Center for Mitochondrial and Epigenomic Medicine),
+Pathology (CHOP)
+
+I've already discussed with Dr. Singh different approaches to mixture-modeling the TST data, and with Dr. Jensen the different ways to incorporate priors into the model. Most of the introdution below, on TB, and the dilemmas faced by Occupational Medicine in interpreting, and acting on, TST results, was derived from my conversations with Dr. Behrman. 
+
+### Introduction 
+In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
+
+In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+Tuberculosis (TB) remains an immense health problem worldwide. Approximately one third of the world's population is, or has been, infected with Mycobacterium tuberculosis (MTB), and new infections occur in about 1% of the population each year. Mycobacteria can survive for decades in latent form; approximately one in ten latent infections eventually reactivates, and active disease, if left untreated, is more than 50% fatal. High-prevalence countries typically vaccinate their inhabitants with Bacille de Calmette et Guérin (BCG), which is, on average, approximately 50% effective in preventing tuberculosis. The tuberculin skin test (TST), also known as the purified protein derivative (PPD) test, has been around for more than 100 years and comprises a mixture of about 200 non-specific antigens that are shared with non-tuberculosis mycobacteria (NTM), including the strains developed from Mycobacterium bovis for the BCG vaccine; thus, approximately 40% of individuals uninfected with MTB, but vaccinated with BCG, test positive by the TST. The motivation for this study comes from the clinical dilemmas faced by the Occupational Medicine Service of the University of Pennsylvania Health System (UPHS). All new hires for UPHS are screened for TB infection using the TST, including those who were born outside the U.S. (where both MTB and BCG vaccination are more common). If the test is positive, a chest x-ray is obligatory to rule out active TB infection and thereby avoid exposure to UPHS patients. However, most MTB infections are latent (LTBI), and treatment of LTBI is not without risks. Which individuals with a positive TST should be treated for LTBI? Should the same standard cut-off for positivity of 10 mm be used for those with a low vs. high prior probability of LTBI, BCG, and NTM? 
+
+To address the above questions, I will analyze the NHANES data from 1999-2000 for 7386 participants in a study of the TST for LTBI, starting with mixture models to assess the contributions of NTM and BCG to lower levels of reactivity. I will then use data on the prior probabilities of LTBI in different populations to generate positive predictive values for different sizes of TST reactivity. The problem is interdisciplinary as it draws on the mathematics and statistics of mixture models (with the help of Larry Singh, who did is his PhD on mixture models), Bayesian modeling (with the help of Shane Jensen, who is an expert on Bayesian data analytics), and the occupational medicine of TB testing (with the help of Amy Behrman, who is the Director of Occupational Medicine for UPHS). 
+
+### Methods
+In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+
+The data used is the NHANES data from 1999-2000 for 7386 participants in a study of the TST for LTBI. The methodological approach will be to start with mixture models to assess whether there is good evidence of more than one distribution. The I will assess the contributions of non-tuberculosis mycobacteria (NTM) and Bacille de Calmette et Guérin (BCG) to lower levels of reactivity by separately examining the data from those participants for whom the independent skin test for NTM is postive, and for whom there is good evidence for BCG vaccination (foreign-born, BCG-vaccination scar). 
+
+
+```{r eval=TRUE, message=FALSE}
+
+# Modeling TST alone
+# Attempt to recapitulate Figure 1 of Bennett et al. Am J Respir Crit Care Med 177: 348-355, 2008
+
+# https://wwwn.cdc.gov/Nchs/Nhanes/1999-2000/TB.htm
+# https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/TBX_G.htm
+
+# To read SAS files: https://github.com/mangothecat/SASxport. Also on CRAN:
+
+# Install package to read in SAS files
+install.packages("SASxport")
+library(SASxport)
+
+# Read in NHANES data from 1999-2000
+tbdata <- read.xport(file="TB.XPT")
+
+# Get rid of rows in which PPD is NA
+tbdata <- tbdata[!is.na(tbdata$TBDPPDS),]
+
+# Take a look at the data
+# head(tbdata)
+# dim(tbdata)
+
+# Read in the demographics data for the same individuals
+demodata <- read.xport(file="DEMO.XPT")
+# head(demodata$SEQN)
+
+# Get demographic data on individuals who are in the tb dataset
+demodatatb <- demodata[tbdata$SEQN,]
+# head(demodatatb)
+# dim(demodatatb)
+# tbdata$SEQN[1:50]
+# demodatatb$SEQN[1:50]
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+
+```{r eval=TRUE, message=FALSE}
+
+library(tidyr)
+library(ggplot2)
+
+# Tasks: Extract demo data corresponding to SEQN numbers in tbdata. Look at bcg scar (already in tbdata), presence of NTM (PPD-B positive, already in tbdata), effect of age on low mm peak(s) (by regression) to see if age correlates with *decreasing* mm due to bcg wearing off. 
+
+# Plot a histogram of the TST (PPD-S) results
+tbdataTST <- tbdata$TBDPPDS
+hist(tbdataTST,breaks=32,ylim=c(0,300))
+
+# MClust the data
+install.packages("mclust")
+library("mclust")
+fitzero <- Mclust(tbdataTST)
+fitzero
+summary(fitzero) # best model: univariate, equal variance (E) with 8 components
+plot(fitzero, what = "BIC") # Plateaus at 2
+# plot(fitzero, what = "classification")
+plot(fitzero, what = "density")
+table(tbdataTST, fitzero$classification)
+fitzero$BIC
+
+# Re-do with 2 underlying distributions
+fitzero2 <- Mclust(tbdataTST, G=2)
+fitzero2 # univariate, equal variance (E) with 2 components
+summary(fitzero2)
+# plot(fitzero2, what = "BIC") 
+# plot(fitzero2, what = "classification")
+plot(fitzero2, what = "density")
+table(tbdataTST, fitzero2$classification)
+
+# Re-do with 3 underlying distributions
+fitzero3 <- Mclust(tbdataTST, G=3)
+fitzero3 # univariate, equal variance (E) with 3 components
+summary(fitzero3, parameters = TRUE)
+# plot(fitzero3, what = "BIC") 
+# plot(fitzero3, what = "classification")
+plot(fitzero3, what = "density")
+table(tbdataTST, fitzero3$classification)
+
+# Re-do with 4 underlying distributions
+fitzero4 <- Mclust(tbdataTST, G=4)
+fitzero4 # univariate, equal variance (E) with 4 components
+summary(fitzero4, parameters = TRUE)
+# plot(fitzero4, what = "BIC") 
+# plot(fitzero, what = "classification")
+plot(fitzero4, what = "density")
+table(tbdataTST, fitzero4$classification) # Suggests classification of <7.25 and > 7.25
+
+# Re-do with 5 underlying distributions
+fitzero5 <- Mclust(tbdataTST, G=5)
+fitzero5 # univariate, equal variance (E) with 5 components
+summary(fitzero5, parameters = TRUE)
+# plot(fitzero5, what = "BIC") 
+# plot(fitzer5, what = "classification")
+plot(fitzero5, what = "density")
+table(tbdataTST, fitzero5$classification) # Suggests classification of <7.25 and > 7.25
+
+XXXXXXXXXXXXXXX
+
+# Get rid of negatives (zero mm); "tbdataTSTnz" where nz is "non-zero"
+tbdataTSTnz <- tbdataTST[tbdataTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataTSTnz)
+hist(tbdataTSTnz,breaks=32,ylim=c(0,300))
+
+# MClust the data
+fit <- Mclust(tbdataTSTnz)
+fit
+summary(fit) # V (univariate, unequal variance) model with 3 components
+plot(fit, what = "BIC") # Plateaus at 2
+# plot(fit, what = "classification")
+# plot(fit, what = "density")
+table(tbdataTSTnz, fit$classification)
+
+# Re-do with 2 underlying distributions
+fit2 <- Mclust(tbdataTSTnz, G=2)
+fit2
+summary(fit2)
+# plot(fit2, what = "BIC") # Plateaus at 2
+# plot(fit2, what = "classification")
+plot(fit2, what = "density")
+
+# Get parameters of the two underlying distributions
+summary(fit2, parameters = TRUE)
+
+# Get classifictions of the results
+table(tbdataTSTnz, fit2$classification) # Shows cutoff at <5, >=5. 
+
+# Fit with 3 distributions
+fit3 <- Mclust(tbdataTSTnz, G=3)
+fit3
+summary(fit3)
+summary(fit3, parameters = TRUE)
+# plot(fit2, what = "BIC") # Plateaus at 2
+# plot(fit2, what = "classification")
+plot(fit3, what = "density")
+
+# Get classifictions of the results
+table(tbdataTSTnz, fit3$classification) # Shows cutoffs at >5, <=5 but >1, <=1. Suggests that <=1 mm might be false positive.
+
+# XXXXXXXXXXXXXXXXXXXXXXX
+
+# Look at TST distribution of individuals WITH bcg scars (TBABCG), where 1 is present, 2 is absent, 3 is refused
+# head(tbdata)
+tbdataPosScar <- tbdata[which(tbdata$TBABCG==1),]
+# head(tbdataPosScar)
+tbdataPosScarTST <- tbdataPosScar$TBDPPDS
+hist(tbdataPosScarTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataPosScarTSTnz <- tbdataPosScarTST[tbdataPosScarTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataPosScarTSTnz,breaks=32,ylim=c(0,300))
+
+# Mclust tbdataPosScarTSTnz, where PS = Positive Scar
+fitPS <- Mclust(tbdataPosScarTSTnz)
+fitPS # Best model has 2 components!
+summary(fitPS)
+plot(fitPS, what = "BIC") # Plateaus at 2
+plot(fitPS, what = "density")
+
+# Get classifictions of the results
+table(tbdataPosScarTSTnz, fitPS$classification) # Again (!) shows cutoffs at >5, <=5.
+
+# XXXXXXXXXXXXXXXXXXXXXXX
+
+# Look at TST distribution of individuals WITHOUT bcg scars (TBABCG), where 1 is present, 2 is absent, 3 is refused
+# head(tbdata)
+tbdataNegScar <- tbdata[which(tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegScarTST <- tbdataNegScar$TBDPPDS
+hist(tbdataNegScarTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataNegScarTSTnz <- tbdataNegScarTST[tbdataNegScarTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataNegScarTSTnz,breaks=32,ylim=c(0,300))
+
+# Mclust tbdataPosScarTSTnz, where NS = Negative Scar
+fitNS <- Mclust(tbdataNegScarTSTnz)
+fitNS # 3 components best
+summary(fitNS)
+plot(fitNS, what = "BIC") # Plateaus at 2
+plot(fitNS, what = "density")
+
+# Re-do with 2 components
+fitNS2 <- Mclust(tbdataNegScarTSTnz, G=2)
+fitNS2 # 3 components best
+summary(fitNS2)
+# plot(fitNS2, what = "BIC") # Plateaus at 2
+plot(fitNS2, what = "density")
+
+# Get classifictions of the results
+table(tbdataNegScarTSTnz, fitNS2$classification) # Again (!) shows cutoffs at >5, <=5. Since bcg was excluded, perhaps NTM accounts for lower distribution
+
+# XXXXXXXXXXXXXXXXXXXXXXX
+
+# Look at TST in those who are PPD-B (TBDPPDB) NEGATIVE to check whether NTM contributes to lower distribution. (Try pos NTM and then age next.)
+tbdataNegNTM <- tbdata[which(tbdata$TBDPPDB==0),]
+# head(tbdataPosScar)
+tbdataNegNTMtst <- tbdataNegNTM$TBDPPDS
+hist(tbdataNegNTMtst,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where NZ is "non-zero"
+tbdataNegNTMtstNZ <- tbdataNegNTMtst[tbdataNegNTMtst != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataNegNTMtstNZ,breaks=32,ylim=c(0,300))
+
+# Mclust tbdataNegNTMtstNZ, where NN = Negative NTM
+fitNN <- Mclust(tbdataNegNTMtstNZ)
+fitNN # 3 components best
+summary(fitNN)
+plot(fitNN, what = "BIC") # V plateaus at 2, E plateaus at 3
+plot(fitNN, what = "density")
+
+# Re-do with 2 components
+fitNN2 <- Mclust(tbdataNegNTMtstNZ, G=2)
+fitNN2 # 3 components best
+summary(fitNN2)
+# plot(fitNS2, what = "BIC") # Plateaus at 2
+plot(fitNN2, what = "density")
+
+# Get classifictions of the results
+table(tbdataNegNTMtstNZ, fitNN2$classification) # Again (!) shows cutoffs around 5 (<5, >=5).
+
+# XXXXXXXXXXXXXXXXXXXXXXX
+
+# Look at TST in those who are PPD-B (TBDPPDB) POSITIVE to check whether NTM contributes to lower distribution. (Try pos NTM and then age next.)
+tbdataPosNTM <- tbdata[which(tbdata$TBDPPDB !=0),]
+tbdataPosNTMtst <- tbdataPosNTM$TBDPPDS
+hist(tbdataPosNTMtst,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where NZ is "non-zero"
+tbdataPosNTMtstNZ <- tbdataPosNTMtst[tbdataPosNTMtst != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataPosNTMtstNZ,breaks=32,ylim=c(0,300))
+
+# Mclust tbdataPosNTMtstNZ, where PN = Positive NTM
+fitPN <- Mclust(tbdataPosNTMtstNZ)
+fitPN # 3 components best
+summary(fitPN)
+plot(fitPN, what = "BIC") # Plateaus at 2
+plot(fitPN, what = "density")
+
+# Re-do with 2 components
+fitPN2 <- Mclust(tbdataPosNTMtstNZ, G=2)
+fitPN2 # 3 components best
+summary(fitPN2)
+# plot(fitNS2, what = "BIC") # Plateaus at 2
+plot(fitPN2, what = "density")
+
+# Get classifictions of the results
+table(tbdataPosNTMtstNZ, fitPN2$classification) # Again (!) shows cutoffs around 5 (>5, <=5).
+
+# XXXXXXXXXXXXXXXXXXXXXXX
+
+# Look at TST in those who are PPD-B (TBDPPDB) NEGATIVE AND WITHOUT bcg scars (TBABCG; where 1 is present, 2 is absent, 3 is refused) to check whether one OR the other contributes to lower distribution. 
+tbdataNegBoth <- tbdata[which(tbdata$TBDPPDB==0 & tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegBothTST <- tbdataNegBoth$TBDPPDS
+hist(tbdataNegBothTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataNegBothTSTnz <- tbdataNegBothTST[tbdataNegBothTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataNegBothTSTnz,breaks=32,ylim=c(0,300))
+
+# Mclust tbdataNegNTMtstNZ, where NB = Negative Both (PPD-B, Scar)
+fitNB <- Mclust(tbdataNegBothTSTnz)
+fitNB # 3 components best
+summary(fitNB)
+plot(fitNB, what = "BIC") # V plateaus at 2, E plateaus at 3
+plot(fitNB, what = "density")
+
+# Re-do with 2 components
+fitNB2 <- Mclust(tbdataNegBothTSTnz, G=2)
+fitNB2
+summary(fitNB2)
+# plot(fitNS2, what = "BIC") # Plateaus at 2
+plot(fitNB2, what = "density")
+
+# Get classifictions of the results
+table(tbdataNegBothTSTnz, fitNB2$classification) # Again (!) shows cutoffs around 5 (<5, >=5).
+
+# Conclusion at this point is that < 5 is negative and a cross-reactivity with an NTM different from that used for the PPD-B, or that <5 is negative and a cross-reactivity with something ubiquitous (like other fungi). Parse both >5 and <5 to see sub-distributions within these components, particularly the >5. 
+
+```
+
+
+
