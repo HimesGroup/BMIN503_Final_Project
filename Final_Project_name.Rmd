@@ -1,10 +1,14 @@
 ---
 title: "Final Project"
-output: html_document
+author: "Saurav Bose"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: show
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, fig.align = 'center')
 ```
 
 
@@ -15,16 +19,111 @@ library(reshape2)
 ```
 
 ### Overview
-[Aircasting](http://aircasting.org/map#/map_crowd) is an open-source, end-to-end solution for collecting, displaying, and sharing health and environmental data. The idea is to scape air quality data especially PM2.5 levels across Philadelphia off of the website and find a way to characterize them graphically and analytically.
+[Aircasting](http://aircasting.org/map#/map_crowd) is an open-source, end-to-end solution for collecting, displaying, and sharing health and environmental data. The idea is to scrape air quality data especially PM2.5 levels across Philadelphia off of the website and find a way to characterize them graphically and analytically.
 
 ### Introduction
 Asthma is a prototypical complex disease for which studying genetic and environmental factors simultaneously may lead to greater breakthroughs in understanding of pathophysiology than studying genetics or the environment in isolation. However, there have been few attempts to simultaneously and comprehensively address the influence of genetics and the environment on asthma. In this project we will make the first important step in characterizing environmental parameters especially the air quality as expressed by PM2.5 levels that might have a correlation with asthama levels across the US. A good visulaiation of the geographical variation of the PM2.5 levels will give us clues to better understand respiratory health in the United States.  
 
 The project is unique in that it sits at the intersection of Medicine, Computer Science and Art. Creative visulaizations often require an artistic approach which in our case is implemented via the Statistical Computer software, R. However, the visualzations will become meaningful only when augmented by solid Medical domain knowledge. Yet another unique opportunity presented by Dr. Himes for the project is the ability to collect our own live data using the Aircasting sensors. Once the data is collected, cleaned and visulaised for Philadelphia, we will extend the study to other cities and states and thereafter use Machine Learning algorithms to predict the chance of suffering from Asthama for people belonging to a given city.
 
+### Methods
+The data was obtained as a set of CSV files from the Aircasting website. In it's raw form it was rather difficult to run visualisation/ modelling routines on it. This was mainly because, measurements from different sensors were appended vertically and not horizontally resulting in multiple header rows scattered throughout the dataset. The following data snippet illustrates this:  
 
 ```{r}
+raw_snip <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/raw_snip.csv')
+raw_snip
+
+```
+
+In order to transform the raw data into a more manageable form, `Python` was used in favour of `R` due to its superior data processing capabilities. The following code identifies the various sensor measurements contained in the input CSV files and splits them into sensor-specific CSV files. Each of the input files contains data corresponding to Temperature, Sound Level, Humidity and PM 2.5 measurements. The Python code reads in all these files and generates 4 CSV files, one for each of the sensors.
+
+```{python eval=FALSE}
+import pandas as pd
+import numpy as np
+import string
+
+path = r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113232917/'
+files = ['test2.csv', 'data.xlsx','session_37219_greys_ferry_blue_20171113-12198-emi888.csv']
+
+
+#For excel files
+#df=pd.read_excel(path+files[1], sep = '',header=None)
+#df = df.applymap(str)
+
+#For CSV files
+df=pd.read_csv(path+files[2], sep = ',',header=None)
+df=df.dropna()
+
+
+#df.index=df[0].map(lambda x: not x.isdigit()).cumsum()
+
+
+   
+truth = df[3].map(lambda x: not x.replace('.','').isdigit())
+
+counter = 1
+counter_temp = 1
+
+idx = []
+
+for i in range(truth.size):
+    if (truth[i] == True):
+        idx.append(counter) 
+        if (truth[i+1] == False):
+            counter_temp+=1
+    elif (truth[i] == False):
+        idx.append(counter) 
+        if (i!= truth.size-1 and truth[i+1] == True):
+            counter = counter_temp
+
+df.index = idx
+
+gp=df.groupby(df.index)
+
+#df2=np.hstack([gp.get_group(i) for i in gp.groups])
+
+
+
+data = {}
+
+for i in gp.groups:
+    data[str(i)]  = pd.DataFrame(np.array(gp.get_group(i))[1:], columns = np.array(gp.get_group(i))[0])
+    
+ 
+keys = data.keys()
+response = []
+units=[]
+for i in keys:
+    response.append(data["{}".format(i)]["sensor:capability"][0])                  
+    units.append(data["{}".format(i)]["sensor:units"][0])      
+    
+    
+output_title = [a+b+c+d for a,b,c,d in zip(response,["("]*len(response),units,[")"]*len(response))]    
+
+    
+for i in range(len(keys)):
+    data["{}".format(keys[i])]["sensor:units"][1] = output_title[i]    
+    
+    
+for i in keys:
+    data["{}".format(i)].columns = data["{}".format(i)].iloc[1]   
+    data["{}".format(i)] = data["{}".format(i)].reindex(data["{}".format(i)].index.drop([0,1]))    
+   
+    
+for i in range(len(keys)):
+    data["{}".format(keys[i])].to_csv(r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/{}.csv'.format(response[i]), index = False)                                  
+```
+
+The output files ar shown below:
+```{r}
 dir('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data')
+```
+
+
+These sensor-specific CSV files are now read into R and are ready to be analysed.
+
+```{r}
+
 
 
 temp <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Temperature.csv')
@@ -36,12 +135,17 @@ pm <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Cl
 
 ```
 
+Here is what the temperature data now looks like:
+
 ```{r}
 
 head(temp)
 
 ```
 
+We have also imported similar data files for the Humidity, Sound level and PM 2.5 level measurements. As we can see from the above data snippet, each of the sensor measurements has geo-spacial coordinates and a time stamp associated with it. These act as additional degrees of freedom in our analysis.  
+
+Here is a brief quantitative summary of the sensor data:
 
 ```{r}
 data.plot <- data.frame(Temperature = temp$Temperature.degrees.Fahrenheit., Humidity = hum$Humidity.percent., PM2.5 = pm$Particulate.Matter.micrograms.per.cubic.meter.)
@@ -52,7 +156,11 @@ data.plot <- data.frame(Temperature = temp$Temperature.degrees.Fahrenheit., Humi
 summary(data.plot)
 ```
 
+Now equipped with a clean dataset, we want to understand the relationship between our features: Temperature, Humidity, Sound Level, Time of day and Geographic Location on the variable of interest (response variable), PM 2.5. In order to do so, we resort to a graphical analysis that includes plotting histograms, correlation plots, parallel plots and geo-spacial heat maps.
 
+
+### Results
+First, we look at the individual distributions of the variables.
 
 ```{r}
 ggplot(data.plot)+geom_histogram(aes(x = Temperature), bins = 5)
@@ -78,7 +186,7 @@ ggplot(data.plot)+geom_histogram(aes(x = PM2.5))
 
 ```
 
-
+Next, we look at the relationships between PM2.5 and the other variables
 ```{r}
 
 ggplot(data.plot)+geom_point(aes(x = Temperature, y = PM2.5))
@@ -105,25 +213,9 @@ ggplot(data.plot)+geom_point(aes(x = Temperature, y = PM2.5))
 
 ```
 
+In order to summarise the relationships between all the variables we develop correlation plots and parallel plots.  
 
-```{r}
-plotData <-melt(cor(data.plot[sapply(data.plot, is.numeric)]))
-
-ggplot(plotData ,
-    aes(x = Var1, y = Var2, fill =value)) +
-    geom_tile() +
-    ylab("") +
-    xlab("") +
-scale_x_discrete(limits = rev(levels(plotData $Var2))) + #Flip the x- or y-axis
-    scale_fill_gradient( low = "#56B1F7", high = "#132B43") +     #lightblue to darkblue
-    #scale_fill_gradient( low = "white", high = "black") + #white to black
-       guides(fill = guide_legend(title = "Correlation"))
-
-
-
-
-```
-
+The correlation plot is shown below: 
 
 ```{r}
 # pick the numeric columns
@@ -150,11 +242,30 @@ ggplot(corr.table, aes(x=Var1, y=Var2)) +
 
 ```
 
+The plot doesn't distinguish between positive and negative corelations and is used to simply assess the strength of the correlation between variables. It reveals that Temperature and Humidity don't really have a strong correlation with PM2.5 levels. Interestingly, it also reveals that Temperature and Humidity are strongly correlated. It turns out that Temperature and Humidity are infact negatively corelated as seen by the variation on the correlation plot as shown below: 
 
 ```{r}
+plotData <-melt(cor(data.plot[sapply(data.plot, is.numeric)]))
 
-data.plot
+ggplot(plotData ,
+    aes(x = Var1, y = Var2, fill =value)) +
+    geom_tile() +
+    ylab("") +
+    xlab("") +
+scale_x_discrete(limits = rev(levels(plotData $Var2))) + #Flip the x- or y-axis
+    scale_fill_gradient( low = "#56B1F7", high = "#132B43") +     #lightblue to darkblue
+    #scale_fill_gradient( low = "white", high = "black") + #white to black
+       guides(fill = guide_legend(title = "Correlation"))
 
+
+
+
+```
+
+
+The relationship between the variables is further explored using parallel plots. 
+
+```{r}
 temp.min <- min(data.plot$Temperature)
 temp.max <- max(data.plot$Temperature)
 temp.range <- temp.max-temp.min
@@ -243,6 +354,20 @@ rownames(cat.sum) <- c("High", "Low", "Medium")
 cat.sum
 
 ```
+
+Each of the features which were originally numerical are converted into categorical variables with three categories: High, Medium and Low. This is done by computing the range for each of the variables and dividing them into three equal parts. This results in three intervals for each of the variables with the one corresponding to the highest numerical values being labeled as High and the lowest numerical values being labelled as Low. (Note that this is not the final way to categorize the data. This method was the simplest and hence implemented for the sake of testing the plots)
+
+The above plot shows us that around University city, the PM2.5 levels were mainly less than 3.55. Of the small fraction of the time, the PM2.5 levels were greater than 5.44, the humidity levels were more than 42% and temperatures were between 65.67 and 67.33 Farenheight.
+
+
+### To Do:
+1. Include more data into the analysis
+2. Create Geo-Spacial Heatmaps
+3. Think of interesting ways to implement ML techniques.
+4. Add details to the write up
+
+
+
 
 
 
