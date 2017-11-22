@@ -24,8 +24,153 @@ Castleman disease consists of a group of three heterogeneous diseases, character
 Understanding the patient population and characteristics of treatment responders vs. non-responders requires a multidisciplinary approach. As its name suggests, iMCD is idiopathic and understanding the cause requires a multidisciplinary approuch. Proteomics can be used to characterize the protein state of patients in flare compared to remission and to understand if there are proteomic changes specific to any certain subgroup. The study of gene mutations will help to understand if iMCD is caused by an underlying genetic disorder. Whole genome or whole exome sequencing can be used to determine if Castleman disease is caused by a somatic mutation.  In addition to determining the underlying cause, is crucial to understand the patient's clinical presentation. We currently have available a rich set of clinical data from the siltuximab trial and are actively collecting data in the first ever patient registry.  First, the siltuximab-trial data will be used to develop a decision tree to identify responders vs. non-responders.  The decision tree algorithm will then be validated by data collected in the ACCELERATE registry. Bill LaCava advised on the development of decision tree algorithm - specifically he provided advice on restricting to certain data collection points.  In addition, regression models will be run on the ACCELERATE data in order to test the association between additional predictors and the response outcome.  Rebecca Hubbard advised on the development of regression models. Specifically, we discussed the non-standard time-points and data collection and how to develop a mixed-effects model. Using heatmaps, clinical, laboratory, and pathological features of Castleman disease patients will be graphically presented. Jason Moore advised on developing heatmaps looking at characteristics on one axis, patients on the other axis, and using hierarchical clustering to try and identify subgroups. 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+Two sets of data are being used for this project. The first set includes the data from the siltuximab clinical trial ([siltuximab](https://clinicaltrials.gov/ct2/show/NCT01024036), a placebo controlled trial. This trial evaluated the efficacy of siltuximab in treatment of Castleman disease.  Patients were randomized to placebo or siltuximab plus best supportive care. Of 79 patients who met inclusion criteria, 53 were randomized to siltuximab. Of the 53, 18 (34%) responded to treatment.  In this project, I am first evaluating the characteristics of the siltuximab responders vs. non-responders and attempting to identify predictors for response. I will run univariate regression models, logistic regression models, and will develop a decision tree model to identify predictors of response.  I will then validate the decision tree using the second dataset, which has been obtained from the ACCELERATE registry. ACCELERATE is the first-ever natural history registry of Castleman disease. Patient enrollment has been ongoing for 1 year and clinical, laboratory, treatment, and treatment response data has been entered for approximately 40 patients.  I will identify patients treated with siltuximab in the ACCELERATE dataset and will use that data to validate the decision tree developed with the siltuximab data. 
 
+```{r eval=TRUE, warning=FALSE, message=FALSE}
+#SILTUXIMAB DATA CLEANING
+#import Siltuximab Trial files for cleaning
+#screening
+screening <-read.csv(file="/Users/sheilapierson/Desktop/Data Science/Final Datasets/adsl - Subject-level.csv", header=TRUE)
+#response
+efficacy <-read.csv(file="/Users/sheilapierson/Desktop/Data Science/Final Datasets/adef - efficacy template.csv", header=TRUE)
+#clinical
+clinical <-read.csv(file="/Users/sheilapierson/Desktop/Data Science/Final Datasets/addc - Disease Characteristics.csv",header=TRUE, na.strings=c("","NA"))
+#labs
+labs <-read.csv(file="/Users/sheilapierson/Desktop/Data Science/Final Datasets/adlb - Laboratory Test Results.csv", header=TRUE)
+
+#Format the datafiles needed for the siltuximab dataset
+#From SCREENING, filter for eligible patients and select needed columns
+library(tidyverse)
+library(reshape2)
+eligible <-screening%>%
+  filter(ARM=="CNTO328 + BSC" | ARM=="PLACEBO + BSC")%>%
+  dplyr::select(USUBJID,SUBJID, AGE,SEX,RACE,ARM,TRTP,TRTPN,HISTYPER)%>%
+  droplevels()
+
+#From EFFICACY, filter for the parameter "Durable tumor and symptomatic response during blinded treatment period by independent review" and select the needed columns
+response<-efficacy%>%
+  filter(PARAM=="Durable tumor and symptomatic response during blinded treatment period by independent review")%>%
+  dplyr::select(USUBJID,PARAM,AVALC)%>%
+  mutate(RESP=ifelse(AVALC %in% c("CR","PR"), 1, 2))%>%
+  mutate(RESP=factor(RESP, levels=c(1, 2), labels=c("Responder", "NonResponder")))%>%
+  droplevels()
+
+
+#From CLINICAL, filter for visit that occurred at "CYCLE 1 DAY 1" (baseline), select necessary variables
+clin_screen<-clinical%>%
+  filter(VISIT=="CYCLE 1 DAY 1")%>%
+  dplyr::select(USUBJID,DCTEST,DCTESTCD,DCCAT,DCSCAT,DCORRES,
+         DCSTRESC,PARAMCD)
+#Look at the clinical parameters
+summary(clin_screen$DCTESTCD)
+#drop variables that will not be involved in the model
+levels(clin_screen$DCTEST) #check levels
+#assign DCTEST levels that are wanted because there is corresponding data in validation set
+WantedLevels<-c(1,11,15:17, 22,25,27,35:36,52,56:58)
+clin_var<-filter(clin_screen,as.integer(DCTEST) %in% WantedLevels)
+#restrict to variables to spread to wide 
+clin_var_to_wide<-clin_var[c(1,3,7)]
+clin_wide<-spread(clin_var_to_wide,"DCTESTCD","DCSTRESC")
+#Turn all clinical values into 2-level factors
+clin_wide<-droplevels(clin_wide)
+
+#From LABS, filter for visit that occurred at "CYCLE 1 DAY 1", select necessary variables 
+lab_screen<-labs%>%
+  filter(VISIT=="CYCLE 1 DAY 1")%>%
+  dplyr::select(USUBJID,LBTEST,LBTESTCD,LBORRES,LBORRESU,LBSTRESC,
+         LBSTRESN,LBSTRESU,VISIT, LBDT, LBDY, LBTM,LBTPT,LBTPTNUM)
+#Select LABS that are also measured in validated set and that will be included in decision tree
+WantedLevels<-c(3,12,23,35, 41,67)
+lab_var<-filter(lab_screen,as.integer(LBTEST) %in% WantedLevels)
+#Select one lab per patient (currently CRP is collected at 3 timepoints, exclude "2HR" and "4HR" measurements) 
+one_lab<-lab_var%>%
+  group_by(USUBJID,LBTEST)%>%
+  filter(LBTPT!="2HR")%>%
+  filter(LBTPT!="4HR")
+#restrict to variables to spread to wide - spread labs
+lab_var_to_wide<-one_lab[c(1,3,7)]
+lab_wide_value<-spread(lab_var_to_wide,"LBTESTCD","LBSTRESN")
+#rename  columns to add unit ids
+names(lab_wide_value) <- c("USUBJID","ALB_g_L","CRP_mg_L","ESR_mm_hr","HGB_g_L", "IGG_g_L","PROT_g_L")
+
+#Merge the 4 siltuximab trial sets (screening, efficacy, clinical, and lab)
+#join the units and labs dataframe
+elig_resp<-left_join(eligible,response,by="USUBJID")
+addclin<-left_join(elig_resp,clin_wide,by="USUBJID")
+alldata<-left_join(addclin,lab_wide_value,by="USUBJID")
+#restrict to siltuximab arm (trtpn=2)
+siltuximab<-filter(alldata,TRTPN==2)
+
+
+#ACCELERATE DATA CLEANING
+#IN PROGRESS - TO BE UPDATED
+```
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r eval=TRUE, warning=FALSE}
+#First, summarize the variables in the Siltuixmab dataset
+str(siltuximab)
+summary(siltuximab)
+
+#Run univariate analyses on all continous and categorical variables with >1 level
+#prepare an output dataset for variables to be included  
+vars<-siltuximab[,c(3:5,9,16:17,19:21,23:24,27:32)]
+output<-data.frame(matrix(nrow=17, ncol=2))
+names(output)=c("var", "pval")
+output$var<-colnames(vars) 
+
+#run univariate analyis
+uni<-siltuximab[,c(3:5,9,12,16:17,19:21,23:24,27:32)]
+n<-length(vars)
+for (i in 1:n){
+  result<-(glm(uni$RESP ~ uni[[i+1]],family=binomial()))
+  output[i,2] <- coef(summary(result))[,4][2]
+}
+#review p-value output
+output
+lowp<-filter(output, pval<.05)
+lowp
+
+#prepare graphical output of the significant variables
+library(GGally)
+ggpairs(siltuximab, mapping=aes(col=RESP), columns=c("ALB_g_L","HGB_g_L", "IGG_g_L", "PROT_g_L"))
+
+#logistic regression models
+summary((glm(RESP~IGG_g_L+ ALB_g_L+ HGB_g_L+PROT_g_L, data=siltuximab, family=binomial())))
+#SP to graph and commment on results
+
+
+#build decision tree with all demographic, clinical, and lab variables
+library(party)
+library(rpart)
+library(rpart.plot)
+library(tree)
+tree <- rpart(RESP ~AGE+SEX+RACE+HISTYPER+CRP_mg_L+ALB_g_L+NEUROPTH+
+              IGG_g_L+FEVER+FLUIDRET+
+              LIVER+SPLEEN+MALAISE+SKINDIS+ESR_mm_hr+HGB_g_L+
+              PROT_g_L, data = siltuximab, method = "class")
+tree
+rpart.plot(x=tree)
+#Validation to be completed
+
+#build a random forest model on the complete data only
+library(randomForest)
+#complete cases
+complete<-siltuximab[complete.cases(siltuximab), ]
+siltux.rf <- randomForest(RESP~ AGE+SEX+RACE+HISTYPER+CRP_mg_L+ALB_g_L+NEUROPTH+
+              IGG_g_L+FEVER+FLUIDRET+
+              LIVER+SPLEEN+MALAISE+SKINDIS+ESR_mm_hr+HGB_g_L+
+              PROT_g_L,
+                          data=complete, ntree=200, importance=TRUE)
+siltux.rf
+siltux.rf$importance
+
+```
+
+
+```
+In the univariate analysis, albumin, hemoglobin, IgG, and proteinuria as measured at baseline were found to be significantly associated with response to siltuximab. 
+
+The significant variables were applied to a logistic regression models.
+
+[Analyses still in progress. Additional comments on results to be updated before final submission date]
