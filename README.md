@@ -1,5 +1,5 @@
 # Characterizing Air Quality in Philadelphia
-This repository contains files pertaining to teh project that aims at characterizing air quality quantified by PM 2.5 levels in the city of Philadelphia. The study takes on  a graphical and analytical approach in analysing the relationships between air quality and a variety of pamareters like Temperature, Humidity, Time of Day, Sound Levels and Geo-spacial coordinates. 
+This repository contains files pertaining to the project that aims at characterizing air quality quantified by PM 2.5 levels in the city of Philadelphia. The study takes on  a graphical and analytical approach in analysing the relationships between air quality and a variety of pamareters like Temperature, Humidity, Time of Day, Sound Levels and Geo-spacial coordinates. 
 
 The two main files that are needed to reproduce the results: 
 1. data_processing.py : To transorm the raw CSV files into more manageable format
