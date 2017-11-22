@@ -25,15 +25,14 @@ In this section, give a brief a description of your project and its goal, what d
 ### Introduction 
   Antimicrobial resistance in bacteria, particularly multi-drug resistance (MDR) is a growing concern in not only human but veterinary medicine. Animals with MDR infections have poor treatment outcomes, the antimicrobials needed to treat MDR infections are significantly more expensive for pet owners, and many MDR organisms are zoonotic, putiing not only other animals but humans at risk. When a patient's bacterial culture and sensitivity tests reveals MDR, various additional infectious disease control procedures are initiated to protect other animal patients and human staff. The ability to identify patients at high risk of MDR would allow for these procedures to be initiated earlier, reducing the spread of MDR bacteria and the risk to animal and human health.
   
-  Dr. Shelley Rankin's experience and knowledge of culture and sensitivity testing as Chief of Clinical Microbiology at PennVet's Ryan Veterinary Hospital helped me develop the initial question for this project. My studies in veterinary medicine, epidemiology and the sociology of antimicrobial prescribing influenced the choice of the variables to include in the dataset.  Many veterinary studies are limited to small case-control or cohort studies and prospective clinical trials, largely due to a lack of electronic records at many clinics. This study will utilize a data set of approximately 40,000 canine admissions to a tertiary veterinary hospital.   The scale of the data for this project allows us to branch into "big data" approaches that are rare in veterinary medicine.  As such my methods are developed with the assistance of Dr. La Cava, a Data Sscientist post-doctroal fellow, and John Holmes, an faculty member in the Department of Epidemiology, Biostatistics, and Informatics. 
-
-In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
-
-In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+  Dr. Shelley Rankin's experience and knowledge of culture and sensitivity testing as Chief of Clinical Microbiology at PennVet's Ryan Veterinary Hospital helped me develop the initial question for this project. My studies in veterinary medicine, epidemiology and the sociology of antimicrobial prescribing influenced the choice of the variables to include in the dataset.  Many veterinary studies are limited to small case-control or cohort studies and prospective clinical trials, largely due to a lack of electronic records at many clinics. This study will utilize a data set of approximately 40,000 canine admissions to a tertiary veterinary hospital.   The scale of the data for this project allows us to branch into "big data" approaches that are rare in veterinary medicine.  As such my methods are developed with the assistance of Dr. La Cava, a Data Sscientist post-doctroal fellow, and John Holmes, an faculty member in the Department of Epidemiology, Biostatistics, and Informatics.
 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+The data used for this project was from a large tertiary veterinary hospital. It is de-identified but otherwise drawn straight from medical records and requires significant cleaning. Although the data is de-identified, it will not be made publically available for privacy purposes. 
+
+In order to predict MDR status, we will employ the supervised machine learning method, Random Forest.  The development of MDR is very rare, leading to a very unbalanced data set. Only 0.5-1% of the patients in the data set have MDR (depending on the stage we are in data cleaning), the models may always select control status and still have an accuracy of 99%.  In this analysis we will explore different methods of dealing with this imbalance (under sampling controls, over sampling cases, a combination of both, and a synthetic sampling mechanism, ROSE) and their effect on prediction in a validation data set. Because this is a rare but very serious event, we will prioritize models that reduce the false negative rate over those that produce a higher overall accuracy.      
 
 Retrieving the vet data (given as a .csv), and saving as a dataframe in R. 
 ```{r eval=FALSE}
@@ -43,9 +42,8 @@ save(vet,file="vet.Rda")
 ```
 
 Loading the dataframe and cleaing the data. 
-```{r eval=TRUE}
+```{r eval=FALSE}
 library(dplyr)
-library(knitr)
 load("vet.Rda")
 
 #Stripping the time and date from the MDR-Alert and fee code so that only procedures and visits prior to the MDR alert are included in the analysis. 
@@ -87,10 +85,10 @@ table(vet$case)
 table(visit$case)
 
 ```
-Of the 45,312 canine patients seen in 2013-2014, 423 had MDR alerts in their medical records.  Of these, 320 had MDR Alerts placed in the study period. The 68 patients with MDR alerts prior to 2013 will be removed from analysis. The 35 patients with MDR alerts after 2014 will be included in the analysis, but will be treated as non-MDR patients since during their hospital stays during the study period they did not have an MDR. The final number of MDR patient admissions during the study period will be 320, out of 45,244 admissions. 
+Of the 45,312 canine patients seen in 2013-2014, 423 had MDR alerts in their medical records.  Of these, 320 had MDR Alerts placed in the study period. The 68 patients with MDR alerts prior to 2013 will be removed from analysis. The 35 patients with MDR alerts after 2014 will be included in the analysis, but will be treated as non-MDR patients since during their hospital stays during the study period they did not have an MDR. The number of MDR patient admissions during the study period will be 320, out of 45,244 admissions. 
 
  Remove all the procedure codes after the MDR alert time from the patients that had an MDR (since procedures after the MDR alert are not relevant to predicting MDR).  
-```{r eval=TRUE}
+```{r eval=FALSE}
 
 vet<-subset(vet,vet$case=="No"|(vet$case=="Yes"&!(vet$feedate < vet$MDRtime)))
 
@@ -98,7 +96,7 @@ vet<-subset(vet,vet$case=="No"|(vet$case=="Yes"&!(vet$feedate < vet$MDRtime)))
 
 Create new variables to be used in the analysis: antibiotic use (y/n), antibiotic prescriptions per visit, length of stay, month, admit service, sex, referred (y/n), surgery patient(y/n), Philadelphia residence (y/n), age at admission.  Each will be calculated at the visit level. 
 
-```{r eval=TRUE}
+```{r eval=FALSE}
 #Age
 vet<-rename(vet, dob=MDR)
 vet$dob<-strptime(vet$dob, "%m/%d/%Y")
@@ -107,19 +105,24 @@ vet$AdmitDate<-strptime(vet$AdmitDate, "%d%b%Y")
 vet$AdmitDate<-as.POSIXct(vet$AdmitDate)
 vet<-mutate(vet, age=as.numeric(difftime(AdmitDate, dob, 
                                         unit="weeks"))/52.25)
+sum(is.na(vet$age))
+
 #Casrated or Spayed Status
 vet$cast<-factor(vet$CasSpayDesc)
 table(vet$cast)
+sum(is.na(vet$cast))
 
 #Admit month
 vet$month<-months(vet$AdmitDate)
 vet$month<-factor(vet$month)
 table(vet$month)
 class(vet$month)
+sum(is.na(vet$month))
 
 #Admit Service
 vet$AdmitService<-factor(vet$AdmitService)
 table(vet$AdmitService)
+sum(is.na(vet$AdmitService))
 
 #Intensive Care (ever yes vs no)
 #vet <-mutate(vet, intcare=ifelse(vet$ServiceAtTimeOfFeeCodeEntry=="INTENSIVE CARE", 0,1))
@@ -128,6 +131,7 @@ table(vet$AdmitService)
 #Pure Breed (mixed/unknown vs purebred)
 table(vet$BreedDescription)
 vet<-mutate(vet, purebreed=ifelse(BreedDescription=="UNSPECIFIED"| BreedDescription=="UNKNOWN"|BreedDescription=="MIXED CANINE",0,1))
+sum(is.na(vet$purebreed))
 
 #Length of Stay--Note: this is until MDR status for MDR patients and until discharge for patients without MDR, because this represents their time at risk of MDR. 
 vet$DischargeDate<-strptime(vet$DischargeDate, "%m/%d/%Y")
@@ -136,11 +140,13 @@ vet<-mutate(vet, finalday=ifelse(case=="Yes",MDRtime,DischargeDate))
 vet$finalday<-as.POSIXct(vet$finalday, origin="1970-01-01")
 vet<-mutate(vet, LOS=(as.numeric(difftime(finalday, AdmitDate, unit="days"))+1))
 summary(vet$LOS)
+sum(is.na(vet$LOS))
 
 #Weight (Weights over 150kg are beyond the maximum recorded for dogs--set to NA)
 summary(vet$WeightKG)
 vet<-mutate(vet, weight=ifelse(WeightKG<150,WeightKG,NA))
 summary(vet$weight)
+sum(is.na(vet$weight))
 
 #Referral Status
 table(is.na(vet$RefVetName))
@@ -155,20 +161,182 @@ table(vet$ab)
 vet <- vet %>% group_by(VisitID) %>% mutate(ab.yn=max(ab))
 vet <- mutate(vet, ab.yn = factor(ab.yn, levels=c(0, 1), labels=c("No", "Yes")))
 table(vet$ab.yn)
+sum(is.na(vet$ab.yn))
 
 
 #Number of Antibiotic Prescriptions per Admission
 vet <- vet %>% group_by(VisitID) %>% mutate(num.ab.rx=sum(ab))
 table(vet$num.ab.rx)
-vet<-mutate(vet, num.ab.rx=aggregate(ab ~ VisitID, data = vet, sum))
+
 
 
 ```
 Now that we are finished using the fee code data to extract information, we will collapse the data back to one row per visit, since we are analyzing the risk per patient. 
 
-```{r eval=TRUE}
+```{r eval=FALSE}
 visit<-vet[!duplicated(vet$VisitID),]
+table(visit$case) #NOTE: 320-->190 (where did these go???)
+
+#Only keep variables still relevant for the analysis
+ var <- c("num.ab.rx","ab.yn","referral", "LOS","weight", "case", "AdmitService", "purebreed", "month", "cast", "age", "VisitID")
+names.use <- names(visit)[(names(visit) %in% var)]
+data <- visit[, names.use]
+save(data,file="data1.rda")
 ```
+
+We will first investigate the realtionships between the variables in this cleaned data set and case status visually.
+```{r eval=TRUE}
+library(tidyverse)
+library(GGally)
+load("data1.rda")
+ggpairs(data, mapping=aes(col=case), columns=c("LOS", "ab.yn", "num.ab.rx"))
+
+ggpairs(data, mapping=aes(col=case), columns=c("age", "purebreed","weight"))
+
+"
+```
+
+
+The sample is highly unbalanced as seen above.  We will first attempt to conduct the analysis without accounting for this imbalance, and then compare 4 methods of accounting for this unbalance to compare the results.  Finally we will attempt to use a subset of the most important variables to develop a simplified method of predicting MDR that can be calculated by clinicians on an individual basis. 
+
+First, we will use random forest imputation to impute the missing values in this data set. 
+ 
+```{r eval=FALSE}
+library(missForest)
+library(randomForest)
+library(doParallel)
+
+#Explicitly save data as dataframe for missForest imputation
+class(data)
+data<-as.data.frame(data)
+
+#Set up random forest imputation using missForest. Note: I only used 20 trees here (per missing data point), ran these processes in parallel, and set a maximum of four iterations to reduce execution time. As is this needed to run overnight. Ideally, for a full analysis, I would optimize these parameters and use a high performance computing environment.  
+#registerDoParallel(cores=4)
+#data.full<-missForest(data, ntree=20, maxiter = 4, parallelize = "forests" )
+#stopCluster()
+#stopImplicitCluster(registerDoParallel)
+#class(data.full$ximp)
+#datafull<-data.full$ximp
+#save(datafull,file="datafull.rda")
+#sum(is.na(datafull))
+
+
+
+```
+We'll split the data into two sets: a training/testing set and a validation set. We will retain 66% for training/testing and 34% for validation, as recommended by Dr. Holmes.
+```{r eval=TRUE}
+library(caret)
+library(broom)
+library(ROSE)
+library(rpart)
+load("datafull.rda")
+#Splitting into training and validation data sets
+set.seed(301)
+index <- createDataPartition(datafull$case, p = 0.66, list = FALSE)
+train_data <- datafull[index, ]
+validation_data  <- datafull[-index, ]
+
+sum(is.na(train_data))
+```
+
+Next we will train the model without regard to the imbalance in the data. Dr. Holmes and Dr. La Cava differed in their advice on whether or not to center and scale the data. I chose to leave the data as is and avoid bias that might derive from these changes since Random Forests are non-parametric. If I were conducting a regression analysis in parallel, I would have chosen to scale and center the data. 
+
+```{r eval=TRUE}
+treeimb <- rpart(case ~ ., data =train_data)
+pred.treeimb <- predict(treeimb, newdata = validation_data)
+accuracy.meas(validation_data$case, pred.treeimb[,2])
+roc.curve(validation_data$case, pred.treeimb[,2], plotit = F)
+```
+Although this looks like a good AUC, because we have such a low number of case samples, we need to adjust for the imbalance in the data. Otherwise, the model can just assign every MDR case as a control and still have a very high predictive score.
+We will compare four methods: oversampling cases, undersampling controls, both, and a synthetic sampling protocol (rose) that combines these methods to evaluate thier performance.
+
+```{r eval=TRUE}
+#over sampling
+data_balanced_over <- ovun.sample(case ~ ., data = train_data, method = "over",N = 59300)$data
+table(data_balanced_over$case)
+
+#undersampling
+data_balanced_under <- ovun.sample(case ~ ., data = train_data, method = "under", N = 252, seed = 1)$data
+table(data_balanced_under$case)
+
+#Both over and undersampling
+data_balanced_both <- ovun.sample(case ~ ., data = train_data, method = "both", p=0.5,                             N=29776, seed = 1)$data
+table(data_balanced_both$case)
+
+#ROSE Synthetic Sampling
+ data.rose <- ROSE(case ~ ., data = train_data, seed = 1)$data
+table(data.rose$case)
+```
+Now we will build our decision tree models using the test data.
+```{r eval=TRUE}
+#build decision tree models
+tree.rose <- rpart(case ~ ., data = data.rose)
+tree.over <- rpart(case ~ ., data = data_balanced_over)
+tree.under <- rpart(case ~ ., data = data_balanced_under)
+tree.both <- rpart(case ~ ., data = data_balanced_both)
+```
+
+Now we will test these models using the validation data
+```{r eval=TRUE}
+pred.tree.rose <- predict(tree.rose, newdata = validation_data)
+pred.tree.over <- predict(tree.over, newdata = validation_data)
+pred.tree.under <- predict(tree.under, newdata = validation_data)
+pred.tree.both <- predict(tree.both, newdata = validation_data)
+
+```
+
+And now we will evaluate these predictions
+```{r}
+roc.curve(validation_data$case, pred.tree.over[,2])
+roc.curve(validation_data$case, pred.tree.under[,2])
+roc.curve(validation_data$case, pred.tree.both[,2])
+roc.curve(validation_data$case, pred.tree.rose[,2])
+```
+
+We can also evaluate these predictions more specifically. First we will use the holdout method (insert more info on that here).  Then we will specifically evaluate and map specificity, sensitivity, false positive rate, and false negative rate.  In this analysis, the false negative rate is more important than these other parameters, so we will chose our final model and evaluate the most important factors primarily based on the model with the lowest false negative rate. 
+```{r}
+ ROSE.holdout <- ROSE.eval(case ~ ., data = train_data, learner = rpart, method.assess = "holdout", extr.pred = function(obj)obj[,2], seed = 1)
+ROSE.holdout
+
+#Insert more code for holdout here
+
+```
+```{r}
+#This code should make a nice graph of sensitivity, specificity, FNR and FPR, but is not currently working 
+models <- list(original = treeimb,
+                       under = tree.under,
+                       over = tree.over,
+                       both = tree.both,
+                       rose = tree.rose)
+
+comparison <- data.frame(model = names(models),
+                         Sensitivity = rep(NA, length(models)),
+                         Specificity = rep(NA, length(models)),
+                         Precision = rep(NA, length(models)),
+                         Recall = rep(NA, length(models)),
+                         F1 = rep(NA, length(models)))
+
+
+for (name in names(models)) {
+   model <- get(paste0("cm_",name))
+  
+  comparison[comparison$model == name, ] <- filter(comparison, model == name) %>%
+    mutate(Sensitivity = model$byClass["Sensitivity"],
+           Specificity = model$byClass["Specificity"],
+           Precision = model$byClass["Precision"],
+           Recall = model$byClass["Recall"],
+           F1 = model$byClass["F1"])
+}
+
+library(tidyr)
+library(ggplot2)
+comparison %>%
+  gather(x, y, Sensitivity:F1) %>%
+  ggplot(aes(x = x, y = y, color = model)) +
+    geom_jitter(width = 0.2, alpha = 0.5, size = 3)
+
+```
+
 
 
 ### Results
