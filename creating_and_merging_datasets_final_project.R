@@ -90,9 +90,9 @@ w<-dim(distinctRXredempfams)
 
 dataset<-c("FIreg","RXreg","FullRX","Fullmerge","RXrecips","RXredemps")
 observations<-c(FR[1],RR[1],FRX[1],f[1],r[1],u[1])
-visits<-c(x[1],z[1],b[1],g[1],s[1],v[1])
-families<-c(y[1],a[1],c[1],h[1],t[1],w[1])
-datasettable<-as.data.frame(cbind(dataset,observations,visits,families))
+distinct_visits<-c(x[1],z[1],b[1],g[1],s[1],v[1])
+distinct_families<-c(y[1],a[1],c[1],h[1],t[1],w[1])
+datasettable<-as.data.frame(cbind(dataset,observations,distinct_visits,distinct_families))
 datasettable
 
 #' 
