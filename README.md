@@ -8,6 +8,16 @@ This repository contains templates for your final written report and GitHub repo
 1. [**Push**][ref-push]/sync the changes up to your GitHub account.
 1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
 
+SP Repository updates
+Using data obtained from the siltuximab trial and from the first-ever Castleman disease natural history registry, ACCLERATE, this project aims to identify the characteristics of siltuximab responders vs. non-responders. 
+
+Resposity contains:
+1. README.md file to list the datafiles and RMD program files used in this project
+2. final_project_template.Rmd contains code and results 
+3. Dummy datasets from the siltuximab trial and ACCELERATE registry to be added
+
+
+
 
 DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
@@ -18,3 +28,6 @@ DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in wh
 [ref-commit]: http://gitref.org/basic/#commit
 [ref-push]: http://gitref.org/remotes/#push
 [pull-request]: https://help.github.com/articles/creating-a-pull-request
+
+
+
