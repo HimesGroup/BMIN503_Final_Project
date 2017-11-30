@@ -15,6 +15,11 @@ knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, fig.align = 'center
 ```{r, include=FALSE}
 library(tidyverse)
 library(reshape2)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(dplyr)
 
 ```
 
@@ -38,12 +43,20 @@ raw_snip
 In order to transform the raw data into a more manageable form, `Python` was used in favour of `R` due to its superior data processing capabilities. The following code identifies the various sensor measurements contained in the input CSV files and splits them into sensor-specific CSV files. Each of the input files contains data corresponding to Temperature, Sound Level, Humidity and PM 2.5 measurements. The Python code reads in all these files and generates 4 CSV files, one for each of the sensors.
 
 ```{python eval=FALSE}
+# -*- coding: utf-8 -*-
 import pandas as pd
 import numpy as np
 import string
+import os
 
-path = r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113232917/'
-files = ['test2.csv', 'data.xlsx','session_37219_greys_ferry_blue_20171113-12198-emi888.csv']
+#path = r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113232917/'
+path = r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113233300/'
+
+#files = ['test2.csv', 'data.xlsx','session_37219_greys_ferry_blue_20171113-12198-emi888.csv']
+#files = os.listdir(r"/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113232917")
+
+files = os.listdir(r"/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/sessions_20171113233300/")
+
 
 
 #For excel files
@@ -51,7 +64,7 @@ files = ['test2.csv', 'data.xlsx','session_37219_greys_ferry_blue_20171113-12198
 #df = df.applymap(str)
 
 #For CSV files
-df=pd.read_csv(path+files[2], sep = ',',header=None)
+df=pd.read_csv(path+files[4], sep = ',',header=None)
 df=df.dropna()
 
 
@@ -111,7 +124,11 @@ for i in keys:
    
     
 for i in range(len(keys)):
-    data["{}".format(keys[i])].to_csv(r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/{}.csv'.format(response[i]), index = False)                                  
+    with open(r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/{}.csv'.format(response[i]), 'a') as f:
+             data["{}".format(keys[i])].to_csv(f, header=False,index = False)
+    #data["{}".format(keys[i])].to_csv(r'/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/{}.csv'.format(response[i]), index = False)                                  
+
+                                
 ```
 
 The output files ar shown below:
@@ -125,22 +142,52 @@ These sensor-specific CSV files are now read into R and are ready to be analysed
 ```{r}
 
 
+temp <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Temperature.csv', stringsAsFactors = F)
 
-temp <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Temperature.csv')
+hum <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Humidity.csv', stringsAsFactors = F)
 
-hum <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Humidity.csv')
+pm <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Particulate Matter.csv', stringsAsFactors = F)
 
-pm <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Particulate Matter.csv')
-
+sound <- read.csv('/Users/sauravbose/Data Science/Bioinformatics/Aircasting Data/Clean_Data/Sound Level.csv', stringsAsFactors = F)
 
 ```
 
-Here is what the temperature data now looks like:
+
+
+```{r, results='hide'}
+
+s <- inner_join(temp,sound,by = c("Timestamp","geo.lat","geo.long"))
+s <- s[!duplicated(s$Timestamp),]
+
+s2 <- inner_join(s,hum,by = c("Timestamp","geo.lat","geo.long"))
+s2 <- s2[!duplicated(s2$Timestamp),]
+
+s3 <- inner_join(s2,pm,by = c("Timestamp","geo.lat","geo.long"))
+s3 <- s3[!duplicated(s3$Timestamp),]
+
+dim(s3)
+```
+
+
+```{r, results='hide'}
+
+data <- s3 %>% mutate(Timeofday = Timestamp)
+data <- data %>% transform(Timeofday = strptime(Timeofday, "%Y-%m-%dT%H:%M:%S"))%>% transform(Timeofday= ifelse(Timeofday$min>30,Timeofday$hour+1,Timeofday$hour))
+
+
+data <- data %>% rename(Temperature = Temperature.degrees.Fahrenheit., Sound = Sound.Level.decibels., Humidity = Humidity.percent., PM2.5 = Particulate.Matter.micrograms.per.cubic.meter., lon = geo.long, lat = geo.lat)
+
+dim(data)
+unique(data$Timeofday)
+
+```
+
+
+One all of the sensory data is cleaned, organised and loaded, here is what it looks like:
 
 ```{r}
 
-head(temp)
-
+data
 ```
 
 We have also imported similar data files for the Humidity, Sound level and PM 2.5 level measurements. As we can see from the above data snippet, each of the sensor measurements has geo-spacial coordinates and a time stamp associated with it. These act as additional degrees of freedom in our analysis.  
@@ -148,7 +195,8 @@ We have also imported similar data files for the Humidity, Sound level and PM 2.
 Here is a brief quantitative summary of the sensor data:
 
 ```{r}
-data.plot <- data.frame(Temperature = temp$Temperature.degrees.Fahrenheit., Humidity = hum$Humidity.percent., PM2.5 = pm$Particulate.Matter.micrograms.per.cubic.meter.)
+data.plot <- data %>% select(Temperature, Sound, Humidity, PM2.5)
+
 
 ```
 
@@ -156,14 +204,57 @@ data.plot <- data.frame(Temperature = temp$Temperature.degrees.Fahrenheit., Humi
 summary(data.plot)
 ```
 
-Now equipped with a clean dataset, we want to understand the relationship between our features: Temperature, Humidity, Sound Level, Time of day and Geographic Location on the variable of interest (response variable), PM 2.5. In order to do so, we resort to a graphical analysis that includes plotting histograms, correlation plots, parallel plots and geo-spacial heat maps.
+Now equipped with a clean dataset, we want to understand the relationship between our features: Temperature, Humidity, Sound Level, Time of day and Geographic Location on the variable of interest (response variable), PM 2.5. In order to do so, we resort to a graphical analysis that includes plotting histograms, correlation plots, parallel plots and geo-spacial maps.
 
 
 ### Results
+
+
+```{r}
+counties <- map_data("county")
+penn_county <- counties %>% filter(region=="pennsylvania")
+phil <- penn_county %>% filter(subregion == "philadelphia")
+phil <- phil %>% rename(lon = long)
+
+ll_means <- c(min(phil$lon), min(phil$lat))
+map2 <- get_map(location = ll_means,  maptype = "hybrid", source = "google")
+
+
+pm <- pm %>% rename(lon = geo.long, lat = geo.lat, PM2.5 = Particulate.Matter.micrograms.per.cubic.meter.)
+
+ggmap(map2) + geom_point(data = pm, mapping =  aes(x = lon, y = lat, color = PM2.5), size = 2)+ 
+  scale_colour_gradientn(colours = rev(heat.colors(7)), guide = "colourbar") +ggtitle("PM2.5 Measurements overlayed on Pennsylvania Map")
+
+```
+
+
+```{r}
+#ll_means <- sapply(pm[1:2], mean)
+
+ll_means <- c(-75.175,39.95)
+map2 <- get_map(location = ll_means,  maptype = "roadmap", source = "google", zoom =14)
+
+#ggmap(map2) + geom_tile(data = pm, aes(x = lon, y = lat, fill = part))+ scale_color_gradientn(colours = rainbow(7))
+
+ggmap(map2) + geom_point(data = pm, mapping =  aes(x = lon, y = lat, color = PM2.5), size = 2)+ 
+  scale_colour_gradientn(colours = rev(heat.colors(7)),  guide = "colourbar", limits = c(0,30)) +ggtitle("PM2.5 Measurements overlayed on Philadelphia Map")
+
+
+```
+
 First, we look at the individual distributions of the variables.
 
 ```{r}
-ggplot(data.plot)+geom_histogram(aes(x = Temperature), bins = 5)
+mytheme <- theme(plot.title = element_text(family = "Helvetica", face = "bold", size = (15),hjust = 0.5), 
+                 legend.title = element_text(colour = "black",  face = "bold.italic", family = "Helvetica"), 
+                 legend.text = element_text(face = "italic", colour="steelblue4",family = "Helvetica"), 
+                  axis.title = element_text(family = "Helvetica", size = (10), colour = "black"),
+                  axis.text = element_text(family = "Courier", colour = "black", size = (10)))
+  
+#ggplot(data.plot)+geom_histogram(aes(x = Temperature), bins = 10)+mytheme+ggtitle("Histogram of Temperature Measurements")
+
+temp <- temp %>% rename(Temperature = Temperature.degrees.Fahrenheit., lon = geo.long, lat = geo.lat)
+ggplot(temp)+geom_histogram(aes(x = Temperature), bins = 10)+mytheme+ggtitle("Histogram of Temperature Measurements")
 
 
 
@@ -171,16 +262,25 @@ ggplot(data.plot)+geom_histogram(aes(x = Temperature), bins = 5)
 
 
 ```{r}
-ggplot(data.plot)+geom_histogram(aes(x = Humidity), bins = 7)
+hum <- hum %>% rename(Humidity = Humidity.percent., lon = geo.long, lat = geo.lat)
+
+ggplot(hum)+geom_histogram(aes(x = Humidity), bins = 10)+mytheme+ggtitle("Histogram of Humidity Measurements")
 
 
+
+```
+
+```{r}
+sound.hist <- sound[!duplicated(sound$Timestamp),]
+sound.hist <- sound.hist %>% rename(Sound = Sound.Level.decibels., lon = geo.long, lat = geo.lat)
+ggplot(sound.hist)+geom_histogram(aes(x = Sound), bins = 15)+mytheme+ggtitle("Histogram of Sound Measurements")
 
 ```
 
 
 
 ```{r}
-ggplot(data.plot)+geom_histogram(aes(x = PM2.5))
+ggplot(pm)+geom_histogram(aes(x = PM2.5), bins = 30)+mytheme+ggtitle("Histogram of PM2.5 Measurements")
 
 
 
@@ -189,7 +289,7 @@ ggplot(data.plot)+geom_histogram(aes(x = PM2.5))
 Next, we look at the relationships between PM2.5 and the other variables
 ```{r}
 
-ggplot(data.plot)+geom_point(aes(x = Temperature, y = PM2.5))
+ggplot(data.plot)+geom_point(aes(x = Temperature, y = PM2.5))+mytheme+ggtitle("Dependence of PM2.5 on Temperature Measurements")
 
 
 
@@ -198,7 +298,7 @@ ggplot(data.plot)+geom_point(aes(x = Temperature, y = PM2.5))
 
 
 ```{r}
-ggplot(data.plot)+geom_point(aes(x = Humidity, y = PM2.5))
+ggplot(data.plot)+geom_point(aes(x = Humidity, y = PM2.5))+mytheme+ggtitle("Dependence of PM2.5 on Humidity Measurements")
 
 
 
@@ -242,32 +342,43 @@ ggplot(corr.table, aes(x=Var1, y=Var2)) +
 
 ```
 
-The plot doesn't distinguish between positive and negative corelations and is used to simply assess the strength of the correlation between variables. It reveals that Temperature and Humidity don't really have a strong correlation with PM2.5 levels. Interestingly, it also reveals that Temperature and Humidity are strongly correlated. It turns out that Temperature and Humidity are infact negatively corelated as seen by the variation on the correlation plot as shown below: 
-
-```{r}
-plotData <-melt(cor(data.plot[sapply(data.plot, is.numeric)]))
-
-ggplot(plotData ,
-    aes(x = Var1, y = Var2, fill =value)) +
-    geom_tile() +
-    ylab("") +
-    xlab("") +
-scale_x_discrete(limits = rev(levels(plotData $Var2))) + #Flip the x- or y-axis
-    scale_fill_gradient( low = "#56B1F7", high = "#132B43") +     #lightblue to darkblue
-    #scale_fill_gradient( low = "white", high = "black") + #white to black
-       guides(fill = guide_legend(title = "Correlation"))
-
-
-
-
-```
+The plot doesn't distinguish between positive and negative corelations and is used to simply assess the strength of the correlation between variables. It reveals that Temperature and Humidity do have a fair correlation with PM2.5 levels. 
 
 
 The relationship between the variables is further explored using parallel plots. 
 
 ```{r}
+# 
+# 
 temp.min <- min(data.plot$Temperature)
 temp.max <- max(data.plot$Temperature)
+# temp.min <- 26
+# temp.max <- 87
+# temp.range <- temp.max-temp.min
+# 
+# # 
+# # hum.min <- min(data.plot$Humidity)
+# # hum.max <- max(data.plot$Humidity)
+# # hum.range <- hum.max-hum.min
+# 
+# 
+# #pm.min <- min(data.plot$PM2.5)
+# #pm.max <- max(data.plot$PM2.5)
+# #pm.range <- pm.max-pm.min
+# 
+# 
+# # s.min <- min(data.plot$Sound)
+# # s.max <- max(data.plot$Sound)
+# #s.range <- s.max-s.min
+# 
+# 
+# 
+# data.cat <-  data.plot %>% mutate(Temperature = ifelse(Temperature < (temp.min+temp.range/3), "Low",ifelse(Temperature > (temp.min+2*temp.range/3),"High","Medium"))) %>% mutate(Humidity = ifelse(Humidity < 20, "Low",ifelse(Humidity > 50,"High","Medium"))) %>% mutate(PM2.5 = ifelse(PM2.5 < 12, "Low",ifelse(PM2.5 > 35,"High","Medium"))) %>% mutate(Sound = ifelse(Sound < 40, "Low",ifelse(Sound > 80,"High","Medium"))) %>% mutate(Temperature = as.factor(Temperature), Humidity = as.factor(Humidity), PM2.5 = as.factor( PM2.5),Sound= as.factor(Sound))
+#  
+
+
+#temp.min <- 26
+#temp.max <- 87
 temp.range <- temp.max-temp.min
 
 
@@ -281,12 +392,18 @@ pm.max <- max(data.plot$PM2.5)
 pm.range <- pm.max-pm.min
 
 
+s.min <- min(data.plot$Sound)
+s.max <- max(data.plot$Sound)
+s.range <- s.max-s.min
 
-data.cat <-  data.plot %>% mutate(Temperature = ifelse(Temperature < (temp.min+temp.range/3), "Low",ifelse(Temperature > (temp.min+2*temp.range/3),"High","Medium"))) %>% mutate(Humidity = ifelse(Humidity < (hum.min+hum.range/3), "Low",ifelse(Humidity > (hum.min+2*hum.range/3),"High","Medium"))) %>% mutate(PM2.5 = ifelse(PM2.5 < (pm.min+pm.range/3), "Low",ifelse(PM2.5 > (pm.min+2*pm.range/3),"High","Medium")))%>% mutate(Temperature = as.factor(Temperature), Humidity = as.factor(Humidity), PM2.5 = as.factor(PM2.5))
 
 
+# data.cat <-  data.plot %>% mutate(Temperature = ifelse(Temperature < (temp.min+temp.range/3), "Low",ifelse(Temperature > (temp.min+2*temp.range/3),"High","Medium"))) %>% mutate(Humidity = ifelse(Humidity < (hum.min+hum.range/3), "Low",ifelse(Humidity > (hum.min+2*hum.range/3),"High","Medium"))) %>% mutate(PM2.5 = ifelse(PM2.5 < (pm.min+pm.range/3), "Low",ifelse(PM2.5 > (pm.min+2*pm.range/3),"High","Medium")))%>% mutate(Sound = ifelse(Sound < (s.min+s.range/3), "Low",ifelse(Sound > (s.min+2*s.range/3),"High","Medium")))%>% mutate(Temperature = as.factor(Temperature), Humidity = as.factor(Humidity), PM2.5 = as.factor(PM2.5), Sound = as.factor(Sound))
 
-data.temp <- data.cat %>% group_by(Temperature, Humidity, PM2.5) %>% summarise(Freq = n()) 
+data.cat <-  data.plot %>% mutate(Temperature = ifelse(Temperature < (temp.min+temp.range/3), "Low",ifelse(Temperature > (temp.min+2*temp.range/3),"High","Medium"))) %>% mutate(Humidity = ifelse(Humidity < (hum.min+hum.range/3), "Low",ifelse(Humidity > (hum.min+2*hum.range/3),"High","Medium"))) %>% mutate(PM2.5 = ifelse(PM2.5 < 10, "Low",ifelse(PM2.5 > 30,"High","Medium")))%>% mutate(Sound = ifelse(Sound < (s.min+s.range/3), "Low",ifelse(Sound > (s.min+2*s.range/3),"High","Medium")))%>% mutate(Temperature = as.factor(Temperature), Humidity = as.factor(Humidity), PM2.5 = as.factor(PM2.5), Sound = as.factor(Sound))
+
+
+data.temp <- data.cat %>% group_by(Temperature, Humidity, Sound, PM2.5) %>% summarise(Freq = n()) 
 
 #Parallel plot
 parallelset <- function(..., freq, col="gray", border=0, layer, 
@@ -331,23 +448,24 @@ parallelset <- function(..., freq, col="gray", border=0, layer,
 }
 
 
-myt <- subset(data.temp, select=c("Temperature","Humidity","PM2.5","Freq"))
+myt <- subset(data.temp, select=c("Temperature","Humidity","Sound","PM2.5","Freq"))
 myt <- within(myt, {
     color <- ifelse(PM2.5=="Low","#008888",ifelse(PM2.5=="Medium","#330066", "#000080"))
 })
 
 
-with(myt, parallelset(Temperature, Humidity, PM2.5, freq=Freq, col=color, alpha=0.2))
+with(myt, parallelset(Temperature, Humidity, Sound,  PM2.5, freq=Freq, col=color, alpha=0.2))
 
 
 ```
+
 
 The definitions of High, Low and Medium are summarised below: 
 ```{r}
 
 cat.sum <- data.frame(Temperature = c(paste(">",as.character(round(temp.min+2*temp.range/3,2))),paste("<",as.character(round(temp.min+temp.range/3,2))),paste(">=",as.character(round(temp.min+temp.range/3,2)),"and <=",as.character(round(temp.min+2*temp.range/3,2)))),Humidity = 
 c(paste(">",as.character(round(hum.min+2*hum.range/3,2))),paste("<",as.character(round(hum.min+hum.range/3,2))),paste(">=",as.character(round(hum.min+hum.range/3,2)),"and <=",as.character(round(hum.min+2*hum.range/3,2)))), PM2.5 = 
-c(paste(">",as.character(round(pm.min+2*pm.range/3,2))),paste("<",as.character(round(pm.min+pm.range/3,2))),paste(">=",as.character(round(pm.min+pm.range/3,2)),"and <=",as.character(round(pm.min+2*pm.range/3,2)))))
+c(paste(">",as.character(30)),paste("<",as.character(10)),paste(">=",as.character(10),"and <=",as.character(30))),Sound = c(paste(">",as.character(round(s.min+2*s.range/3,2))),paste("<",as.character(round(s.min+s.range/3,2))),paste(">=",as.character(round(s.min+s.range/3,2)),"and <=",as.character(round(s.min+2*s.range/3,2)))))
 
 rownames(cat.sum) <- c("High", "Low", "Medium")
 
@@ -357,14 +475,12 @@ cat.sum
 
 Each of the features which were originally numerical are converted into categorical variables with three categories: High, Medium and Low. This is done by computing the range for each of the variables and dividing them into three equal parts. This results in three intervals for each of the variables with the one corresponding to the highest numerical values being labeled as High and the lowest numerical values being labelled as Low. (Note that this is not the final way to categorize the data. This method was the simplest and hence implemented for the sake of testing the plots)
 
-The above plot shows us that around University city, the PM2.5 levels were mainly less than 3.55. Of the small fraction of the time, the PM2.5 levels were greater than 5.44, the humidity levels were more than 42% and temperatures were between 65.67 and 67.33 Farenheight.
+The above plot shows us that around University city, the PM2.5 levels were mainly less than 10. Of the small fraction of the time, the PM2.5 levels were greater than 10 and less than 30, the humidity levels were more than 41%, sound levels were between 54.61 and 74.71dB and temperatures were greater than 73 Farenheight.
 
 
 ### To Do:
-1. Include more data into the analysis
-2. Create Geo-Spacial Heatmaps
-3. Think of interesting ways to implement ML techniques.
-4. Add details to the write up
+1. Think of interesting ways to implement ML techniques.
+2. Add details to the write up
 
 
 
