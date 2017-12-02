@@ -1,0 +1,472 @@
+---
+title: "Response to treatment and risk-of-recurrence in patients with breast cancer receiving neoadjuvant chemotherapy (NACT)"
+author: "Yuxi (Clara) Dong"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+### Overview
+
+Neoadjuvant chemotherapy for breast cancer provides critical information about tumor response. The I-SPY1 TRIAL (Investigation of Serial Studies to Predict Your Therapeutic Response With Imaging and Molecular Analysis) integrated clinical and imaging data to evaluate and predict pathologic complete response(PCR) and recurrence-free survival(RFS) based on MRI imaging, and the data from I-SPY1 TRIAL consists of image data, clinical and outcome data for locally advanced breast cancer patients. My ultimate goal is to use these data to evaluate whether response to therapy – as measured by MRI would predict pathologic complete response (pCR) and recurrence-free survival (RFS) for patients with stage 2 or 3 breast cancer receiving neoadjuvant chemotherapy (NACT).
+
+
+### Introduction 
+
+Neoadjuvant chemotherapy is a common treatment that used to treat woman with invasive breast cancer, and it has shown to reduce the risk of recurrence after surgery and siginificant overall survival outcomes. There is a positive association between change of primary tumor size in response to chemotheray and overall survival, therefore, the size change of primary tumor can be regarded as a biomarker for breast cancer. Thus, monitoring tumor response can provide prediction of PCR and RFS to neoadjuvant chemotherapy. Current clinical assessment of tumor response to radiation or chemotherapy and therapeutic efficacy can be obtained from magnetic resonance imaging (MRI) with the indication of changes in tumor morphology resulted from the molecular changes to tumor tissue. 
+The purpose of this project is to find the relationship of PCR and RFS based on patient clinical information and tumor biomarkers assessed by MRI. 
+
+To address this problem, multidisciplinary approach is required. Understanding pathophysiology of breast cancer will be helpful to interpret clinical assessments of tumor response to neoadjuvant chemotherapy, as well as histopathologic analysis of surgical specimens. Having knowledge in MR imaging technique as well as knowledge in MR image data assessment is also necessary to understand image data of tumor response to chemotherapy. Finally, statistics will serve as a key input for the overall study to not only show the data graphically, but also explore data among important issues, and make correctly and properly inference. Thus, the probelm addressed in this project is interdisciplinary.
+
+
+
+### Methods
+
+The data sets I utilized in this project were obtained from [Cancer Imaging Archive](https://wiki.cancerimagingarchive.net/display/Public/ISPY1#0eadffee2ba44b479e4ed5f7a6311f33), which is a database of various cancer images and related clinical trial data. Specifically, the data set I analyzed are part of the ACRIN 6657 trial in I-SPY1 TRIAL (Investigation of Serial Studies to Predict Your Therapeutic Response With Imaging and Molecular Analysis). This try aims to establish standards for collecting molecular and imaging data, as well as to support high-quality real-time biomarker evaluation for future trials. The dataset is consists of two part - patient clinical data and treatment outcome data. I will do several analysis on this two data and investigate relationships and predictbilities of PCR and RFS based on patient characteristics, clinical information and tumor biomarkers.
+
+First of all, the raw clinical and outcome data will be imported. The raw data are in excel, and they were imported as two dataframes.
+
+```{r, eval=TRUE, warning=FALSE}
+library(readxl)
+setwd("/Users/claradong/Documents/GitHub/BMIN503_Final_Project")
+df_clinical = read_xlsx("Final_project_data.xlsx", sheet = 2)
+df_outcome = read_xlsx("Final_project_data.xlsx", sheet = 4)
+```
+Summary views of the raw patients clinical data were reviewed. 
+```{r, eval=TRUE}
+str(df_clinical)
+```
+Summary views of the raw treatment outcome data were reviewed.
+```{r, eval=TRUE}
+str(df_outcome)
+```
+
+However, lots of information in raw data are not related to this project. Two datasets are therefore cleaned for better utilization based on the information needed.
+
+```{r, eval=TRUE, warning=FALSE}
+library(tidyverse)
+```
+
+```{r, eval=TRUE}
+clinical <- df_clinical %>%
+  select(SUBJECTID,age,race_id,ERpos,PgRpos,'HR Pos','Her2MostPos','HR_HER2_CATEGORY', BilateralCa,Laterality,'MRI LD Baseline','MRI LD 1-3dAC', 'MRI LD InterReg','MRI LD PreSurg') %>%
+  mutate(race_id = factor(race_id, levels=c(1,3,4,5,6,50), labels=c("Caucasian", "Afican American", "Asian", "Native Hawaiian/Pacific Islander", "American Indian/Alaskan Native", "Multiple race"))) %>%
+  mutate(ERpos = factor(ERpos, levels=c(0,1,2), labels=c("Negative","Positive","Inderminate"))) %>%
+  mutate(PgRpos = factor(PgRpos,levels=c(0,1,2), labels=c("Negative","Positive","Inderminate"))) %>% 
+  mutate('HR Pos' = factor(`HR Pos`,levels=c(0,1,2), labels=c("Negative","Positive","Inderminate"))) %>%
+  mutate('Her2MostPos' = factor(`Her2MostPos`, levels=c(0,1), labels=c('Negative','Positive'))) %>%
+  mutate('HR_HER2_CATEGORY' = factor(`HR_HER2_CATEGORY`, levels=c(1,2,3), labels=c('HR Positive, Her2 Negative', 'Her2 Positive', 'Triple Negative'))) %>%
+  mutate(BilateralCa = factor(BilateralCa, levels=c(0,1), labels=c("No","Yes"))) %>%
+  mutate(Laterality = factor(Laterality, levels=c(1,2), labels=c("Left", "Right")))
+str(clinical)
+
+outcome <- df_outcome %>%
+  rename(survival.status = sstat) %>%
+  mutate(survival.status = factor(survival.status, levels=c(7,8,9), labels=c("Alive", "Dead","Lost"))) %>%
+  mutate(PCR = factor(PCR, levels=c(0,1), labels=c("No","Yes"))) %>%
+  mutate(RCBClass = factor(RCBClass, levels=c(0,1,2,3), labels=c("0,RCB index 0", "1=I,RCB index less than or equal to 1.36", "2=II,RCB index greater than 1.36 or equal to 3.28", "3=III,RCB index greater than 3.28")))
+```
+
+To investigating the relationship between recptor status and PCR, RCF, I will select related columns from two clinical and outcome dataset and merge them together to facilitate furthur use. 
+```{r, eval=TRUE}
+group <- c(rep(0,100),rep(1,121))
+
+total <- merge(clinical, outcome) %>%
+  select("SUBJECTID","race_id", "age","ERpos", "PgRpos", "HR Pos", "Her2MostPos", "HR_HER2_CATEGORY","BilateralCa", "Laterality","survival.status", "survDtD2 (tx)", "RFS", "PCR") %>%
+  rename(HR_status = 'HR Pos') %>%
+  mutate(group = factor(group, levels=c(0,1), labels=c("case", "control")))
+str(total)
+total <- na.exclude(total)
+```
+
+To get an overall information of patients enrolled in this clinical trial, summray of patients characteristics based on race, age, and diffierent receptors status.
+
+```{r, eval=TRUE, warning=FALSE}
+table <- total %>%
+  select("race_id","age","ERpos", "PgRpos", "HR_status", "Her2MostPos", "HR_HER2_CATEGORY") %>%
+  rename(race="race_id", Estrogen="ERpos", Progesterone="PgRpos", Hormone="HR_status", HER2="Her2MostPos")
+library(knitr)
+library(kableExtra)
+options(knitr.kable.NA='')
+kable(summary(table))
+```
+
+Specifically, age distribution and race distribution were plotted below.
+
+```{r, eval=TRUE}
+library(ggplot2)
+ggplot(data=clinical, aes(x=age)) +
+  geom_histogram(binwidth = 3) +
+  ggtitle(paste("Patients age distribution")) +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(data=clinical, aes(x=race_id)) +
+  geom_bar() +
+  labs(title = "Patients race distribution",
+       x = "Race",
+       y = "Count") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+```
+
+### Results
+
+First, I want to look at the survival status of all patients as a whole to see if there is any relationship between survival status and patients age distribution. The result below, however, doesn't indicate any association of survival status and patients democracy.
+
+```{r, eval=TRUE}
+ggplot(data=total, aes(x=age, fill=survival.status)) +
+  geom_histogram(binwidth = 3) +
+  scale_fill_manual(values=c("gray40", "gray70", "gray90"))+
+  theme_bw()+
+  ggtitle(paste("Survival status of all patients across all ages")) +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+```
+
+
+Since I want to find the relationship and predictability of PCR and RFS based on tumor biomarkers, or specifically, the tumor size, I will first visualize the tumor size change from the MRI imaging data. Worth to mention here, baseline is the first MRI image patient got before getting neoadjuvant chemotherapy (NACT), t1 is the second examination after one cycle of anthracyline-based treatment, t3 is the third examination between the anthracycline-based regimen and taxane, and t4 is the fourth examination  after all chemotherapy and prior to surgery. The MR imaging assessment included the measurements of tumor longest diameter, which has a direct indication of tumor size change. From the boxplot below, we can see after the NACT treatment, the overall tumor size decrease over time. 
+
+```{r, eval=TRUE, warning=FALSE}
+tumor.df <- clinical %>%
+  select(SUBJECTID, `MRI LD Baseline`,`MRI LD 1-3dAC`,`MRI LD InterReg`,`MRI LD PreSurg`) %>%
+  rename(baseline='MRI LD Baseline', t1='MRI LD 1-3dAC', t2='MRI LD InterReg', t3='MRI LD PreSurg')
+
+tumor.df %>%
+  gather(time, size, baseline:t3) %>%
+  ggplot(aes(time, size)) +
+  geom_boxplot(na.rm = TRUE) +
+  geom_jitter(width = 0.1, pch = 21, fill = "grey", na.rm = TRUE) +
+  labs(title = "Tumor Size ~ Time",
+       x = "Time Point",
+       y = "Tumor Size") +
+  theme_bw() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(face = "bold", size = 20)
+  )
+```
+
+We also want to take a look at the rate tumor size decreases over time because at different treatment time points, the effect of treatment will be different, and the overall percentage of tumor size might have correlation with PCR an RFS. Below we have a box plot for tumor size percentage change over four different treatment time points, and the results indicate that the tumor decreasing rate will be lowest at the very beginning of the treatment, and the rate will increase over time.
+
+```{r, eval=TRUE}
+id <- tumor.df["SUBJECTID"]
+n <- 3L
+id[,2:length(n-2):dim(tumor.df)[2]] <-
+  lapply(n:dim(tumor.df)[2], function(x) setNames(((tumor.df[x]-tumor.df[x-1])/tumor.df[x-1]),
+                                            paste0("Pct", x-2, x-1)))
+SUBJECTID <- id$SUBJECTID
+pct12 <- id$V2$Pct12
+pct23 <- id$V3$Pct23
+pct34 <- id$V4$Pct34
+
+id <- data.frame(SUBJECTID,pct12,pct23,pct34)
+
+id %>%
+  gather(time, percentage_change, pct12:pct34) %>%
+  ggplot(aes(time, percentage_change)) +
+  geom_boxplot(na.rm = TRUE) +
+  geom_jitter(width = 0.1, pch = 21, fill = "grey", na.rm = TRUE) +
+  labs(title = "Tumor Size Percentage Change ~ Time",
+       x = "Treatment Time Point",
+       y = "Tumor Size Percentage Change") +
+  theme_bw() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(face = "bold", size = 20)
+  )
+
+summary(id)
+ 
+  
+```
+
+Then, we want to investigate the correlation between tumor size overall change and PCR and RFS. Looking at the overall tumor size changes versus RFS, we can say RFS is independently associated with tumor size over change over four treatment time points. However, looking at boxplot of tumor size change versus PCR, we found that the larger percentage of tumor decrease over time, the higher possibility that patient will have PCR after treatments. Also, the boxplot of survival status vs. tumor size overall change confirms the assumption that the more tumor size decrease, the higher possibility that patients will be alive after treatment. The bar plot of survival status and PCR also confirms that patients with PCR will have higher possibility to alive. The result of survival status and RFS confirms that patients with longer RFS will have higher possibility to be alive after treatment.
+
+```{r, eval=TRUE, warning=FALSE}
+tumor.df <- mutate(tumor.df, overall_change = (t3-baseline)/baseline)
+
+df2 <- merge(tumor.df, total)
+
+ggplot(df2, aes(x=overall_change, y=RFS)) +
+  geom_point() +
+  theme_bw()+
+  labs(title = "Tumor size overall change vs. RFS",
+       x = "Tumor size overall change",
+       y = "Recurrence-free survival time") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=PCR, y=overall_change)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Tumor size overall change vs. PCR",
+       x = "PCR Status",
+       y = "Tumor size overall change") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=survival.status, y=overall_change)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Tumor size overall change vs. survival status",
+       x = "Survival status",
+       y = "Tumor size overall change") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=PCR, fill = survival.status)) +
+  geom_bar(position="fill")+
+  scale_fill_manual(values=c("gray40", "gray70", "gray90"))+
+  theme_bw()+
+  labs(title = "Survival status vs. PCR status",
+       x = "PCR status",
+       y = "Survival status") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=survival.status, y=RFS)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Survival status vs. RFS",
+       x = "Survival status",
+       y = "RFS") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+```
+
+However, all previous analysis were looking at how tumor size change related to pCR, RFS and survival status regardless of the tumor type one patient have. Now I want to do a series of analysis to look at how different status of receptor, which determines the types of breast cancer, can have impact on PCR and RFS. The status of HR, HER2, ER and PR status can indicate differet types of breast cancer patients have. 
+
+Lots of literature indicated that triple neagtive triple negative breast cancer (with HR negative, HER negative and ER negative) are more common in yonger woman. The analysis of this data confirms the statement. 
+
+```{r, eval=TRUE, warning=FALSE}
+ggplot(df2, aes(x=HR_HER2_CATEGORY, y=age)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Age distribution for patients with different \nHR, HER2 status",
+       x = "HR, HER2 status",
+       y = "Age") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+```
+
+Within different tumor subsets, PCR and RFS exhibit different relationship with receptor status - HER2 positive breast cancer tends to have higher possibility to achieve positive pCR status, however, HR positive and HER2 negative breast cancer tends to have higher RFS time. The correlation of overall tumor size change with tumor subsets turns out conform to the correaltion of RFS ansd tumor subsets.
+
+```{r, eval=TRUE, warning=FALSE}
+ggplot(df2, aes(x=HR_HER2_CATEGORY, fill=PCR)) +
+  geom_bar(position="fill") +
+  scale_fill_manual(values=c("gray40", "gray70"))+
+  theme_bw()+
+  labs(title = "PCR status within tumor subsets",
+       x = "receptor status",
+       y = "pCR") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=HR_HER2_CATEGORY, y=RFS)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "RFS within tumor subsets",
+       x = "receptor status",
+       y = "RFS") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+ggplot(df2, aes(x=HR_HER2_CATEGORY, y=overall_change)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Overall tumor size change within tumor subsets",
+       x = "receptor status",
+       y = "overall tumor size change") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+
+
+```
+
+Looking at the correlation between PCR and RFS, we found that patient with Pathologic Complete Response after neoadjuvant treatment will be more likely to have higher recurrence-free survival time. 
+
+```{r, eval=TRUE, warning=FALSE}
+ggplot(total, aes(x=PCR, y=RFS)) +
+  geom_boxplot() +
+  theme_bw()+
+  labs(title = "Correlation of PCR and RFS",
+       x = "PCR",
+       y = "RFS") +
+  theme(
+    text = element_text(family = "Palatino"),
+    plot.title = element_text(hjust = 0, face="bold", size=20))
+```
+
+To confirm the previous results, I look at the association with various receptor status and PCR,RFS outcome, a multivariate regression model is made. Based on the multivariate regression model, age and HER2 receptor status are two relatively significant predictors compared to other variables for PCR outcome, and estrogen receptor status is a relatively significant predictor compared to other variables for RFS outcome. 
+
+```{r, eval=TRUE, warning=FALSE}
+#Create logistic regression model using all variables
+PCR.glm <- glm(PCR ~ age + ERpos + PgRpos + Her2MostPos + HR_status + HR_HER2_CATEGORY + BilateralCa, data=total, family=binomial(logit))
+summary(PCR.glm)
+
+RFS.lm <- lm(RFS ~ age + ERpos + PgRpos + Her2MostPos + HR_status + HR_HER2_CATEGORY + BilateralCa, data=total)
+summary(RFS.lm)
+
+SS.glm <- glm(survival.status ~ age + ERpos + PgRpos + Her2MostPos + HR_status + HR_HER2_CATEGORY + BilateralCa, data=total, family="binomial")
+summary(PCR.glm)
+
+PCR.glm.pred <- predict(PCR.glm, total, type="response")
+RFS.lm.pred <- predict(RFS.lm, total, type="response")
+```
+
+To evaluate the multivariate regression model we used for predicting PCR and RFS outcome, cross validation was done to compare that using all varibles to predict outcomes and using only relatively significant variable to predict outcome. The final AUC area indictaed that the difference of using all variables and using only siginificant variable are negligible, indicating that many factors might be contributing to the outcomes. Even though the predictors we got above are more significant compared to other variables, but they are not the only factor affects the PCR and RFS outcomes, many variables contribute to the final outcome together.
+
+```{r, eval=TRUE, warning=FALSE}
+#Get prediction error estimate
+library(boot)
+PCR.cv.glm <- cv.glm(total, PCR.glm, K=10)
+summary(PCR.cv.glm)
+
+#Cross validation
+N = nrow(total)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.glm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(total, s != i)
+    test <- filter(total, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$PCR
+    
+    #GLM train/test
+    glm <- glm(PCR ~ age + ERpos + PgRpos + Her2MostPos + HR_status + HR_HER2_CATEGORY, data=train, family=binomial(logit))
+    glm.pred.curr <- predict(glm, test, type="response")
+    pred_outputs.glm[1:length(s[s==i]) + offset] <- glm.pred.curr
+}
+
+N = nrow(total)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(total, s != i)
+    test <- filter(total, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$RFS
+    
+    #GLM train/test
+    lm <- lm(RFS ~ age + ERpos + PgRpos + Her2MostPos + HR_status + HR_HER2_CATEGORY, data=train, family=binomial(logit))
+    lm.pred.curr <- predict(lm, test, type="response")
+    pred_outputs.lm[1:length(s[s==i]) + offset] <- lm.pred.curr
+}
+
+library(pROC)
+roc(total$PCR, PCR.glm.pred, ci=TRUE)
+
+plot.roc(total$PCR, PCR.glm.pred, ci=TRUE)
+plot.roc(obs_outputs, pred_outputs.glm,ci=TRUE, col="darkblue", add=TRUE)
+plot.roc(total$PCR, RFS.lm.pred, ci=TRUE, col="darkgreen", add=TRUE)
+plot.roc(obs_outputs, pred_outputs.lm, ci=TRUE, col="red", add=TRUE)
+
+legend("bottomright", legend=c("PCR Training", "PCR Cross-Validation", "RFS Training", "RFS Cross-Validation"), col=c("black", "darkblue", "darkgreen", "red"), lwd=2)
+
+auc(total$PCR, PCR.glm.pred)
+auc(obs_outputs, pred_outputs.glm)
+auc(total$PCR, RFS.lm.pred)
+auc(obs_outputs, pred_outputs.lm)
+
+
+
+#Create logistic regression model using best variables
+PCR.glm <- glm(PCR ~ age +Her2MostPos, data=total, family="binomial")
+summary(PCR.glm)
+
+RFS.lm <- lm(RFS ~ ERpos, data=total)
+summary(RFS.lm)
+
+PCR.glm.pred <- predict(PCR.glm, total, type="response")
+RFS.lm.pred <- predict(RFS.lm, total, type="response")
+
+#Get prediction error estimate
+library(boot)
+PCR.cv.glm <- cv.glm(total, PCR.glm, K=10)
+summary(PCR.cv.glm)
+
+#Cross validation
+N = nrow(total)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.glm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(total, s != i)
+    test <- filter(total, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$PCR
+    
+    #GLM train/test
+    glm <- glm(PCR ~ age + Her2MostPos, data=train, family=binomial(logit))
+    glm.pred.curr <- predict(glm, test, type="response")
+    pred_outputs.glm[1:length(s[s==i]) + offset] <- glm.pred.curr
+}
+
+N = nrow(total)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.lm <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(total, s != i)
+    test <- filter(total, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$RFS
+    
+    #GLM train/test
+    lm <- lm(RFS ~ ERpos, data=train, family=binomial(logit))
+    lm.pred.curr <- predict(lm, test, type="response")
+    pred_outputs.lm[1:length(s[s==i]) + offset] <- lm.pred.curr
+}
+
+library(pROC)
+roc(total$PCR, PCR.glm.pred, ci=TRUE)
+
+plot.roc(total$PCR, PCR.glm.pred, ci=TRUE)
+plot.roc(obs_outputs, pred_outputs.glm,ci=TRUE, col="darkblue", add=TRUE)
+plot.roc(total$PCR, RFS.lm.pred, ci=TRUE, col="darkgreen", add=TRUE)
+plot.roc(obs_outputs, pred_outputs.lm, ci=TRUE, col="red", add=TRUE)
+
+legend("bottomright", legend=c("PCR Training", "PCR Cross-Validation", "RFS Training", "RFS Cross-Validation"), col=c("black", "darkblue", "darkgreen", "red"), lwd=2)
+
+auc(total$PCR, PCR.glm.pred)
+auc(obs_outputs, pred_outputs.glm)
+auc(total$PCR, RFS.lm.pred)
+auc(obs_outputs, pred_outputs.lm)
+```
+
+### Conclusion
+Overall, the analysis on this dataset provides insight into the prediction of pathologic complete response (PCR) and recurrence-free survival (RFS) based on the tumor biomarkers from magnetic resonance imaging (MRI). Looking at the all patients tumor size change as a whole, the patients tumor size will decrease over time after each treatment time point, indicating the efficacy of neoadjuvant chemotherapy (NACT). From the presented results, the tumor size change rate also exhibiting increasing treand over each treatment time point, indicating that consecutive series of treatment have good treatment outcome. The presented results also indicated that tumor size change over treatment time point cannot be an indicative predictor to predict the RFS outcome, however, larger tumor size overall change over four treatment time point does show higher possibility of having PCR after neoadjuvant chemotehrapy. Since the results confirms that most alive patients tend to have PCR over treatment and longer RFS, and the univariate analysis of tumor size change and survival status also confirms that most alive patients tend to have their tumor decrease more, we believe that tumor size change information obtained form MRI can be a biomarker for breast cancer, and the tumor size overall change and change rate can be predictors to patients' PCR and treatment outcome. The prediction of PCR or treatment outcome for breast cancer patients is important for clinicians to make right decision when making and adjusting treatment plan.
+
+From the data provided, we found that different types of breast cancer based on types of hormone receptor that cancer cells grow in response to will affect differnt age groups - triple negative (HER2, ER, PR negative) breast cancer are more common in younger women. However, there are no direct association of types of cancer with treatment outcome, PCR, RFS or survival status. Even though age and HER2 receptor status seem to more related to PCR outcome than other variables, and estrogen receptor status is a relatively significant predictor compared to other variables for RFS outcome, all the variables including types of cancer and age and many other factors not recorded in this dataset will contribute to the treatment outcome together. Therefore we cannot predict PCR and RFS or survival rate just based on types of cancer. However the tumor morphological change from MRI still can be a effecient predictor to predict the treatment outcome.
