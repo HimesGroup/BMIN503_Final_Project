@@ -1,20 +1,9 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository is my BMIN503/EPID600 final project repository
 
-1. To start, [**fork** this BMIN503_Final_Project repository][forking].
-1. [**Clone**][ref-clone] the forked repository to your computer.
-1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
-1. [**Push**][ref-push]/sync the changes up to your GitHub account.
-1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This repository contains files related to final projects. My final project is about investigating the relationship and predictability of PCR and RFS based on tumor biomarkers, patients characteristics and recptor status, as well as evaluate the ability of MRI for prediction of response to neoadjuvant chemotherapy. 
 
 
-DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-[ref-clone]: http://gitref.org/creating/#clone
-[ref-commit]: http://gitref.org/basic/#commit
-[ref-push]: http://gitref.org/remotes/#push
-[pull-request]: https://help.github.com/articles/creating-a-pull-request
+1. Final_project_data.xlsx - Two data sets (clinical and outcome) used in this project.
+2. final_project.rmd - The main file of final project with code and results.
