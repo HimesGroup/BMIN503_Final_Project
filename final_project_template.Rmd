@@ -1,5 +1,5 @@
 ---
-title: "Mark Mai Project Template"
+title: "Using text mining and latent dirichlet allocation to assess collinearity of topics with MeSH terms"
 author: "Mark Mai"
 output: 
   html_document:
@@ -20,24 +20,152 @@ This project aims to see whether the topics generated from topic modeling techni
 [Final Project Repo](https://github.com/markmaiwords/BMIN503_Final_Project)
 
 ### Introduction 
-Document classification and patient cohorting can be viewed as similar tasks when approached from a text mining or natural language processing standpoint.  Documents in the biomedical realm are manually assigned to topical headings using Medical Subject Headings in PubMed, which is a time consuming and labor intensive process, which may be prone to underclassification.  As this task falls under the purview of the National Library of Medicine, a library science approach has been traditionally used for this problem.  However, document classification techniques have also arisen from the informatics and computer science fields.  In particular, within the field of topic modeling, LDA is one approach that assigns various topics to a document based on its composition.  One recent study (Yu et al. 2016), found that the combination of MeSH terms with topics generated from LDA can improve performance on document retrieval and classificaiton tasks.
+Document classification and patient cohorting can be viewed as similar tasks when approached from a text mining or natural language processing standpoint.  Documents in the biomedical realm are manually assigned to topical headings using Medical Subject Headings in PubMed, which is a time consuming and labor intensive process[1](https://dl.acm.org/citation.cfm?id=2110450), which may be prone to underclassification.  As this task falls under the purview of the National Library of Medicine, a library science approach has been traditionally used for this problem.  However, document classification techniques have also arisen from the informatics and computer science fields.  In particular, within the field of topic modeling, LDA is one approach that assigns various topics to a document based on its composition.  One recent study (Yu et al. 2016), found that the combination of MeSH terms with topics generated from LDA can improve performance on document retrieval and classificaiton tasks.
 
 In a similar fashion, patients have a number of documents associated with them and require manual coders to assign billing codes and items on the patient's problem list.  Often these data are useful for the financial aspects of caring for a patient; however, these codes are often used secondarily for quality improvement as well as research purposes.  Again, because of the manual nature of the process, these codes are labor intensive and can underrepresent the full clinical picture.  The same techniques could be applied to patient notes to determine whether the codes can be reliably used for their current secondary uses and also to see whether topics from LDA could improve these as well.  Thus, the problem lies at the intersection of library science, data science, computer science, and clinical care.  This study could help initially to improve cohort identification for various quality improvement and research efforts.  If successful, the same approach could be used prospectively to suggest related topics based on clinical narrative that might extend a clinician's understand of a given patient's illness.
 
 ### Methods
 In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
-First, we will use the rentrez package to retrieve PubMed entries that match the MeSH term that we are interested in - in this case "Pediatric Emergency Medicine."  Using the entrez_fetch function, we will obtain the abstracts that match the previous IDs.  This will return the abstracts in XML format.
+This final project will use data requested from the PubMed database.  First, articles appearing under the MeSH term "Pediatric Emergency Medicine" will be pulled, with particular focus on the abstract and associated MeSH terms.  The correspondence between these will be assessed, based on a previous study that established an evaluation framework against reference topics.  
+
+First, we will use the rentrez package to retrieve PubMed entries that match the MeSH terms that we are interested in - in this case "Child" and "fever".  We will use NCBI's Web History objects to store the IDs from this large query.
+
+https://ropensci.org/tutorials/rentrez_tutorial/
 ```{r}
 library(rentrez)
-mesh <- '"Pediatric Emergency Medicine"[MeSH]'
-ped.EM.search <- entrez_search(db = "pubmed", term = mesh)
-raw_abs <- entrez_fetch(db = "pubmed", id = ped.EM.search$ids, rettype = "abstract")
+mesh <- '"Child"[MeSH], "Fever"[MeSH]'
+ped.EM.search <- entrez_search(db = "pubmed", term = mesh, use_history = TRUE)
+ped.EM.search
+```
+
+
+Using the entrez_fetch function, we will obtain the first 1000 abstracts that match the previous IDs.  This will return the abstracts in XML format.  Using the XML package, we will convert these abstracts into a dataframe, using a few custom functions to build a data frame from the XML node set.
+```{r}
+raw.abs <- entrez_fetch(db = "pubmed", web_history = ped.EM.search$web_history, rettype = "xml", retmax = 1000)
+
+# # Downloading abstracts in chunks
+# for(abs_start in seq(1,1000,100)){
+#     raw_abs <- entrez_fetch(db="pubmed", web_history=ped.EM.search$web_history,
+#                          rettype="xml", retmax=100, retstart=abs_start)
+#     cat(raw_abs, file="abs.xml", append=TRUE)
+#     cat(abs_start+99, "abstracts downloaded\r")
+# }
 
 library(XML)
 
+# Function to deal with missing nodes
+xpath2 <-function(x, path, fun = xmlValue, ...){
+  y <- xpathSApply(x, path, fun, ...)
+  ifelse(length(y) == 0, NA, y)
+}
+
+# Function to concatenate MeSH 
+xpath3 <- function(x, path, fun = xmlValue, ...){
+  y <- xpathSApply(x, path, fun, ...)
+  ifelse(length(y) == 0, NA, paste(y, sep = " ", collapse = ","))
+}
+
+# Function to build data frame from nodeset
+parse_article_set <- function(nodeSet) {
+  pmid <- sapply(nodeSet, xpath2, ".//ArticleId[@IdType='pubmed'][1]")
+  title <- sapply(nodeSet, xpath2, ".//Article/ArticleTitle[1]")
+  year <- sapply(nodeSet, xpath2, ".//PubDate/Year[1]")
+  journal <- sapply(nodeSet, xpath2, ".//Journal/Title[1]")
+  abstract <- sapply(nodeSet, xpath2, ".//Abstract/AbstractText[1]")
+  mesh <- sapply(nodeSet, xpath3, ".//MeshHeadingList/MeshHeading/DescriptorName")
+  data.frame(pmid, title, year, journal, abstract, mesh)
+}
+
+abs.xml <- xmlParse(raw.abs, useInternalNodes = TRUE)
+abs.nodes <- getNodeSet(abs.xml, "//PubmedArticle")
+abs.df <- parse_article_set(abs.nodes)
 ```
 
+
+rvest package to bring text into R
+qdap package for quantitative discourse analysis
+
+In this section, we will pre-process the data.  tm_map will allow us to perform transformations on the corpus
+
+```{r}
+library(tm)
+
+
+
+abs.corpus <- Corpus(VectorSource(abs.df$abstract))
+summary(abs.corpus)
+
+inspect(abs.corpus[1])
+
+# Remove punctuation
+abs.corpus <- tm_map(abs.corpus, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+# Remove numbers
+abs.corpus <- tm_map(abs.corpus, removeNumbers)
+
+# Change to lowercase, so that words appear the same every time
+abs.corpus <- tm_map(abs.corpus, tolower)
+
+# Remove stop words
+abs.corpus <- tm_map(abs.corpus, removeWords, stopwords("english"))
+
+# Remove white space
+abs.corpus <- tm_map(abs.corpus, stripWhitespace)
+
+# Remove specific words: children, clinical, patients
+abs.corpus <- tm_map(abs.corpus, removeWords, c("children", "clinical", "patients"))
+
+```
+
+Next we will convert the corpus to a document term matrix, then create a transpose of the matrix
+
+```{r message=FALSE}
+abs.dtm <- DocumentTermMatrix(abs.corpus)
+
+abs.tdm <- TermDocumentMatrix(abs.corpus)
+
+# this will organize terms by their frequency
+freq <- sort(colSums(as.matrix(abs.dtm)), decreasing=TRUE)   
+
+word.freq <- data.frame(word = names(freq), freq = freq)
+
+# Plot words appearing at least 30 times
+library(ggplot2)
+
+freq.plot <- ggplot(subset(word.freq, freq > 40), aes(x = reorder(word, -freq), y = freq)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+freq.plot
+```
+
+Term correlations with kawasaki
+
+```{r}
+findAssocs(abs.dtm, c("kawasaki"), corlimit = 0.5)
+```
+
+
+Figure 1. Word frequency analysis
+
+
+
+Figure . Word Cloud
+
+```{r}
+library(wordcloud)
+set.seed(142)
+
+wordcloud(names(freq), freq, min.freq = 30, scale = c(5, 0.1), colors = brewer.pal(6, "Dark2"))
+```
+
+
+Figure 2. Cumulative frequency plot for 50 most frequently used words
+Figure 3. Conditional frequency distribution
+
+
+http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
