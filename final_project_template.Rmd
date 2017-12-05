@@ -146,6 +146,10 @@ Reduce number of terms with tf-idf
 
 ```{r}
 library(slam)
+library(dplyr)
+library(reshape2)
+
+
 abs.tfidf <- tapply(abs.dtm$v/row_sums(abs.dtm)[abs.dtm$i], abs.dtm$j, mean) *
   log2(nDocs(abs.dtm)/col_sums(abs.dtm > 0))
 summary(abs.tfidf)
@@ -157,6 +161,13 @@ Determine k number of topics using harmonic mean.  we will determine the harmoni
 library(topicmodels)
 library(Rmpfr)
 
+# The median tf-idf is 0.135, so let's use this as the lower limit and remove terms from the DTM with a tf-idf smaller than 0.155, ensuring very frequent terms are omitted
+
+abs.dtm.reduced <- abs.dtm[, abs.tfidf >= 0.135]
+summary(col_sums(abs.dtm.reduced))
+
+# The new median is 2
+
 harmonicMean <- function(logLikelihoods, precision = 2000L) {
   llMed <- median(logLikelihoods)
   as.double(llMed - log(mean(exp(-mpfr(logLikelihoods, prec = precision) + llMed))))
@@ -166,7 +177,7 @@ seqk <- seq(2, 100, 1)
 burnin <- 1000
 iter <- 1000
 keep <- 50
-system.time(fitted_many <- lapply(seqk, function(k) LDA(abs.dtm, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))))
+system.time(fitted_many <- lapply(seqk, function(k) LDA(abs.dtm.reduced, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))))
 
 
 fitted <- LDA(abs.dtm, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))
@@ -175,6 +186,13 @@ fitted <- LDA(abs.dtm, k = k, method = "Gibbs", control = list(burnin = burnin, 
 logLiks <- fitted@logLiks[-c(1:(burnin/keep))]
 
 harmonicMean(logLiks)
+
+# other approach
+library(lda)
+abs.lda <- lexicalize(abs.corpus)
+abs.lda.model <- lda.collapsed.gibbs.sampler(abs.lda$documents, K = 10, vocab = abs.lda$vocab, burnin = 9999, num.iterations = 1000, alpha = 1, eta = 0.1)
+top.words <- top.topic.words(abs.lda.model$topics, 5, by.score = TRUE)
+print(top.words)
 ```
 
 
@@ -193,7 +211,15 @@ Figure . Word Cloud
 
 ```{r}
 library(wordcloud)
+library(RColorBrewer)
 set.seed(142)
+
+# abs.tdm.matrix <- as.matrix(abs.tdm)
+# v <- sort(rowSums(abs.tdm.matrix), decreasing = TRUE)
+# d <- data.frame(word = names(v), freq = v)
+# pal <- brewer.pal(9, "BuGn")
+# pal <- pal[-(1:2)]
+# wordcloud(d$word, d$freq, scale = c(8,0.3), min.freq = 2, max.words = 100, random.order = T, rot.per = 0.15, colors = pal, vfont = c("sans serif", "plain"))
 
 wordcloud(names(freq), freq, min.freq = 30, scale = c(5, 0.1), colors = brewer.pal(6, "Dark2"))
 ```
