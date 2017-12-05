@@ -68,18 +68,21 @@ xpath3 <- function(x, path, fun = xmlValue, ...){
 
 # Function to build data frame from nodeset
 parse_article_set <- function(nodeSet) {
-  pmid <- sapply(nodeSet, xpath2, ".//ArticleId[@IdType='pubmed'][1]")
-  title <- sapply(nodeSet, xpath2, ".//Article/ArticleTitle[1]")
+  doc_id <- sapply(nodeSet, xpath2, ".//ArticleId[@IdType='pubmed'][1]")
+  heading <- sapply(nodeSet, xpath2, ".//Article/ArticleTitle[1]")
   year <- sapply(nodeSet, xpath2, ".//PubDate/Year[1]")
   journal <- sapply(nodeSet, xpath2, ".//Journal/Title[1]")
-  abstract <- sapply(nodeSet, xpath2, ".//Abstract/AbstractText[1]")
+  text <- sapply(nodeSet, xpath2, ".//Abstract/AbstractText[1]")
   mesh <- sapply(nodeSet, xpath3, ".//MeshHeadingList/MeshHeading/DescriptorName")
-  data.frame(pmid, title, year, journal, abstract, mesh)
+  data.frame(doc_id, text, heading, year, journal, mesh)
 }
 
 abs.xml <- xmlParse(raw.abs, useInternalNodes = TRUE)
 abs.nodes <- getNodeSet(abs.xml, "//PubmedArticle")
 abs.df <- parse_article_set(abs.nodes)
+
+# Remove abstracts where there is no text
+abs.df <- abs.df[is.na(abs.df$text) == FALSE,]
 ```
 
 
@@ -91,9 +94,8 @@ In this section, we will pre-process the data.  tm_map will allow us to perform 
 ```{r}
 library(tm)
 
-
-
-abs.corpus <- Corpus(VectorSource(abs.df$abstract))
+# Creates corpus from data frame
+abs.corpus <- Corpus(DataframeSource(abs.df))
 summary(abs.corpus)
 
 inspect(abs.corpus[1])
@@ -139,6 +141,42 @@ freq.plot <- ggplot(subset(word.freq, freq > 40), aes(x = reorder(word, -freq), 
 
 freq.plot
 ```
+
+Reduce number of terms with tf-idf
+
+```{r}
+library(slam)
+abs.tfidf <- tapply(abs.dtm$v/row_sums(abs.dtm)[abs.dtm$i], abs.dtm$j, mean) *
+  log2(nDocs(abs.dtm)/col_sums(abs.dtm > 0))
+summary(abs.tfidf)
+```
+
+Determine k number of topics using harmonic mean.  we will determine the harmonic mean over a sequence of topic models with different values for k.  sequence of k from 2:100 stepped by 1
+
+```{r}
+library(topicmodels)
+library(Rmpfr)
+
+harmonicMean <- function(logLikelihoods, precision = 2000L) {
+  llMed <- median(logLikelihoods)
+  as.double(llMed - log(mean(exp(-mpfr(logLikelihoods, prec = precision) + llMed))))
+}
+
+seqk <- seq(2, 100, 1)
+burnin <- 1000
+iter <- 1000
+keep <- 50
+system.time(fitted_many <- lapply(seqk, function(k) LDA(abs.dtm, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))))
+
+
+fitted <- LDA(abs.dtm, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))
+
+# assume burnin is multiple of keep
+logLiks <- fitted@logLiks[-c(1:(burnin/keep))]
+
+harmonicMean(logLiks)
+```
+
 
 Term correlations with kawasaki
 
