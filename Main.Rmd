@@ -1,0 +1,440 @@
+---
+title: "Unsupervised discovery of leukemogenesis-cooperating genes in *de novo* acute myeloid leukemia"
+author: "Osvaldo D. Rivera"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+#knitr::opts_chunk$set(fig.width=7, fig.height=4.1) 
+```
+
+## Overview
+Acute myeloid leukemia (AML) is rapidly progressing hematopoietic malignancy categorized by its high heterogeneity and considerable molecular diversity. The goal of this project is to explore gene expression profiles of AML patients with the intent of subtype classification and clinical outcome stratification using clustering and feature selection algorithms. I hypothesize that the differential expression of key genes characterize the stratification of subtype-specific gene expression profiles, potentially leading to diverse clinical outcomes.
+
+For this project, I will be analyzing publicly available gene expression data from the LAML project, part of the TCGA (The Cancer Genome Atlas) patient cohort. Throughout the project, I met with my thesis advisor, Yoseph Barash, to discuss variations seen in the dataset. With his expertise in transcriptome profiling, he advised me to perform rigorous validations for clustering tendency, to find the optimal number of k clusters in the dataset. I also met with Ryan Urbanowicz and discussed clustering stability and feature selection. With his expertise in machine learning, he also advised me to find statistics regarding clustering tendencies and stabilities. He also mentioned to stay away from cross-validation as this approach is mostly used for predictive modeling. Moreover, he presented me with his feature selection algorithm, MultiSURF. Finally, I met with Kristen W. Lynch to discuss the biology of AML. With her expertise in the human immune system and myeloid malignancies, she advised me to look at gene expression of recurrently mutated genes. She also mentioned that AML could harbor splicing dysregulation patterns stemming from mutations in RNA binding proteins and splicing factors.
+
+[Project repo](https://github.com/justoz/BMIN503_Final_Project)
+
+## Introduction 
+Acute myeloid leukemia (AML) is rapidly progressing hematopoietic malignancy categorized by its high heterogeneity and considerable molecular diversity. This leads to a universally poor prognosis with a 5 year survival rate lower than 25%. Moreover, there is a rather low mutational burden compared to other tumors; where patients range from having no known mutations to having multiple mutations in key regulators. Recent studies have correlated the co-occurrence of molecular mutations in key chromatin regulators and kinases with distinct cytomorphological subtypes and disease pathogenesis. However, only a small amount of studies, have taken looked at the gene expression profiles of AML, and no studies have taken a completely unbiased approach. 
+
+The goal of this project is to explore gene expression profiles of AML patients with the intent of subtype classification and clinical outcome stratification, leveraging the use of both clustering and feature selection algorithms. I hypothesize that the differential expression of key genes characterize the stratification of subtype-specific gene expression profiles, potentially leading to diverse clinical outcomes. Moreover, studies have associated mutation patterns with disease subtypes. I hypothesize that these patterns are reflected in the gene expression profiles of AML, and can also be potentially be linked to clinical outcome. This project is highly interdisciplinary given that it will use computational techniques alongside a biological mindset to gain a deeper understanding of AML and its potential drivers. Computational algorithms can be used for pattern recognition, but without an understanding of the biology behind these patterns, we cannot draw meaningful conclusions.
+
+## METHODS
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(dplyr)
+library(DT)
+```
+### Data Query
+Publicly available de-identified patient data was queried and downloaded from The Cancer Genome Atlas (TCGA) LAML project. First, raw read counts (produced by the HTSeq workflow) representing the transcriptome profiles of patients were obtained using TCGAbiolinks.
+```{r eval=TRUE, message=FALSE}
+## Download and prepare using GDC query.
+#query.exp <- GDCquery(project = "TCGA-LAML",
+#                      data.category = "Transcriptome Profiling",
+#                      data.type = "Gene Expression Quantification",
+#                      workflow.type = "HTSeq - Counts",
+#                      sample.type = "Primary Blood Derived Cancer - Peripheral Blood")
+#GDCdownload(query.exp)
+## Prepare GDC query
+#GDCprepare(query = query.exp, save = TRUE, save.filename = "amlExp.rda")
+
+load("~/Git/FINAL_PROJECT/amlExp.rda")
+aml.exp <- data
+```
+
+### Outlier Detection
+Array-Array Intensity correlation (AAIC) was used to define a square symmetric matrix of Pearson correlation among samples to find those with low correlation that can be identified as possible outliers.
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+counts <- TCGAanalyze_Preprocessing(object = aml.exp, width = 2000, height = 2000, filename = "AAIC.png", cor.cut = 0.5)
+counts <- as.data.frame(counts)
+```
+
+### Library Normalization and Relative mRNA Abundance:
+Gene IDs corresponding to mitochondrial RNA (mtRNA) and ribosomal RNA (rRNA) were filtered out. The counts matrix was subsequently normalized through TMM-normalization, a scaling normalization method that estimates scale factors between samples for differential expression analysis. Using non-overlapping gene lengths, the normalized gene libraries where transformed to reads per kilobase of transcript per million mapped reads (RPKM), a common unit to represent relative mRNA abundance. The RPKM matrix was subsequently transformed using inverse hyperbolic sine function (asinh). This transformation is similar to log2, but limits lower values to zero. This is better than log2 for the purposes of clustering as very lowly expressed genes will not be blown up as very low negative values.
+```{r , eval=TRUE, message=FALSE, warning=FALSE}
+lib_rpkm <- function(counts){
+  # Import rRNA and mtRNA IDs
+  rRNA <- read.table('rRNA.txt')$V1
+  mtRNA <- read.table('mtRNA.txt')$V1
+  
+  # Remove gene IDs for rRNA and mtRNA
+  counts <- counts[!(rownames(counts) %in% rRNA),]
+  counts <- counts[!(rownames(counts) %in% mtRNA),]
+  
+  # Zero Filtering. Genes that are not expressed at a biologically meaningful level in any condition should be discarded to reduce the subset of genes to those that are of interest, and to reduce the number of tests carried out downstream when looking at differential expression.
+  counts <- counts[rowSums(counts)>0,]
+  
+  # Import gene lengths (created with GenomicFeatures in high performance cluster)
+  gene.lengths <- read.table('gene.lengths.txt', header=T)
+  
+  # Bring both datasets to the same length
+  gene.lengths <- gene.lengths[(gene.lengths$Gene_ID %in% rownames(counts)),]
+  counts <- counts[(rownames(counts) %in% gene.lengths$Gene_ID),]
+  
+  library(edgeR)
+  # Create Differential Gene Expression object with dataset (DGE) object
+  dge <- DGEList(counts=counts, remove.zeros=TRUE)
+  
+  # Apply TMM normalization to normalize library sizes
+  dge <- calcNormFactors(dge, method=c('TMM'))
+  
+  # Calculate RPKMs and transform using inverse hyperbolic sine function (why inverse hyperbilic sine?)
+  rpkm.1 <-  rpkm(x=dge, gene.length=gene.lengths$Length, normalized.lib.sizes=TRUE)
+  rpkm <- asinh(rpkm.1)
+  lib <- dge$samples %>% tibble::rownames_to_column(var = "sample")
+  d <- dim(rpkm)
+  
+  #Plot
+  library(ggpubr)
+  # Plot library size and with respective norm factor, also add dim values to plot. this is an informational plot
+  sp <- ggscatter(lib, x = "norm.factors", y = "lib.size",
+                  ylab = "Library Size",
+                  xlab = "Normalization Factor",
+                  font.x = c(20, "bold"),
+                  font.y = c(20, "bold"),
+                  font.tickslab = 20,
+                  color = "black", shape = 21, size = 3, # Points color, shape and size
+                  add = "reg.line", add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+                  conf.int = TRUE, # Add confidence interval
+                  cor.coef = TRUE, cor.coeff.args = list(method = "pearson", label.sep = "\n")) + 
+    border()
+  # Marginal density plot of x (top panel) and y (right panel)
+  xplot <- ggdensity(lib, "norm.factors", palette = "jco")
+  yplot <- ggdensity(lib, "lib.size", palette = "jco") +
+    rotate()
+  # Cleaning the plots
+  sp <- sp + rremove("legend")
+  ydens <- yplot + clean_theme() + rremove("legend")
+  xdens <- xplot + clean_theme() + rremove("legend")
+  
+  # Arranging the plot using cowplot
+  p1 <- cowplot::insert_xaxis_grob(sp, xdens, grid::unit(.2, "null"), position = "top")
+  p2 <- cowplot::insert_yaxis_grob(p1, ydens, grid::unit(.2, "null"), position = "right")
+  
+  results <- list("rpkm" = rpkm, "plt" = p2)
+  return(results)
+}
+```
+
+### Filtering
+Gene expression data is known to have vast amounts of noise. To reduce the dimensionality of my dataset, I created a function to filter features (genes) based the variance observed across samples (patients).
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+var_filter <- function(rpkm, pick){
+   # Pick most variable genes 
+  samples <- colnames(rpkm)
+  rpkm.v <- as.data.frame(rpkm)
+  rpkm.v$var <- apply(rpkm.v[samples], 1, var) # Variance
+  rpkm.v <- rpkm.v[order(rpkm.v$var, decreasing=TRUE),]
+  rpkm.v <- rpkm.v[0:pick,]
+  rpkm.v <- rpkm.v[samples]
+  exp <- tibble::rownames_to_column(rpkm.v, var = "GENE_ID")
+  write.table(exp, "rpkm.tsv", sep="\t", quote = FALSE, row.names = FALSE)
+  # Boxplots
+  library(ggpubr)
+  mlt <- reshape2::melt(rpkm.v) %>% dplyr::rename(sample = variable, RPKM = value)
+  g <- ggboxplot(mlt, x = "sample", y = "RPKM", 
+                 title = "TMM-normalized, asinh transformed mRNA abundance of TCGA samples",
+                 font.x = c(20, "bold"),
+                 font.y = c(20, "bold"),
+                 font.tickslab = 20)
+  g <- ggpar(g, tickslab = FALSE) 
+  
+  results <- list("rpkm" = rpkm.v, "plt" = g)
+  return(results)
+}
+```
+
+### Consensus Clustering
+Cluster analysis is a basic tool for subtype discovery and sample classification using high-dimensional data. Since 1996, cluster analysis of microarray-derived gene expression profiles has led to the discovery of molecular subtypes of many cancers. Despite its critical importance, the task of evaluating cluster strength is difficult to be formulated in a hypothesis-testing framework. This is because each real dataset could have its own unique covariance structure, making it challenging to calculate false-positive and false-negative rates of cluster results. Consensus Clustering calculates a “consensus rate” between all pairs of samples, defined as the frequency with which a given pair is grouped together in multiple clustering runs, each with a certain degree of permutation either by random initialization or by random sample- or gene-subsampling. The resulting sample-sample similarity matrix is routinely used both as a visualization tool for putative clusters and as an inference tool: the differences between within-group and between-group consensus rates are used to assess cluster stability and to infer the optimal K. A new metric based on CC, the proportion of ambiguously clustered pairs (PAC), infers K equally or more reliably than similar methods in simulated data with known K. A low value of PAC indicates a flat middle segment, allowing inference of the optimal K by the lowest PAC.
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+clus.fxn <- function(df, maxK, title, seed){
+  ddist <- dist(df)
+  ############## Consensus Clustering ##############
+  library("ConsensusClusterPlus")
+  con.clust <- ConsensusClusterPlus::ConsensusClusterPlus(ddist, 
+                                                          maxK = maxK, 
+                                                          pItem = 0.9, 
+                                                          reps = 1000, 
+                                                          seed = seed,
+                                                          innerLinkage = "ward.D2", 
+                                                          finalLinkage = "complete",
+                                                          clusterAlg = "hc",
+                                                          plot = "pdf", 
+                                                          title = title,
+                                                          writeTable = FALSE)
+  ############## PAC implementation ##############
+  Kvec = 2:maxK
+  x1 = 0.1; x2 = 0.9 # threshold defining the intermediate sub-interval
+  PAC = rep(NA,length(Kvec))
+  names(PAC) = paste(Kvec) # from 2 to maxK
+  for(i in Kvec){
+    M = con.clust[[i]]$consensusMatrix
+    Fn = ecdf(M[lower.tri(M)])
+    PAC[i-1] = Fn(x2) - Fn(x1)
+  }#end for i
+  # Plot ECDF
+  PAC = as.data.frame(PAC) %>% tibble::rownames_to_column(var = "K")
+  pac <- ggpubr::ggline(PAC, x = "K", y = "PAC", ylab = "proportion of ambiguously clustered pairs (PAC)")
+  results <- list("cc" = con.clust, "pac" = pac)
+  return(results)
+}
+clus.ht <- function(df, clus, k, names){
+  ComplexHeatmap::Heatmap(df, split = clus$cc[[k]]$consensusClass, km_title = "C%i",
+                          show_row_names = FALSE, show_column_names = names,
+                          heatmap_legend_param = list(title = "RPKM", color_bar = "continuous"))
+}
+```
+
+### MultiSURF
+RELIEF is a feature selection algorithm used in binary classification.  Its strengths are that it is not dependent on heuristics, runs in low-order polynomial time, and is noise-tolerant and robust to feature interactions, as well as being applicable for binary or continuous data. An adaptation of such is the Spatially Uniform ReliefF (SURF), used for computationally-efficient filtering of gene-gene interactions. Genome-wide association studies are becoming the de facto standard in the genetic analysis of common human diseases. Given the complexity and robustness of biological networks such diseases are unlikely to be the result of single points of failure but instead likely arise from the joint failure of two or more interacting components. (Python Snippet, see featureSelection.py)
+```{python, eval=FALSE, include=TRUE}
+import pandas as pd
+from skrebate import MultiSURF
+from sklearn.model_selection import train_test_split
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f",
+                        "--file",
+                        required=True,
+                        help="matrix",
+                        type=str)
+    args = parser.parse_args()
+
+    genetic_data = pd.read_csv(args.file, sep='\t')
+
+    # Pick features and endpoint variables.
+    features, labels = genetic_data.drop('class', axis=1).values, genetic_data['class'].values
+
+    # Make sure to compute the feature importance scores from only your training set
+    X_train, X_test, y_train, y_test = train_test_split(features, labels)
+
+    fs = MultiSURF()
+    fs.fit(X_train, y_train)
+
+    f = dict()
+    for feature_name, feature_score in zip(genetic_data.drop('class', axis=1).columns, fs.feature_importances_):
+        if feature_name not in f:
+            f[feature_name] = int(feature_score)
+    s = pd.Series(f, name='score')
+    s.index.name = 'Feature'
+    s = s.reset_index()
+    pd.DataFrame.to_csv(s, path_or_buf="features.tsv", sep="\t")
+```
+### Kaplan-Meier Overall Survival Curves
+The Kaplan–Meier estimator, also known as the product limit estimator, is a non-parametric statistic used to estimate the survival function from lifetime data. A plot of the Kaplan–Meier estimator is a series of declining horizontal steps which, with a large enough sample size, approaches the true survival function for that population. The value of the survival function between successive distinct sampled observations ("clicks") is assumed to be constant. When no truncation or censoring occurs, the Kaplan–Meier curve is the complement of the empirical distribution function. In statistics, the log-rank test is a hypothesis test to compare the survival distributions of two samples. It is a nonparametric test and appropriate to use when the data are right skewed and censored. Censoring is a condition in which the value of a measurement or observation is only partially known.
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+surival_plot <- function(data){
+  # --- Survival Plots --- #
+  library(survival); library(survminer); library(ggplot2)
+  # Survival fit
+  notDead <- is.na(data$days_to_death) 
+  if (any(notDead == TRUE)) {data[notDead, "days_to_death"] <- data[notDead, "days_to_last_follow_up"]} 
+  data$s <- grepl("dead|deceased", data$vital_status, ignore.case = TRUE)
+  surv <- data[, c("days_to_death", "s", "disease", "groupsCC")]
+  f.m <- formula(Surv(as.numeric(surv$days_to_death), event = surv$s) ~ surv$"groupsCC")
+  fit <- do.call(survfit, list(formula = f.m, data = surv))
+  
+  ### Labels ###
+  label.add.n <- function(x) {
+      na.idx <- is.na(surv[, "days_to_death"])
+      negative.idx <- surv[, "days_to_death"] < 0
+      idx <- !(na.idx | negative.idx)
+      return(paste0(x, " (n = ", sum(dataClin[idx, "groupsCC"] == x),")"))
+    }
+  d <- survminer::surv_summary(fit, data = surv)
+  order <- unname(sapply(levels(d$strata), function(x) unlist(stringr::str_split(x, "="))[2]))
+  labels <- sapply(order, label.add.n)
+  
+  ### Plot ###
+  p <- ggsurvplot(fit, conf.int = FALSE,  pval = TRUE, pval.method = TRUE, legend.labs = labels,
+                  font.x = c(16, "bold"),
+                  font.y = c(16, "bold"),
+                  font.tickslab = 16,
+                  font.legend = 12)
+  return(p)
+}
+```
+
+### Gene Ontology
+g:Profiler is a bioinformatics toolkit for characterising gene lists from high-throughput genomic data. g:GOSt captures Gene Ontology (GO), pathway (KEGG, Reactome), or transcription factor binding site (Transfac) enrichments.
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+# GO Analysis
+GO <- function(genes){
+  library(dplyr)
+  gs <- as.data.frame(gProfileR::gprofiler(list(genes)), src_filter = c("GO", "KEGG", "REAC", "MI", "CORUM","HP", "HPA", "OMIM"))
+  gs <- gs[c("p.value", "domain", "term.name", "relative.depth", "intersection")]
+  gs <- gs[order(gs$p.value, decreasing = FALSE),]
+  gs$p.value <- abs(log(gs$p.value))
+  return(gs)
+}
+# Translate ENSEMBL Gene IDs to HGNC Gene symbols.
+library(biomaRt)
+translate <- function(genes){
+  g <- getBM(attributes=c('ensembl_gene_id', 'hgnc_symbol'),
+             filters ='ensembl_gene_id',
+             values = genes,
+             mart = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl"))
+  g <- g$hgnc_symbol
+  return(g)
+}
+```
+## RESULTS
+### Transcriptome Profiling
+The first goal of this project was to obtain gene expression data and prepare it for library normalization. The following plot shows the library size as a function of its normalization factor. As expected, I obtained a negative correlation. The small range of normalization factors shows that the amount of reads per sample remains relatively similar across all patients in this cohort. (FIG. 1)
+```{r library, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+lib <- lib_rpkm(counts)
+rpkm <- lib$rpkm
+cowplot::ggdraw(lib$plt)
+```
+
+
+Gene expression data is known to have vast amounts of noise. To reduce the dimensionality of our dataset, I filtered for the top 2000 most variable genes. These genes are also assumed to have functional relevance, and will ultimately determine cluster stratification. (FIG. 2)
+```{r genevar, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+lib.var <- var_filter(rpkm, 2000)
+rpkm.v <- lib.var$rpkm
+cowplot::ggdraw(lib.var$plt)
+```
+
+### Consensus Clustering
+Once filtered, I performed Consensus clustering over the dataset. Through the PAC implementation (proportion of ambiguously clustered pair), I deduced through the elbow method that the optimal number of clusters is k = 6. (FIG. 3)
+```{r PAC, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+df <- as.matrix(t(lib.var$rpkm))
+cc <- clus.fxn(df, 10, "mc_consensus", 12345)
+cc$pac
+```
+
+### Survival Probabilities and Gene Expression Profiles
+I proceeded to produce Kaplan-Meier Curves and Gene Expression Heatmaps based on the deduced optimal number of clusters. 
+```{r survival, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+k.optimal = 6
+
+#------  Add cluster information
+cluster <- data.frame("groupsCC" = cc$cc[[k.optimal]]$consensusClass)
+cluster$groupsCC <- paste0("C",cluster$groupsCC)
+cluster$patient <-  substr(colData(aml.exp)$patient,1,12)
+cluster$ID <- rownames(cluster)
+
+# Add information about gropus from consensus Cluster to Indexed Clinical data (download with the "download" module)
+dataClin <- read.table("dataClin.tsv")
+dataClin <- merge(dataClin, cluster, by.x="bcr_patient_barcode", by.y="patient")
+pl <- surival_plot(dataClin)
+pl$plot
+clus.ht(df, cc, k.optimal, names = FALSE)
+```
+
+### MultiSURF 
+To extract features that could be potentially defining cluster stratification, I appended to each sample its cluster association based on the optimal number of K, making it a suitable end-point variable. I exported the matrix and performed feature selection with the MultiSURF algorithm in a high performance cluster (HPC). The script is python-based.
+```{r}
+# Add cluster association as endpoint variable
+class <- cluster[c("groupsCC")]
+class <- tibble::rownames_to_column(class, var = "ID")
+colnames(class) <- c("ID", "class")
+df <- t(rpkm.v)
+scl <- function(x){(x-min(x))/(max(x)-min(x))} # Scale data between interval [0 1]
+df <- scl(df)
+tmp <- tibble::rownames_to_column(as.data.frame(df), var = "ID")
+tmp.0 <- as.data.frame(merge(tmp, class, by="ID"))
+tmp.0 <- tibble::column_to_rownames(tmp.0, var = "ID")
+write.table(tmp.0, 'tcga_rpkm.tsv', sep="\t", col.names = TRUE, row.names = FALSE, quote = FALSE)
+```
+
+
+After performing feature selection, I picked the top 100 features based on their MultiSURF scores. (FIG. 5)
+```{r multisurf, fig.align = "center"}
+ft <- read.table("features.tsv")
+ft <- ft[order(ft$score, decreasing = TRUE),]
+g.all <- as.character(ft[1:2000,]$Feature)
+g.top <- as.character(ft[1:100,]$Feature)
+
+par(mfrow=c(1,2), mar=c(5, 5, 2, 1), las=1)
+plot(ft$score, ylab = "MultiSURF score", cex=2, cex.lab = 2, cex.axis = 1.5)
+abline(v = 100, h = as.integer(ft[100,]$score),  col="red")
+plot(ft[ft$Feature %in% g.top,]$score, ylab = "MultiSURF score", cex=2, cex.lab = 2, cex.axis = 1.5)
+```
+
+
+After filtering for the to 100 features, I began seeing disguising patterns across the different clusters. (FIG. 6)
+```{r multisurfsurvival, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+df <- as.matrix(t(rpkm[rownames(rpkm) %in% g.top,]))
+ddist <- dist(df)
+c.ft <- clus.fxn(df, 10, "mc_consensus_multisurf", 12345)
+# --- Heatmap ----
+clus.ht(df, cc, k.optimal, names = FALSE)
+
+cluster <- data.frame("groupsCC" = c.ft$cc[[k.optimal]]$consensusClass)
+cluster$groupsCC <- paste0("C",cluster$groupsCC)
+cluster$patient <-  substr(colData(aml.exp)$patient,1,12)
+cluster$ID <- rownames(cluster)
+
+# Add information about gropus from consensus Cluster to Indexed Clinical data (download with the "download" module)
+dataClin <- read.table("dataClin.tsv")
+dataClin <- merge(dataClin, cluster, by.x="bcr_patient_barcode", by.y="patient")
+pl <- surival_plot(dataClin)
+pl
+```
+
+### Gene Ontology
+To explore the biology behind these top 100 features, I performed GO enrichment analysis. The analysis shows that the inital list of 2000 genes was populated with immune system genes. However, upon feature selection, I was able to extract genes implicated in skeletal development and morphogenesis; genes that are likely to be transcriptionally misregulated in cancer. (FIG. 7)
+```{r}
+gs.all <- GO(g.all)
+gs.top <- GO(g.top)
+```
+```{r}
+v <- c("p.value", "domain", "term.name")
+tbl1 <- gs.all[1:20,v]
+rownames(tbl1) <- c()
+tbl2 <- gs.top[1:20,v]
+rownames(tbl2) <- c()
+tbl1; tbl2
+```
+
+
+From the Kyoto Encyclopedia of Genes and Genomes (KEGG), I Picked the list gene group classified as "Transcriptional Misregulation in Cancer Genes", and explored their respective expression profiles. (FIG. 8)
+```{r heatmapcancer, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+cancer <- read.table('./trans.cancer.txt')$V1
+df.go <- rpkm[(rownames(rpkm) %in% cancer),]
+rownames(df.go) <- translate(rownames(df.go))
+df <- as.matrix(t(df.go))
+clus.ht(df, c.ft, k.optimal, names = TRUE)
+```
+
+
+Seeing that the GO analysis also showed enrichment for HOX genes, I decided to subset for the genes belonging to this family as they have been known to be implicated in leukemogenesis. The following heatmap shows that the cluster of patients with the highest survival probabilities have significant down regulation of these gene clusters. More analysis have to be done to support this claim, but its a good preliminary approach. (FIG. 9)
+```{r heatmaphox, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+hox <- read.table('./hox.txt')$V1
+df.hox <- rpkm[(rownames(rpkm) %in% hox),]
+rownames(df.hox) <- translate(rownames(df.hox))
+df <- as.matrix(t(df.hox))
+clus.ht(df, c.ft, k.optimal, names = TRUE)
+```
+
+
+As a last exploratory approach, I obtained a list of recurrently mutated genes in AML. The following heatmap suggests that there is no differential expression of these specific genes across samples clusters, highlighting that mutational status of a gens does not necessarily correlate with its relative expression. (FIG. 10)
+```{r heatmapcpd, eval=TRUE, message=FALSE, warning=FALSE, fig.align = "center"}
+cpd.genes <- read.table('./cpd.genes')
+cpd.genes <- cpd.genes[(order(cpd.genes$V2, decreasing = FALSE)),]
+df.cpd <- rpkm[(rownames(rpkm) %in% cpd.genes$V2),]
+rownames(df.cpd) <- cpd.genes$V1
+df <- as.matrix(t(df.cpd))
+clus.ht(df, c.ft, k.optimal, names = TRUE)
+```
+
+
+## CONCLUSIONS
+The presented results suggest that the transcriptome profile, specifically the relative expression of key genes, can be associated with the survival outcome of patients. In a disease like AML, where there is a co-ocurrance of multiple mutations, we need to find new ways of assessing the prognosis of patients. Here, I suggest that the misregulation of genes implicated implicated in leukemogenesis can be associated with the clinical outcome of AML, where patients with the lower expression of these genes presented higher survivability. I believe that with the development of new computational algorithms, we could employ rigorous feature selection to filter out the noise that comes with a highly dimensional dataset such as RNA-Seq. From this exploratory analysis I hypothesize that the mutational profile of patients is reflected in their respective gene expression profiles. For my future works I will be assessing how the co-ocurrance of recurrently mutated genes contributes to the misregulation of key genes.
+
+
+
+
+
