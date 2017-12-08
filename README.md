@@ -1,24 +1,20 @@
-# Topic Modeling of PubMed Abstracts
+# BMIN503/EPID600 Final Project
 
-## Overview
+This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
-This repository contains the project files Forked from [BMIN503/EPID600 Final Project repository](https://guides.github.com/activities/forking/). This project is self-contained in an R markdown file, which details the efforts to assess the collinearity of topic models identified by latent dirichlet allocation and medical subject headings within PubMed abstracts.
+1. To start, [**fork** this BMIN503_Final_Project repository][forking].
+1. [**Clone**][ref-clone] the forked repository to your computer.
+1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
+1. [**Push**][ref-push]/sync the changes up to your GitHub account.
+1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
 
-Author: Mark Mai
 
-## Dependencies
+DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
-The following packages should be installed:
-* rentrez
-* XML
-* tm
-* ggplot2
-* slam
-* dplyr
-* reshape2
-* topicmodels
-* Rmpfr
-* stringr
-* tidyr
-* LDAvis
-* wordcloud
+
+<!-- Links -->
+[forking]: https://guides.github.com/activities/forking/
+[ref-clone]: http://gitref.org/creating/#clone
+[ref-commit]: http://gitref.org/basic/#commit
+[ref-push]: http://gitref.org/remotes/#push
+[pull-request]: https://help.github.com/articles/creating-a-pull-request
