@@ -1,6 +1,7 @@
 # BMIN503/EPID600 Final Project - Rennie Rhee
 
-This repository contains the draft of my final written report and GitHub repository. 
+This repository contains the final version of my project, as R markdown file and html, as well as PDFs which contain heatmaps generated.
+
 
 #Instructions
 Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
