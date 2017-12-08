@@ -1,6 +1,6 @@
 ---
-title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+title: "Using text mining and latent dirichlet allocation to assess collinearity of topics with MeSH terms"
+author: "Mark Mai"
 output: 
   html_document:
     toc: false 
@@ -12,21 +12,293 @@ output:
 options(width = 400)
 ```  
 ***
-Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
 
 ### Overview
-In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+This project aims to see whether the topics generated from topic modeling techniques, like Latent Dirichlet Allocation (LDA), match with MeSH topics that have been manually coded.  The goals of this study are to 1) confirm the findings of a previous paper studied in this area and 2) to see if topical representations of text can be extended by LDA and support more tailored information retrieval tasks.
 
+[Final Project Repo](https://github.com/markmaiwords/BMIN503_Final_Project)
 
 ### Introduction 
-In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
+Document classification and patient cohorting can be viewed as similar tasks when approached from a text mining or natural language processing standpoint.  Documents in the biomedical realm are manually assigned to topical headings using Medical Subject Headings in PubMed, which is a time consuming and labor intensive process[Yepes et al. 2012](https://dl.acm.org/citation.cfm?id=2110450), which may be prone to underclassification.  As this task falls under the purview of the National Library of Medicine, a library science approach has been traditionally used for this problem.  However, document classification techniques have also arisen from the informatics and computer science fields.  In particular, within the field of topic modeling, LDA is the simplest approach that assigns various topics to a document based on its composition.  The underlying premise is that all documents in a corpus exhibit multiple topics in different proportions resulting in a per-document distribution of topics.  A topic is randomly chosen from this distribution and then a word is chosen from the distribution over the vocabulary [Blei 2012](https://dl.acm.org/citation.cfm?doid=2133806.2133826).  One recent study ([Yu et al. 2016](https://www.ncbi.nlm.nih.gov/pubmed/27001195)), found that the combination of MeSH terms with topics generated from LDA can improve performance on document retrieval and classificaiton tasks.
 
-In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+![LDA](img/LDA.jpg)
 
+In a similar fashion, patients have a number of documents associated with them and require manual coders to assign billing codes and items on the patient's problem list.  Often these data are useful for the financial aspects of caring for a patient; however, these codes are often used secondarily for quality improvement as well as research purposes.  Again, because of the manual nature of the process, these codes are labor intensive and can underrepresent the full clinical picture.  The same techniques could be applied to patient notes to determine whether the codes can be reliably used for their current secondary uses and also to see whether topics from LDA could improve these as well.  Thus, the problem lies at the intersection of library science, data science, computer science, and clinical care.  This study could help initially to improve cohort identification for various quality improvement and research efforts.  If successful, the same approach could be used prospectively to suggest related topics based on clinical narrative that might extend a clinician's understand of a given patient's illness.
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+This final project will retrieve abstract data from the PubMed database, then parse through the XML result for the abstract text and relevant metadata (i.e. PMID, journal name, title, MeSH terms).  For preprocessing, these data will be joined into a dataframe and then into a corpus for easy use with the `tm` package, which will be used to clean the data.  Some descriptive visualizations of the data will be applied before modeling the data with the `topicmodeling` package.  The resulting model will be visualized with the `LDAvis` package.  
 
+First, we will use the `rentrez` package to retrieve PubMed entries that match the MeSH terms that we are interested in - in this case "Child" and "fever".  We will use [NCBI's Web History objects](https://ropensci.org/tutorials/rentrez_tutorial/) to store the IDs from this large query.  We will then use the `entrez_fetch` function to  obtain the first 1000 abstracts that match the previous IDs.  This will return the abstracts in XML format.  Using the XML package, we will convert these abstracts into a dataframe, using a few custom functions to build a data frame from the XML node set.
+
+```{r message=FALSE, warning=FALSE}
+library(rentrez)
+library(XML)
+
+mesh <- '"Child"[MeSH], "Fever"[MeSH]'
+ped.EM.search <- entrez_search(db = "pubmed", term = mesh, use_history = TRUE)
+
+raw.abs <- entrez_fetch(db = "pubmed", web_history = ped.EM.search$web_history, rettype = "xml", retmax = 1000)
+
+# Function to deal with missing nodes (i.e. IDs without abstracts)
+xpath2 <-function(x, path, fun = xmlValue, ...){
+  y <- xpathSApply(x, path, fun, ...)
+  ifelse(length(y) == 0, NA, y)
+}
+
+# Function to concatenate MeSH terms
+xpath3 <- function(x, path, fun = xmlValue, ...){
+  y <- xpathSApply(x, path, fun, ...)
+  ifelse(length(y) == 0, NA, paste(y, sep = " ", collapse = ","))
+}
+
+# Function to build data frame from nodeset
+parse_article_set <- function(nodeSet) {
+  doc_id <- sapply(nodeSet, xpath2, ".//ArticleId[@IdType='pubmed'][1]")
+  heading <- sapply(nodeSet, xpath2, ".//Article/ArticleTitle[1]")
+  year <- sapply(nodeSet, xpath2, ".//PubDate/Year[1]")
+  journal <- sapply(nodeSet, xpath2, ".//Journal/Title[1]")
+  text <- sapply(nodeSet, xpath2, ".//Abstract/AbstractText[1]")
+  mesh <- sapply(nodeSet, xpath3, ".//MeshHeadingList/MeshHeading/DescriptorName")
+  data.frame(doc_id, text, heading, year, journal, mesh)
+}
+
+abs.xml <- xmlParse(raw.abs, useInternalNodes = TRUE)
+abs.nodes <- getNodeSet(abs.xml, "//PubmedArticle")
+abs.df <- parse_article_set(abs.nodes)
+
+# Remove abstracts where there is no text
+abs.df <- abs.df[is.na(abs.df$text) == FALSE,]
+
+# Add row IDs
+abs.df$ID <- seq.int(nrow(abs.df))
+
+```
+
+In this section, we will pre-process the data using the `tm` package.  First, we will create a corpus, tm_map will allow us to perform transformations on the corpus, specifically, removing punctuation, numbers, white space, general stop words, specified stop words, and normalizing terms to lowercase.
+
+```{r message=FALSE}
+library(tm)
+
+# Creates corpus from data frame
+abs.corpus <- Corpus(DataframeSource(abs.df))
+
+# Remove punctuation
+abs.corpus <- tm_map(abs.corpus, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+# Remove numbers
+abs.corpus <- tm_map(abs.corpus, removeNumbers)
+
+# Change to lowercase, so that words appear the same every time
+abs.corpus <- tm_map(abs.corpus, tolower)
+
+# Remove stop words
+abs.corpus <- tm_map(abs.corpus, removeWords, stopwords("english"))
+
+# Remove white space
+abs.corpus <- tm_map(abs.corpus, stripWhitespace)
+
+# Remove specific words: children, clinical, patients
+abs.corpus <- tm_map(abs.corpus, removeWords, c("children", "clinical", "patients", "fever"))
+```
+
+Next we will convert the corpus to a document term matrix.  In addition, we'll construct a term frequency plot, as well as a word cloud.
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
+
+abs.dtm <- DocumentTermMatrix(abs.corpus)
+
+# If needed later - code to transpose DTM.
+# abs.tdm <- TermDocumentMatrix(abs.corpus)
+
+# Organize terms by their frequency
+freq <- sort(colSums(as.matrix(abs.dtm)), decreasing=TRUE)   
+
+word.freq <- data.frame(word = names(freq), freq = freq)
+
+# Plot words appearing at least 100 times
+freq.plot <- ggplot(subset(word.freq, freq > 100), aes(x = reorder(word, -freq), y = freq)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Frequency of terms in corpus with > 100 utterances")
+
+freq.plot
+
+# Construction of wordcloud
+set.seed(2239)
+wordcloud(names(freq), freq, min.freq = 30, scale = c(5, 0.1), colors = brewer.pal(6, "Dark2"))
+```
+
+To reduce number of terms and try to isolate the most important terms, we'll use [tf-idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf).
+
+```{r message=FALSE}
+library(slam)
+library(dplyr)
+library(reshape2)
+
+abs.tfidf <- tapply(abs.dtm$v/row_sums(abs.dtm)[abs.dtm$i], abs.dtm$j, mean) * log2(nDocs(abs.dtm)/col_sums(abs.dtm > 0))
+
+summary(abs.tfidf)
+```
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+The median tf-idf is 0.137, so let's use this as the lower limit and remove terms from the DTM with a tf-idf smaller than 0.137, ensuring very frequent terms are omitted.  We'll use the harmonic mean to determine the optimal number of topics using harmonic mean, as previously described by [Meza 2015](http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html) and [Ponweiser 2012](http://epub.wu.ac.at/3558/1/main.pdf).  For different topic models with a subsequently increasing number of topics, we will determine the harmonic mean.  Given the amount of time that the models take to run, we'll set this code chunk to not evaluate.
+
+```{r eval}
+library(topicmodels)
+library(Rmpfr)
+library(ggplot2)
+
+# Retains terms with tf-idf greater than or equal to the median
+abs.dtm.reduced <- abs.dtm[, abs.tfidf >= 0.137]
+summary(col_sums(abs.dtm.reduced))
+
+# Define harmonic mean function (borrowed from Ponweiser and Meza)
+harmonicMean <- function(logLikelihoods, precision = 2000L) {
+  llMed <- median(logLikelihoods)
+  as.double(llMed - log(mean(exp(-mpfr(logLikelihoods, prec = precision) + llMed))))
+}
+
+# Determine the best k (number of topics) for corpus and output amount of time needed to run models
+seqk <- seq(2, 100, 1)
+burnin <- 1000
+iter <- 1000
+keep <- 50
+system.time(fitted_many <- lapply(seqk, function(k) LDA(abs.dtm.reduced, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))))
+
+# Get log likelihoods from each topic
+logLiks_many <- lapply(fitted_many, function(L)  L@logLiks[-c(1:(burnin/keep))])
+
+# Compute harmonic means
+hm_many <- sapply(logLiks_many, function(h) harmonicMean(h))
+```
+
+```{r}
+# Plot
+lda.plot <- ggplot(data.frame(seqk, hm_many), aes(x = seqk, y = hm_many)) + 
+  geom_path(lwd = 1.0) +
+  xlab('Number of Topics') +
+  ylab('Harmonic Mean') +
+  labs(title = "Latent Dirichlet Allocation of PubMed Abstracts", subtitle = paste("The optimal number of topics is ", seqk[which.max(hm_many)]))
+
+lda.plot
+```
+
+Now, we'll run the model with the reduced DTM and the optimal number of topics and save the model.  Afterwards, we'll take a look at the first ten topics that this model generated.
+
+```{r}
+system.time(abs.lda.model <- LDA(abs.dtm.reduced, 25, method = "Gibbs", control = list(iter=2000, seed = 0622)))
+
+# Exploring the model
+abs.topics <- topics(abs.lda.model, 1)
+
+abs.terms <- as.data.frame(terms(abs.lda.model, 30), stringsAsFactors = FALSE)
+abs.terms[1:10]
+```
+
+For each topic, we'll get the first three terms and output them into a table of topic number and topic terms.
+
+```{r message=FALSE}
+library(stringr)
+library(tidyr)
+
+abs.topic.terms <- gather(abs.terms, Topic)
+abs.topic.terms <- cbind(abs.topic.terms, Rank = rep(1:30))
+abs.top.terms <- filter(abs.topic.terms, Rank < 4)
+abs.top.terms <- mutate(abs.top.terms, Topic = word(Topic, 2))
+
+abs.top.terms$Topic <- as.numeric(abs.top.terms$Topic)
+topic.label <- data.frame()
+
+for (i in 1:25) {
+  z <- filter(abs.top.terms, Topic == i)
+  l <- as.data.frame(paste(z[1,2], z[2,2], z[3,2], sep = " "), stringsAsFactors = FALSE)
+  topic.label <- rbind(topic.label, l)
+}
+
+colnames(topic.label) <- c("Label")
+topic.label
+```
+
+
+
+Output the topic models to JSON for use with LDAvis
+```{r}
+topicmodels_json_ldavis <- function(fitted, corpus, doc_term){
+     ## Required packages
+     library(topicmodels)
+     library(dplyr)
+     library(stringi)
+     library(tm)
+     library(LDAvis)
+
+     ## Find required quantities
+     phi <- posterior(fitted)$terms %>% as.matrix
+     theta <- posterior(fitted)$topics %>% as.matrix
+     vocab <- colnames(phi)
+     doc_length <- vector()
+     for (i in 1:length(corpus)) {
+          temp <- paste(corpus[[i]]$content, collapse = ' ')
+          doc_length <- c(doc_length, stri_count(temp, regex = '\\S+'))
+     }
+     temp_frequency <- col_sums(doc_term)
+     freq_matrix <- data.frame(ST = names(temp_frequency),
+                               Freq = temp_frequency)
+     rm(temp_frequency)
+
+     ## Convert to json
+     json_lda <- LDAvis::createJSON(phi = phi, theta = theta,
+                                    vocab = vocab,
+                                    doc.length = doc_length,
+                                    term.frequency = freq_matrix$Freq)
+
+     return(json_lda)
+}
+```
+
+Now we'll run the function and supply the fitted model, corpus, and DTM.
+
+```{r eval=FALSE}
+abs.json <- topicmodels_json_ldavis(abs.lda.model, abs.corpus, abs.dtm.reduced)
+serVis(abs.json)
+```
+![LDAviz.png](img/LDAviz.png)
+
+So far, we've generated topics from this corpus of abstracts that consist of terms that match up with our expectations of the world.  Furthermore, we're able to visualize intertopic distances and find that despite close proximity of some topics, LDA does a reasonably good job of grouping together terms.  Next steps will involve creating a correlation plot between MeSH term and topics to determine whether or not there's a correlation between these and if topics can be used as a proxy.
+
+#### Code for next steps
+```{r eval=FALSE}
+# Generate per document probability of topics
+theta <- as.data.frame(posterior(abs.lda.model)$topics)
+head(theta[1:5])
+
+x <- as.data.frame(row.names(theta), stringsAsFactors = FALSE)
+colnames(x) <- c("ID")
+x$ID <- as.numeric(x$ID)
+theta2 <- cbind(x, theta)
+theta2 <- left_join(theta2, abs.df, by = "ID")
+
+# grouped by journal
+theta.mean.by <- by(theta2[, 2:26], theta2$journal, colMeans)
+theta.mean <- do.call("rbind", theta.mean.by)
+
+# Generate correlation plot between MeSH terms and topics
+library(corrplot)
+c <- cor(theta.mean)
+corrplot(c, method = "circle")
+
+# Create df with PMID and the most likely topic 
+abs.topics.df <- as.data.frame(abs.topics)
+abs.topics.df <- transmute(abs.topics.df, ID = rownames(abs.topics.df), Topic = abs.topics)
+abs.topics.df$ID <- as.integer(abs.topics.df$ID)
+```
+
+### References
+1. Blei DM. Probabilistic topic models. Commun ACM. 2012 Apr 1;55(4):77.
+2. Meza D. Topic Modeling in R [Internet]. 2015 [cited 2017 Dec 5]. Available from: http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html
+3. Ponweiser M. Latent Dirichlet Allocation in R. Vienna University of Business and Economics; 2012. 
+4. Yepes AJ, Mork JG, Wilkowski B, Demner Fushman D, Aronson AR. MEDLINE MeSH indexing: lessons learned from machine learning and future directions. In: Proceedings of the 2nd ACM SIGHIT symposium on International health informatics - IHI ’12. New York, New York, USA: ACM Press; 2012. p. 737. 
+5. Yu Z, Bernstam E, Cohen T, Wallace BC, Johnson TR. Improving the utility of MeSH® terms using the TopicalMeSH representation. J Biomed Inform. 2016 Jun;61:77–86.
