@@ -1,0 +1,510 @@
+---
+title: "Gather Procedures"
+author: "Adam Dziorny"
+date: "October 21, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+```
+
+## Connect
+
+First source the ODBC connection functions and make the connection (code is hidden).
+
+```{r nzConn, echo=FALSE}
+source('F_rodbc_cdw.R')
+
+nzConn <- makeConn(user = 'dziornya', pwd = getPassword('CHOPDW'), 
+                   server = 'binbiaclv2.chop.edu', db = 'CDWPRD')
+```
+
+## Create Query
+
+The cohort is based on the full `DISTINCT PAT_KEY` selection - we do not restrict to visits where the patients are in the PICU, because procedures are in their own `VISIT`.  In the CDW, a `CASE` is the requested (but not necessarily completed) OR case associated with 1 to many procedures.  For example, patient John Smith could have a case requested then cancelled, then could go to the OR for an MLB and a GT/Nissen.  They would have two cases (one cancelled), and the second case would have multiple PANEL_NUM values. Surgeons are linked to the procedures associated with the case.
+
+The times we use are the `CASE_BEGIN_DT` and `CASE_END_DT`.  We attempted to use the `OR_LOG` table - however, when we link this table to the `OR_CASE` table, we find no logs for procedures before `2013-05-06`.  It seems that while `OR_LOG` has date-times before 2013, the table `OR_LOG_CASE_TIMES` has a different set of `DICT_OR_PAT_EVENT_KEY` values for procedures prior to this date.  A closer examination of those keys do not show consistency in entry - exit time into and out of the OR.  Therefore we will use the BEGIN and END DT values.
+
+Therefore, the query procedure is, we find all `OR_CASES` linked to all `PAT_KEY` values in the cohort.  We then link the `PROCEDURES` and `SURGEONS` to the cases, and 
+
+```{r}
+query <- strwrap(paste(
+"WITH 
+cohort AS ( 
+SELECT DISTINCT vis_evnt.PAT_KEY
+FROM CDW.VISIT_EVENT vis_evnt 
+  INNER JOIN CDW.CDW_DICTIONARY event_type ON vis_evnt.DICT_ADT_EVENT_KEY = event_type.dict_key 
+    AND event_type.src_id IN (1,2,3,4,6) 
+  INNER JOIN CDW.CDW_DICTIONARY event_sub_type ON vis_evnt.DICT_EVENT_SUBTYPE_KEY = event_sub_type.dict_key 
+    AND event_sub_type.src_id <> 2 
+  INNER JOIN CDW.DEPARTMENT dept ON vis_evnt.DEPT_KEY = dept.DEPT_KEY 
+WHERE 
+  dept.DEPT_ID IN (34, 43, 123, 36) 
+  AND vis_evnt.VISIT_KEY NOT IN (-1, 0) AND vis_evnt.PAT_KEY NOT IN (0) 
+  AND vis_evnt.EFF_EVENT_DT BETWEEN DATE('07/01/2012') AND DATE('07/01/2017') 
+),
+cases AS (
+SELECT 
+  cohort.PAT_KEY,
+  orc.OR_CASE_KEY,
+  orc.LOG_KEY,
+  orc.CASE_BEGIN_DT,
+  orc.CASE_END_DT,
+  or_svc.DICT_NM AS OR_SVC,
+  CASE WHEN orc.add_on_case_ind = 0 AND orc.add_on_case_sch_ind = 0 THEN 0 ELSE 1 END AS add_on_case_ind 
+FROM cohort
+  JOIN CDW.OR_CASE orc ON cohort.PAT_KEY = orc.PAT_KEY
+  JOIN CDW.CDW_DICTIONARY or_svc ON or_svc.DICT_KEY = orc.DICT_OR_SVC_KEY
+WHERE 
+  orc.log_key NOT IN (-1,0) 
+),
+logs AS (
+SELECT
+  cases.*,
+  orl.NUM_OF_PANELS,
+  or_stat.DICT_NM AS OR_STAT,
+  loc.LOC_NM AS LOC,
+  room.FULL_NM AS ROOM,
+  md.FULL_DT AS MASTER_DT,
+  orl.ADMIT_VISIT_KEY,
+  dict_case_type.DICT_NM AS CASE_TYPE,
+  dict_case_class.DICT_NM AS CASE_CLASS,
+  CASE WHEN loc.loc_id != 900100100.000 THEN 1 ELSE 0 END AS asc_ind 
+FROM cases
+  JOIN CDWPRD.CDW.OR_LOG orl ON orl.LOG_KEY = cases.LOG_KEY
+  JOIN CDW.LOCATION loc ON loc.loc_key = orl.loc_key
+  JOIN CDW.CDW_DICTIONARY or_stat ON or_stat.DICT_KEY = orl.DICT_OR_STAT_KEY
+  JOIN CDW_ANALYTICS.FACT_OR_LOG fact_orl ON fact_orl.log_key = orl.log_key
+  JOIN CDW.PROVIDER AS room ON room.prov_key = orl.room_prov_key
+  JOIN CDW.MASTER_DATE md ON orl.surg_dt_key = md.dt_key 
+  JOIN CDW.CDW_DICTIONARY dict_case_type ON dict_case_type.dict_key = orl.dict_or_case_type_key 
+  JOIN CDW.CDW_DICTIONARY dict_case_class ON dict_case_class.dict_key = orl.dict_or_case_class_key
+WHERE
+  or_stat.SRC_ID IN (1.0030, 2) 
+  and orl.DICT_NOT_PERF_KEY = -2 
+), 
+procs AS (
+SELECT 
+  logs.*,
+  or_proc.OR_PROC_ID AS PROC_ID,
+  or_proc.OR_PROC_NM AS PROC_NM,
+  orl_proc.SEQ_NUM AS PROC_SEQ_NUM,
+  orl_proc.ALL_PROC_PANEL_NUM,
+  dict_anes_type.DICT_NM AS ANES_TYPE
+FROM logs
+  JOIN CDW.OR_LOG_ALL_PROCEDURES orl_proc ON logs.log_key = orl_proc.log_key 
+    JOIN CDW.OR_PROCEDURE or_proc ON or_proc.or_proc_key = orl_proc.or_proc_key
+      JOIN CDW.CDW_DICTIONARY dict_anes_type ON dict_anes_type.dict_key = orl_proc.dict_or_anes_type_key
+), 
+case_tracking_events as ( 
+SELECT 
+  orl.log_key
+,min(case when dict_or_pat_event_key = 241288 then event_in_dt end) as in_facility 
+,min(case when dict_or_pat_event_key = 294805 then event_in_dt end) as intake_process 
+,min(case when dict_or_pat_event_key = 792807 then event_in_dt end) as in_waiting_area 
+,min(case when dict_or_pat_event_key = 792808 then event_in_dt end) as core_tech_ack_req 
+,min(case when dict_or_pat_event_key = 241330 then event_in_dt end) as request_transport 
+,min(case when dict_or_pat_event_key = 241311 then event_in_dt end) as ack_transport_request 
+,min(case when dict_or_pat_event_key = 241299 then event_in_dt end) as in_preop_room 
+,min(case when dict_or_pat_event_key = 241313 then event_in_dt end) as premed_patient
+,min(case when dict_or_pat_event_key = 241314 then event_in_dt end) as ack_premed_patient 
+,min(case when dict_or_pat_event_key = 241315 then event_in_dt end) as pat_medicated 
+,min(case when dict_or_pat_event_key = 241320 then event_in_dt end) as pat_ready_for_or 
+,min(case when dict_or_pat_event_key = 241331 then event_in_dt end) as in_room 
+,min(case when dict_or_pat_event_key = 241334 then event_in_dt end) as anes_sed_start 
+,min(case when dict_or_pat_event_key = 241304 then event_in_dt end) as prep_start
+,min(case when dict_or_pat_event_key = 241303 then event_in_dt end) as anes_ready
+,min(case when dict_or_pat_event_key = 241335 then event_in_dt end) as proc_start
+,min(case when dict_or_pat_event_key = 241336 then event_in_dt end) as proc_close
+,min(case when dict_or_pat_event_key = 241318 then event_in_dt end) as out_for_test 
+,min(case when dict_or_pat_event_key = 241319 then event_in_dt end) as return_from_test
+,min(case when dict_or_pat_event_key = 241316 then event_in_dt end) as req_PACU_bed
+,min(case when dict_or_pat_event_key = 241323 then event_in_dt end) as req_CPRU_bed 
+,min(case when dict_or_pat_event_key = 241289 then event_in_dt end) as out_room 
+,min(case when dict_or_pat_event_key = 241290 then event_in_dt end) as phase_I
+,min(case when dict_or_pat_event_key = 241332 then event_in_dt end) as ready_for_vis
+,min(case when dict_or_pat_event_key = 241293 then event_in_dt end) as phase_II
+,min(case when dict_or_pat_event_key = 241337 then event_in_dt end) as anes_sed_stop
+,min(case when dict_or_pat_event_key = 241291 then event_in_dt end) as recovery_complete 
+,min(case when dict_or_pat_event_key = 241296 then event_in_dt end) as trans_disch 
+,min(case when dict_or_pat_event_key = 257709 then event_in_dt end) as old_arrived
+,min(case when dict_or_pat_event_key = 257710 then event_in_dt end) as old_pt_ready
+,min(case when dict_or_pat_event_key = 257711 then event_in_dt end) as old_ack_med_req
+,min(case when dict_or_pat_event_key = 257712 then event_in_dt end) as old_ack_bed_req
+,min(case when dict_or_pat_event_key = 257713 then event_in_dt end) as old_ack_transport_req
+,min(case when dict_or_pat_event_key = 257714 then event_in_dt end) as old_ack_pacu_bed
+,min(case when dict_or_pat_event_key = 257715 then event_in_dt end) as old_transport_ip
+,min(case when dict_or_pat_event_key = 257716 then event_in_dt end) as old_medicated
+,min(case when dict_or_pat_event_key = 257717 then event_in_dt end) as old_premed_not_req
+,min(case when dict_or_pat_event_key = 257718 then event_in_dt end) as old_premed_pt
+,min(case when dict_or_pat_event_key = 257719 then event_in_dt end) as old_preop_process
+,min(case when dict_or_pat_event_key = 257720 then event_in_dt end) as old_pt_in_recovery
+,min(case when dict_or_pat_event_key = 257721 then event_in_dt end) as old_pt_out_recovery
+,min(case when dict_or_pat_event_key = 257722 then event_in_dt end) as old_pt_in_surgery
+,min(case when dict_or_pat_event_key = 257723 then event_in_dt end) as old_prep_started
+,min(case when dict_or_pat_event_key = 257724 then event_in_dt end) as old_proc_started
+,min(case when dict_or_pat_event_key = 257725 then event_in_dt end) as old_proc_ended
+,min(case when dict_or_pat_event_key = 257726 then event_in_dt end) as old_out_of_room
+,min(case when dict_or_pat_event_key = 257727 then event_in_dt end) as old_phase_II
+FROM CDW.OR_LOG orl
+  LEFT JOIN CDW.OR_LOG_CASE_TIMES ON or_log_case_times.LOG_KEY = orl.log_key
+GROUP BY 1
+),
+joined_procs AS (
+SELECT
+  procs.*,
+  case_tracking_events.*
+FROM procs
+  JOIN case_tracking_events ON case_tracking_events.log_key = procs.log_key
+) 
+SELECT * 
+FROM joined_procs
+WHERE DATE(CASE_BEGIN_DT) BETWEEN DATE('2012-01-01') AND ('2017-08-01')
+ORDER BY PAT_KEY, OR_CASE_KEY, PROC_SEQ_NUM",                       
+  sep="\n"), width=1000000)
+```
+
+## Execute Query
+
+Now we run the query: 
+
+```{r}
+# Create the 'as.is' vector which specifies the columns to leave unconverted
+as.is <- rep(T,68)
+as.is[c(1,2,3,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22)] <- F
+
+# Execute the query from the database
+or_procs.df <- sqlQuery(nzConn, query, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE,
+                  as.is = as.is)
+```
+
+## Cleanup
+
+There are a few things to clean up before saving out:
+
+  + Convert the date-time columns to `POSIXct` classes using the appropriate format string
+  + Factor the OR and Surgeon Services
+  + Factor the Surgeon names
+  + Factor the OR Procedures
+
+```{r}
+# Convert times
+as.is[12] <- F # This one requires a different format
+for (i in which(as.is)) {
+  or_procs.df[,i] <- as.POSIXct(or_procs.df[,i], format='%Y-%m-%d %H:%M:%S')
+}
+or_procs.df[,12] <- as.POSIXct(or_procs.df[,12], format='%Y-%m-%d')
+
+# Apply some factors
+to.factor <- c('OR_SVC','OR_STAT','LOC','ROOM','CASE_TYPE','CASE_CLASS',
+               'PROC_NM','ANES_TYPE')
+for (n in to.factor) {
+  or_procs.df[,n] <- factor(or_procs.df[,n])
+}
+
+# Remove variables
+rm(i, n, as.is, to.factor)
+```
+
+#### Special Case - Leap Year
+
+THrough our testing below we have found that there is one `CASE_END_DT` that results in a `NA` POSIXct value - the value is `2014-03-09 02:00:00` on index 9649.  This is because Daylight Savings Time started at 02:00 AM on that date, and according to the POSIX standard there was no 02:00 AM on that date (it jumped to 03:00 AM).  Therefore we will subtract one minute from this time, and set that as the POXIXct time:
+
+```{r}
+cat(sprintf(paste0(
+  'Number of NA values in CASE_BEGIN_DT: %d\n',
+  'Number of NA values in CASE_END_DT: %d\n'),
+  sum(is.na(or_procs.df$CASE_BEGIN_DT)),
+  sum(is.na(or_procs.df$CASE_END_DT))))
+
+or_procs.df$CASE_END_DT[which(is.na(or_procs.df$CASE_END_DT))] <-
+  as.POSIXct('2014-03-09 01:59:59', format='%Y-%m-%d %H:%M:%S')
+```
+
+Verify that we have no NA values in those two time columns:
+
+```{r}
+cat(sprintf(paste0(
+  'Number of NA values in CASE_BEGIN_DT: %d\n',
+  'Number of NA values in CASE_END_DT: %d\n'),
+  sum(is.na(or_procs.df$CASE_BEGIN_DT)),
+  sum(is.na(or_procs.df$CASE_END_DT))))
+```
+
+#### Mashup Times
+
+We now need to mash up the out-of-room times, which we will use as the starting time of our "post-op" interval.  We choose this over `PROC_CLOSE` because it is more consistently filled in.  However, sometime around '2013-05-06' a major overhaul in the OpTime coding occured and the time flags were completely redone. Because our cohort spans this whole time, we need to pull together the old and the new. We will create a `SRC_COLUMN` vector which will store the name of the column from which to source the end date.
+
+```{r}
+src.column <- vector(mode = 'character', length = nrow(or_procs.df))
+```
+
+First we verify that there is no time at which both the old `OLD_OUT_OF_ROOM` and new `OUT_ROOM` flags are not `NA` together - meaning there is no overlap among the two:
+
+```{r}
+src.column[!is.na(or_procs.df$OUT_ROOM)] <- 'OUT_ROOM'
+src.column[!is.na(or_procs.df$OLD_OUT_OF_ROOM)] <- 'OLD_OUT_OF_ROOM'
+
+cat(sprintf('How many cases do OUT_ROOM and OLD_OUT_OF_ROOM overlap? %d',
+            sum(!is.na(or_procs.df$OUT_ROOM) & !is.na(or_procs.df$OLD_OUT_OF_ROOM))))
+```
+
+We need to know what times to choose when both of these are `NA`, however.  We could default to `CASE_END_DT` but this is the scheduled end time, and likely less accurate.  How many will this impact?
+
+```{r}
+cat(sprintf('How many cases are both OUT_ROOM and OLD_OUT_OF_ROOM == NA? %d',
+            sum(is.na(or_procs.df$OUT_ROOM) & is.na(or_procs.df$OLD_OUT_OF_ROOM))))
+```
+
+Of these cases, do they fall before or after the OpTime go-live?
+
+```{r}
+bothInvalid <- is.na(or_procs.df$OUT_ROOM) & is.na(or_procs.df$OLD_OUT_OF_ROOM)
+
+goLive <- as.POSIXct('2013-05-06 06:00:00', format='%Y-%m-%d %H:%M:%S')
+
+cat(sprintf(paste0('Before 2013-05-06: %d\n',
+                   'After this date: %d'),
+            sum(or_procs.df$CASE_BEGIN_DT[bothInvalid] < goLive),
+            sum(or_procs.df$CASE_BEGIN_DT[bothInvalid] >= goLive)))
+```
+
+For those before the '2013-05-06' date, the only remaining flag that would be appropriate is `OLD_PROC_ENDED`.  If this exists, use it, otherwise use CASE_END_DT.
+
+```{r}
+src.column[!is.na(or_procs.df$OLD_PROC_ENDED) & 
+             bothInvalid & 
+             or_procs.df$CASE_BEGIN_DT < goLive] <- 'OLD_PROC_ENDED'
+
+src.column[is.na(or_procs.df$OLD_PROC_ENDED) &
+             bothInvalid &
+             or_procs.df$CASE_BEGIN_DT < goLive] <- 'CASE_END_DT'
+```
+
+For those after the '2013-05-06' date, the optional flags are `PROC_CLOSE`, `REQ_PACU_BED`, `REQ_CPRU_BED`, `ANES_SED_STOP`, `PHASE_I`. If none of these work, then we choose CASE_END_DT.
+
+```{r}
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             !is.na(or_procs.df$PROC_CLOSE)] <- 'PROC_CLOSE'
+
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             is.na(or_procs.df$PROC_CLOSE) &
+             !is.na(or_procs.df$REQ_PACU_BED)] <- 'REQ_PACU_BED'
+
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             is.na(or_procs.df$PROC_CLOSE) &
+             is.na(or_procs.df$REQ_PACU_BED) &
+             !is.na(or_procs.df$REQ_CPRU_BED)] <- 'REQ_CPRU_BED'
+
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             is.na(or_procs.df$PROC_CLOSE) &
+             is.na(or_procs.df$REQ_PACU_BED) &
+             is.na(or_procs.df$REQ_CPRU_BED) &
+             !is.na(or_procs.df$ANES_SED_STOP)] <- 'ANES_SED_STOP'
+
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             is.na(or_procs.df$PROC_CLOSE) &
+             is.na(or_procs.df$REQ_PACU_BED) &
+             is.na(or_procs.df$REQ_CPRU_BED) &
+             is.na(or_procs.df$ANES_SED_STOP) &
+             !is.na(or_procs.df$PHASE_I)] <- 'PHASE_I'
+
+src.column[bothInvalid & or_procs.df$CASE_BEGIN_DT >= goLive &
+             is.na(or_procs.df$PROC_CLOSE) &
+             is.na(or_procs.df$REQ_PACU_BED) &
+             is.na(or_procs.df$REQ_CPRU_BED) &
+             is.na(or_procs.df$ANES_SED_STOP) &
+             is.na(or_procs.df$PHASE_I)] <- 'CASE_END_DT'
+```
+
+Are any still left un-set?
+
+```{r}
+cat(sprintf('How many src.column still equal null string? %d',
+            sum(src.column == '')))
+```
+
+How many of each do we have?
+
+```{r}
+table(src.column)
+```
+
+Now we have to create the `MESH_END_DT` column, bind this and the `src.column` to the data frame, and convert the `src.column` into a factor:
+
+```{r}
+MESH_END_DT <- vector(length = nrow(or_procs.df))
+
+for (i in 1 : nrow(or_procs.df)) {
+  MESH_END_DT[i] <- format(or_procs.df[i,names(or_procs.df) == src.column[i]], format='%Y-%m-%d %H:%M:%S')
+}
+
+MESH_END_DT <- as.POSIXct(MESH_END_DT, format='%Y-%m-%d %H:%M:%S')
+
+or_procs.df <- cbind(or_procs.df,
+                     MESH_SRC_COLUMN = src.column,
+                     MESH_END_DT = MESH_END_DT)
+```
+
+```{r, echo=FALSE}
+rm(goLive, bothInvalid, i, src.column, MESH_END_DT)
+```
+
+## Save
+
+Now we write out the OR Procedures data to the file `D_or_procedures`:
+
+```{r}
+save(or_procs.df, file='D_or_procedures')
+```
+
+## Test Matchup
+
+We will run a test matchup now, where we look at post-operative CBC hemoglobins.  First we load the library packages and the pre-processed lab data:
+
+```{r message=FALSE, warning=FALSE}
+load('D_preprocessed')
+```
+
+We filter out the appropriate proc and base, and limit by appropriate values:
+
+```{r}
+procs <- c('CBC w Diff', 'CBC wo Diff')
+bases <- c('hgb')
+
+values <- labs.df %>%
+    dplyr::filter(PROC_NM %in% procs) %>%
+    dplyr::filter(BASE_NM %in% bases) %>%
+    dplyr::filter(!is.na(VALUE)) %>%
+    dplyr::filter(VALUE < 1000)
+
+ggplot(values) +
+  geom_histogram(aes(VALUE), bins=30) +
+  xlab('Hemoglobin Value (g/dL)') +
+  ylab('Count') +
+  ggtitle('Hemoglobin Value Histogram')
+```
+
+Now we run a function to match the procedure data with the lab data. This section will return two output values:
+
+  + `indexOfLastProc`: Row in the `or_procs.df` data frame matching the last procedure
+  + `hrsFromLastProc`: Value (in hours) since the last procedure
+
+```{r, message=FALSE}
+
+# Create Progress Bar
+pb <- txtProgressBar(min = 0, max = nrow(values), style = 3)
+
+indexOfLastProc <- vector(mode = 'numeric', length = nrow(values))
+hrsFromLastProc <- vector(mode = 'numeric', length = nrow(values))
+  
+for (i in 1 : nrow(values))
+{
+  matches <- 
+    or_procs.df$PAT_KEY == values$PAT_KEY[i]
+  
+  # If patient had no procedures, set output variables to NA, next()
+  if (sum(matches) == 0) {
+    indexOfLastProc[i] <- NA
+    hrsFromLastProc[i] <- NA
+    
+    next
+  }
+  
+  # Indices of which OR Procedures are matches? To save out index
+  areTrue <- which(matches)
+
+  # Calculate time difference in hours
+  timeDiffs <- as.numeric(values$RSLT_DT[i] - or_procs.df$MESH_END_DT[matches], units='hours')
+  
+  # If all are in the past, set output variables ot NA, next()
+  if (sum(timeDiffs > 0) == 0) {
+    indexOfLastProc[i] <- NA
+    hrsFromLastProc[i] <- NA
+    
+    next
+  }
+  
+  # Limit indices by those with time diffs > 0 (those which happened in the past)
+  areTrue <- areTrue[timeDiffs > 0]
+  
+  # Now set the output values to the minimum value
+  hrsFromLastProc[i] <- min(timeDiffs[timeDiffs > 0])
+  indexOfLastProc[i] <- areTrue[which.min(timeDiffs[timeDiffs > 0])]
+  
+  # update progress bar
+  setTxtProgressBar(pb, i)
+}
+
+# Close Progress Bar
+close(pb)
+
+rm(procs, bases, pb,i,matches,areTrue,timeDiffs)
+```
+
+Now that we've calculated the hours from the last procedure (when they are not NA), we will plot the HGB values in immediate post-operative patients (< 24 hrs since procedure) compared to everyone else:
+
+```{r}
+is.post.op <- !is.na(hrsFromLastProc) & hrsFromLastProc < 24
+post.op.svc <- vector(mode = 'character', length = nrow(values))
+post.op.svc[is.post.op] <- as.character(or_procs.df$OR_SVC[indexOfLastProc[is.post.op]])
+post.op.svc <- factor(post.op.svc)
+  
+values <- values %>%
+  dplyr::mutate(IS_POSTOP = is.post.op,
+                POST_OP_SVC = post.op.svc)
+
+ggplot() +
+  geom_histogram(aes(x = hrsFromLastProc[values$IS_POSTOP]), bins=30) +
+  xlab('Time from Opreative End (Hours)') +
+  ylab('Count') +
+  ggtitle('Histogram of Hours From Procedure End in POST_OP Cohort') +
+  theme_bw()
+```
+
+```{r}
+summary(hrsFromLastProc[values$IS_POSTOP])
+```
+
+We split the CBC results on this `IS_POSTOP` flag:
+
+```{r}
+ggplot(values, aes(x=VALUE, group=IS_POSTOP, fill=IS_POSTOP)) +
+  geom_histogram(position = 'identity', alpha = 0.8, bins=30) +
+  theme_bw()
+```
+
+```{r}
+values %>%
+  dplyr::group_by(IS_POSTOP, DEPT_GRP) %>%
+  dplyr::summarise(N = n(), mean = mean(VALUE), median = median(VALUE), IQR = IQR(VALUE))
+```
+
+Surprisingly (maybe?), immediate post-operative patients are not more likely to be anemic than non post-operative patients. We can also capture the service recorded for the booked case, to see if there is variation among service:
+
+```{r}
+values %>%
+  dplyr::filter(IS_POSTOP) %>%
+  dplyr::group_by(POST_OP_SVC) %>%
+  dplyr::summarize(mean = mean(VALUE),
+                   median = median(VALUE),
+                   std = sd(VALUE),
+                   n = n(),
+                   sem = sd(VALUE) / sqrt(n())) %>%
+  dplyr::mutate(orders = n() - row_number(mean) + 1,
+                svc_order = POST_OP_SVC[orders]) %>%
+  ggplot() +
+  geom_col(aes(svc_order, mean)) +
+  geom_errorbar(aes(x = svc_order, ymin = mean - sem, ymax = mean + sem), width = 0.2) +
+  theme(axis.text.x=element_text(angle=60,hjust=1)) +
+  xlab('Operative Service') +
+  ylab('Mean Hemoglobin (g/dL)')
+```

@@ -1,0 +1,137 @@
+---
+title: "Split VS Data"
+author: "Adam Dziorny"
+date: "November 25, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+
+source('F_pageXDS.r')
+```
+
+## Load File
+
+First we load the pre-processed VS file, created from `2017-11-25 - Pre-Process Vital Signs.Rmd`.  This file is ~ 150 MB and loads into about 12 GB of RAM.
+
+```{r loader}
+tic <- proc.time()
+load('D_vs_preprocessed')
+toc <- proc.time() - tic
+
+cat(sprintf('Elapsed time to load (min): %0.2f\n',
+            toc[3]/60))
+```
+
+```{r, echo=F}
+rm(tic,toc)
+```
+
+### Most Commonly Filled
+
+Let's look at the most commonly filled VS rows - we sort by `DISP_NM` and summarize by N and %.  We then display the head of the sorted list.
+
+```{r}
+count.by.nm <-
+  vs.df %>%
+  dplyr::group_by(DISP_NM) %>%
+  dplyr::summarize(n = n(),
+                   perc = n() / nrow(vs.df) * 100) %>%
+  dplyr::arrange(desc(n))
+
+kable(head(count.by.nm, n=20), col.names = c('Row Name', 'N', '%'), digits = 2)
+```
+
+```{r, echo=FALSE}
+rm(count.by.nm)
+```
+
+### Pulse
+
+Let's export the Pulse after we convert the `MEAS_VAL` into a numeric field.  
+
+```{r}
+vs.hr.df <-
+  vs.df %>%
+  dplyr::filter(DISP_NM == 'Pulse') %>%
+  dplyr::mutate(VAL = as.numeric(MEAS_VAL)) %>%
+  dplyr::select(VISIT_KEY, IN_DT, OUT_DT, VAL, FS_REC_DT, REC_DT, ENTRY_DT)
+
+save(vs.hr.df, file='D_vs_hr')
+```
+
+What's the histogram of the values of this field look like?
+
+```{r}
+vs.hr.df %>%
+  ggplot() +
+  geom_histogram(aes(x = VAL), bins = 30) +
+  xlab('HR (beats/min)') + 
+  ylab('Count') +
+  theme_bw()
+```
+
+There appear to be some outliers here, so we will drill down into the summary of values:
+
+```{r}
+summary(vs.hr.df$VAL)
+```
+
+Let's pull off the 1st and 99th percentile values.  Below are those values, and the histogram resulting from plotting every value between the tails:
+
+```{r}
+tails <- quantile(vs.hr.df$VAL, c(0.01, 0.99), na.rm = T)
+
+cat(sprintf('1st Percentile: %0.f\n99th Percentile: %0.f\n',
+            tails[1], tails[2]))
+```
+
+```{r}
+vs.hr.df %>%
+  dplyr::filter(VAL >= tails[1] & VAL <= tails[2]) %>%
+  ggplot() +
+  geom_histogram(aes(x = VAL), bins = 20) +
+  xlab('HR (beats/min)') + 
+  ylab('Count') +
+  theme_bw()
+```
+
+```{r, echo=FALSE}
+rm(vs.hr.df, tails)
+```
+
+### SpO2
+
+Now let's export the SpO2 after we convert the `MEAS_VAL` into a numeric field.  
+
+```{r}
+vs.spo2.df <-
+  vs.df %>%
+  dplyr::filter(DISP_NM == 'SpO2') %>%
+  dplyr::mutate(VAL = as.numeric(MEAS_VAL)) %>%
+  dplyr::select(VISIT_KEY, IN_DT, OUT_DT, VAL, FS_REC_DT, REC_DT, ENTRY_DT)
+
+save(vs.spo2.df, file='D_vs_spo2')
+```
+
+What's the histogram of the values of this field look like?
+
+```{r}
+vs.spo2.df %>%
+  ggplot() +
+  geom_histogram(aes(x = VAL), bins = 30) +
+  xlab('SpO2 (%)') + 
+  ylab('Count') +
+  theme_bw()
+```
+
+```{r echo=FALSE}
+rm(vs.spo2.df)
+```

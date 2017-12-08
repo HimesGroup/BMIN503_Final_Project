@@ -1,0 +1,841 @@
+---
+title: "Simultaneous Labs"
+author: "Adam Dziorny"
+date: "November 22, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## <a name='contents'/>Contents
+
+This document looks at lab values that appear simultaneously (or near-simultaneously) and analyzes patterns in this data.
+
+1. [Loading Data](#load_data) : Loads libraries and data files
+2. [Verification](#verification) 
+3. [Analysis](#analysis)
+  + [Analysis Functions](#analysis_functions)
+  + Gas & Electrolyte Panel Matchup
+    + [Sodium](#analysis_na)
+    + [Potassium](#analysis_k)
+  + [Hemoglobin Matchup](#analysis_hgb)
+    + [Mismatch Covariates](#analysis_hgb_cov)
+  + [iStat & CBC Matchup](#analysis_istat_hgb)
+
+All work is (c) Adam Dziorny, 2017.
+  
+### <a name='load_data'/>Load the Data
+
+First we load the required libraries:
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(ggpubr)
+library(cowplot)
+library(kableExtra)
+library(BlandAltmanLeh)
+```
+
+And the full pre-processed dataset:
+
+```{r}
+load('D_preprocessed')
+```
+
+### <a name='verification'/>Verification
+
+We need to use the Specimen Taken Date instead of the Result Date.  Let's confirm first that the Specimen Taken Date and the Result Date for `hgb` bases are reasonably close - they should not be very far apart:
+
+```{r}
+date.diff <-
+  labs.df %>%
+  dplyr::filter(BASE_NM %in% c('hgb')) %>%
+  dplyr::mutate(HRS_DIFF = as.numeric(RSLT_DT - SPECIMEN_TAKEN_DT, units = 'hours'))
+
+summary(date.diff$HRS_DIFF)
+```
+
+There are a few errors here, for items that don't pass the 'sniff test'.  First of all, there should be no negative values - labs cannot result before they are taken.  Let's see how many negative values there are:
+
+```{r}
+cat(sprintf('Number < 0: %0.f\nTotal Number: %0.f\nPercent: %0.4f %%\n',
+            sum(date.diff$HRS_DIFF < 0, na.rm = T),
+            sum(!is.na(date.diff$HRS_DIFF)),
+            sum(date.diff$HRS_DIFF < 0, na.rm = T) / sum(!is.na(date.diff$HRS_DIFF))))
+```
+
+Clearly not a huge percentage, and because `SPECIMEN_TAKEN_DT` relies on human interaction, we assume this is human error.  What is the average number of hours before zero?
+
+```{r}
+summary(date.diff$HRS_DIFF[date.diff$HRS_DIFF < 0])
+```
+
+Most of them are right at the zero mark, with only a few (< 25%) falling about a day before - likely the result of either the collector or lab entering the wrong date on the specimen.  The result date is the date to believe.
+
+Now we look at the excessive values - the values > 2 hrs and the values > 25 hrs, for example:
+
+```{r}
+cat(sprintf('Number with diff > 2 hours: %0.f\nNumber with diff > 25 hrs: %0.f\n',
+            sum(date.diff$HRS_DIFF > 2, na.rm = T),
+            sum(date.diff$HRS_DIFF > 25, na.rm = T)))
+
+```
+
+Among those with date differences > 25 hours:
+
+```{r}
+summary(date.diff$HRS_DIFF[date.diff$HRS_DIFF > 25])
+```
+
+Among these outliers, half (or ~ 500) are within 45 hours, while the final 500 or so are > 45 hours.  The last few are > 200 hours (or > 10 days) after the `SPECIMEN_TAKEN_DT`, as we can see from this `head(...)` of the sorted list:
+
+```{r}
+
+head(sort(date.diff$HRS_DIFF, decreasing = T), n=100)
+```
+
+Because we are comparing labs of the same `SPECIMEN_TAKEN_DT`, we need not worry about these transcription errors - if anything, they will decrease our *simultaneously collected* sample size if different labs have different `SPECIMEN_TAKEN_DT` values.  However, to better view the histogram we are going to eliminate date differences > 120 hours.
+
+```{r}
+date.diff %>%
+  dplyr::filter(HRS_DIFF < 120) %>%
+  #dplyr::mutate(IS_NEG = if_else(HRS_DIFF < 0,'p','c')) %>%
+  ggplot() +
+  geom_histogram(aes(x = HRS_DIFF), alpha = 0.6, bins = 30) + 
+  scale_y_log10(breaks = c(1e1,1e2,1e3,1e4,1e5,1e6)) +
+  scale_fill_manual(name = 'Is Negative?',
+                    values = c('p'='red','c'='blue'), 
+                    labels = c('p' = 'Yes','c' = 'No')) +
+  ylab('Log10 Count') + 
+  xlab('Hours Difference') + 
+  labs(fill = 'Is Negative') +
+  theme_bw()
+```
+
+```{r echo=F}
+rm(date.diff)
+```
+
+### <a name='analysis'/>Analysis
+
+Now we begin to analyze the simultaneously-collected labs. The basic framework for this analysis is to select the labs from the different PROCEDUREs, join the two based on `VISIT_KEY` and `SPECIMEN_TAKEN_DT`, and then display and analyze.  
+
+The outcomes we desire for this section are the Pearson Correlation Coefficient and the Bland-Altman method of comparison.  Specifically, for each location (CICU vs PICU) we are interested in the following:
+
+- Values:
+  - Pearson correlation coefficient statistics (R, R^2 and p-value)
+  - Bland-Altman mean bias, upper and lower limits
+- Plots: 
+  - Scatter plot
+  - Bland Altman plot
+
+We will first develop the functions to compute these for lists of procedures (and a given `BASE_NM`).
+
+#### <a name='analysis_functions'/>Functions
+
+Function to compute the joined table, based on either an exact time match or a (variable) mismatch:
+
+```{r}
+computeJoinedTable <- function (proc.x, proc.y, base.nm, suffix, 
+                                cutoff.val = 1000, time.diff = NULL)
+{
+  df.filt.x <- 
+    labs.df %>%
+    dplyr::filter(PROC_NM %in% proc.x) %>%
+    dplyr::filter(BASE_NM %in% base.nm) %>%
+    dplyr::filter(VALUE < cutoff.val) %>%
+    dplyr::select(VISIT_KEY, PAT_KEY, PROC_ORD_KEY, 
+                  SPECIMEN_TAKEN_DT, RSLT_DT, DEPT_GRP, VALUE)
+  
+  df.filt.y <-
+    labs.df %>%
+    dplyr::filter(PROC_NM %in% proc.y) %>%
+    dplyr::filter(BASE_NM %in% base.nm) %>%
+    dplyr::filter(VALUE < cutoff.val) %>%
+    dplyr::select(VISIT_KEY, PAT_KEY, PROC_ORD_KEY, 
+                  SPECIMEN_TAKEN_DT, RSLT_DT, DEPT_GRP, VALUE)
+  
+  if (is.null(time.diff)) {
+    df.joined <-
+      dplyr::inner_join(x = df.filt.x, y = df.filt.y,
+                        by = c('VISIT_KEY', 'PAT_KEY', 'SPECIMEN_TAKEN_DT', 'DEPT_GRP'),
+                        suffix = suffix) %>%
+      dplyr::mutate(RSLT_DIFF_HR = as.numeric(
+        get(paste0('RSLT_DT',suffix[1])) - get(paste0('RSLT_DT',suffix[2])), units = 'hours'))
+  } else {
+    df.joined <-
+      dplyr::inner_join(x = df.filt.x, y = df.filt.y,
+                        by = c('VISIT_KEY', 'PAT_KEY', 'DEPT_GRP'),
+                        suffix = suffix) %>%
+      dplyr::mutate(
+        RSLT_DIFF_HR = as.numeric(
+          get(paste0('RSLT_DT',suffix[1])) - get(paste0('RSLT_DT',suffix[2])), units = 'hours'),
+        SPEC_TAKEN_DIFF_MIN = as.numeric(
+          get(paste0('SPECIMEN_TAKEN_DT',suffix[1])) - get(paste0('SPECIMEN_TAKEN_DT',suffix[2])), units = 'mins')) %>%
+      dplyr::filter(abs(SPEC_TAKEN_DIFF_MIN) < time.diff)
+  }
+
+  return(df.joined)
+}
+```
+
+Function to calculate Pearson Correlation Coefficient data points and plot:
+
+```{r}
+pearsonCalculations <- function (df.joined, suffix, dept.grp, xlab = '', ylab = '',
+                                 plot.jitter = T, plot.abline = T, plot.density = T,
+                                 print.res = T)
+{
+  df.filt.joined <-
+    df.joined %>%
+    dplyr::filter(DEPT_GRP == dept.grp)
+  
+  cor.res <- 
+    cor.test(df.filt.joined[,paste0('VALUE',suffix[1])], 
+             df.filt.joined[,paste0('VALUE',suffix[2])],
+             alternative='two.sided',
+             method='pearson')
+  
+  res <- list()
+  
+  res[[1]] <- cor.res
+  res[[2]] <- cor.res$estimate
+  
+  plot.res <-
+    df.filt.joined %>%
+    ggplot() 
+  
+  if (plot.jitter) {
+    plot.res <- plot.res +
+      geom_jitter(aes_string(x = paste0('VALUE',suffix[1]), y = paste0('VALUE',suffix[2])), size = 0.2)
+  } else {
+    plot.res <- plot.res +
+      geom_point(aes_string(x = paste0('VALUE',suffix[1]), y = paste0('VALUE',suffix[2])), size = 0.2)
+  }
+  
+  if (plot.abline) {
+    plot.res <- plot.res + 
+      geom_abline(mapping = NULL, data = NULL, 
+                  slope = 1, intercept = 0,  na.rm = FALSE, show.legend = NA)
+  }
+  
+  if (plot.density) {
+    plot.res <- plot.res + 
+      geom_density2d(aes_string(x = paste0('VALUE',suffix[1]), 
+                                y = paste0('VALUE',suffix[2])), 
+                     color = 'red', size=1, alpha = 0.5)
+  }
+
+  # Calculate the limits on the graph to 0.1% and 99.9% of the data
+  q.x <- quantile(df.filt.joined[,paste0('VALUE',suffix[1])], c(0.001,0.999))
+  q.y <- quantile(df.filt.joined[,paste0('VALUE',suffix[2])], c(0.001,0.999))
+  
+  lim <- c(max(q.x[1],q.y[1]), max(q.x[2],q.y[2]))
+  
+  plot.res <- plot.res + 
+    scale_y_continuous(limits = lim) +
+    scale_x_continuous(limits = lim) +
+    xlab(xlab) +
+    ylab(ylab)
+  
+  res[[3]] <- plot.res
+  
+  # Optionally, print the results
+  if (print.res) {
+    cat(sprintf('Correlation: R = %0.3f\nR^2 = %0.4f\n',
+                res[[2]],
+                res[[2]] * res[[2]]))
+  }
+  
+  return(res)
+}
+```
+
+Function to generate Bland Altman plot (otherwise known as Tukey's Mean Difference Plot) & stats, based on this 1986 publication by JM Bland and DG Altman (found [here](http://www-users.york.ac.uk/~mb55/meas/ba.htm)).  We use the package `BlandAltmanLeh` available from CRAN repository (and documented [here](https://cran.r-project.org/web/packages/BlandAltmanLeh/vignettes/Intro.html)) to first make the plot, and second calculate the statistics - namely, the mean difference and 95% confidence intervals.  These intervals suggest that 95% of the data fall between these intervals. 
+
+```{r}
+blandAltmanCalculate <- function (df.joined, suffix, dept.grp, 
+                                  xlab = NULL, ylab = NULL, 
+                                  print.res = T)
+{
+  # Filter by the DEPT_GRP first
+  df.filt.joined <- 
+    df.joined %>%
+    dplyr::filter(DEPT_GRP == dept.grp)
+  
+  res <- list()
+
+  # Calculate the stats
+  stats <- bland.altman.stats(df.filt.joined[,paste0('VALUE',suffix[1])],
+                              df.filt.joined[,paste0('VALUE',suffix[2])])
+  
+  res[[1]] <- stats
+
+  res[[2]] <- stats$mean.diffs
+  res[[3]] <- stats$lower.limit
+  res[[4]] <- stats$upper.limit
+    
+  # Generate the plot
+  res[[5]] <-
+    bland.altman.plot(df.filt.joined[,paste0('VALUE',suffix[1])], 
+                      df.filt.joined[,paste0('VALUE',suffix[2])],
+                      graph.sys='ggplot2')
+  
+  if (!is.null(xlab)) {
+    res[[5]] <- res[[5]] + 
+      xlab(xlab)
+  }
+  
+  if (!is.null(ylab)) {
+    res[[5]] <- res[[5]] + 
+      ylab(ylab)
+  }
+  
+  # Print the results
+  if (print.res) {
+    cat(sprintf(paste0(
+      'Mean Difference: %0.2f\n',
+      'Confidence Interval: %0.2f to %0.2f\n'),
+      stats$mean.diffs,
+      stats$lower.limit, stats$upper.limit))
+  }
+  
+  return(res)
+}
+```
+
+#### <a name='analysis_na'/>Simultaneous Sodium
+
+```{r}
+na.joined <- 
+  computeJoinedTable(proc.x = c('BMP','CMP'),
+                     proc.y = c('VBG-L','sVBG', 'VBG', 'sABG', 'ABG-L', 'ABG'),
+                     base.nm = c('na'),
+                     suffix = c('.panel', '.gas'))
+
+res.picu <-
+  pearsonCalculations(df.joined = na.joined, 
+                      suffix = c('.panel', '.gas'),
+                      dept.grp = c('PICU'),
+                      xlab = 'Panel Sodium (mmol/L)',
+                      ylab = 'Blood Gas Sodium (mmol/L)',
+                      print.res = T)
+
+res.cicu <-
+  pearsonCalculations(df.joined = na.joined, 
+                      suffix = c('.panel', '.gas'),
+                      dept.grp = c('CICU'),
+                      xlab = 'Panel Sodium (mmol/L)',
+                      ylab = 'Blood Gas Sodium (mmol/L)',
+                      print.res = T)
+```
+
+Plot the scatter plots for both locations:
+
+```{r fig.height = 9, fig.width = 7}
+plot_grid(res.picu[[3]] +
+            ggtitle('PICU Sodium Comparison') + 
+            theme_bw(),
+          res.cicu[[3]] +
+            ggtitle('CICU Sodium Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+```{r}
+ba.picu <- blandAltmanCalculate(df.joined = na.joined, 
+                                suffix = c('.panel','.gas'),
+                                dept.grp = 'PICU', 
+                                xlab = 'Average of Panel and Gas Na (mmol/L)',
+                                ylab = 'Bias [Panel - Gas Na (mmol/L)]',
+                                print.res = T)
+
+ba.cicu <- blandAltmanCalculate(df.joined = na.joined, 
+                                suffix = c('.panel','.gas'),
+                                dept.grp = 'CICU', 
+                                xlab = 'Average of Panel and Gas Na (mmol/L)',
+                                ylab = 'Bias [Panel - Gas Na (mmol/L)]',                                
+                                print.res = T)
+```
+
+```{r fig.height=9, fig.width=7}
+plot_grid(ba.picu[[5]] +
+            ggtitle('PICU Sodium Comparison') +
+            theme_bw(),
+          ba.cicu[[5]] +
+            ggtitle('CICU Sodium Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+```{r, echo=FALSE}
+rm(na.joined, res.picu, res.cicu, ba.picu, ba.cicu)
+```
+
+#### <a name='analysis_k'/>Simultaneous Potassium
+
+```{r}
+k.joined <- 
+  computeJoinedTable(proc.x = c('BMP','CMP'),
+                     proc.y = c('VBG-L','sVBG', 'VBG', 'sABG', 'ABG-L', 'ABG'),
+                     base.nm = c('k'),
+                     suffix = c('.panel', '.gas'))
+
+res.picu <-
+  pearsonCalculations(df.joined = k.joined, 
+                      suffix = c('.panel', '.gas'),
+                      dept.grp = c('PICU'),
+                      xlab = 'Panel Potassium (mmol/L)',
+                      ylab = 'Blood Gas Potassium (mmol/L)',
+                      print.res = T)
+
+res.cicu <-
+  pearsonCalculations(df.joined = k.joined, 
+                      suffix = c('.panel', '.gas'),
+                      dept.grp = c('CICU'),
+                      xlab = 'Panel Potassium (mmol/L)',
+                      ylab = 'Blood Gas Potassium (mmol/L)',
+                      print.res = T)
+```
+
+Plot the scatter plots for both locations:
+
+```{r fig.height = 9, fig.width = 7}
+plot_grid(res.picu[[3]] +
+            ggtitle('PICU Potassium Comparison') + 
+            theme_bw(),
+          res.cicu[[3]] +
+            ggtitle('CICU Potassium Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+```{r}
+ba.picu <- blandAltmanCalculate(df.joined = k.joined, 
+                                suffix = c('.panel','.gas'),
+                                dept.grp = 'PICU', 
+                                xlab = 'Average of Panel and Gas Potassium (mmol/L)',
+                                ylab = 'Bias [Panel - Gas Potassium (mmol/L)]',
+                                print.res = T)
+
+ba.cicu <- blandAltmanCalculate(df.joined = k.joined, 
+                                suffix = c('.panel','.gas'),
+                                dept.grp = 'CICU', 
+                                xlab = 'Average of Panel and Gas Potassium (mmol/L)',
+                                ylab = 'Bias [Panel - Gas Potassium (mmol/L)]',                                
+                                print.res = T)
+```
+
+```{r fig.height=9, fig.width=7}
+plot_grid(ba.picu[[5]] +
+            ggtitle('PICU Potassium Comparison') +
+            theme_bw(),
+          ba.cicu[[5]] +
+            ggtitle('CICU Potassium Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+```{r, echo=FALSE}
+rm(k.joined, res.picu, res.cicu, ba.picu, ba.cicu)
+```
+
+#### <a name='analysis_hgb'/>Simultaneous Hemoglobins
+
+Start with hemoglobin from CBC and gas. Select each hgb base, then join on visit key, patient key and rslt_dt.
+
+```{r}
+hgb.joined <- 
+  computeJoinedTable(proc.x = c('CBC w Diff', 'CBC wo Diff'),
+                     proc.y = c('VBG-L','sVBG', 'VBG', 'sABG', 'ABG-L', 'ABG'),
+                     base.nm = c('hgb'),
+                     suffix = c('.cbc', '.gas'))
+```
+
+##### Time Differences
+
+Let's start by looking at the result time difference between the two labs, in hours - first the summary, then the heads of the top and bottom:
+
+```{r}
+summary(hgb.joined$RSLT_DIFF_HR)
+```
+
+```{r}
+head(sort(hgb.joined$RSLT_DIFF_HR))
+```
+
+```{r}
+head(sort(hgb.joined$RSLT_DIFF_HR, decreasing = T))
+```
+
+How many fall outside the range of -2 to +2 hours: 
+
+```{r}
+cat(sprintf('Count outside range: %0.f\nTotal count: %0.f\n',
+            sum(hgb.joined$RSLT_DIFF_HR < -2 | hgb.joined$RSLT_DIFF_HR > 2),
+            sum(!is.na(hgb.joined$RSLT_DIFF_HR))))
+```
+
+##### Simultaneous Values
+
+First we look by department, separating out the PICU and the CICU:
+
+```{r}
+res.picu <-
+  pearsonCalculations(df.joined = hgb.joined, 
+                      suffix = c('.cbc', '.gas'),
+                      dept.grp = c('PICU'),
+                      xlab = 'CBC Hemoglobin (g/dL)',
+                      ylab = 'Blood Gas Hemoglobin (g/dL)',
+                      print.res = T)
+
+res.cicu <-
+  pearsonCalculations(df.joined = hgb.joined, 
+                      suffix = c('.cbc', '.gas'),
+                      dept.grp = c('CICU'),
+                      xlab = 'CBC Hemoglobin (g/dL)',
+                      ylab = 'Blood Gas Hemoglobin (g/dL)',
+                      print.res = T)
+```
+
+Now we look at graphical plots of these two coefficients:
+
+```{r fig.height=9, fig.width=7}
+plot_grid(res.picu[[3]] +
+            ggtitle('PICU Hemoglobin Comparison') + 
+            theme_bw(),
+          res.cicu[[3]] +
+            ggtitle('CICU Hemoglobin Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+Now we compute the Bland-Altman statistics and plots:
+
+```{r}
+ba.picu <- blandAltmanCalculate(df.joined = hgb.joined, 
+                                suffix = c('.cbc','.gas'),
+                                dept.grp = 'PICU', 
+                                xlab = 'Average of CBC and Gas HGB (g/dL)',
+                                ylab = 'Bias [CBC - Gas Hgb (g/dL)]',
+                                print.res = T)
+
+ba.cicu <- blandAltmanCalculate(df.joined = hgb.joined, 
+                                suffix = c('.cbc','.gas'),
+                                dept.grp = 'CICU', 
+                                xlab = 'Average of CBC and Gas HGB (g/dL)',
+                                ylab = 'Bias [CBC - Gas Hgb (g/dL)]',                                
+                                print.res = T)
+```
+
+```{r fig.height=9, fig.width=7}
+plot_grid(ba.picu[[5]] +
+            ggtitle('PICU Hemoglobin Comparison') + 
+            theme_bw(),
+          ba.cicu[[5]] +
+            ggtitle('CICU Hemoglobin Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+> In both cases, the mean difference is less than zero implying that the value of a Blood Gas Hemoglobin tends to run slightly higher than a CBC Hemoglobin.  The spread is greater in the PICU than in the CICU, with wider confidence intervals even in the middle section.
+
+##### <a name='analysis_hgb_cov'/>Mismatch Covariates
+
+We'd like to try and tease out what makes some Hgb match and some mismatched.  To do this, let us look at a dichotomous variable `well.matched` which will be `TRUE` if the hemoglobins are well-matched, and `FALSE` if they are not.  Then we will look at a few covariates: PAT_SVC, SEX, AGE (Category), WBC, PLT, pH, PO2, BICARB.
+
+```{r}
+cutoff <- 1.5
+
+match.df <-
+  hgb.joined %>%
+  dplyr::mutate(VALUE_ABS_DIFF = abs(VALUE.cbc - VALUE.gas)) %>%
+  dplyr::mutate(WELL_MATCHED = if_else(VALUE_ABS_DIFF < cutoff, 'Yes', 'No'),
+                WELL_MATCHED = factor(WELL_MATCHED))
+
+# Show table of well_matched values
+table(match.df$WELL_MATCHED)
+
+# Join with the `final.cohort` to get demographic info
+demo.match.df <- 
+  dplyr::left_join(x = match.df, 
+                   y = final.cohort %>%
+                     dplyr::group_by(VISIT_KEY, PAT_KEY) %>%
+                     dplyr::summarize(PAT_SVC = PAT_SVC[1],
+                                      PAT_DOB = PAT_DOB[1],
+                                      PAT_SEX = PAT_SEX[1]) %>%
+                     dplyr::select(VISIT_KEY, PAT_KEY, PAT_SVC, PAT_DOB, PAT_SEX),
+                   by = c('VISIT_KEY', 'PAT_KEY')) %>%
+  dplyr::filter(!is.na(PAT_SEX)) %>%
+  dplyr::mutate(AGE_AT_TEST = as.numeric(max(RSLT_DT.gas,RSLT_DT.cbc) - PAT_DOB, units='days') / 365.25,
+                AGE_CAT = if_else(AGE_AT_TEST <= 1, '<= 1',
+                                  if_else(AGE_AT_TEST <= 3, '1 < age <= 3',
+                                          if_else(AGE_AT_TEST <= 6, '3 < age <= 6',
+                                                  if_else(AGE_AT_TEST <= 12, '6 < age <= 12','age > 12')))),
+                AGE_CAT = factor(AGE_CAT),
+                MEAN_HGB = (VALUE.cbc + VALUE.gas) / 2)
+
+
+# Plot count of Hgb values by age category, to show distribution of age categories
+demo.match.df %>%
+  ggplot() +
+  geom_bar(aes(AGE_CAT)) +
+  xlab('Age Category') +
+  ylab('Count of Hemoglobin Values') +
+  theme_bw()
+```
+
+```{r}
+# Now we gather the WBC and PLT from the CBC PROC_ORDER_KEY
+df.wbc <- 
+  labs.df %>%
+  dplyr::filter(BASE_NM == 'wbc') %>%
+  dplyr::group_by(PROC_ORD_KEY) %>%
+  dplyr::summarize(WBC = VALUE[1]) %>%
+  dplyr::select(PROC_ORD_KEY, WBC)
+
+df.plt <-
+  labs.df %>%
+  dplyr::filter(BASE_NM == 'plt') %>%
+  dplyr::group_by(PROC_ORD_KEY) %>%
+  dplyr::summarize(PLT = VALUE[1]) %>%
+  dplyr::select(PROC_ORD_KEY, PLT)
+
+df.cbc <-
+  full_join(x = df.wbc,
+            y = df.plt,
+            by = c('PROC_ORD_KEY'))
+
+# Join CBC values
+demo.cbc.match.df <-
+  dplyr::left_join(x = demo.match.df,
+                   y = df.cbc,
+                   by = c('PROC_ORD_KEY.cbc' = 'PROC_ORD_KEY'))
+
+# Now pull the unique pH, pO2 and Bicarb values from the gas
+df.ph <-
+  labs.df %>%
+  dplyr::filter(BASE_NM == 'pH') %>%
+  dplyr::group_by(PROC_ORD_KEY) %>%
+  dplyr::summarize(PH = VALUE[1]) %>%
+  dplyr::select(PROC_ORD_KEY, PH)
+
+df.po2 <-
+  labs.df %>%
+  dplyr::filter(BASE_NM == 'pO2') %>%
+  dplyr::group_by(PROC_ORD_KEY) %>%
+  dplyr::summarize(PO2 = VALUE[1]) %>%
+  dplyr::select(PROC_ORD_KEY, PO2)
+
+df.bicarb <-
+  labs.df %>%
+  dplyr::filter(BASE_NM == 'bicarb') %>%
+  dplyr::group_by(PROC_ORD_KEY) %>%
+  dplyr::summarize(BICARB = VALUE[1]) %>%
+  dplyr::select(PROC_ORD_KEY, BICARB)
+
+df.gas <-
+  full_join(x = df.ph,
+            y = df.po2,
+            by = c('PROC_ORD_KEY'))
+
+df.gas <-
+  full_join(x = df.gas,
+            y = df.bicarb,
+            by = c('PROC_ORD_KEY'))
+
+# And join `gas` elements to make the final data frame, and filter by invalid values
+demo.cbc.gas.match.df <-
+  dplyr::left_join(x = demo.cbc.match.df,
+                   y = df.gas,
+                   by = c('PROC_ORD_KEY.gas' = 'PROC_ORD_KEY')) %>%
+  dplyr::filter(WBC < 1000 & PLT < 1000 &
+                  !is.na(PH) & PH < 8 &
+                  !is.na(PO2) & PO2 < 1000 &
+                  !is.na(BICARB) & BICARB < 1000)
+
+# Now we run the GLM on our items of interest
+model.logistic <-
+  glm((WELL_MATCHED == 'No') ~ MEAN_HGB + PAT_SVC + PAT_SEX + AGE_AT_TEST + WBC + PLT + PH + PO2 + BICARB,
+      data = demo.cbc.gas.match.df, family = binomial)
+
+summary(model.logistic)
+```
+
+```{r echo=FALSE}
+rm(cutoff, match.df, demo.match.df, df.wbc, df.plt, df.cbc, demo.cbc.match.df, df.ph, df.po2, df.bicarb, df.gas)
+```
+
+> Age, WBC, pH and PO2 values are significantly associated with the ability to match CBC and blood gas hemoglobins.  
+
+We examine each of these significant variables individually to see in which direction the effects go:
+
+```{r fig.height=9, fig.width=7}
+p.age <-
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_boxplot(aes(x = WELL_MATCHED, y = AGE_AT_TEST)) +
+  xlab('CBC and Gas Hgb Well-Matched?') +
+  ylab('Age at test (years)') +
+  theme_bw()
+
+p.wbc <- 
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_boxplot(aes(x = WELL_MATCHED, y = WBC)) +
+  scale_y_log10() +
+  xlab('CBC and Gas Hgb Well-Matched?') +
+  ylab('Log (WBC Count)') +
+  theme_bw()
+
+p.ph.bw <-
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_boxplot(aes(x = WELL_MATCHED, y = PH)) +
+  xlab('CBC and Gas Hgb Well-Matched?') +
+  ylab('pH') +
+  theme_bw()
+
+p.ph.j <-
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_point(aes(x = VALUE_ABS_DIFF, y = PH)) +
+  xlab('Abs( CBC - Gas Hgb [g/dL])') +
+  ylab('pH') +
+  theme_bw()
+
+p.po2.bw <-
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_boxplot(aes(x = WELL_MATCHED, y = PO2)) +
+  xlab('CBC and Gas Hgb Well-Matched?') +
+  ylab('pO2 (mmHg)') +
+  theme_bw()
+
+p.po2.j <-
+  demo.cbc.gas.match.df %>%
+  ggplot() +
+  geom_point(aes(x = VALUE_ABS_DIFF, y = PO2)) +
+  xlab('Abs( CBC - Gas Hgb [g/dL])') +
+  ylab('pO2 (mmHg)') +
+  theme_bw()
+
+plot_grid(p.age, p.wbc,
+          p.ph.bw, p.ph.j, 
+          p.po2.bw, p.po2.j,
+          labels = LETTERS[1:4], 
+          ncol = 2, nrow = 3)
+```
+
+```{r echo=FALSE}
+rm(p.age, p.wbc, p.ph.bw, p.ph.j, p.po2.bw, p.po2.j, demo.cbc.gas.match.df)
+rm(hgb.joined, res.picu, res.cicu, ba.picu, ba.cicu, model.logistic)
+```
+
+#### <a name='analysis_istat_hgb'/>iStat and CBC Hemoglobins
+
+We now compare the iSTAT and CBC hemoglobin measurements.  There are many fewer iStat values then blood gas values, so we will limit to the values with a minimum difference of < 5 minutes between `SPECIMEN_TAKEN_DT`.
+
+```{r}
+hgb.joined <- 
+  computeJoinedTable(proc.x = c('CBC w Diff', 'CBC wo Diff'),
+                     proc.y = c('iStat3', 'iStat7'),
+                     base.nm = c('hgb'),
+                     suffix = c('.cbc', '.istat'),
+                     time.diff = 5)
+
+res.picu <-
+  pearsonCalculations(df.joined = hgb.joined, 
+                      suffix = c('.cbc', '.istat'),
+                      dept.grp = c('PICU'),
+                      xlab = 'CBC Hemoglobin (g/dL)',
+                      ylab = 'iSTAT Hemoglobin (g/dL)',
+                      print.res = T)
+
+res.cicu <-
+  pearsonCalculations(df.joined = hgb.joined, 
+                      suffix = c('.cbc', '.istat'),
+                      dept.grp = c('CICU'),
+                      xlab = 'CBC Hemoglobin (g/dL)',
+                      ylab = 'iSTAT Hemoglobin (g/dL)',
+                      print.res = T)
+```
+
+```{r fig.height=9, fig.width=7}
+plot_grid(res.picu[[3]] +
+            ggtitle('PICU Hemoglobin Comparison') + 
+            theme_bw(),
+          res.cicu[[3]] +
+            ggtitle('CICU Hemoglobin Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+```{r}
+ba.picu <- blandAltmanCalculate(df.joined = hgb.joined, 
+                                suffix = c('.cbc','.istat'),
+                                dept.grp = 'PICU', 
+                                xlab = 'Average of CBC and iSTAT HGB (g/dL)',
+                                ylab = 'Bias [CBC - iSTAT Hgb (g/dL)]',
+                                print.res = T)
+
+ba.cicu <- blandAltmanCalculate(df.joined = hgb.joined, 
+                                suffix = c('.cbc','.istat'),
+                                dept.grp = 'CICU', 
+                                xlab = 'Average of CBC and iSTAT HGB (g/dL)',
+                                ylab = 'Bias [CBC - iSTAT Hgb (g/dL)]',                                
+                                print.res = T)
+```
+
+Now plot the Bland Altman plots:
+
+```{r fig.height=9, fig.width=7}
+plot_grid(ba.picu[[5]] +
+            ggtitle('PICU Hemoglobin Comparison') + 
+            theme_bw(),
+          ba.cicu[[5]] +
+            ggtitle('CICU Hemoglobin Comparison') + 
+            theme_bw(),
+          labels = LETTERS[1:2], 
+          ncol = 1, nrow = 2)
+```
+
+Plot a histogram of the difference in `SPECIMEN_TAKEN` date-times - recall that we restricted this difference to an absolute value of < 5 minutes.
+
+```{r}
+hgb.joined %>%
+  ggplot() +
+  geom_histogram(aes(x = SPEC_TAKEN_DIFF_MIN), bins = 16)
+```
+
+```{r}
+cbc.lt.7 <- hgb.joined$VALUE.cbc <= 7
+istat.lt.7 <- hgb.joined$VALUE.istat <= 7
+
+cat(sprintf(paste0('Total rows: %0.f\n',
+                   'iStat <= 7 and CBC > 7: %0.f (%0.2f %%)\n',
+                   'CBC <= 7 and iStat > 7: %0.f (%0.2f %%)\n'),
+            nrow(hgb.joined),
+            sum(istat.lt.7 & !cbc.lt.7),
+            sum(istat.lt.7 & !cbc.lt.7) / nrow(hgb.joined) * 100,
+            sum(cbc.lt.7 & !istat.lt.7),
+            sum(cbc.lt.7 & !istat.lt.7) / nrow(hgb.joined) * 100))
+```
+
+```{r, echo=FALSE}
+rm(hgb.joined, res.picu, res.cicu, ba.picu, ba.cicu, cbc.lt.7, istat.lt.7)
+```
+
+<p style="font-size:75%;">[Return to Top](#contents)</p>
+***

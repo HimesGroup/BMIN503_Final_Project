@@ -1,0 +1,137 @@
+---
+title: "Gather Lab Values"
+author: "Adam Dziorny"
+date: "September 27, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r nzConn, echo=FALSE}
+source('F_rodbc_cdw.R')
+source('F_lab_ids.R')
+
+nzConn <- makeConn(user = 'dziornya', pwd = getPassword('CHOPDW'), 
+                   server = 'binbiaclv2.chop.edu', db = 'CDWPRD')
+
+# Source the paging function to notify me when results are back
+source('F_pageXDS.r')
+```
+
+# Lab Values
+
+In this notebook we collect lab value data.  First we must load the cohort information we have previously saved:
+
+```{r}
+load(file = 'D_final_cohort_w_queries')
+```
+
+## Combine Queries
+
+Included with the above load are all of the sub-queries (the small parts of the large `WITH` query) onto which we will join the individual lab result queries.  The labs of interest are stored in a separate `F_lab_ids.R` file, which contains a data frame:
+
+```{r}
+head(lab.ids)
+```
+
+```{r}
+summary(lab.ids)
+```
+
+Each `base` represents a result component, and each `proc.id` / `proc.name` represents a procedure.  Some procedures use different `rslt.id` values for the same `base` - for example, PO2 is `rslt.id` = 29 in an arterial blood gas sample, but `rslt.id` = 4112 in a venous blood gas sample.  We desire to represent both as PO2 (but maintain the procedure for subsequent analysis).
+
+First we use the function `makeQuery()`, which composes a data frame of all queries for each element in the `lab.ids` data frame.  We then use loops to combine these queries (and a `join` query for each) into to cohort `WITH` statement.  Finally we union all of the lab queries together.  
+
+```{r combine_queries}
+query.df <- makeQuery()
+
+query <- strwrap(paste("
+WITH 
+cohort AS (",       q.cohort, "), 
+all_adt AS (",      q.all_adt, "), 
+remv_periop AS (",  q.remv_periop, "), 
+same_dept AS (",    q.same_dept, "),
+visit_dt_set AS (", q.visit_dt_set, "), 
+comb_lines AS (",   q.comb_lines, "), 
+final_cohort AS (", q.final_cohort, "), ", 
+  sep="\n"), width=1000000)
+
+# Loop over each individual query and write out the lab and '_jt' query
+for (i in 1 : nrow(query.df)) {
+  endLine <- ifelse(i < nrow(query.df),',','')
+
+  query <- paste0(query, 
+                  ' ', 'tbl_', query.df[i,'md5'], ' AS (',
+                  query.df[i,'query'],'), ',
+                  'tbl_', query.df[i,'md5'], '_jt AS (',
+                  query.df[i,'joinTable'], ')',
+                  endLine, ' ')
+}
+rm(i, endLine)
+
+# Now loop over all joined tables '_jt' and UNION
+for (i in 1 : nrow(query.df)) {
+  endLine <- ifelse(i < nrow(query.df),'\n UNION \n','')
+  
+  query <- paste0(query,
+                  'SELECT * FROM ',
+                  'tbl_', query.df[i,'md5'], '_jt',
+                  endLine)
+}
+rm(i, endLine)
+
+# Wrap the whole query
+query <- strwrap(query, width=1000000)
+```
+
+We need to specify an "as-is" vector, a boolean vector which tells the RODBC connection which columns to leave alone (and not attempt to convert to a time class).  The columns of the result table will be:
+
+| Col # | Name | Type |
+| ----- | ---- | ---- |
+| 1 | `VISIT_KEY` | Integer |
+| 2 | `PAT_KEY` | Integer |
+| 3 | `PROC_ORD_KEY` | Integer |
+| 4 | `LAB_DEPT` | Character (Factor) |
+| 5 | `RSLT_DT` | Date-Time |
+| 6 | `SPECIMEN_TAKEN_DT` | Date-Time |
+| 7 | `VALUE` | Numeric |
+| 8 | `PROC_NM` | Character (Factor) |
+| 9 | `BASE_NM` | Chracter (Factor) | 
+| 10 | `DEPT_GRP` | Character (Factor) |
+| 11 | `IN_DT` | Date-Time |
+| 12 | `RSLT_DATE` | Date |
+
+Based on this, we would like to leave the Date-Time and Date columns `as-is` and perform offline conversion of characters to dates. All others are `F` in the `as.is` vector. 
+
+```{r}
+as.is <- rep(F,12)
+
+as.is[c(5,6,11,12)] <- T
+```
+
+## Run Query & Save
+
+Now we run the full query, timing it with `proc.time()` on each end. After it is completed, we save out the results immediately.
+
+```{r}
+# Run the query, timing it with proc.time() 
+tic <- proc.time()
+labs.df <- sqlQuery(nzConn, query, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE,
+                  as.is = as.is)
+toc <- proc.time() - tic
+
+save(labs.df, file='D_labs_df')
+
+# And page to notify that we are done
+pageMe(profileID = 'E7582503', msg='Finished gathering lab values!', displayResult = F)
+```
+
+The total query duration is as follows:
+
+```{r}
+cat(sprintf('Elapsed time: %0.2f min\n',toc[3]/60))
+```

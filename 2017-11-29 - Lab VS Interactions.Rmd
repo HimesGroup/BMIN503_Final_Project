@@ -1,0 +1,146 @@
+---
+title: "Lab VS Interactions"
+author: "Adam Dziorny"
+date: "November 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+In this markdown we will look at patients with hemoglobins that resulted less than a given value, defined as patients with anemia.  We will then examine HR values for those patients from the most recent flowsheet record to that lab result.  This requires joining the lab result data frame with the HR VS data frame, as well as the cohort data frame (to obtain the patient age). 
+
+First we load the required libraries:
+
+```{r, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(RCurl)
+```
+
+Load the pre-processed lab data and the VS HR data:
+
+```{r}
+load('D_preprocessed')
+load('D_vs_hr')
+```
+
+### Summarize
+
+First we limit the lab data to only hemoglobin values from a CBC w/ or w/o diff:
+
+```{r}
+hgb.df <-
+  labs.df %>%
+  #dplyr::filter(PROC_NM %in% c('CBC w Diff','CBC wo Diff')) %>%
+  dplyr::filter(BASE_NM == 'hgb') %>%
+  dplyr::filter(VALUE < 1000)
+
+cat(sprintf('Number of rows: %0.f\n',
+            nrow(hgb.df)))
+```
+
+To begin, we will use a cutoff HGB of 7.0 g/dL.  How many rows will this leave us with:
+
+```{r}
+hgb.filt.df <-
+  hgb.df %>%
+  dplyr::filter(VALUE <= 7.0)
+
+cat(sprintf('Number of rows with Hgb < 7 g/dL: %0.f\n',
+            nrow(hgb.filt.df)))
+
+summary(hgb.filt.df$VALUE)
+```
+
+### Join to Cohort Data Frame
+
+We join this resulting table with `final.cohort` to obtain the PAT_DOB for each lab, which we then use to calculate the AGE_AT_LAB:
+
+```{r}
+hgb.age.df <-
+  dplyr::left_join(x = hgb.filt.df,
+                   y = final.cohort %>%
+                     dplyr::select(IN_KEY, PAT_DOB),
+                   by = c('IN_KEY')) %>%
+  dplyr::mutate(AGE_AT_LAB = as.numeric(SPECIMEN_TAKEN_DT - PAT_DOB, units='days') / 365.25)
+
+summary(hgb.age.df$AGE_AT_LAB)
+```
+
+Compute a histogram on the age at lab draw:
+
+```{r}
+hgb.age.df %>%
+  ggplot() +
+  geom_histogram(aes(x = AGE_AT_LAB), bins = 30) + 
+  xlab('Age at lab draw (years)') +
+  ylab('Count') + 
+  theme_bw()
+```
+
+### Join to Heart Rate Data Frame
+
+Now we need to join this frame with the `vs.hr.df` data frame. We do this with a left join on VISIT_KEY, knowing that we will get a tremendous amount of multiplicative rows.  We will then select down for the row with the shortest (positive) time difference between SPECIMEN_TAKEN_DT and REC_DT:
+
+```{r}
+hgb.vs <-
+  dplyr::left_join(x = hgb.age.df,
+                   y = vs.hr.df,
+                   by = c('VISIT_KEY')) %>%
+  dplyr::mutate(TIME_DIFF = as.numeric(SPECIMEN_TAKEN_DT - REC_DT, units='hours')) %>%
+  dplyr::filter(VALUE > 1.5) %>%
+  dplyr::filter(TIME_DIFF > 0 & TIME_DIFF <= 4) %>%
+  dplyr::group_by(PROC_ORD_KEY, BASE_NM) %>%
+  dplyr::summarize(MEAN_VS = mean(VAL),
+                   HGB_VAL = VALUE[1],
+                   AGE_AT_LAB = AGE_AT_LAB[1]) %>%
+  dplyr::ungroup()
+
+mid.98 <- quantile(hgb.vs$MEAN_VS, c(0.01, 0.99), na.rm = T)
+
+hgb.vs <-
+  hgb.vs %>%
+  dplyr::filter(MEAN_VS >= mid.98[1] & MEAN_VS <= mid.98[2])
+```
+
+What's the histogram of the Hgb values look like?
+
+```{r}
+hgb.vs %>%
+  ggplot() +
+  geom_histogram(aes(x = HGB_VAL)) +
+  xlab('Hemoglobin Value (g/dL)') +
+  ylab('Count') +
+  theme_bw()
+```
+
+```{r}
+hgb.vs %>%
+  ggplot() + 
+  geom_point(aes(x = MEAN_VS, y = AGE_AT_LAB, color = HGB_VAL)) +
+  geom_smooth(aes(x = MEAN_VS, y = AGE_AT_LAB)) +
+  #geom_density2d(aes(x = VAL, y = AGE_AT_LAB), alpha = 0.5) +
+  scale_y_log10() +
+  xlab('Mean HR (4 hrs Prior to Lab Draw)') +
+  ylab('Log10 Age at Lab (Years)') +
+  labs(color = 'Hgb (g/dL)') +
+  theme_bw()
+```
+
+Can we predict Hgb based on HR and age?
+
+```{r}
+model <- lm(HGB_VAL ~ AGE_AT_LAB + MEAN_VS, data = hgb.vs)
+
+summary(model)
+```
+
+> For each 10-point increase in HR comes a 0.044 g/dL decrement in hemoglobin, starting at an intercept of 6.79 g/dL.  
+
+```{r, echo = FALSE}
+rm(hgb.age.df, hgb.df, hgb.filt.df, hgb.vs, mid.98, model)
+```

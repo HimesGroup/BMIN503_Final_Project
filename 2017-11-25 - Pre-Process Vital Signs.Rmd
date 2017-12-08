@@ -1,0 +1,93 @@
+---
+title: "Pre-Process Vital Signs"
+author: "Adam Dziorny"
+date: "November 25, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+source('F_pageXDS.r')
+```
+
+## Load File
+
+First we load the raw VS file, created from `2017-11-24 - Gather Vital Signs.Rmd`.  This raw file is ~ 100 MB and loads into about 10 GB of RAM.
+
+```{r loader}
+tic <- proc.time()
+load('D_vs_df')
+toc <- proc.time() - tic
+
+cat(sprintf('Elapsed time to load (min): %0.2f\n',
+            toc[3]/60))
+```
+
+How many rows are in our dataset:
+
+```{r}
+cat(sprintf('Millions of rows: %0.2f\n',
+            nrow(vs.df)/1e6))
+```
+
+## Convert Date-Times to POSIX
+
+We used the `as.is` clause in our query to prevent inappropriate POSIX conversion of the column, so now we have to post-hoc convert the five date-time columns to POSIX format.  This will shrink the dataset (eventually), but the conversion is slow.
+
+```{r}
+tic <- proc.time()
+
+# Full DT
+vs.df[,2] <- as.POSIXct(vs.df[,2], format='%Y-%m-%d %H:%M:%S') # IN_DT
+vs.df[,3] <- as.POSIXct(vs.df[,3], format='%Y-%m-%d %H:%M:%S') # OUT_DT
+
+vs.df[,8] <- as.POSIXct(vs.df[,8], format='%Y-%m-%d %H:%M:%S') # REC_DT
+vs.df[,9] <- as.POSIXct(vs.df[,9], format='%Y-%m-%d %H:%M:%S') # ENTRY_DT
+
+# Just Date
+vs.df[,7] <- as.POSIXct(vs.df[,7], format='%Y-%m-%d') # FS_REC_DT
+
+toc <- proc.time() - tic
+
+cat(sprintf('Elapsed time to convert DTs (min): %0.2f\n',
+            toc[3]/60))
+```
+
+## Remove Out-of-Range INs
+
+We next will remove the rows with IN date-times out of range of our IRB-designated date range: `2012-07-01` through `2017-07-01`:
+
+```{r}
+outOfRange <- vs.df$IN_DT < as.POSIXct('2012-07-01') | 
+  vs.df$IN_DT > as.POSIXct('2017-07-01')
+
+vs.df <- vs.df[!outOfRange,]
+
+cat(sprintf('The number of records removed: %d\n',sum(outOfRange)))
+```
+
+## Add Factors
+
+We add a factor on the Display Name of the Flowsheet Row:
+
+```{r}
+vs.df$DISP_NM <- factor(vs.df$DISP_NM)
+```
+
+## Save Preprocessed Data
+
+And now we save out the pre-processed vital sign data:
+
+```{r}
+save(vs.df, file = 'D_vs_preprocessed')
+
+# And page to notify that we are done
+pageMe(profileID = 'E7582503', msg='Finished preprocessing VS!', displayResult = F)
+```
