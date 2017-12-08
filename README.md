@@ -3,7 +3,8 @@
 This repository contains code and presentation for the "Identification and Classification of Retinal Bipolar Single Cells" project. The goal of this project was to take publicly available retinal single bipolar cell sequencing data and correctly identify the 11 known bipolar cell types using R, the R package Seurat, and known applicable cell markers. The following items are contained in this repository:
 
 
-final_project_dana.Rmd        Containing the code used to load, clean, and analyze the data.
+final_project_dana.Rmd        
+> Containing the code used to load, clean, and analyze the data.
 
 final_project_dana.html       Containing the final html file submitted to Canvas.
 
