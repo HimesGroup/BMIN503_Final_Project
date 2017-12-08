@@ -1,20 +1,100 @@
-# BMIN503/EPID600 Final Project
+# Optimizing Lab Utilization in the Pediatric Intensive Care Unit
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+## Overview
 
-1. To start, [**fork** this BMIN503_Final_Project repository][forking].
-1. [**Clone**][ref-clone] the forked repository to your computer.
-1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
-1. [**Push**][ref-push]/sync the changes up to your GitHub account.
-1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Reducing unnecessary laboratory testing is important to decreasing patient harm, eliminating hospital waste and reducing costs. In the pediatric intensive care unit (PICU), laboratory testing accounts for a large portion of estimated costs and studies have demonstrated variation in testing practices, suggesting room for optimization (Zimmerman, Seneff et al. 1997). Data science and machine learning techniques to predict laboratory results have been proposed (Cismondi, Celi et al. 2013, Lee and Maslove 2015, Rajkomar, McCulloch et al. 2016). However before such techniques are evaluated in the PICU, we must characterize the available data including laboratory results, repeated laboratory measures and factors influencing these laboratory results.
 
+I have obtained IRB approval to perform a retrospective study including all patients admitted to the CHOP PICU and CICU from 7/1/2012 through 7/1/2017, to look at labs obtained and covariates including vital signs, administered medications, procedures, demographic information and other interventions.
 
-DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+To complete this project I have spoke to three faculty mentors: Heather Wolfe, Akira Nishisaki and Tony Luberti.  Each have been helpful in me understanding the analysis and scope of my project.  Below is a brief summary of what I have learned.  
 
+- Heather Wolfe is a pediatric critical care medicine (PCCM) faculty member with a research focus on quality improvement.  She has published on studies of pathways and protocols to standardize practice, thereby reducing variation and improving quality of care.  We spoke of my approach to this project as a quality improvement work.  She has also published on reducing lab testing in a particular post-operative population and the advantages of focusing on a single population first.  She will be valuable when it comes to helping design an intervention for my study results.
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-[ref-clone]: http://gitref.org/creating/#clone
-[ref-commit]: http://gitref.org/basic/#commit
-[ref-push]: http://gitref.org/remotes/#push
-[pull-request]: https://help.github.com/articles/creating-a-pull-request
+- Akira Nishisaki is also a PCCM faculty member with a focus on airway intervention research. However Akira has run several multi-institution trials and is a well-supported researcher.  We spoke on some basic research methadology issues and about thinking of the goals of this project prior to beginning.  He was helpful in reviewing my IRB proposal and in thinking about the early steps to designing my analysis plan.
+
+- Tony Luberti is my fellowship director for clinical informatics.  He has been instrumental in forcing me to think about (a) obtaining the right mentor support for each of my project interests, and (b) thinking about the target of this project - academic, QI, grant data, etc.  We talked extensively about who in the DBHI community might be able to help with the machine learning questions to be subsequently addressed.
+
+My final project's GitHub address is <https://github.com/adziorny/BMIN503_Final_Project>. 
+
+## Introduction
+
+Lab testing is frequent and often unnecessary in the hospitalized environment, specifically the pediatric intensive care unit. There exist both system-wide and patient-specific pressures to decrease unnecessary testing. U.S. health care spending waste is estimated to be in excess of $910 billion, with estimates of $192 billion specifically wasted in overtreatment (Berwick and Hackbarth 2012). Patients exposed to this testing experience hospital-acquired anemia, increased financial burden, decreased satisfaction and potential increased infection risk. Reasons for over-testing include panel-based tests and lack of cost transparency, and among trainee physicians the lack of appropriate cost-conscious mentors (Sedrak, Patel et al.).
+
+This interdisciplinary problem draws from experience in the critical care field, quality improvement, data science and machine learning. Several studies have examined lab test utilization in the intensive care environment, where testing accounts for an estimated 10-25% of costs (Ezzie, Aberegg et al. 2007). However limited published data exist on PICU ordering practices. Additionally, relatively few studies have examined patterns among repeated laboratory results or interventions in response to laboratory results. Machine learning techniques to predict laboratory results require skills known to data scientists, such as data collection & cleaning as well as analysis. Once prediction models exist, quality improvement projects can be designed to validate and test process and outcomes measures in the real-world PICU setting.
+
+## Methods
+
+This is a retrospective descriptive study making use of a convenience sample of all patients admitted or transferred into the PICU or CICU between July 1, 2012 and July 1, 2017.  The study cannot include patients admitted prior to July 1, 2012 as EHR Flowsheet documentation was not started in the ICUs prior to this date.  Outcome and covariate data was collected through July 1, 2017 for any patients still admitted by this date.  All data was gathered from the CHOP Data Warehouse (Enterprise Analytics & Reporting, The Children's Hospital of Philadelphia). This project was approved by the Institutional Review Board of The Children's Hospital of Philadephia with a waiver of subject consent. Primary data elements to be abstracted are listed below: 
+
+-	Visit data
+-	Patient data
+-	Procedures
+-	Medications
+-	Laboratory Results
+-	Flowsheet Elements
+
+### Design Overview
+
+File types in this repository are as follows:
+
+- `F_` files: Contain R functions for a specific task
+- `D_` files: Data files, containing (IRB-protected) data [**Not uploaded to GitHub public repository**]
+- `Q_` files: Contain SQL queries extracted from the Rmd files, for re-use
+- `.Rmd` and `.html` files: Contain segments of the analysis, as described below
+
+The overall design of this study can be broken down into segments, with each segment having a different R markdown file containing processing, markup and results.  They are described here and in more detail in each subsequent R markdown file:
+
+##### Cohort and Labs
+
+- Cohort Identification : `2017-09-21 - Gather Cohort.Rmd`
+  - Interim cohort data : `D_interim_cohorts`
+  - Final cohort query : `Q_final_cohort.sql`
+  - Final cohort data : `D_final_cohort_w_queries`
+- Outcome Data (lab value) collection : `2017-09-27 - Gather Lab Values.Rmd`
+  - Generate lab value query : `F_lab_ids.R`
+  - Labs raw data : `D_labs_df`
+- Pre-processing cohort & lab data : `2017-09-29 - Pre-Processing.Rmd`
+  - Pre-processed data : `D_preprocessed`
+- Univariate Analysis : `2017-09-27 - Univariate Analysis.Rmd`
+- Simultaneously Obtained Labs : `2017-11-22 - Simultaneous Labs.Rmd`
+
+##### Procedures
+
+- OR Procedures for cohort : `2017-10-21 - Gather OR Procedures.Rmd`
+  - OR procedure data : `D_or_procedures`
+  
+##### Vital Signs
+
+- Gather Vital Signs : `2017-11-24 - Gather Vital Signs.Rmd`
+  - Vital Sign raw data : `D_vs_df`
+- Pre-process Vital Sign data : `2017-11-25 - Pre-Process Vital Signs.Rmd`
+  - Pre-processed VS data : `D_vs_preprocessed`
+- Split VS data : `2017-11-25 - Split VS Data.Rmd`
+  - HR VS data : `D_vs_hr`
+  - SpO2 VS data : `D_vs_spo2`
+- Lab VS Interactions : `2017-11-29 - Lab VS Interactions.Rmd`
+
+##### Misc Functions
+
+- RODBC Connection Functions : `F_rodbc_cdw.R`
+- Extend Paging System Function : `F_pageXDS.r`
+
+### Results
+
+Please see each individual file (listed above) for a description of the results.
+
+## References
+
+Berwick, D. M. and A. D. Hackbarth (2012). "Eliminating waste in US health care." JAMA 307(14): 1513-1516.
+
+Cismondi, F., L. A. Celi, A. S. Fialho, S. M. Vieira, S. R. Reti, J. M. Sousa and S. N. Finkelstein (2013). "Reducing unnecessary lab testing in the ICU with artificial intelligence." Int J Med Inform 82(5): 345-358.
+
+Ezzie, M. E., S. K. Aberegg and J. M. O'Brien, Jr. (2007). "Laboratory testing in the intensive care unit." Crit Care Clin 23(3): 435-465.
+
+Lee, J. and D. M. Maslove (2015). "Using information theory to identify redundancy in common laboratory tests in the intensive care unit." BMC Med Inform Decis Mak 15: 59.
+
+Rajkomar, A., C. E. McCulloch and M. C. Fang (2016). "Low Diagnostic Utility of Rechecking Hemoglobins Within 24 Hours in Hospitalized Patients." Am J Med 129(11): 1194-1197.
+
+Sedrak, M. S., M. S. Patel, J. B. Ziemba, D. Murray, E. J. Kim, C. J. Dine and J. S. Myers (2016). "Residents' self-report on why they order perceived unnecessary inpatient laboratory tests." J Hosp Med 11(12): 869-872.
+
+Zimmerman, J. E., M. G. Seneff, X. Sun, D. P. Wagner and W. A. Knaus (1997). "Evaluating laboratory usage in the intensive care unit: patient and institutional characteristics that influence frequency of blood sampling." Crit Care Med 25(5): 737-748.

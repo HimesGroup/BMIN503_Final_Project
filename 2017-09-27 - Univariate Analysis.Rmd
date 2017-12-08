@@ -1,0 +1,1008 @@
+---
+title: "Clean Lab Values"
+author: "Adam Dziorny"
+date: "September 27, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## <a name='contents'/>Contents
+
+This document goes through the analysis of the cohort data as well as initial lab univariate and bivariate analysis.  It conforms to the IRB # 17-014368 protocol, a copy of which can be found [here](https://www.dropbox.com/s/wj19tp7bghvw2nd/2017-09-26%20-%20IRB%20Protocol%20v2%20%28Clean%29.pdf?dl=0).  
+
+1. [Loading Data](#load_data) : Loads libraries and data files
+2. [Cohort Univariates](#cohort_uni) : Run univariate analysis of the cohort data
+  + [Total Visits](#cohort_totals)
+  + [INs per Visit, Patient](#cohort_per_vp)
+  + [INs per Dept](#cohort_per_dept)
+  + [INs per Time Period](#cohort_per_time)
+  + [INs Length of Stay](#cohort_los)
+  + [Cohort Ages](#cohort_age)
+3. [Lab Univariates](#lab_uni) : Run univariate analysis of the laboratory data
+  + [By Department](#lab_dept)
+  + [By Lab Name](#lab_name)
+  + [Histogram Analysis](#lab_histo)
+    + [CBC Panels](#lab_histo_cbc)
+      + [Limit By Dept](#lab_histo_by_dept)
+    + [Chem Panels](#lab_histo_chem)
+    + [VBG Panels](#lab_histo_vbg)
+    + [ABG Panels](#lab_histo_abg)
+    + [Coagulation Studies](#lab_histo_coags)
+
+All work is (c) Adam Dziorny, 2017.
+  
+### <a name='load_data'/>Load the Data
+
+First we load the required libraries:
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(ggpubr)
+library(cowplot)
+library(kableExtra)
+```
+
+And the full pre-processed dataset:
+
+```{r}
+load('D_preprocessed')
+```
+
+### <a name='cohort_uni'/> Cohort Univariates
+
+We begin by examining some of the univariate data in the final cohort.  The names of the variables in this data frame are:
+
+```{r}
+names(final.cohort)
+```
+
+```{r}
+head(final.cohort)
+```
+
+#### <a name='cohort_totals'/>Total Visits & Patients
+
+Recall that each row in this data set represents a unique admission or transfer into the ICU - however, it does *not* represent a unique patient or even a unique `VISIT_KEY` as a hospital encounter.  Therefore, we want to know the total number of admissions / transfers (which we will subsequently call INs), unique `VISIT_KEY` values and unique patients:
+
+```{r}
+cat(sprintf(paste0('The number of INs is: %d\n',
+                   'The number of unique VISIT_KEY values is: %d\n',
+                   'The number of unique PAT_KEY values is: %d\n'),
+            nrow(final.cohort),
+            length(unique(final.cohort$VISIT_KEY)),
+            length(unique(final.cohort$PAT_KEY))))
+```
+
+Recall that our IRB approval letter (dated 9/26/2017) gave us the following study enrollment limit:
+
+> The approved enrollment limit for this study at CHOP is 22500, with a total enrollment study wide of 22500.
+
+We are below this enrollment limit in terms of unique patients, which is the counting mechanism used by the IRB. This is despite the fact that our protocol stated (in Section 3.2.2):
+
+> ... we anticipate an approximate number of patient-visits in our cohort as 17,500 in the PICU and 5,000 in the CICU
+
+#### <a name='cohort_per_vp'/>INs per Visit, Patient
+
+Now we'd like to see the "high utilizer" patients - a distribution of the number of INs across unique patients.  To do this we use the `dplyr::count` function:
+
+```{r}
+insByPatient <- dplyr::count(final.cohort,PAT_KEY) %>% dplyr::arrange(desc(n))
+insByPatient <- cbind(insByPatient, index = 1 : nrow(insByPatient))
+
+ggplot(data = insByPatient) +
+  geom_line(aes(x = index, y = n)) +
+  xlab('Patient Index') +
+  ylab('# of INs per Patient') +
+  ggtitle('INs per Patient')
+```
+
+We can make this by-patient examination binary for single visitors (`INs == 1`) or repeat visitors (`INs > 1`).  This can then be cross-tabulated with different variables:
+
+```{r}
+singleVisits <- insByPatient$n == 1
+
+cat(sprintf(paste0('# of unique patients: %d\n',
+                   '\t# (%%) of single visit patients: %d (%0.2f)\n',
+                   '\t# (%%) of multiple visit patients: %d (%0.2f)\n'),
+            length(singleVisits),
+            sum(singleVisits), sum(singleVisits) / length(singleVisits) * 100,
+            sum(!singleVisits), sum(!singleVisits) / length(singleVisits) * 100))
+```
+
+Here we can see that about 1/4 of the patients are "multiple visit" users, while 3/4 are "one and done" users in the time-frame of this study.
+
+```{r}
+patientSpecific <- dplyr::select(final.cohort,PAT_KEY,PAT_DOB,PAT_SEX) %>%
+  dplyr::distinct()
+insByPatient <- dplyr::inner_join(x = insByPatient, y = patientSpecific, by = c('PAT_KEY'))
+
+# Compute cross-tabs here ***
+```
+
+```{r, echo=FALSE}
+rm(insByPatient,singleVisits,patientSpecific)
+```
+
+#### <a name='cohort_per_dept'/>INs per Department
+
+We examine the number of INs that come into the PICU versus the CICU:
+
+```{r}
+ggplot(data = final.cohort) + 
+  geom_bar(aes(x = DEPT)) + 
+  xlab('Department') + 
+  ylab('Count of Unique Admissions & Transfers') +
+  ggtitle('ICU Admission / Transfers by Department')
+```
+
+#### <a name='cohort_per_time'/>INs By Time Period
+
+We can examine the number of INs per year, and per month:
+
+```{r}
+# Table of INs per year:
+table(final.cohort$DEPT,final.cohort$IN_YEAR)
+```
+
+```{r}
+# Plot of INs per year:
+ggplot(data = final.cohort) +
+  geom_bar(aes(x = IN_YEAR, fill = DEPT)) +
+  xlab('Admission / Transfer In Year') +
+  ylab('Count Per Year') +
+  ggtitle('Count per IN Year')
+```
+
+```{r}
+# Table of INs per month:
+table(final.cohort$DEPT,final.cohort$IN_MONTH)
+```
+
+```{r}
+# Plot of INs per year:
+ggplot(data = final.cohort) +
+  geom_bar(aes(x = IN_MONTH, fill = DEPT)) +
+  xlab('Admission / Transfer Per Month') +
+  ylab('Count Per Month') +
+  ggtitle('Count per IN Month')
+```
+
+#### <a name='cohort_los'/>INs Length Of Stay
+
+First we examine the summary statistics on these LOS measures:
+
+```{r}
+summary(as.numeric(final.cohort$ICU_LOS, units='days'))
+```
+
+```{r}
+summary(as.numeric(final.cohort$HOSP_LOS, units='days'))
+```
+
+It seems that there are very short LOS values provided for some of the patients - 0.0007 days is approximately 1 minute, clearly an outlier. We examine the ICU_LOS cohort entries that have < 60 minute LOS:
+
+```{r}
+shortLOS <- as.numeric(final.cohort$ICU_LOS, units = 'mins') < 60
+
+cat(sprintf('Number of rows with ICU_LOS < 60 minutes: %d\n',
+            sum(shortLOS)))
+```
+
+We will examine a small subset of these by completing a manual review.  To do this, we need the patient MRN, admit date and CSN for each of a set of Visit Keys.  The script below (which is set `EVAL=FALSE`) will pull out that information.
+
+```{r, eval=FALSE}
+# Set seed and pull out a sample of VISIT_KEYs to examine
+set.seed(1234)
+indicesToExamine = base::sample(sum(shortLOS), size=10)
+visitKeysToExamine <- final.cohort$VISIT_KEY[shortLOS][indicesToExamine]
+
+# Make DB connection
+source('F_rodbc_cdw.R')
+nzConn <- makeConn(user = 'dziornya', pwd = getPassword('CHOPDW'), 
+                   server = 'binbiaclv2.chop.edu', db = 'CDWPRD')
+
+# Write the query to include these sample visit keys
+q.keyExamine <- strwrap(paste0("
+    SELECT p.PAT_MRN_ID, v.ENC_ID, v.HOSP_ADMIT_DT
+    FROM CDWPRD.CDW.VISIT v INNER JOIN CDWPRD.CDW.PATIENT p ON v.PAT_KEY = p.PAT_KEY
+    WHERE v.VISIT_KEY IN (",
+    paste(visitKeysToExamine,collapse=','),")"), width=100000)
+
+# Gather the visit details from our database
+visitDetails <- sqlQuery(nzConn, q.keyExamine, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+
+visitDetails <- cbind(visitDetails, IN_DT = final.cohort$IN_DT[shortLOS][indicesToExamine])
+
+# Display the top 10 results
+head(visitDetails,n=10)
+
+# Clean up by removing all variables created in this segment
+rm(indicesToExamine,visitKeysToExamine,nzConn,q.keyExamine,visitDetails,
+   getPassword,makeConn,makeConnTCL,getDataFromFile)
+odbcCloseAll()
+```
+
+The results of this manual review are as follows:
+
+Chart # | Description
+--------|------------
+1 | ADT location error
+2 | ADT location error
+3 | ED resuscitation, died in OR
+4 | ADT location error
+5 | ADT location error - moved too soon from last encounter
+6 | ADT location error
+7 | ADT location error - moved too soon from last encounter
+8 | ADT location error
+9 | ADT location error
+10 | ADT location error - moved too soon from last encounter
+
+From this we can conclude that most charts with short LOS are errors of location entry into the ADT system.  Because these errors are short and typically no labs will result during these encounters, we do not need to prune them (at the risk of pruning short yet meaningful encounters).  Our primary outcomes are based on lab results, not based on encounters.
+
+To make sure there is no peak early in the Length of Stay variable, we plot a histogram after filtering all stays < 1 day (or 24 hrs) long:
+
+```{r}
+dplyr::filter(final.cohort, as.numeric(ICU_LOS, units='hours') < 24) %>%
+  ggplot( aes(as.numeric(ICU_LOS, units='hours')) ) +
+  geom_histogram(binwidth = 1) +
+  xlab('ICU Length of Stay (hours)') +
+  ylab('Count of Cohorts') +
+  ggtitle('Histogram of ICU Length of Stay (< 1 day)')
+
+```
+
+```{r}
+rm(shortLOS)
+```
+
+Now we graph the LOS values using a density plot on a *log plus one* transformation X axis:
+
+```{r}
+ggplot(data = final.cohort, aes(x=as.numeric(ICU_LOS, units='days'))) +
+  stat_density(aes(y=..count..), color="black", fill="blue", alpha=0.3) +
+  #scale_x_continuous(breaks=c(0,1,2,3,4,5,10,30,100,300,1000), trans="log1p", expand=c(0,0)) +
+  scale_x_log10(breaks=c(0,1,2,3,4,5,10,30,100,300,1000)) +
+  #scale_y_continuous(breaks=c(0,2000,4000,6000,8000,10000,12000), expand=c(0,0)) +
+  xlab('Length of Stay (days)') +
+  ylab('Count of INs') +
+  ggtitle('Length of ICU Stay') +
+  theme_bw()
+```
+
+#### <a name='cohort_age'/> Cohort Ages
+
+We calculate the histogram of the cohort's ages, on admit / transfer into the unit:
+
+```{r}
+in.age <- as.numeric(final.cohort$AGE_AT_IN, units='days') / 365.25
+
+ggplot(final.cohort) +
+  geom_histogram( aes(x = in.age), binwidth=2) +
+  xlab('Age at Admit / Transfer In (years)') +
+  ylab('Count') +
+  ggtitle('Histogram of Age At Admit / Transfer In') +
+  theme_bw()
+```
+
+Summarizing the data will give us quartiles on which to split:
+
+```{r}
+summary(in.age)
+```
+
+We can break the cohort age into a categorical variable with four groups on discrete break points: age <= 1, 1 < age <= 4, 4 < age <= 11.5, age > 11.5.  These cutoffs were chosen based on the above quartiles to provide roughly equivalent numbers in each group.
+
+```{r}
+in.age.factor <- vector(length = length(in.age))
+in.age.factor[in.age <= 1] <- 1
+in.age.factor[in.age > 1 & in.age <= 4] <- 2
+in.age.factor[in.age > 4 & in.age <= 11.5] <- 3
+in.age.factor[in.age > 11.5] <- 4
+
+histVals <- hist(in.age, breaks = 20, plot = FALSE)
+p <- histVals$counts / sum(histVals$counts)
+cp <- cumsum(p)
+
+f.factor <- vector(length = length(histVals$mids))
+f.factor[histVals$mids <= 1] <- 1
+f.factor[histVals$mids > 1 & histVals$mids <= 4] <- 2
+f.factor[histVals$mids > 4 & histVals$mids <= 11.5] <- 3
+f.factor[histVals$mids > 11.5] <- 4
+
+ggplot() +
+  geom_col(aes(x = histVals$mids, y = p, fill = f.factor)) +
+  labs(fill='Age Group', x = 'Age at Admit / Transfer', y = 'Probability') +
+  ggtitle('Histogram of Age at Admit / Transfer by Group') +
+  theme_bw()
+```
+
+```{r echo=FALSE}
+rm(cp,p,in.age,in.age.factor,f.factor,histVals)
+```
+
+<p style="font-size:75%;">[Return to Top](#contents)</p>
+***
+
+### <a name='lab_uni'/>Lab Univariates
+
+In this section we evaluate the univariates associated with the lab values. This corresponds to Section 5.4.1 in our IRB protocol.
+
+#### <a name='lab_dept'/>Departments
+
+The `lab department` column is named from the `PROCEDURE` table, and reflects the department from which the procedure was ordered.  Note that this does *not* necessarily reflect the department in which the lab resulted, as the patient could have been transferred into the ICU in between ordering and resulting.  Our lab value query (see `2017-09-27 - Gather Lab Values.Rmd` and `F_lab_ids.R`) guarantees that the lab result date-time falls within the patient admission to the ICU based on the SQL join command `ON` conditions.
+
+Table The levels of the `LAB_DEPT` column are as follows:
+
+```{r}
+levels(labs.df$LAB_DEPT)
+```
+
+We count the rows by lab department, and then print them in descending order:
+
+```{r}
+labDeptCount <- dplyr::count(labs.df,LAB_DEPT) %>% dplyr::arrange(desc(n))
+labDeptCount
+```
+
+```{r}
+cat(sprintf(paste0('Percent from ICU departments (no UNKNOWNs): %0.2f %%\n',
+                   'Percent from ICU departments & UNKNOWNs): %0.2f %%\n'),
+            sum(dplyr::filter(labDeptCount,LAB_DEPT %in% 
+                                c('6 SOUTH TOWER','7 SOUTH TOWER',
+                                  '7 EAST PICU', '7 WEST PICU')) 
+                %>% dplyr::select(n)) 
+            / sum(dplyr::select(labDeptCount,n)) * 100,
+                        sum(dplyr::filter(labDeptCount,LAB_DEPT %in% 
+                                c('6 SOUTH TOWER','7 SOUTH TOWER',
+                                  '7 EAST PICU', '7 WEST PICU','UNKNOWN')) 
+                %>% dplyr::select(n)) 
+            / sum(dplyr::select(labDeptCount,n)) * 100))
+
+
+```
+
+```{r echo=FALSE}
+rm(labDeptCount)
+```
+
+From these results we can see that the majority of labs come from the ICU departments, however a reasonable percentage come from `UNKNOWN` departments.  Let's examine these a bit further:
+
+```{r}
+# Plot count of UNKNOWN by year
+dplyr::select(labs.df, LAB_DEPT, IN_MONTH, IN_YEAR) %>%
+  dplyr::filter(LAB_DEPT == 'UNKNOWN') %>%
+  dplyr::group_by(IN_MONTH, IN_YEAR) %>%
+  dplyr::summarize(cnt = n()) %>%
+  ggplot() +
+  geom_col(aes(x=IN_MONTH, y=cnt, fill=IN_YEAR)) +
+  xlab('Month') + 
+  ylab('Count of UNKNOWN Rows') +
+  ggtitle('Counts of UNKNOWNs by Month & Year') +
+  scale_fill_brewer(palette="Set2")
+```
+
+All of the `UNKNOWN` department values are coming from 2012 and early 2013, until about November of 2013.  If we hypothesize that department coding was not done for labs until sometime in late 2013, then no labs should be coded with ICU departments during that time. So we look at a similar plot for lab values coming from ICU departments:
+
+```{r}
+# Plot count of ICU labs by year
+dplyr::select(labs.df, LAB_DEPT, IN_MONTH, IN_YEAR) %>%
+  dplyr::filter(LAB_DEPT %in% c('6 SOUTH TOWER','7 SOUTH TOWER',
+                                  '7 EAST PICU', '7 WEST PICU')) %>%
+  dplyr::group_by(IN_MONTH, IN_YEAR) %>%
+  dplyr::summarize(cnt = n()) %>%
+  ggplot() +
+  geom_col(aes(x=IN_MONTH, y=cnt, fill=IN_YEAR)) +
+  xlab('Month') + 
+  ylab('Count of ICU Lab Rows') +
+  ggtitle('Counts of ICU Labs by Month & Year') +
+  scale_fill_brewer(palette="Set2") 
+```
+
+Clearly not all of the labs were coded as `UNKNOWN` in 2012 and 2013.  Perhaps it's dependant on the `PROC_NM`:
+
+```{r}
+dplyr::select(labs.df, LAB_DEPT, PROC_NM, IN_YEAR) %>%
+  dplyr::filter(LAB_DEPT %in% c('6 SOUTH TOWER','7 SOUTH TOWER',
+                                  '7 EAST PICU', '7 WEST PICU')) %>%
+  dplyr::group_by(PROC_NM, IN_YEAR) %>%
+  dplyr::summarize(cnt = n()) %>%
+  ggplot() +
+  geom_col(aes(x=PROC_NM, y=cnt, fill=IN_YEAR)) +
+  xlab('Lab Procedure') + 
+  ylab('Count of ICU Lab Rows') +
+  ggtitle('Counts of ICU Labs by Month & Year') +
+  theme(axis.text.x = element_text(angle = -45, hjust=0))
+```
+
+There are results from 2012 and 2013 in all procedures, so there does not seem to be dependence on the type of procedure.
+
+#### <a name='lab_name'/>By Lab Name
+
+We would like a table and graph of the number of labs from each procedure and base.  For the first table we will break this down by labs per year.  We use a package called `kableExtra` and the associated `group_rows(...)` function to provide grouping of several rows.  
+
+```{r}
+df <- data.frame()
+
+procs <- unique(labs.df$PROC_NM)
+procs <- sort(procs)
+
+for (p in procs)
+{
+  #cat(sprintf('Proc: %s\n',p))
+  
+  theseP <- (labs.df$PROC_NM == p)
+  bases <- unique(labs.df$BASE_NM[theseP])
+  
+  for (b in bases)
+  {
+    thesePB <- theseP & (labs.df$BASE_NM == b)
+    
+    df.new <- data.frame(
+                proc = p,
+                base = b,
+                y2012 = sum(labs.df$IN_YEAR[thesePB] == 2012),
+                y2013 = sum(labs.df$IN_YEAR[thesePB] == 2013),
+                y2014 = sum(labs.df$IN_YEAR[thesePB] == 2014),
+                y2015 = sum(labs.df$IN_YEAR[thesePB] == 2015),
+                y2016 = sum(labs.df$IN_YEAR[thesePB] == 2016),
+                y2017 = sum(labs.df$IN_YEAR[thesePB] == 2017),
+                total = sum(thesePB))
+    
+    df <- rbind(df, df.new)
+  }
+}
+
+# Generate the base Kable table
+k.df <- 
+  kable(df[,2:9],"html", caption = "Lab Counts by Procedure",
+        col.names = c('Base', '2012', '2013', '2014', '2015', '2016', '2017', 'Total')) %>%
+  kable_styling(c("striped", "hover", "condensed")) %>%
+  column_spec(8, bold = T)
+
+# Loop over each Proc to set the Group Rows
+for (p in procs) {
+  theseIndices <- which(df$proc == p)
+  
+  # cat(sprintf('%s, %0.f, %0.f\n',
+  #             p, min(theseIndices), max(theseIndices)))
+      
+  k.df <- k.df %>%
+    group_rows(p, 
+               min(theseIndices),
+               max(theseIndices))
+}
+
+# Display the table
+k.df
+```
+
+```{r, echo=FALSE}
+rm(df, procs, p, theseP, bases, b, thesePB, df.new, k.df, theseIndices)
+```
+
+In this next table we gather summary data across all years, for each proc - base combination.  We again make use of the `kableExtra` package to group rows by procedure.
+
+```{r}
+df <- data.frame()
+
+procs <- unique(labs.df$PROC_NM)
+procs <- sort(procs)
+
+for (p in procs)
+{
+  # cat(sprintf('Proc: %s\n',p))
+  
+  theseP <- (labs.df$PROC_NM == p)
+  bases <- unique(labs.df$BASE_NM[theseP])
+  
+  for (b in bases)
+  {
+    thesePB <- theseP & (labs.df$BASE_NM == b)
+    
+    s <- summary(labs.df$VALUE[thesePB])
+    
+    df.new <- data.frame(
+                proc = p,
+                base = b,
+                min = as.numeric(s['Min.']),
+                q1 = as.numeric(s['1st Qu.']),
+                med = as.numeric(s['Median']),
+                mean = as.numeric(s['Mean']),
+                q3 = as.numeric(s['3rd Qu.']),
+                max = as.numeric(s['Max.']),
+                nas = as.numeric(s['NA\'s']),
+                total = sum(thesePB))
+    
+    df <- rbind(df, df.new)
+  }
+}
+
+# Generate the base Kable table
+k.df <- 
+  kable(df[,2:10],"html", caption = "Lab Summary Stats by Procedure",
+        col.names = c('Base', 'Min', '1st Qu', 'Median', 
+                      'Mean', '3rd Qu.', 'Max', 'NA\'s', 'Total')) %>%
+  kable_styling(c("striped", "hover", "condensed")) %>%
+  column_spec(9, bold = T)
+
+# Loop over each Proc to set the Group Rows
+for (p in procs) {
+  theseIndices <- which(df$proc == p)
+  
+  # cat(sprintf('%s, %0.f, %0.f\n',
+  #             p, min(theseIndices), max(theseIndices)))
+      
+  k.df <- k.df %>%
+    group_rows(p, 
+               min(theseIndices),
+               max(theseIndices))
+}
+
+# Display the table
+k.df
+```
+
+```{r, echo=FALSE}
+rm(df, procs, p, theseP, bases, b, thesePB, df.new, k.df, theseIndices, s)
+```
+
+#### <a name='lab_histo'/>Histogram Analysis
+
+The method of lab data binning for histogram analysis performed in [Lee, J. and D. M. Maslove (2015)](https://www.ncbi.nlm.nih.gov/pubmed/26227625) is described below:
+
+> For each ICU admission, the median value of each lab test from each ICU day was used for analysis. For each variable, values less than the 1st percentile and greater than the 99th percentile were regarded as outliers and discarded. The use of median instead of mean as well as the 1st and 99th percentile cutoffs reduced the effects of outliers which commonly exist in raw clinical data such as MIMIC II due to recording and measurement errors. Also, median was particular appropriate since most lab tests exhibited skewed distributions as shown in Fig. 1. Following the exclusion of outliers, the remaining values were discretized into 20 bins of equal width. The choice of 20 bins was informed by visual inspection of the distributions of the lab test values to ensure adequate bin size; Fig. 1 shows the histogram of each lab test using 20 bins.
+
+The uniqle base names we have for analysis are as follows:
+
+```{r}
+levels(labs.df$BASE_NM)
+```
+
+The unique procedures we have for analysis are as follows:
+
+```{r}
+levels(labs.df$PROC_NM)
+```
+
+We begin by looking at univariate analysis for hemoglobin from CBC with and without Diff. Note that the above method of lab binning does not specify whether the medians are computed first, or the 1st / 99th percentiles are thrown away first.  We choose to throw away the outliers first, then compute the medians. This necessitates re-computing the range of the data to obtain the histogram bin edges and the entropy. 
+
+First we create a function which will handle all of this processing, for an arbitrary procedure list and base name list:
+
+```{r}
+labUnivariates <- function (procs, bases, name, unit, 
+                            dept.grp = c('CICU','PICU'), bins = 21, max.val = 1000) {
+  
+  # Filter out procedures and base name, and remove NA values
+  values <- labs.df %>%
+    dplyr::filter(DEPT_GRP %in% dept.grp) %>%
+    dplyr::select(c('LAB_DEPT', 'VISIT_KEY', 
+                    'RSLT_DATE', 'VALUE', 
+                    'PROC_NM', 'BASE_NM')) %>%
+    dplyr::filter(PROC_NM %in% procs) %>%
+    dplyr::filter(BASE_NM %in% bases) %>%
+    dplyr::filter(!is.na(VALUE)) %>%
+    dplyr::filter(VALUE < max.val)
+  
+  # Summarize the full set of values
+  r.sum <- summary(values$VALUE)
+  r.count <- length(values$VALUE)
+  
+  # Compute the 1st and 99th percentiles
+  percentiles <- quantile(values$VALUE, c(0.01, 0.99))
+  
+  # Filter out the outliers, group by patient visit / date and calculate median
+  values <- dplyr::filter(values, VALUE >= percentiles[[1]] &
+                            VALUE <= percentiles[[2]]) %>%
+    dplyr::group_by(VISIT_KEY, RSLT_DATE) %>%
+    dplyr::summarise(median = median(VALUE))
+  
+  # Summarize the median-of-day results
+  r.grouped.sum <- summary(values$median)
+  r.grouped.count <- length(values$median)
+  
+  # Establish break points, compute histogram, reframe as data.frame & plot
+  breakPoints <- seq(from = percentiles[[1]], to = percentiles[[2]], length.out = 21)
+  
+  histo <- hist(values$median, breaks = breakPoints, plot = FALSE)
+  
+  histo <- data.frame(mids = histo$mids, counts = histo$counts)
+  
+  # Normalize histogram of counts by sum of counts
+  histo.norm <- histo %>%
+    dplyr::mutate(counts = counts / sum(histo$counts))
+  
+  r.plot <- ggplot(histo) +
+    geom_col(aes(x = mids, y = counts)) +
+    xlab(paste0(name,' (',unit,')')) +
+    ylab('Count') +
+    #ggtitle(paste0('Histogram of ',name,' (20 Bins)')) +
+    ggtitle(name) +
+    theme_bw()
+  
+  # Calculate and display the entropy
+  p <- histo$counts / sum(histo$counts)
+  
+  r.entropy <- -1 * sum(p * log(p, base = 2))
+  
+  return(list(grouped.sum = r.grouped.sum, 
+              grouped.count = r.grouped.count,
+              sum = r.sum,
+              count = r.count,
+              plot = r.plot, 
+              ent = r.entropy,
+              histo = histo,
+              histo.norm = histo.norm))
+}
+```
+
+Now we run this function to gather results for each procedure.  To do this we need a grouping function, which builds upon this one.  We will provide a list of procedures, bases, names and units.  The function will generate a data table of results, the columns of which are: name, units, count, min, 1st quarter, median, mean, 3rd quarter, max and entropy.
+
+```{r}
+labTableGenerate <- function(procs, bases, names, units)
+{
+  plots <- vector("list", length(bases))
+  
+  res <-
+    labUnivariates(procs, bases = bases[1], name = names[1],unit = units[1])
+  
+  plots[[1]] <- res$plot
+  
+  dt <- data.frame(
+    name = names[1],
+    unit = units[1],
+    count = res$count,
+    grouped.count = res$grouped.count,
+    min = as.numeric(res$grouped.sum['Min.']),
+    q.1st = as.numeric(res$grouped.sum['1st Qu.']),
+    median = as.numeric(res$grouped.sum['Median']),
+    mean = as.numeric(res$grouped.sum['Mean']),
+    q.3rd = as.numeric(res$grouped.sum['3rd Qu.']),
+    max = as.numeric(res$grouped.sum['Max.']),
+    entropy = res$ent
+  )
+  
+  for (i in 2 : length(bases)) {
+    res <- labUnivariates(procs, bases = bases[i], name = names[i], unit = units[i])
+    
+    plots[[i]] <- res$plot
+    
+    res.dt <- data.frame(
+      name = names[i],
+      unit = units[i],
+      count = res$count,
+      grouped.count = res$grouped.count,
+      min = as.numeric(res$grouped.sum['Min.']),
+      q.1st = as.numeric(res$grouped.sum['1st Qu.']),
+      median = as.numeric(res$grouped.sum['Median']),
+      mean = as.numeric(res$grouped.sum['Mean']),
+      q.3rd = as.numeric(res$grouped.sum['3rd Qu.']),
+      max = as.numeric(res$grouped.sum['Max.']),
+      entropy = res$ent
+    )
+    
+    dt <- rbind(dt, res.dt)
+  }
+  
+  names(dt) <-
+    c('Name','Unit','Count','Grouped Count','Min',
+      '1st Qu','Median','Mean','3rd Qu','Max','Entropy')
+  
+  return(list(table = dt, plots = plots))
+}
+```
+
+##### <a name='lab_histo_cbc'/>CBC Panels
+
+Now we run this function on results for the CBC procedures, generating the table and plot for all department groups (PICU + CICU):
+
+```{r}
+procs <- c('CBC w Diff', 'CBC wo Diff')
+bases <- c('hgb','wbc','plt')
+names <- c('Hemoglobin','White Blood Cell','Platelets')
+units <- c('g/dL','cells','thous. cells')
+
+res.cbc <- labTableGenerate(procs,bases,names,units)
+
+kable(res.cbc$table, caption='CBC Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r}
+ggarrange(res.cbc$plots[[1]], res.cbc$plots[[2]], res.cbc$plots[[3]], 
+          labels = LETTERS[1:3], ncol = 2, nrow = 2)
+```
+
+```{r echo=FALSE}
+rm(res.cbc, procs, bases, names, units)
+```
+
+##### <a name='lab_histo_by_dept'/>Limit By Department Group
+
+If we want to limit to just PICU or CICU, we set those limits back in the `labUnivariates(...)` function. Using these limits we can create a histogram that plots the 'cleaned' histograms, such as was done by Lee & Maslove, overlaying the PICU and CICU values.  We first create the function to do this for an individual base name / unit (e.g. hgb or Hemoglobin), then we test it.
+
+```{r}
+plotByDepartment <- function (proc, bases, name, unit, 
+                              normalized = FALSE, hide.legend = FALSE)
+{
+  res.picu <- labUnivariates(
+    proc,
+    bases = bases, 
+    name = name,
+    unit = unit,
+    dept.grp = c('PICU'))
+
+  res.cicu <- labUnivariates(
+    proc,
+    bases = bases, 
+    name = name,
+    unit = unit,
+    dept.grp = c('CICU'))
+  
+  if (normalized) {
+    picu <- res.picu$histo.norm
+    cicu <- res.cicu$histo.norm
+    nmStr <- ' (Normalized)'
+  } else {
+    picu <- res.picu$histo
+    cicu <- res.cicu$histo
+    nmStr <- ''
+  }
+  
+  p <- ggplot() +
+    geom_col(data = picu, aes(x = mids, y = counts, fill = 'p'), alpha = 0.4) +
+    geom_col(data = cicu, aes(x = mids, y = counts, fill = 'c'), alpha = 0.4) +
+    xlab(paste0(name, ' (', unit, ')')) +
+    ylab('Count') +
+    scale_fill_manual(name = 'Department',
+                      values = c('p'='red','c'='blue'), 
+                      labels = c('p' = 'PICU','c' = 'CICU')) +
+    ggtitle(paste0(name,' By Department',nmStr)) +
+    theme_bw()
+  
+  if (hide.legend)
+    p <- p + guides(fill = FALSE)
+  
+  return(p)
+}
+```
+
+Now we test our function for an individual base / name:
+
+```{r}
+procs = c('CBC w Diff', 'CBC wo Diff')
+bases = c('hgb')
+names = c('Hemoglobin')
+units = c('g/dL')
+
+plotByDepartment(procs,bases,names,units, normalized = T, hide.legend = T)
+```
+
+And now we use the `ggarrage(...)` function to plot all CBC bases by department:
+
+```{r}
+procs = c('CBC w Diff', 'CBC wo Diff')
+bases <- c('hgb','wbc','plt')
+names <- c('Hemoglobin','White Blood Cell','Platelets')
+units <- c('g/dL','cells','thous. cells')
+
+ggarrange(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T),
+          labels = LETTERS[1:3], 
+          ncol = 2, nrow = 2)
+```
+
+```{r, echo=FALSE}
+rm(procs,bases,names,units)
+```
+
+##### <a name='lab_histo_chem'/>Chem Panels
+
+Now we do the same for the chemistry panels:
+
+```{r}
+procs <- c('BMP','CMP')
+bases <- c('na','k','cl','bicarb','bun','creat','gluc','ca')
+names <- c('Sodium','Potassium','Chloride','Bicarbonate','BUN','Creatinine','Glucose','Calcium')
+units <- c('mmol/L','mmol/L','mmol/L','mmol/L','mg/dL','mg/dL','mg/dL','mg/dL')
+
+res.chem <- labTableGenerate(procs,bases,names,units)
+
+kable(res.chem$table, caption='Chem Panel Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r fig.height=12, fig.width=7}
+plot_grid(res.chem$plots[[1]], res.chem$plots[[2]], res.chem$plots[[3]], res.chem$plots[[4]],
+          res.chem$plots[[5]], res.chem$plots[[6]], res.chem$plots[[7]], res.chem$plots[[8]],
+          labels = LETTERS[1:8], 
+          ncol = 2, nrow = 4)
+```
+
+Plot some of these by split department, normalized so that total counts do not impact the displayed histograms:
+
+```{r fig.height=12, fig.width=7}
+ggarrange(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[4],names[4],units[4],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[5],names[5],units[5],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[6],names[6],units[6],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[7],names[7],units[7],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[8],names[8],units[8],hide.legend=T,normalized = T),
+          labels = LETTERS[1:8], 
+          ncol = 2, nrow = 4)
+```
+
+```{r echo=FALSE}
+rm(res.chem,procs,bases,names,units)
+```
+
+##### <a name='lab_histo_vbg'/>Venous Blood Gas
+
+```{r}
+procs <- c('sVBG', 'VBG', 'VBG-L')
+bases <- c('pH', 'pCO2', 'pO2', 'bicarb', 'svO2', 'be', 'na', 'k')
+names <- c('pH','pCO2','pO2','Bicarbonate','SvO2','Base Excess', 'Sodium', 'Potassium')
+units <- c('','mmHg','mmHg','mmol/L','%','mmol/L','mmol/L','mmol/L')
+
+res.vbg <- labTableGenerate(procs,bases,names,units)
+
+kable(res.vbg$table, caption='VBG Panel Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r fig.height=12, fig.width=7}
+plot_grid(res.vbg$plots[[1]], res.vbg$plots[[2]], 
+          res.vbg$plots[[3]], res.vbg$plots[[4]],
+          res.vbg$plots[[5]], res.vbg$plots[[6]],
+          res.vbg$plots[[7]], res.vbg$plots[[8]],
+          labels = LETTERS[1:8], 
+          ncol = 2, nrow = 4)
+```
+
+Plot some of these by split department and normalized:
+
+```{r fig.height=12, fig.width=7}
+plot_grid(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[4],names[4],units[4],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[5],names[5],units[5],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[6],names[6],units[6],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[7],names[7],units[7],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[8],names[8],units[8],hide.legend=T,normalized = T),
+          labels = LETTERS[1:8], ncol = 2, align = 'v')
+```
+
+```{r echo=FALSE}
+rm(res.vbg,procs,bases,names,units)
+```
+
+##### <a name='lab_histo_abg'/>Arterial Blood Gas
+
+```{r}
+procs <- c('sABG', 'ABG', 'ABG-L')
+bases <- c('pH', 'pCO2', 'pO2', 'bicarb', 'be', 'na', 'k')
+names <- c('pH','pCO2','pO2','Bicarbonate', 'Base Excess', 'Sodium', 'Potassium')
+units <- c('','mmHg','mmHg','mmol/L','mmol/L','mmol/L','mmol/L')
+
+res.abg <- labTableGenerate(procs,bases,names,units)
+
+kable(res.abg$table, caption='ABG Panel Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r fig.height=12, fig.width=7}
+plot_grid(res.abg$plots[[1]], res.abg$plots[[2]], 
+          res.abg$plots[[3]], res.abg$plots[[4]],
+          res.abg$plots[[5]], res.abg$plots[[6]],
+          res.abg$plots[[7]],
+          labels = LETTERS[1:7], 
+          ncol = 2, nrow = 4)
+```
+
+Plot some of these by split department and normalized:
+
+```{r fig.height=12, fig.width=7}
+plot_grid(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[4],names[4],units[4],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[5],names[5],units[5],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[6],names[6],units[6],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[7],names[7],units[7],hide.legend=T,normalized = T),
+          labels = LETTERS[1:7], ncol = 2, align = 'v')
+```
+
+```{r echo=FALSE}
+rm(res.abg,procs,bases,names,units)
+```
+
+##### <a name='lab_histo_coags'/>Coagulation Studies
+
+```{r}
+procs <- c('PT INR', 'PTT', 'Fibrinogen')
+bases <- c('INR','PT','PTT','fibrinogen','PTT Post Hept')
+names <- c('INR', 'PT', 'PTT', 'Fibrinogen', 'PTT Post Hept')
+units <- c('','secs','secs','mg/dL','secs')
+
+res.coags <- labTableGenerate(procs,bases,names,units)
+
+kable(res.coags$table, caption='Coagulation Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r fig.height=9, fig.width=7}
+plot_grid(res.coags$plots[[1]], res.coags$plots[[2]], 
+          res.coags$plots[[3]], res.coags$plots[[4]],
+          res.coags$plots[[5]],
+          labels = LETTERS[1:5], 
+          ncol = 2, nrow = 3)
+```
+
+Plot some of these by split department and normalized:
+
+```{r fig.height=9, fig.width=7}
+plot_grid(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[4],names[4],units[4],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[5],names[5],units[5],hide.legend=T,normalized = T),
+          labels = LETTERS[1:5], ncol = 2, align = 'v')
+```
+
+```{r echo=FALSE}
+rm(res.coags,procs,bases,names,units)
+```
+
+##### <a name='lab_histo_istat'/>iStat Results
+
+```{r}
+procs <- c('iStat7', 'iStat3')
+bases <- c('pH', 'pCO2', 'pO2', 'bicarb', 'be', 'na', 'k')
+names <- c('pH','pCO2','pO2','Bicarbonate','Base Excess', 'Sodium', 'Potassium')
+units <- c('','mmHg','mmHg','mmol/L','mmol/L','mmol/L','mmol/L')
+
+res.istat <- labTableGenerate(procs,bases,names,units)
+
+kable(res.istat$table, caption='iStat Panel Results') %>%
+  kable_styling(c("striped", "hover", "condensed"))
+```
+
+```{r fig.height=12, fig.width=7}
+plot_grid(res.istat$plots[[1]], res.istat$plots[[2]], 
+          res.istat$plots[[3]], res.istat$plots[[4]],
+          res.istat$plots[[5]], res.istat$plots[[6]],
+          res.istat$plots[[7]],
+          labels = LETTERS[1:7], 
+          ncol = 2, nrow = 4)
+```
+
+Plot some of these by split department and normalized:
+
+```{r fig.height=12, fig.width=7}
+plot_grid(plotByDepartment(procs,bases[1],names[1],units[1],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[2],names[2],units[2],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[3],names[3],units[3],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[4],names[4],units[4],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[5],names[5],units[5],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[6],names[6],units[6],hide.legend=T,normalized = T),
+          plotByDepartment(procs,bases[7],names[7],units[7],hide.legend=T,normalized = T),
+          labels = LETTERS[1:7], ncol = 2, align = 'v')
+```
+
+```{r echo=FALSE}
+rm(res.istat,procs,bases,names,units)
+```
+
+<p style="font-size:75%;">[Return to Top](#contents)</p>
+***

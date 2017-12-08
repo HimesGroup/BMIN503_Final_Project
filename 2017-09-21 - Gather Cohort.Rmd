@@ -1,0 +1,385 @@
+---
+title: "2017-09-21 - Identify Cohort"
+author: "Adam Dziorny"
+date: "September 21, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r nzConn, echo=FALSE}
+source('F_rodbc_cdw.R')
+
+nzConn <- makeConn(user = 'dziornya', pwd = getPassword('CHOPDW'), 
+                   server = 'binbiaclv2.chop.edu', db = 'CDWPRD')
+
+# Source the paging function to notify me when results are back
+source('F_pageXDS.r')
+```
+
+## Identify the Cohort
+
+We need to identify a cohort of PICU / CICU patients who are admitted between 7/1/2012 and 7/1/2017.  
+
+Each section below contains a chunk of SQL code, which will be combined below to a single query and run.
+
+### Cohort
+
+The starting cohort is all VISIT_KEY values with any PICU or CICU VISIT_EVENTs of type ADMISSION, TRANSFER_IN, TRANSFER_OUT, DISCHARGE or CENSUS within the time frame.  Having a VISIT_KEY in this cohort means that at some point during the patient's stay they were in the PICU or CICU within the date range specified.
+
+From the `CDW_DICTIONARY` table (where `DICT_CAT_KEY = 10050`), mapping to `VISIT_EVENT`.`DICT_ADT_EVENT_KEY`:
+
+DICT_KEY | SRC_ID | Name
+-------- | ------ | ----
+20666 | 1 | Admission
+20667 | 2 | Discharge
+20668 | 3 | Transfer In
+20669 | 4 | Transfer Out
+20670 | 5 | Patient Update
+20671 | 6 | Census
+20672 | 7 | Hospital Outpatient
+150739 | 8 | Leave of Absence Out
+150740 | 9 | Leave of Absence Return
+515921 | 10 | Leave of Absence Census
+
+From the `CDW_DICTIONARY` table (where `DICT_CAT_KEY = 100118`), mapping to `VISIT_EVENT`.`DICT_EVENT_SUBTYPE_KEY`:
+
+DICT_KEY | SRC_ID | NAME
+-------- | ------ | ----
+29720 | 1 | Original
+29721 | 2 | Cancelled
+29722 | 3 | Update
+
+From the `DEPARTMENT` table:
+
+DEPT_KEY | DEPT_ID | Name | Abbrev
+-------- | ------- | ---- | ------
+5149 | 34 | 7 EAST PICU | 7EP
+5307 | 36 | 6 SOUTH TOWER | 6ST
+4920 | 43 | 7 SOUTH TOWER | 7ST
+7512 | 123 | 7 WEST PICU | 7WPICU
+4778 | 66 | 6 NORTHEAST | 6NE
+5166 | 58 | 6 NORTHWEST | 6NWS
+5223 | 101001069 | PERIOP COMPLEX | PERIOP
+
+From the CDW Data Dictionary, the variable `EFF_EVENT_DT` is the instant when the event was supposed to have happened.
+
+```{r cohort}
+q.cohort <- strwrap("
+SELECT 
+  DISTINCT vis_evnt.VISIT_KEY
+FROM 
+  CDW.VISIT_EVENT vis_evnt  
+    INNER JOIN CDW.CDW_DICTIONARY event_type ON vis_evnt.DICT_ADT_EVENT_KEY = event_type.dict_key
+        AND event_type.src_id IN (1,2,3,4,6) 
+    INNER JOIN CDW.CDW_DICTIONARY event_sub_type ON vis_evnt.DICT_EVENT_SUBTYPE_KEY = event_sub_type.dict_key
+        AND event_sub_type.src_id <> 2 
+    INNER JOIN CDW.DEPARTMENT dept ON vis_evnt.DEPT_KEY = dept.DEPT_KEY
+WHERE 
+  dept.DEPT_ID IN (34, 43, 123, 36) 
+  AND vis_evnt.VISIT_KEY NOT IN (-1, 0)
+  AND vis_evnt.PAT_KEY NOT IN (0)
+  AND vis_evnt.EFF_EVENT_DT BETWEEN DATE('07/01/2012') AND DATE('07/01/2017')
+  ", width=10000)
+```
+
+### All ADT Events
+
+Now for this group of DISTINCT VISIT_KEYs we obtain *ALL* of the ADT events for each VISIT_KEY, from *ALL* departments.  This is important because there are many patient movement workflows that require knowing other departments. 
+
+Example patient movement:
+- ED -> PICU -> Floor -> PICU
+- ED -> PICU -> PICU (new room) -> OR -> PICU
+- PICU -> OR -> PICU -> Floor -> CICU -> Floor
+- ED -> Floor -> OR -> PICU
+
+Our goal is to capture each individual entry / exit to the PICU and CICU, excluding OR transfers (of DEPT_ID 101001069 [PERIOP], 58 and 66 [Cardiac ORs]). OR transfers should be considered part of the same PICU / CICU stay.
+
+Set the EVENT_DIR (or the direction of the event) as either move-in or move-out, grouping ADMIT/Transfer In as well as DISCHARGE/Transfer Out.
+
+Set the DEPT_GRP as either PICU (34,43,123), CICU, PERIOP or OTHER.
+
+The Bed was just included here for debugging purposes. It adds nothing to the query and could be removed.
+
+event_type SRC_ID: 
+- 1, 3 are move-in
+- 2, 4 are move-out
+
+Departments:
+- 34, 43, 123 are PICU
+- 36 is CICU
+- 101001069, 58, 66 are PERIOP, Cardiac OR, Cardiac Cath
+
+Event_sub_type: 2 is CANCELLED
+
+```{r all_adt}
+q.all_adt <- strwrap("
+SELECT
+  vis_evnt.VISIT_KEY,
+  vis_evnt.VISIT_EVENT_KEY,
+  pat.DOB AS PAT_DOB,
+  pat.SEX AS PAT_SEX,
+  vis_evnt.EFF_EVENT_DT as IN_DT,
+  event_type.DICT_NM AS EVENT_TYPE,
+  CASE WHEN event_type.src_id IN (1,3) THEN 1 
+       WHEN event_type.src_id IN (2,4) THEN 0 
+	   END AS EVENT_DIR,
+  dept.DEPT_NM as d_name,
+  dept.DEPT_KEY AS d_key,
+  CASE WHEN dept.DEPT_ID IN (34,43,123) THEN 1 
+       WHEN dept.DEPT_ID IN (36) THEN 2 
+	   WHEN dept.DEPT_ID IN (101001069,58,66) THEN 3 
+	   ELSE 0 
+	   END AS dept_grp,
+  bed.BED_NM AS bed_name,
+  vis_evnt.PAT_KEY,
+  dict_svc.DICT_NM AS PAT_SVC
+FROM 
+  cohort
+    INNER JOIN CDW.VISIT_EVENT vis_evnt ON cohort.VISIT_KEY = vis_evnt.VISIT_KEY
+    INNER JOIN CDW.PATIENT pat ON pat.PAT_KEY = vis_evnt.PAT_KEY
+    INNER JOIN CDW.CDW_DICTIONARY event_type ON vis_evnt.DICT_ADT_EVENT_KEY = event_type.dict_key
+        AND event_type.src_id IN (1,2,3,4) 
+    INNER JOIN CDW.CDW_DICTIONARY event_sub_type ON vis_evnt.DICT_EVENT_SUBTYPE_KEY = event_sub_type.dict_key
+        AND event_sub_type.src_id <> 2 
+    INNER JOIN CDW.CDW_DICTIONARY dict_svc ON dict_svc.DICT_KEY = vis_evnt.DICT_PAT_SVC_KEY
+    INNER JOIN CDW.DEPARTMENT dept ON vis_evnt.DEPT_KEY = dept.DEPT_KEY
+    INNER JOIN CDW.MASTER_BED bed ON vis_evnt.BED_KEY = bed.BED_KEY
+  ", width=10000)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+# Temporary query from where we have built the cohort so far
+q.temp <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, ")
+SELECT * FROM all_adt", sep="\n"), width=100000)
+
+cohort.1 <- sqlQuery(nzConn, q.temp, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+rm(q.temp)
+
+cat(sprintf('Unique PAT_KEY values: %d\nUnique Visit_KEY values: %d\n',
+            length(unique(cohort.1$PAT_KEY)),
+            length(unique(cohort.1$VISIT_KEY))))
+```
+
+### Remove PERIOP Encounters
+
+All queries are now done partitioned by VISIT_KEY sorted by in_dt and event_dir. The values of event_dir were chosen to ensure that the "OUT" will always come before the "IN" when sorting in this manner (recall they have the exact same DT timestamp).
+
+While we have all of the ADT events for each VISIT_KEY we grab the HOSP_ADMIT_DT and HOSP_DC_DT, so we can calculate an overall LOS.
+
+Next we flag all peri-op jumps:
+- Either: CURRENT and LAG dept are PERIOP, CURRENT is "Transfer Out" and LAG is "Transfer In"
+- OR     CURRENT and LEAD dept are PERIOP, CURRENT is "Transfer In" and LEAD is "Transfer Out"
+
+If either of these conditions is satisfied, flag the case as OUT_PERIOP meaning the patient is out at a periop procedure. These will be removed in the next step.
+
+```{r remv_periop}
+q.remv_periop <- strwrap("
+SELECT 
+  *,
+  FIRST_VALUE(in_dt) OVER (PARTITION BY visit_key ORDER BY in_dt) AS HOSP_ADMIT_DT,
+  FIRST_VALUE(in_dt) OVER (PARTITION BY visit_key ORDER BY in_dt DESC) AS HOSP_DC_DT,
+  CASE WHEN (LAG(dept_grp) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IN (3) AND 
+             dept_grp IN (3) AND
+			 LAG(event_type) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IN ('Transfer In') AND
+			 event_type IN ('Transfer Out')) OR 
+			(LEAD(dept_grp) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IN (3) AND 
+             dept_grp IN (3) AND
+			 LEAD(event_type) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IN ('Transfer Out') AND
+			 event_type IN ('Transfer In')) THEN 'Y' END AS out_periop
+FROM all_adt
+  ", width=10000)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+# Temporary query from where we have built the cohort so far
+q.temp <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, "),
+remv_periop AS (", q.remv_periop, ")
+SELECT * FROM remv_periop ORDER BY VISIT_KEY, in_dt, event_dir", sep="\n"), width=100000)
+
+cohort.2 <- sqlQuery(nzConn, q.temp, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+rm(q.temp)
+
+cat(sprintf('Unique PAT_KEY values: %d\nUnique Visit_KEY values: %d\n',
+            length(unique(cohort.2$PAT_KEY)),
+            length(unique(cohort.2$VISIT_KEY))))
+```
+
+### Flag Same Departments
+
+Now that we've excluded all PERIOP movement, we set a flag if the LAG and CURRENT are of the same DEPT_GRP (meaning the patient was just moving around the DEPT_GRP).
+
+```{r same_dept}
+q.same_dept <- strwrap("
+SELECT 
+  *,
+  CASE WHEN LAG(dept_grp) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IN (dept_grp) THEN 'Y' END AS same_dept
+FROM remv_periop
+WHERE out_periop IS NULL
+  ", width=10000)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+# Temporary query from where we have built the cohort so far
+q.temp <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, "),
+remv_periop AS (", q.remv_periop, "),
+same_dept AS (", q.same_dept, ")
+SELECT * FROM same_dept ORDER BY VISIT_KEY, in_dt, event_dir", sep="\n"), width=100000)
+
+cohort.3 <- sqlQuery(nzConn, q.temp, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+rm(q.temp)
+
+cat(sprintf('Unique PAT_KEY values: %d\nUnique Visit_KEY values: %d\n',
+            length(unique(cohort.3$PAT_KEY)),
+            length(unique(cohort.3$VISIT_KEY))))
+```
+
+### Remove the Duplicate Departments
+
+At this point we have removed PERIOP, and we exclude all DEPT_GRP except 1 or 2 (PICU or CICU). Each "transit" through that DEPT_GRP runs from the VISIT_IN_DT, or when SAME_DEPT is NULL, down through the VISIT_OUT_DT, or the last "Y" before a NULL under SAME_DEPT.  These are set in separate rows here, and combined in the next step.
+
+```{r visit_dt_set}
+q.visit_dt_set <- strwrap("
+SELECT 
+  *,
+  CASE WHEN SAME_DEPT IS NULL THEN IN_DT END AS VISIT_IN_DT,
+  CASE WHEN LEAD(SAME_DEPT) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) IS NULL THEN IN_DT END AS VISIT_OUT_DT
+FROM same_dept
+WHERE DEPT_GRP IN (1,2)
+  ", width=10000)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+# Temporary query from where we have built the cohort so far
+q.temp <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, "),
+remv_periop AS (", q.remv_periop, "),
+same_dept AS (", q.same_dept, "),
+visit_dt_set AS (", q.visit_dt_set, ")
+SELECT * FROM visit_dt_set ORDER BY VISIT_KEY, in_dt, event_dir", sep="\n"), width=100000)
+
+cohort.4 <- sqlQuery(nzConn, q.temp, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+rm(q.temp)
+
+cat(sprintf('Unique PAT_KEY values: %d\nUnique Visit_KEY values: %d\n',
+            length(unique(cohort.4$PAT_KEY)),
+            length(unique(cohort.4$VISIT_KEY))))
+```
+
+### Combine Lines 
+
+At this stage we have rows with alternating NULL / VISIT_IN_DT and opposing alternating VISIT_OUT_DT / NULL values.  We must combine VISIT_IN and VISIT_OUT DT's into a single row for each entry-exit to an ICU.  We chose to keep the VISIT_IN_DT row, and when VISIT_OUT_DT is NULL, get the LEAD(VISIT_OUT_DT) - in other words, just move it up a row.
+
+```{r comb_lines}
+q.comb_lines <- strwrap("
+SELECT
+  *,
+  CASE WHEN VISIT_OUT_DT IS NULL THEN LEAD(VISIT_OUT_DT) OVER (PARTITION BY visit_key ORDER BY in_dt,event_dir) END AS OUT_DT
+FROM visit_dt_set
+WHERE VISIT_IN_DT IS NOT NULL OR VISIT_OUT_DT IS NOT NULL
+  ", width=10000)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+# Temporary query from where we have built the cohort so far
+q.temp <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, "),
+remv_periop AS (", q.remv_periop, "),
+same_dept AS (", q.same_dept, "),
+visit_dt_set AS (", q.visit_dt_set, "),
+comb_lines AS (", q.comb_lines, ")
+SELECT * FROM comb_lines ORDER BY VISIT_KEY, in_dt, event_dir", sep="\n"), width=100000)
+
+cohort.5 <- sqlQuery(nzConn, q.temp, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+rm(q.temp)
+
+cat(sprintf('Unique PAT_KEY values: %d\nUnique Visit_KEY values: %d\n',
+            length(unique(cohort.5$PAT_KEY)),
+            length(unique(cohort.5$VISIT_KEY))))
+```
+
+### Final Cohort
+
+Restrict our final output to those rows with non-NULL IN_DT and OUT_DT and limit our SELECT criteria to get our final set of rows.  Note that VISIT_KEY is *NOT* DISTINCT because patients might move in and out of the PICU / CICU (or even both) in a single hospital visit.  This captures each movement and records IN_DT and OUT_DT. Results are sorted by VISIT_KEY and IN_DT.
+
+```{r final_cohort}
+q.final_cohort <- strwrap("
+SELECT 
+  VISIT_KEY,
+  PAT_KEY,
+  PAT_SVC,
+  PAT_DOB,
+  PAT_SEX,
+  CASE WHEN DEPT_GRP = 1 THEN 'PICU'
+       WHEN DEPT_GRP = 2 THEN 'CICU' END AS DEPT,
+  VISIT_IN_DT AS IN_DT,
+  OUT_DT,
+  HOSP_ADMIT_DT,
+  HOSP_DC_DT
+FROM comb_lines
+WHERE VISIT_IN_DT IS NOT NULL AND OUT_DT IS NOT NULL
+  ", width=10000)
+```
+
+Now we evaluate the above expressions to build the final.cohort data frame.
+
+```{r}
+q.final_query <- strwrap(paste("
+WITH 
+cohort AS (", q.cohort, "), 
+all_adt AS (", q.all_adt, "),
+remv_periop AS (", q.remv_periop, "),
+same_dept AS (", q.same_dept, "),
+visit_dt_set AS (", q.visit_dt_set, "),
+comb_lines AS (", q.comb_lines, "),
+final_cohort AS (", q.final_cohort, ")
+SELECT * FROM final_cohort ORDER BY VISIT_KEY, IN_DT", sep="\n"), width=100000)
+
+final.cohort <- sqlQuery(nzConn, q.final_query, 
+                  believeNRows=TRUE, 
+                  stringsAsFactors=FALSE)
+```
+
+This is saved out, along with all the build strings (as they will be needed to join the lab tables), to an output data file:
+
+```{r}
+save(cohort.1,cohort.2,cohort.3,cohort.4,cohort.5, 
+     file = 'D_interim_cohorts')
+
+save(final.cohort,
+     q.cohort,q.all_adt,q.remv_periop,
+     q.same_dept,q.visit_dt_set,q.comb_lines,
+     q.final_cohort,
+     file = 'D_final_cohort_w_queries')
+
+# And page to notify that we are done
+pageMe(profileID = 'E7582503', msg='Finished gathering cohort!', displayResult = F)
+```
+
+
+

@@ -1,0 +1,260 @@
+---
+title: "2017-09-29 - Pre-Processing"
+author: "Adam Dziorny"
+date: "September 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## <a name='contents'/>Contents
+
+This document goes through the pre-processing & cleaning of cohort and lab data. It conforms to the IRB # 17-014368 protocol, a copy of which can be found [here](https://www.dropbox.com/s/wj19tp7bghvw2nd/2017-09-26%20-%20IRB%20Protocol%20v2%20%28Clean%29.pdf?dl=0).  
+
+1. [Loading Data](#load_data) : Loads libraries and data files
+2. [Cohort Pre-Processing](#cohort_preproc) : Pre-process the cohort data 
+  + [Adding Factors](#cohort_factors)
+  + [Date-Time Manipulation](#cohort_dt)
+3. [Lab Pre-Processing](#lab_preproc) : Pre-process the lab data
+  + [Adding Factors](#lab_factors)
+  + [Date-Time Manipulation](#lab_dt)  
+4. [Saving Data](#save_data) : Save data files out
+
+All work is (c) Adam Dziorny, 2017.
+
+### <a name='load_data'/>Load the Data
+
+First we load the required libraries:
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(digest)
+library(RCurl)
+
+# Source the paging function to notify me when results are back
+source('F_pageXDS.r')
+```
+
+And the full lab dataset, from which we then remove the text queries:
+
+```{r}
+source('F_lab_ids.R')
+
+load('D_labs_df')
+load('D_final_cohort_w_queries')
+
+rm(q.all_adt,q.cohort,q.comb_lines,q.final_cohort,
+   q.remv_periop,q.same_dept,q.visit_dt_set,
+   makeQuery,makeQueryByIndex)
+```
+
+### <a name='cohort_preproc'/>Cohort Pre-Processing
+
+##### Unique Key
+
+Before we begin processing our cohort, we will need a unique KEY to identify an `IN` event - a combination of  `PAT_KEY`, `VISIT_KEY`, and `IN_DT`, base64 encoded to limit the character set.  This combination should never be replicated across the `final.cohort` data frame.  We create this element and verify its uniqueness:
+
+```{r}
+# Create an MD5 hash of those three elements, pasted together
+final.cohort <-
+  final.cohort %>%
+  dplyr::mutate(IN_KEY = sapply(paste0(PAT_KEY,VISIT_KEY,format(IN_DT,format='%Y-%m-%d %H:%M:%S')),
+                                base64))
+
+# Remove the 'names' attribute on the new column
+attr(final.cohort$IN_KEY,'names') <- NULL
+
+cat(sprintf('Number of duplicated IN_KEY elements: %0.f\n',
+            sum(duplicated(final.cohort$IN_KEY))))
+```
+
+We will also define this unique IN_KEY in the labs data frame.  This is necessary to match up the lab and cohort values.  Running this segment involves the base64 encoding of roughly 3.7 million rows.  
+
+```{r}
+labs.df <- 
+  labs.df %>%
+  dplyr::mutate(IN_KEY = sapply(paste0(PAT_KEY,VISIT_KEY,IN_DT),
+                               base64))
+
+attr(labs.df$IN_KEY,'names') <- NULL
+
+cat(sprintf('Number of duplicated IN_KEY elements: %0.f\n',
+            sum(duplicated(labs.df$IN_KEY))))
+```
+
+Now we dummy-check this matchup by making sure that a left_join of our labs with the cohort on the `IN_KEY` variable does not result in any NA values:
+
+```{r}
+# Dummy check this
+cat(sprintf(paste0('Number of NA values in labs.df IN_KEY: %0.f\n',
+                   'Number of NA values in final.cohort IN_KEY: %.f\n'),
+            sum(is.na(labs.df$IN_KEY)),
+            sum(is.na(final.cohort$IN_KEY))))
+
+test.join <- 
+  dplyr::left_join(x = labs.df,
+                   y = final.cohort,
+                   by = c('IN_KEY'))
+
+cat(sprintf('Number of NA genders in final.cohort: %0.f\n',
+            sum(is.na(final.cohort$PAT_SEX))))
+
+bad.join <- is.na(test.join$PAT_SEX)
+
+cat(sprintf('Number of NA genders in test.join (should be 0): %0.f\n',
+            sum(bad.join)))
+```
+
+```{r echo=FALSE}
+rm(test.join,bad.join)
+```
+
+##### Limit to IRB Dates
+
+Recall that our initial cohort query requested all distinct `VISIT_KEY` values with an ADT event in the time of our study period (7/1/2012 - 7/1/2017).  In real terms, this means that we selected any hospital encounters where the patient was in the PICU or CICU at any time within our study period.  We then use all of those encounter IDs and pull *all* of the Admission / Transfers In to the ICU for that encounter ID.
+
+The corollary to this method is, we are capturing Admission / Transfer In events that occur prior to the beginning of our study period. Our IRB Section 3.2.1 specifies our study sample as:
+
+> ... a convenience sample of all patients admitted or transferred into the PICU or CICU between July 1, 2012 and July 1, 2017.  The study cannot include patients admitted prior to July 1, 2012 as EHR Flowsheet documentation was not started in the ICUs prior to this date.  Laboratory data will be collected through July 1, 2017 for any patients still admitted by this date.
+
+Therefore we need to limit our cohort to Admission / Transfer In events that occur between the boundaries of our study period, as we stated in our IRB.
+
+```{r}
+outOfRange <- final.cohort$IN_DT < as.POSIXct('2012-07-01') | 
+  final.cohort$IN_DT > as.POSIXct('2017-07-01')
+
+cat(sprintf('The number of records to be removed: %d\n',sum(outOfRange)))
+```
+
+Because we will remove a set of cohort entries, we need to remove the labs that are associated with these entries as well - otherwise when we go back and try to link the labs to the `final.cohort` variable (for example, for age or sex) we will have `NA` values in the dataset. We do this using the `IN_KEY` which maps the lab result to a particular `IN`.
+
+```{r}
+labs.outOfRange <-
+  labs.df$IN_KEY %in% final.cohort$IN_KEY[outOfRange]
+
+cat(sprintf('The number of labs to be removed: %d\n',sum(labs.outOfRange)))
+```
+
+Now we perform the actual removal:
+
+```{r}
+final.cohort <- final.cohort[!outOfRange,]
+
+labs.df <- labs.df[!labs.outOfRange,]
+```
+
+```{r, echo=FALSE}
+rm(outOfRange, labs.outOfRange)
+```
+
+#### <a name='cohort_factors'/>Factors
+
+We need to establish some factors in the data frames to support analysis:
+
+```{r}
+final.cohort$PAT_SVC <- factor(final.cohort$PAT_SVC)
+final.cohort$PAT_SEX <- factor(final.cohort$PAT_SEX)
+final.cohort$DEPT <- factor(final.cohort$DEPT)
+```
+
+#### <a name='cohort_dt'/>Date-Time Manipulation
+
+We add several new columns to this data.frame:
+
+- `AGE_AT_IN` : The age of the patient at the IN_DT
+- `AGE_AT ADMIT` : The age of the patient at the admit DT
+- `ICU_LOS` : The OUT_DT minus IN_DT
+- `HOSP_LOS` : The discharge date minus admit date
+
+```{r}
+final.cohort <- cbind(final.cohort, AGE_AT_IN = final.cohort$IN_DT - final.cohort$PAT_DOB)
+final.cohort <- cbind(final.cohort, AGE_AT_ADMIT = final.cohort$IN_DT - final.cohort$PAT_DOB)
+final.cohort <- cbind(final.cohort, ICU_LOS = final.cohort$OUT_DT - final.cohort$IN_DT)
+final.cohort <- cbind(final.cohort, HOSP_LOS = final.cohort$HOSP_DC_DT - final.cohort$HOSP_ADMIT_DT)
+```
+
+We would also like to perform calculations by month and year, so we add these columns:
+
+```{r}
+final.cohort <- cbind(final.cohort, IN_YEAR = as.numeric(format(final.cohort$IN_DT,'%Y')))
+final.cohort$IN_YEAR <- factor(final.cohort$IN_YEAR)
+
+final.cohort <- cbind(final.cohort, IN_MONTH = as.numeric(format(final.cohort$IN_DT,'%m')))
+final.cohort$IN_MONTH <- factor(final.cohort$IN_MONTH)
+```
+
+<p style="font-size:75%;">[Return to Top](#contents)</p>
+***
+
+### <a name='lab_preproc'/>Lab Pre-Processing
+
+In this section we will perform pre-processing of our lab values.  First we must convert the character DT elements into POSIXct DT elements:
+
+```{r}
+# Full DT
+labs.df$RSLT_DT <- 
+  as.POSIXct(labs.df$RSLT_DT, format='%Y-%m-%d %H:%M:%S')
+
+labs.df$SPECIMEN_TAKEN_DT <- 
+  as.POSIXct(labs.df$SPECIMEN_TAKEN_DT, format='%Y-%m-%d %H:%M:%S')
+
+labs.df$IN_DT <-
+  as.POSIXct(labs.df$IN_DT, format='%Y-%m-%d %H:%M:%S')
+
+# Just Date
+labs.df$RSLT_DATE <- 
+  as.POSIXct(labs.df$RSLT_DATE, format='%Y-%m-%d')
+```
+
+Similar to above with the cohort analysis, we need to remove labs with dates that fall outside of our defined study period (7/1/2012 - 7/1/2017). For more details, see above in the [Cohort Pre-Processing](#cohort_preproc) section.  Since we've already removed the cohorts outside of this range, this shouldn't remove any values ...
+
+```{r}
+outOfRange <- labs.df$RSLT_DT < as.POSIXct('2012-07-01') | 
+  labs.df$RSLT_DT > as.POSIXct('2017-07-01')
+
+labs.df <- labs.df[!outOfRange,]
+
+cat(sprintf('The number of records removed: %d\n',sum(outOfRange)))
+```
+
+```{r, echo=FALSE}
+rm(outOfRange)
+```
+
+#### <a name='lab_factors'/>Factors
+
+We add factors to the lab data here:
+
+```{r}
+labs.df$LAB_DEPT <- factor(labs.df$LAB_DEPT)
+labs.df$PROC_NM <- factor(labs.df$PROC_NM)
+labs.df$BASE_NM <- factor(labs.df$BASE_NM)
+labs.df$DEPT_GRP <- factor(labs.df$DEPT_GRP)
+```
+
+#### <a name='lab_dt'/>Date-Time Manipulations
+
+Some analysis of labs will be done by year, so we will add additional columns to the `labs.df` data frame to support this analysis:
+
+```{r}
+labs.df <- cbind(labs.df, IN_YEAR = as.numeric(format(labs.df$RSLT_DT,'%Y')))
+labs.df$IN_YEAR <- factor(labs.df$IN_YEAR)
+
+labs.df <- cbind(labs.df, IN_MONTH = as.numeric(format(labs.df$RSLT_DT,'%m')))
+labs.df$IN_MONTH <- factor(labs.df$IN_MONTH)
+```
+
+### <a name='save_data'/>Save Data
+
+We save out the pre-processed data so that it is usable for subsequent analysis steps:
+
+```{r}
+save(final.cohort, lab.ids, labs.df, file = 'D_preprocessed')
+
+# And page to notify that we are done
+pageMe(profileID = 'E7582503', msg='Finished preprocessing lab values!', displayResult = F)
+```
