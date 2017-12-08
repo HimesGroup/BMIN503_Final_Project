@@ -101,10 +101,12 @@ abs.corpus <- tm_map(abs.corpus, stripWhitespace)
 abs.corpus <- tm_map(abs.corpus, removeWords, c("children", "clinical", "patients", "fever"))
 ```
 
-Next we will convert the corpus to a document term matrix
+Next we will convert the corpus to a document term matrix.  In addition, we'll construct a term frequency plot, as well as a word cloud.
 
-```{r message=FALSE}
+```{r message=FALSE, warning=FALSE}
 library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
 
 abs.dtm <- DocumentTermMatrix(abs.corpus)
 
@@ -123,6 +125,10 @@ freq.plot <- ggplot(subset(word.freq, freq > 100), aes(x = reorder(word, -freq),
   labs(title = "Frequency of terms in corpus with > 100 utterances")
 
 freq.plot
+
+# Construction of wordcloud
+set.seed(2239)
+wordcloud(names(freq), freq, min.freq = 30, scale = c(5, 0.1), colors = brewer.pal(6, "Dark2"))
 ```
 
 To reduce number of terms and try to isolate the most important terms, we'll use [tf-idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf).
@@ -137,39 +143,39 @@ abs.tfidf <- tapply(abs.dtm$v/row_sums(abs.dtm)[abs.dtm$i], abs.dtm$j, mean) * l
 summary(abs.tfidf)
 ```
 
-The median tf-idf is 0.137, so let's use this as the lower limit and remove terms from the DTM with a tf-idf smaller than 0.137, ensuring very frequent terms are omitted.  We'll use the harmonic mean to determine the optimal number of topics using harmonic mean, as previously described by [Meza 2015](http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html) and .  we will determine the harmonic mean over a sequence of topic models with different values for k.  sequence of k from 2:100 stepped by 1
+### Results
+
+The median tf-idf is 0.137, so let's use this as the lower limit and remove terms from the DTM with a tf-idf smaller than 0.137, ensuring very frequent terms are omitted.  We'll use the harmonic mean to determine the optimal number of topics using harmonic mean, as previously described by [Meza 2015](http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html) and [Ponweiser 2012](http://epub.wu.ac.at/3558/1/main.pdf).  For different topic models with a subsequently increasing number of topics, we will determine the harmonic mean.  
 
 ```{r}
 library(topicmodels)
 library(Rmpfr)
 library(ggplot2)
 
-# The median tf-idf is 0.137, so let's use this as the lower limit and remove terms from the DTM with a tf-idf smaller than 0.137, ensuring very frequent terms are omitted
-
+# Retains terms with tf-idf greater than or equal to the median
 abs.dtm.reduced <- abs.dtm[, abs.tfidf >= 0.137]
 summary(col_sums(abs.dtm.reduced))
 
-# The new median is 2
-
+# Define harmonic mean function (borrowed from Ponweiser and Meza)
 harmonicMean <- function(logLikelihoods, precision = 2000L) {
   llMed <- median(logLikelihoods)
   as.double(llMed - log(mean(exp(-mpfr(logLikelihoods, prec = precision) + llMed))))
 }
 
-k <- 25
+# Determine the best k (number of topics) for corpus and output amount of time needed to run models
 seqk <- seq(2, 100, 1)
 burnin <- 1000
 iter <- 1000
 keep <- 50
 system.time(fitted_many <- lapply(seqk, function(k) LDA(abs.dtm.reduced, k = k, method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep))))
 
-# extract logliks from each topic
+# Get log likelihoods from each topic
 logLiks_many <- lapply(fitted_many, function(L)  L@logLiks[-c(1:(burnin/keep))])
 
-# compute harmonic means
+# Compute harmonic means
 hm_many <- sapply(logLiks_many, function(h) harmonicMean(h))
 
-# plot
+# Plot
 lda.plot <- ggplot(data.frame(seqk, hm_many), aes(x = seqk, y = hm_many)) + 
   geom_path(lwd = 1.0) +
   xlab('Number of Topics') +
@@ -177,39 +183,21 @@ lda.plot <- ggplot(data.frame(seqk, hm_many), aes(x = seqk, y = hm_many)) +
   labs(title = "Latent Dirichlet Allocation of PubMed Abstracts", subtitle = paste("The optimal number of topics is ", seqk[which.max(hm_many)]))
 
 lda.plot
-
-
 ```
 
-# Time to run the model
-Now, we'll run the model with the DTM and the optimal number of topics
+Now, we'll run the model with the reduced DTM and the optimal number of topics and save the model.  Afterwards, we'll take a look at the topics that this model generated.
 
 ```{r}
 system.time(abs.lda.model <- LDA(abs.dtm.reduced, 25, method = "Gibbs", control = list(iter=2000, seed = 0622)))
-```
 
 # Exploring the model
-
-```{r}
 abs.topics <- topics(abs.lda.model, 1)
 
 abs.terms <- as.data.frame(terms(abs.lda.model, 30), stringsAsFactors = FALSE)
-abs.terms[1:10]
-
-library(gridExtra)
-png("topic.terms.png", height = 1080, width = 1920)
-grid.table(abs.terms[1:10])
-dev.off()
+abs.terms
 ```
 
-# Create a df to store the PMID and the most likely topic (not working yet)
-```{r}
-abs.topics.df <- as.data.frame(abs.topics)
-abs.topics.df <- transmute(abs.topics.df, ID = rownames(abs.topics.df), Topic = abs.topics)
-abs.topics.df$ID <- as.integer(abs.topics.df$ID)
-```
-
-Need to create topic label.  Gather terms in rank order and make label by concatenating the first three terms
+For each topic, we'll get the first three terms and output them into a table of topic number and topic terms.
 
 ```{r}
 library(stringr)
@@ -231,34 +219,9 @@ for (i in 1:25) {
 
 colnames(topic.label) <- c("Label")
 topic.label
-
-png("top.topic.terms.png", height = 1080, width = 400)
-grid.table(topic.label)
-dev.off()
 ```
 
-# Per document probabilities of topics
 
-```{r}
-theta <- as.data.frame(posterior(abs.lda.model)$topics)
-head(theta[1:5])
-
-x <- as.data.frame(row.names(theta), stringsAsFactors = FALSE)
-colnames(x) <- c("ID")
-x$ID <- as.numeric(x$ID)
-theta2 <- cbind(x, theta)
-theta2 <- left_join(theta2, abs.df, by = "ID")
-# grouped by journal
-theta.mean.by <- by(theta2[, 2:26], theta2$journal, colMeans)
-theta.mean <- do.call("rbind", theta.mean.by)
-```
-
-Correlate topic by metadata
-```{r}
-library(corrplot)
-c <- cor(theta.mean)
-corrplot(c, method = "circle")
-```
 
 Output the topic models to JSON for use with LDAvis
 ```{r}
@@ -294,46 +257,46 @@ topicmodels_json_ldavis <- function(fitted, corpus, doc_term){
 }
 ```
 
-Now we'll run the function and supply the fitted model, corpus, and DTM
+Now we'll run the function and supply the fitted model, corpus, and DTM.
 
-```{r}
+```{r eval=FALSE}
 abs.json <- topicmodels_json_ldavis(abs.lda.model, abs.corpus, abs.dtm.reduced)
 serVis(abs.json)
 ```
+![LDAviz.png](img/LDAviz.png)
 
+So far, we've generated topics from this corpus of abstracts that consist of terms that match up with our expectations of the world.  Furthermore, we're able to visualize intertopic distances and find that despite close proximity of some topics, LDA does a reasonably good job of grouping together terms.  Next steps will involve creating a correlation plot between MeSH term and topics to determine whether or not there's a correlation between these and if topics can be used as a proxy.
 
-Term correlations with kawasaki
+#### Code for next steps
+```{r eval=FALSE}
+# Generate per document probability of topics
+theta <- as.data.frame(posterior(abs.lda.model)$topics)
+head(theta[1:5])
 
-```{r}
-findAssocs(abs.dtm, c("kawasaki"), corlimit = 0.5)
+x <- as.data.frame(row.names(theta), stringsAsFactors = FALSE)
+colnames(x) <- c("ID")
+x$ID <- as.numeric(x$ID)
+theta2 <- cbind(x, theta)
+theta2 <- left_join(theta2, abs.df, by = "ID")
+
+# grouped by journal
+theta.mean.by <- by(theta2[, 2:26], theta2$journal, colMeans)
+theta.mean <- do.call("rbind", theta.mean.by)
+
+# Generate correlation plot between MeSH terms and topics
+library(corrplot)
+c <- cor(theta.mean)
+corrplot(c, method = "circle")
+
+# Create df with PMID and the most likely topic 
+abs.topics.df <- as.data.frame(abs.topics)
+abs.topics.df <- transmute(abs.topics.df, ID = rownames(abs.topics.df), Topic = abs.topics)
+abs.topics.df$ID <- as.integer(abs.topics.df$ID)
 ```
-
-
-Figure 1. Word frequency analysis
-
-
-
-Figure . Word Cloud
-
-```{r warnings=FALSE, message=FALSE}
-library(wordcloud)
-library(RColorBrewer)
-set.seed(142)
-
-wordcloud(names(freq), freq, min.freq = 30, scale = c(5, 0.1), colors = brewer.pal(6, "Dark2"))
-```
-
-
-Figure 2. Cumulative frequency plot for 50 most frequently used words
-Figure 3. Conditional frequency distribution
-
-
-http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html
-
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 ### References
 1. Blei DM. Probabilistic topic models. Commun ACM. 2012 Apr 1;55(4):77.
-1. Yepes AJ, Mork JG, Wilkowski B, Demner Fushman D, Aronson AR. MEDLINE MeSH indexing: lessons learned from machine learning and future directions. In: Proceedings of the 2nd ACM SIGHIT symposium on International health informatics - IHI ’12. New York, New York, USA: ACM Press; 2012. p. 737. 
-1. Yu Z, Bernstam E, Cohen T, Wallace BC, Johnson TR. Improving the utility of MeSH® terms using the TopicalMeSH representation. J Biomed Inform. 2016 Jun;61:77–86. 
+2. Meza D. Topic Modeling in R [Internet]. 2015 [cited 2017 Dec 5]. Available from: http://davidmeza1.github.io/2015/07/20/topic-modeling-in-R.html
+3. Ponweiser M. Latent Dirichlet Allocation in R. Vienna University of Business and Economics; 2012. 
+4. Yepes AJ, Mork JG, Wilkowski B, Demner Fushman D, Aronson AR. MEDLINE MeSH indexing: lessons learned from machine learning and future directions. In: Proceedings of the 2nd ACM SIGHIT symposium on International health informatics - IHI ’12. New York, New York, USA: ACM Press; 2012. p. 737. 
+5. Yu Z, Bernstam E, Cohen T, Wallace BC, Johnson TR. Improving the utility of MeSH® terms using the TopicalMeSH representation. J Biomed Inform. 2016 Jun;61:77–86.
