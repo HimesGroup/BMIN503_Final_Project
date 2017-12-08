@@ -1,0 +1,749 @@
+---
+title: "BMIN503/EPID600 Final Project"
+author: "Rob Wilson"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+### Overview
+I will analyze the NHANES data from 1999-2000 for 7386 participants in a study of the tuberculin skin test (TST), also known as the purified protein derivative (PPD) test, for Latent TB Infection (LTBI). The goal is to understand better the implications of the size (i.e., the diameter, measured in millimeters) of the reaction in individuals who are reactive and whether the traditional cut-off for positivity of 10 mm makes sense from a medical perspective. Faculty I have spoken with comprise:
+
+Shane Jensen,
+Associate Professor,
+Statistics
+
+Amy Behrman,
+Associate Professor,
+Emergency Medicine
+
+Larry Singh,
+Senior Scientist (Center for Mitochondrial and Epigenomic Medicine),
+Pathology (CHOP)
+
+I've already discussed with Dr. Singh different approaches to mixture-modeling the TST data, and with Dr. Jensen the different ways to incorporate priors into the model. Most of the introdution below, on TB, and the dilemmas faced by Occupational Medicine in interpreting, and acting on, TST results, was derived from my conversations with Dr. Behrman. 
+
+### Introduction 
+Tuberculosis (TB) remains an immense health problem worldwide. Approximately one third of the world's population is, or has been, infected with Mycobacterium tuberculosis (MTB), and new infections occur in about 1% of the population each year. Mycobacteria can survive for decades in latent form; approximately one in ten latent infections eventually reactivates, and active disease, if left untreated, is more than 50% fatal. High-prevalence countries typically vaccinate their inhabitants with Bacille de Calmette et Guérin (BCG), which is, on average, approximately 50% effective in preventing tuberculosis. The tuberculin skin test (TST), also known as the purified protein derivative (PPD) test, has been around for more than 100 years and comprises a mixture of about 200 non-specific antigens that are shared with non-tuberculosis mycobacteria (NTM), including the strains developed from Mycobacterium bovis for the BCG vaccine; thus, approximately 40% of individuals uninfected with MTB, but vaccinated with BCG, test positive by the TST. The motivation for this study comes from the clinical dilemmas faced by the Occupational Medicine Service of the University of Pennsylvania Health System (UPHS). All new hires for UPHS are screened for TB infection using the TST, including those who were born outside the U.S. (where both MTB and BCG vaccination are more common). If the test is positive, a chest x-ray is obligatory to rule out active TB infection and thereby avoid exposure to UPHS patients. However, most MTB infections are latent (LTBI), and treatment of LTBI is not without risks. Which individuals with a positive TST should be treated for LTBI? Should the same standard cut-off for positivity of 10 mm be used for those with a low vs. high prior probability of LTBI, BCG, and NTM? 
+
+To begin addressing the above questions, I will analyze the NHANES data from 1999-2000 for 7386 participants in a study of the TST for LTBI, starting with mixture models to assess the contributions of NTM and BCG to lower levels of reactivity. The problem is interdisciplinary as it draws on the mathematics and statistics of mixture models (with the help of Larry Singh, who did is his PhD on mixture models), Bayesian modeling (with the help of Shane Jensen, who is an expert on Bayesian data analytics), and the occupational medicine of TB testing (with the help of Amy Behrman, who is the Director of Occupational Medicine for UPHS). 
+
+### Methods
+The data used is the NHANES data from 1999-2000 for 7386 participants in a study of the TST for LTBI. The methodological approach will be to start with mixture models to assess whether there is good evidence of more than one distribution. Then I will assess the contributions of non-tuberculosis mycobacteria (NTM) and Bacille de Calmette et Guérin (BCG) to lower levels of reactivity by separately examining the data from those participants for whom the independent skin test for NTM is postive, and for whom there is good evidence for BCG vaccination (foreign-born, BCG-vaccination scar). 
+
+Late-breaking addition: There is also NHANES data from 2011-2012 with TST data (though not BCG or NTM data); I will analyzes these data as well, and combine the two datasets for a much larger analysis. 
+
+Starting with the 1999-2000 data: Below is the code to retrieve and clean the data. The data with the TST results is in the file TB.XPT. The first task is to remove rows for which the TST is NA. The accompanying demographic data, including BCG-vaccination scar and PPD-B (made from Mycobacterium intracellulare and a surrogate for NTM), is in a separate file, DEMO.XPT. The demographic data needs to be trimmed, including only those subjects with TST data.
+
+```{r eval=TRUE, message=FALSE}
+# Recapitulate Figure 1 of Bennett et al. Am J Respir Crit Care Med 177: 348-355, 2008
+
+# https://wwwn.cdc.gov/Nchs/Nhanes/1999-2000/TB.htm
+# https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/TBX_G.htm
+
+# To read SAS files: https://github.com/mangothecat/SASxport. Also on CRAN:
+
+# Install package to read in SAS files
+# install.packages("SASxport")
+library(SASxport)
+
+# Read in NHANES data from 1999-2000
+tbdata <- read.xport(file="TB.XPT")
+
+# Get rid of rows in which PPD is NA
+tbdata <- tbdata[!is.na(tbdata$TBDPPDS),]
+
+# Take a look at the data
+# head(tbdata)
+# dim(tbdata)
+
+# Read in the demographics data for the same individuals
+demodata <- read.xport(file="DEMO.XPT")
+# head(demodata$SEQN)
+
+# Get demographic data on individuals who are in the tb dataset
+demodatatb <- demodata[tbdata$SEQN,]
+# head(demodatatb)
+# dim(demodatatb)
+# tbdata$SEQN[1:50]
+# demodatatb$SEQN[1:50]
+```
+
+### Results
+
+RESULTS PART 1: 
+
+First, a simple histogram of TST (PPD-Standard) results:
+
+```{r eval=TRUE, message=FALSE}
+library(tidyr)
+library(ggplot2)
+
+# Plot a histogram of the TST (PPD-S) results
+tbdataTST <- tbdata$TBDPPDS
+hist(tbdataTST,breaks=32,ylim=c(0,300), main="Histogram of All TST Results", xlab="Diameter of Reaction in Millimeters")
+
+# length(tbdataTST) # 7386 total
+# length(tbdataTST[tbdataTST==0]) # 5674 zero mm
+```
+
+Most of the results (5674 out of 7386) are zero millimeters. In looking at the distribution of non-zero results, the question arises as to whether there is more than one distribution underlying these data. I will test this using MClust. MClust fits up to nine Gaussian distributions using an EM algorithm and allows a plot of the Bayesian Information Criterion (BIC) for each number of distributions:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+# install.packages("mclust")
+library("mclust")
+fitzero <- Mclust(tbdataTST)
+# fitzero
+# summary(fitzero) # best model: univariate, equal variance (E) with 8 components
+plot(fitzero, what = "BIC") # Plateaus at 2
+# plot(fitzero, what = "classification")
+# plot(fitzero, what = "density")
+# table(tbdataTST, fitzero$classification)
+# fitzero$BIC
+```
+
+The BIC plateaus somewhat at two components (i.e., underlying Gaussian distributions). Re-running the MClust with two components only gives the following distributions:
+
+```{r eval=TRUE, message=FALSE}
+# Re-do with 2 underlying distributions
+fitzero2 <- Mclust(tbdataTST, G=2)
+# fitzero2 # univariate, equal variance (E) with 2 components
+# summary(fitzero2)
+# plot(fitzero2, what = "BIC") 
+# plot(fitzero2, what = "classification")
+plot(fitzero2, what = "density", main="", xlab="Diameter of Reaction in Millimeters, Two-Component Model Density Plot")
+```
+
+Using the table function in MClust (see code below), the classification cutoff is ≤ 7 mm for one distribution and ≥ 7.5 mm for the other, i.e. the cutoff is between 7 mm and 7.5 mm. Using the summary function, the distributions have means of 0.45 mm and 13.45 mm. The full summary information is shown below:
+
+```{r eval=TRUE, message=FALSE}
+# table(tbdataTST, fitzero2$classification)
+summary(fitzero2, parameters = TRUE)
+```
+
+Below is a comparison of the densities using 2, 3, 4, and 5 components:
+
+```{r eval=TRUE, message=FALSE}
+par(mfrow=c(2,2))
+plot(fitzero2, what = "density", xlab="Mm Reaction, Two-Component Model", main="")
+
+# Re-do with 3 underlying distributions
+fitzero3 <- Mclust(tbdataTST, G=3)
+# fitzero3 # univariate, equal variance (E) with 3 components
+# summary(fitzero3, parameters = TRUE)
+# plot(fitzero3, what = "BIC") 
+# plot(fitzero3, what = "classification")
+plot(fitzero3, what = "density", xlab="Mm Reaction, Three-Component Model", main="")
+# table(tbdataTST, fitzero3$classification) # Classification identical to two-component model
+
+# Re-do with 4 underlying distributions
+fitzero4 <- Mclust(tbdataTST, G=4)
+# fitzero4 # univariate, equal variance (E) with 4 components
+# summary(fitzero4, parameters = TRUE)
+# plot(fitzero4, what = "BIC") 
+# plot(fitzero, what = "classification")
+plot(fitzero4, what = "density", xlab="Mm Reaction, Four-Component Model", main="")
+# table(tbdataTST, fitzero4$classification) # Suggests classifications of ≤ 5 and ≥ 5.3, and ≤ 12.5 and ≥ 12.7
+
+# Re-do with 5 underlying distributions
+fitzero5 <- Mclust(tbdataTST, G=5)
+# fitzero5 # univariate, equal variance (E) with 5 components
+# summary(fitzero5, parameters = TRUE)
+# plot(fitzero5, what = "BIC") 
+# plot(fitzer5, what = "classification")
+plot(fitzero5, what = "density", xlab="Mm Reaction, Five-Component Model", main="")
+# table(tbdataTST, fitzero5$classification) # Suggests classifications of ≤ 2.5 and ≥ 2.7, ≤ 7.5 and ≥ 7.7, and ≤ 14.3 and ≥ 14.5
+```
+
+The two- and three-component models have the same cutoffs, namely between 7 mm and 7.5 mm. This is unsurprising given that there is no BIC advantage going from two to three components. The four-component model has cutoffs between 5 and 5.3, and between 12.5 and 12.7. The five-component model has cutoffs between 2.5 and 2.7, between 7.5 and 7.7, and between 14.3 and 14.5.
+
+Given that individuals with zero mm reactivity are unequivocally negative, I re-analyzed the data with zero mm reactivity removed, focusing on distributions within the positive results. Below is the histogram of TST results with zero mm removed: 
+
+```{r eval=TRUE, message=FALSE}
+# Get rid of zero mm results; "tbdataTSTnz" where nz is "non-zero"
+tbdataTSTnz <- tbdataTST[tbdataTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataTSTnz)
+hist(tbdataTSTnz,breaks=32,ylim=c(0,300), main="Histogram of Non-zero TST Results", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust, and fitting up to nine Gaussian distributions by EM, we get the plot shown below of the Bayesian Information Criterion (BIC) for each number of distributions:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fit <- Mclust(tbdataTSTnz)
+# fit
+# summary(fit) # V (univariate, unequal variance) model with 3 components
+plot(fit, what = "BIC") # Plateaus at 2
+# plot(fit, what = "classification")
+# table(tbdataTSTnz, fit$classification)
+```
+
+The removal of the zero-mm results allows modeling with variable variances, and the BICs are better with the variable variances (V above) than with the equal variances (E above). The plotted distributions (three components) with variable variances also match the raw data histograms much more realistically:
+
+```{r eval=TRUE, message=FALSE}
+plot(fit, what = "density", xlab="Three-component Model, Non-zero TST in millimeters")
+```
+
+The table function (code below) reveals cutoffs between 1.0 and 1.3, and between 5.0 and 5.3. 
+
+```{r eval=TRUE, message=FALSE}
+# table(tbdataTSTnz, fit$classification)
+```
+
+The summary data for the three-component model of the non-zero data is show below:
+
+```{r eval=TRUE, message=FALSE}
+summary(fit, parameters = TRUE)
+```
+
+Given that the BIC starts to plateau at two components, I re-ran MClust on the non-zero data, restricting the analysis to two components and plotting the densities: 
+
+```{r eval=TRUE, message=FALSE}
+# Re-do with 2 underlying distributions
+fit2 <- Mclust(tbdataTSTnz, G=2)
+# fit2
+# summary(fit2)
+# plot(fit2, what = "BIC") # Plateaus at 2
+# plot(fit2, what = "classification", xlab='Two-component model, non-zero TST, in millimeters reactivity')
+plot(fit2, what = "density", main='Nonzero clustering', xlab='Two-component model, non-zero TST, in millimeters reactivity')
+```
+
+The cuttoff between the two distributions in this case is between 4.7 and 5.0 mm, which is similar to the second cutoff in the three-distribution model. The parameters for the two distributions are shown below:
+
+```{r eval=TRUE, message=FALSE}
+# Get classifictions of the results
+# table(tbdataTSTnz, fit2$classification) # Shows cutoff between 4.7 and 5.0.
+# Get parameters of the two underlying distributions
+summary(fit2, parameters = TRUE)
+```
+
+RESULTS PART 2: The contributions of BCG and/or NTM to TST results less than 5 mm. 
+
+Could the lower of the two distributions in the two-distribution, non-zero model derive from BCG vaccination (583 individuals in this cohort)? This could be approached by looking at the distribution(s) of the data in individuals with BCG scars; however, individuals who received BCG vaccinations are almost invariably from countries in which TB is endemic, hence a better approach would be to look at the distribution(s) of the non-zero data in individuals without BCG scars, starting with a histogram of the actual data: 
+
+```{r eval=TRUE, message=FALSE}
+# Look at TST distribution of individuals WITHOUT bcg scars (TBABCG), where 1 is present, 2 is absent, 3 is refused
+# head(tbdata)
+tbdataNegScar <- tbdata[which(tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegScarTST <- tbdataNegScar$TBDPPDS
+# hist(tbdataNegScarTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataNegScarTSTnz <- tbdataNegScarTST[tbdataNegScarTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataNegScarTSTnz)
+hist(tbdataNegScarTSTnz,breaks=32,ylim=c(0,300), main="Histogram of Non-zero TST Results, No BCG Scar", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust, and fitting up to nine Gaussian distributions by EM, the plot below shows the Bayesian Information Criterion (BIC) for each number of distributions:
+
+```{r eval=TRUE, message=FALSE}
+# Mclust tbdataPosScarTSTnz, where NS = Negative Scar
+fitNS <- Mclust(tbdataNegScarTSTnz)
+# fitNS # 3 components best
+# summary(fitNS)
+plot(fitNS, what = "BIC") # Plateaus at 2
+```
+
+The result is similar to that obtained with BCG-scar individuals included, and the density plot is similar as well:
+
+```{r eval=TRUE, message=FALSE}
+plot(fitNS, what = "density", xlab='Three-component model, non-zero TST, no BCG scar, in millimeters reactivity')
+```
+
+Repeating the analysis with two components, and plotting, gives results that are also similar to those obtained with BCG-scar individuals included:
+
+```{r eval=TRUE, message=FALSE}
+# Re-do with 2 components
+fitNS2 <- Mclust(tbdataNegScarTSTnz, G=2)
+# fitNS2
+# summary(fitNS2)
+# plot(fitNS2, what = "BIC")
+plot(fitNS2, what = "density", xlab='Two-component model, non-zero TST, no BCG scar, in millimeters reactivity')
+```
+
+And the parameters are similar as well:
+
+```{r eval=TRUE, message=FALSE}
+# Get parameters of the two underlying distributions
+summary(fitNS2, parameters = TRUE)
+```
+
+Could the lower of the two distributions in the two-distribution, non-zero model derive from NTM? As with BCG scars, this could be approached by looking at the distribution(s) of the data in individuals with negative results in the PPD-B, which is a surrogate measure of NTM. I did this analysis, and got results similar to those above in analyzing BCG-scar-negative individuals (data not shown). A third hypothesis to explain the lower of the two distributions in the two-distribution, non-zero model is that the lower distribution derives from some combination of BCG and/or NTM. To test this hypothesis, I removed both the BCG-scar-positive, and the PPD-B-positive (NTM-positive), individuals and re-analyzed -- the histogram of the raw data lacking both is shown below: 
+
+```{r eval=TRUE, message=FALSE}
+# Look at TST in those who are PPD-B (TBDPPDB) NEGATIVE AND WITHOUT bcg scars (TBABCG; where 1 is present, 2 is absent, 3 is refused) to check whether one OR the other contributes to lower distribution. 
+tbdataNegBoth <- tbdata[which(tbdata$TBDPPDB==0 & tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegBothTST <- tbdataNegBoth$TBDPPDS
+# hist(tbdataNegBothTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataNegBothTSTnz <- tbdataNegBothTST[tbdataNegBothTST != 0]
+# head(tbdataTSTnz)
+# length(tbdataPosScarTSTnz)
+hist(tbdataNegBothTSTnz,breaks=32,ylim=c(0,300), main='Histogram of non-zero TST data, no BCG, PPD-B negative', xlab='mm reactivity')
+```
+
+The lower distribution (less than 5 mm) is still there. After MClust, there is a similar distribution of BICs, with a plateau at two components for the variable variance model:
+
+```{r eval=TRUE, message=FALSE}
+# Mclust tbdataNegNTMtstNZ, where NB = Negative Both (PPD-B, Scar)
+fitNB <- Mclust(tbdataNegBothTSTnz)
+# fitNB # 3 components best
+# summary(fitNB)
+plot(fitNB, what = "BIC") # V plateaus at 2, E plateaus at 3
+```
+
+A plot of the densities for the three-component model looks similar to that of the three-component model with BCG-scar and NTM-positive individuals included:
+
+```{r eval=TRUE, message=FALSE}
+plot(fitNB, what = "density", xlab='Three-component model, non-zero TST, no BCG scar, PPD-B negative, in millimeters reactivity')
+```
+
+Likewise, the two-component model is similar, with a cutoff between 4.3 and 5.0 mm:
+
+```{r eval=TRUE, message=FALSE}
+# Re-do with 2 components
+fitNB2 <- Mclust(tbdataNegBothTSTnz, G=2)
+# fitNB2
+# summary(fitNB2)
+# plot(fitNS2, what = "BIC") # Plateaus at 2
+plot(fitNB2, what = "density", xlab='Two-component model, non-zero TST, no BCG scar, PPD-B negative, in millimeters reactivity')
+
+# Get classifictions of the results
+# table(tbdataNegBothTSTnz, fitNB2$classification) # Again (!) shows cutoffs around 5 (between 4.3 and 5.0).
+```
+
+The parameters are similar as well:
+
+```{r eval=TRUE, message=FALSE}
+summary(fitNB2, parameters = TRUE)
+```
+
+RESULTS PART 3: Parsing the TST results above 5 mm. 
+
+The results above suggest that TST results below 5 mm are truly negative, perhaps from cross-reactivity with antigens common in the environment. In the context of Gaussian mixture models, the results below 5 mm are a tail of the distribution represented most prominently by zero mm. It remains to model the results above 5 mm to see whether there are underlying distributions that might be parsed. I will start by removing all results ≤5 mm, and then plot a histogram of the remaining raw data:
+
+```{r eval=TRUE, message=FALSE}
+tbdataTSThi <- tbdataTST[tbdataTST > 5]
+# head(tbdataTSThi)
+# length(tbdataTSThi) # 576
+hist(tbdataTSThi,breaks=32,ylim=c(0,300), main="Histogram of the 576 TST Results > 5 mm", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust, and fitting up to nine Gaussian distributions by EM, a plot the results is shown below of the Bayesian Information Criterion (BIC) for each number of distributions:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitHi <- Mclust(tbdataTSThi)
+# fitHi
+# summary(fitHi) # V (univariate, unequal variance) model with 3 components
+plot(fitHi, what = "BIC") # Plateaus at 2, improves a bit with 3
+# plot(fitHi, what = "classification")
+# table(tbdataTSThi, fitHi$classification)
+```
+
+The removal of the results ≤ 5 mm again allows modeling with variable variances, and the BICs are better with the variable variances (V above) than with the equal variances (E above). The plotted distributions with variable variances mirror the raw data histogram, with a valley between 5 and 10 mm:
+
+```{r eval=TRUE, message=FALSE}
+plot(fitHi, what = "density", xlab='Three-component model, TST > 5 mm, in millimeters reactivity')
+```
+
+The table function (code below) reveals cutoffs between 7.5 and 7.7, and between 12.7 and 13.0. 
+
+```{r eval=TRUE, message=FALSE}
+# table(tbdataTSThi, fitHi$classification)
+```
+
+The summary data for the three-component model of the data > 5 mm is shown below, with means of 6.5, 10.7, and 15.1:
+
+```{r eval=TRUE, message=FALSE}
+summary(fitHi, parameters = TRUE)
+```
+
+Given that the BIC starts to plateau at two components, I re-ran MClust on the > 5 mm data, restricting the analysis to two components and plotting the densities: 
+
+```{r eval=TRUE, message=FALSE}
+# Re-do with 2 underlying distributions
+fitHi2 <- Mclust(tbdataTSThi, G=2)
+# fitHi2
+# summary(fitHi2)
+# plot(fitHi2, what = "BIC") # Plateaus at 2
+# plot(fitHi2, what = "classification")
+plot(fitHi2, what = "density", xlab='Two-component model, TST > 5 mm, in millimeters reactivity')
+```
+
+The cuttoff between the two distributions in this case is between 7.0 and 7.5 mm, which is similar to the first cutoff in the three-distribution model. The parameters for the two distributions are shown below, with means of 6.5 and 13.2 mm:
+
+```{r eval=TRUE, message=FALSE}
+# Get classifictions of the results
+# table(tbdataTSThi, fitHi2$classification) # Shows cutoff between 7.0 and 7.5.
+# Get parameters of the two underlying distributions
+summary(fitHi2, parameters = TRUE)
+```
+
+RESULTS PART 4: The contributions of BCG and/or NTM to TST results > 5 mm. 
+
+Could the distribution with mean 6.5 mm derive from BCG vaccination (583 individuals in this cohort)? This could be approached by looking at the distribution(s) of the data in individuals with BCG scars; however, individuals who received BCG vaccinations are almost invariably from countries in which TB is endemic, hence, as in Part 2, a better approach would be to look at the distribution(s) of the > 5 mm data in individuals without BCG scars, starting with a histogram of the actual data: 
+
+```{r eval=TRUE, message=FALSE}
+# Look at TST distribution of individuals WITHOUT bcg scars (TBABCG), where 1 is present, 2 is absent, 3 is refused
+# head(tbdata)
+tbdataNegScar <- tbdata[which(tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegScarTST <- tbdataNegScar$TBDPPDS
+# hist(tbdataNegScarTST,breaks=32,ylim=c(0,300))
+
+# Get rid of negatives (zero mm), where nz is "non-zero"
+tbdataNegScarTSThi <- tbdataNegScarTST[tbdataNegScarTST > 5]
+# head(tbdataTSTnz)
+# length(tbdataNegScarTSTnz)
+hist(tbdataNegScarTSThi,breaks=32,ylim=c(0,300), main="Histogram of > 5 mm TST Results, No BCG Scar", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust, and fitting up to nine Gaussian distributions by EM, shown below is the plot of the Bayesian Information Criterion (BIC) for each number of distributions:
+
+```{r eval=TRUE, message=FALSE}
+# Mclust tbdataNegScarTSThi, where NS = Negative Scar and hi = > 5 mm
+fitNShi <- Mclust(tbdataNegScarTSThi)
+# fitNShi # 3 components best
+# summary(fitNShi)
+plot(fitNShi, what = "BIC") # Plateaus at 2
+```
+
+The result is similar to that obtained with BCG-scar individuals included, and the density plot is similar as well:
+
+```{r eval=TRUE, message=FALSE}
+plot(fitNShi, what = "density", xlab='Three-component model, TST > 5 mm, no BCG scar, in millimeters reactivity')
+```
+
+And the parameters are similar as well:
+
+```{r eval=TRUE, message=FALSE}
+# Get parameters of the two underlying distributions
+summary(fitNShi, parameters = TRUE)
+```
+
+As in Part 2 above, a third hypothesis to explain the lower of the two distributions in the two-distribution model is that the lower distribution derives from some combination of BCG and/or NTM. To test this hypothesis, I removed both the BCG-scar-positive, and the PPD-B-positive (NTM-positive), individuals and re-analyzed -- the histogram of the raw data lacking both is shown below: 
+
+```{r eval=TRUE, message=FALSE}
+# Look at TST in those who are PPD-B (TBDPPDB) NEGATIVE AND WITHOUT bcg scars (TBABCG; where 1 is present, 2 is absent, 3 is refused) to check whether one OR the other contributes to the distribution with a mean of 6.5 mm. 
+tbdataNegBoth <- tbdata[which(tbdata$TBDPPDB==0 & tbdata$TBABCG==2),]
+# head(tbdataPosScar)
+tbdataNegBothTST <- tbdataNegBoth$TBDPPDS
+# hist(tbdataNegBothTST,breaks=32,ylim=c(0,300))
+
+# Keep results > 5 mm, designated by "hi"
+tbdataNegBothTSThi <- tbdataNegBothTST[tbdataNegBothTST > 5]
+# head(tbdataNegBothTSThi)
+# length(tbdataNegBothTSThi) # 90
+hist(tbdataNegBothTSThi,breaks=32,ylim=c(0,300), main='Histogram of TST > 5 mm, no BCG scar, PPD-B negative', xlab="Reaction in mm")
+```
+
+These data are likely too sparse, which may explain why, after running MClust, there is a plateau at one component in the BIC plot:
+
+```{r eval=TRUE, message=FALSE}
+# Mclust tbdataNegBothTSThi, where NB = Negative Both (PPD-B, Scar)
+fitNBhi <- Mclust(tbdataNegBothTSThi)
+# fitNBhi # 3 components best
+# summary(fitNBhi)
+plot(fitNBhi, what = "BIC") # V plateaus at 1, E plateaus at 1
+```
+
+Nevertheless, the cutoff for the distribution centered at 6.5 mm is similar to that seen with the three-component model for all results > 5 mm, with a cutoff between 7.5 and 8.0, and with a similar fraction of the results in the distribution centered at 6.5 mm. 
+
+```{r eval=TRUE, message=FALSE}
+# Get classifictions of the results
+# table(tbdataNegBothTSThi, fitNBhi$classification) # Again (!) shows cutoffs between 7.5 and 8.0, and between 12.0 and 12.3, in the three-component model.
+```
+
+The parameters for the distribution centered at 6.5 mm are similar as well and if anything, there is a higher proportion of results in the distribution centered at 6.5 mm (21%, compared to 15% in all results > 5 mm):
+
+```{r eval=TRUE, message=FALSE}
+summary(fitNBhi, parameters = TRUE)
+```
+
+RESULTS PART 4: NHANES data from 2011-2012
+
+Turns out there are data for TST in the 2011-2012 NHANES study. (Who knew?) I started by looking at the newer data separately, starting with the same cleanup and histogram:
+
+```{r eval=TRUE, message=FALSE}
+# Read in NHANES data from 2011-2012
+tbdataG <- read.xport(file="TBX_G.XPT")
+# dim(tbdataG)
+head(tbdataG)
+length(tbdataG$TBDRUIND)
+
+# Get rid of rows in which PPD is NA
+tbdataG <- tbdataG[!is.na(tbdataG$TBDRUIND),]
+
+# Plot a histogram of the TST (PPD) results
+tbdataGtst <- tbdataG$TBDRUIND
+hist(tbdataGtst,breaks=32,ylim=c(0,300), main="Histogram of All TST Results", xlab="Diameter of Reaction in Millimeters")
+
+# length(tbdataGtst) # 7386 total
+# length(tbdataTST[tbdataTST==0]) # 5674 zero mm
+
+```
+
+Note that in these data, there is no "valley" midway between 5 and 10 mm, suggesting that this is an artifact of the 1999-2000 study. Running MClust on the newer data, the following BIC plot is obtained:
+
+```{r eval=TRUE, message=FALSE}
+
+# MClust the data
+fitzeroG <- Mclust(tbdataGtst)
+# fitzeroG
+# summary(fitzeroG) # best model: univariate, equal variance (E) with 8 components
+plot(fitzeroG, what = "BIC") # Plateaus at 3
+# plot(fitzeroG, what = "classification")
+# plot(fitzeroG, what = "density")
+# table(tbdataGtst, fitzeroG$classification)
+# fitzeroG$BIC
+```
+
+The density plot of the three-component model is shown below:
+
+```{r eval=TRUE, message=FALSE}
+fitzeroG3 <- Mclust(tbdataGtst, G = 3)
+# fitzeroG
+# summary(fitzeroG) # best model: univariate, equal variance (E) with 8 components
+# plot(fitzeroG, what = "BIC") # Plateaus at 3
+plot(fitzeroG3, what = "density", xlab='Three-component model, millimeters reactivity')
+# table(tbdataGtst, fitzeroG$classification)
+# fitzeroG$BIC
+```
+
+Again, the interest here is in the non-zero results (the zero results being inarguably negative). Removing the non-zero results and re-plotting:
+
+```{r eval=TRUE, message=FALSE}
+# Get rid of zero mm results; "tbdataGtstNZ" where NZ is "non-zero"
+tbdataGtstNZ <- tbdataGtst[tbdataGtst != 0]
+# head(tbdataTSTnz)
+# length(tbdataTSTnz)
+hist(tbdataGtstNZ,breaks=32,ylim=c(0,300), main="Histogram of Non-zero TST Results, 2011-2012", xlab="Diameter of Reaction in Millimeters")
+```
+
+And the BIC plot of the non-zero results:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitGnz <- Mclust(tbdataGtstNZ)
+# fit
+# summary(fit) # V (univariate, unequal variance) model with 3 components
+plot(fitGnz, what = "BIC") # Plateaus at 2
+# plot(fit, what = "classification")
+# table(tbdataTSTnz, fit$classification)
+
+```
+
+Fitting the two-component model, we see a similar "valley" just below 5 mm:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitGnz2 <- Mclust(tbdataGtstNZ, G = 2)
+# fit
+# summary(fit) # V (univariate, unequal variance) model with 3 components
+# plot(fitGnz2, what = "BIC") # Plateaus at 2
+# plot(fit, what = "classification")
+#table(tbdataGtstNZ, fitGnz2$classification)
+plot(fitGnz2, what = "density", xlab='Two-component model, non-zero TST, millimeters reactivity')
+```
+
+RESULTS PART 5: Combined 1999-2000 and 2011-2012 NHANES data
+
+Given that there are two datasets, combining them makes sense, particularly for analysis of positive data only, and positive data above the clearly negative cutoff around 4 mm. Combining the data, we have 13,514 TST results, and the following histogram:
+
+```{r eval=TRUE, message=FALSE}
+
+# Combine 1999-2000 and 2011-2012
+combTST <- c(tbdataTST,tbdataGtst)
+# length(combTST) # 13,514
+hist(combTST,breaks=32,ylim=c(0,300), main="Histogram of Combined 13,514 TST Results", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust on the total combined data, the BIC plot is shown below:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitComb <- Mclust(combTST)
+# fitComb
+# summary(fitComb) # V (univariate, unequal variance) model with   components
+plot(fitComb, what = "BIC") # Plateaus at 2
+# plot(fitComb, what = "classification")
+# table(combTST, fitComb$classification)
+```
+
+Parsing out the (3135) non-zero results, the histogram is shown below:
+
+```{r eval=TRUE, message=FALSE}
+# Get rid of zero mm results; "combTSTnz" where nz is "non-zero"
+combTSTnz <- combTST[combTST != 0]
+# head(combTSTnz)
+# length(combTSTnz) # 3135
+hist(combTSTnz,breaks=32,ylim=c(0,300), main="Histogram of 3135 Non-zero TST Results", xlab="Diameter of Reaction in Millimeters")
+```
+
+And again running MClust and plotting the BIC:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitCombNZ <- Mclust(combTSTnz)
+# fitCombNZ
+# summary(fitCombNZ) # V (univariate, unequal variance) model with   components
+plot(fitCombNZ, what = "BIC") # Plateaus at 2 or 3
+# plot(fitCombNZ, what = "classification")
+# table(combTSTnz, fitCombNZ$classification)
+```
+
+Running the three-component model, the following density plot is obtained:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data with 3 components
+fitCombNZ3 <- Mclust(combTSTnz, G=3)
+# fitCombNZ3
+# summary(fitCombNZ3) # V (univariate, unequal variance) model with   components
+# plot(fitCombNZ3, what = "BIC") # Plateaus at 2 or 3
+# plot(fitCombNZ3, what = "classification")
+# table(combTSTnz, fitCombNZ3$classification)
+plot(fitCombNZ3, what = "density", xlab='Three-component model, Combined non-zero TST, millimeters reactivity')
+```
+
+Because the two components below 5 mm are likely both negative, running the two component model, the following density plot is obtained:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data with 2 components
+fitCombNZ2 <- Mclust(combTSTnz, G=2)
+# fitCombNZ2
+# summary(fitCombNZ2) # V (univariate, unequal variance) model with   components
+# plot(fitCombNZ2, what = "BIC") # Plateaus at 2 or 3
+# plot(fitCombNZ2, what = "classification")
+# table(combTSTnz, fitCombNZ2$classification)
+plot(fitCombNZ2, what = "density", xlab="Two-component Model, Combined Non-zero TST in millimeters")
+
+```
+
+In the summary data (not shown), a cutoff of 4.5 mm is obtained for the classification.
+
+RESULTS PART 6: Combined data, > 4.5 mm only 
+
+The results above suggest that TST results below 4.5 mm are truly negative, perhaps from cross-reactivity with antigens common in the environment. In the context of these Gaussian mixture models, the results below 4.5 mm are likely a tail of the distribution represented most prominently by zero mm. It remains to model the results above 4.5 mm to see whether there are underlying distributions that might be parsed. I will start by removing all results ≤ 4.5 mm, and then plot a histogram of the remaining raw data:
+
+```{r eval=TRUE, message=FALSE}
+combTSTnzHi <- combTSTnz[combTSTnz > 4.5]
+# head(combTSTnzHi)
+# length(combTSTnzHi) # 1405
+hist(combTSTnzHi,breaks=32,ylim=c(0,300), main="Histogram of the 1405 TST Results > 4.5 mm", xlab="Diameter of Reaction in Millimeters")
+```
+
+Running MClust, the following BIC plot is obtained:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data
+fitCombTSTnzHi <- Mclust(combTSTnzHi)
+# length(combTSTnzHi) # 1405
+# fitCombTSTnzHi
+# summary(fitCombTSTnzHi) # V (univariate, unequal variance) model with   components
+plot(fitCombTSTnzHi, what = "BIC") # Plateaus at 2, 3, then up at 4
+# plot(fitCombTSTnzHi, what = "classification")
+# table(combTSTnzHi, fitCombTSTnzHi$classification)
+```
+
+The four-component density plot is shown below:
+
+```{r eval=TRUE, message=FALSE}
+plot(fitCombTSTnzHi, what = "density", xlab="Four-component model, Combined TST data > 4.5 mm, millimeters reactivity")
+```
+
+A classification plot for the four-component model is shown below:
+
+```{r eval=TRUE, message=FALSE}
+summary(fitCombTSTnzHi, parameters = TRUE)
+plot(fitCombTSTnzHi, what = "classification", xlab='Four-component model, Combined TST data > 4.5 mm, millimeters reactivity"')
+```
+
+A density plot of the three-component model is shown below:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data with 3 components
+fitCombTSTnzHi3 <- Mclust(combTSTnzHi, G = 3)
+# length(combTSTnzHi) # 1405
+# fitCombTSTnzHi3
+# summary(fitCombTSTnzHi3) # V (univariate, unequal variance) model with   components
+# plot(fitCombTSTnzHi3, what = "BIC") # Plateaus at 2, 3, then up at 4
+# plot(fitCombTSTnzHi3, what = "classification", xlab="Three-component Model, Combined > 4.5-millimeter TST")
+# table(combTSTnzHi, fitCombTSTnzHi3$classification)
+plot(fitCombTSTnzHi3, what = "density", xlab="Three-component Model, Combined > 4.5-millimeter TST")
+```
+
+A classification plot for the three-component model is shown below:
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data with 3 components
+fitCombTSTnzHi3 <- Mclust(combTSTnzHi, G = 3)
+# length(combTSTnzHi) # 1405
+# fitCombTSTnzHi3
+# summary(fitCombTSTnzHi3) # V (univariate, unequal variance) model with   components
+# plot(fitCombTSTnzHi3, what = "BIC") # Plateaus at 2, 3, then up at 4
+plot(fitCombTSTnzHi3, what = "classification", xlab="Three-component Model, Combined > 4.5-millimeter TST")
+# table(combTSTnzHi, fitCombTSTnzHi3$classification)
+# plot(fitCombTSTnzHi3, what = "density", xlab="Three-component Model, Combined > 4.5-millimeter TST")
+```
+
+The summary data for the three-component model is shown below:
+
+```{r eval=TRUE, message=FALSE}
+summary(fitCombTSTnzHi3, parameters = TRUE)
+```
+
+The classification fit is shown below because it is so interesting. The reason it is so interesting is that the cutoffs are 4.5, 9, and 14 mm, which are remarkably similar to the CDC's cutoffs for high, medium, and low-risk individuals, which are 5, 10, and 15 mm. 
+
+```{r eval=TRUE, message=FALSE}
+table(combTSTnzHi, fitCombTSTnzHi3$classification)
+```
+
+For completeness, the density plot of the two-component model is shown below: 
+
+```{r eval=TRUE, message=FALSE}
+# MClust the data with 2 components
+fitCombTSTnzHi2 <- Mclust(combTSTnzHi, G = 2)
+# length(combTSTnzHi) # 1405
+# fitCombTSTnzHi2
+# summary(fitCombTSTnzHi2) # V (univariate, unequal variance) model with   components
+# plot(fitCombTSTnzHi2, what = "BIC") # Plateaus at 2, 3, then up at 4
+# plot(fitCombTSTnzHi2, what = "classification")
+# table(combTSTnzHi, fitCombTSTnzHi2$classification)
+plot(fitCombTSTnzHi2, what = "density", xlab="Two-component Model, Combined > 4.5-millimeter TST")
+```
+
+In the two-component model, the largest distribution in the three-component model is subsumed in the second largest distribution, pulling the 9 mm cutoff slightly up to 9.3 mm:
+
+```{r eval=TRUE, message=FALSE}
+table(combTSTnzHi, fitCombTSTnzHi2$classification)
+```
+
+DISCUSSION
+
+In this study I have modeled the TST using the NHANES 1999-2000 and 2011-2012 datasets. Using the MClust package in R, I performed Gaussian mixture modeling of each dataset, and the combined datasets, for the full data, non-zero data, and data above 5 mm and 4.5 mm respectively, which likely comprise positive results. Sub-distributions are evident, raising the question: What do the sub-distributions represent? I have several hypotheses:
+
+1. The subsets are an artifact of overfitting. I think this is unlikely since the data from both datasets are very obviously not singly distributed, just by eye. Also, the two datasets were obtained independently, 12 years apart, and show similar results. Moreover, the combined datasets comprise 13,514 TSTs, and 3135 non-zero TSTs; these are hardly sparse datasets. 
+
+2. One or more of the subsets are from BCG vaccination. To test this I analyzed the 1999-2000 dataset, which included data on BCG scars. The data were not appreciably changed, suggesting that BCG vaccination does not explain the subsetting. 
+
+3. One or more of the subsets are from NTM infection. To test this I analyzed the 1999-2000 dataset, which included data on PPD-B, which measures the reaction the M. intracellulare. The data were not appreciably changed, suggesting that NTM does not explain the subsetting, with the caveat that M. intracellulare is only one of many NTM. 
+
+4. Some combination 2 and 3 above. I analyzed data with both BCG-scar and PPD-B-positive individuals included and excluded and saw little change, with the caveat that the data were, at this point, sparse. Unfortunately, the 2011-2012 data does not include BCG scar or PPD-B data. 
+
+5. The subsets represent at least two components of LTBI, which I would suggest (and Dr. Behrman agrees) is a misnomer. In the field of infectious disease, "latent infection" refers to the persistance of an infectious organism in the body. LTBI actually refers to a reactivation risk and lumps together what I would like to call "True LTBI," in which the organism (Mtb) is still present in the body, and what I would like to call "Immune LTBI," in which the organism (Mtb) is no longer present but the immune reaction (TST positivity) remains, at perhaps a lower level since there is no longer a periodic boosting of the immune system by the Mtb that periodically escapes and is held in check. A prediction of this hypothesis is that the reactivation risk should differ between the subsets revealed by my Gaussian mixture modeling of the TST results. Dr. Behrman is unaware of a study that addresses this question. Such a study might take prospective or retrospective form, the retrospective form comprising a look-back at previous TST results in individuals who later reactivate to see whether they disproportionally derive from one of the Gaussian-mixture-model subsets. 
+
+The most striking finding, perhaps, derives from the three-component modeling of the combined datasets, which revealed prominent cutoffs of 4.5 mm, 9 mm, and 14 mm. These cutoffs are remarkly close to the CDC's positivity cutoffs for high, medium, and low-risk individuals, respectively. That the immunocompromised individuals in the high-risk group have the lowest cutoff makes sense from the perspective of their difficulty in mounting an immune response. The other CDC categories of risk involve exposure risk, and the idea of using different cutoffs for different risks in these groups amounts to a lumping together of prior and conditional probabilities. This makes practical sense, but I would submit that teasing apart the priors and the conditionals will enhance our understanding of the test results and allow us to refine our estimates of the risk of LTBI, thus enabling better decision making for physicians such as Dr. Behrman, who are confronted with difficult decisions regarding whether to treat or not treat otherwise asymptomatic individuals at some uncertain risk of reactivation. The study described herein is part of a larger study to more accurately model Tb testing for the purpose of aiding in such decision-making. 
