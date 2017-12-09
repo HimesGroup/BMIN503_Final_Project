@@ -4,8 +4,6 @@ This repository contains the following materials for my final project, which con
 
 ##Final project template - overview of the project background, methods and results
 
-##Code for various stagest of the project - loading and cleaning data, merging datsets, descriptive analysis and (eventually) regression analysis and predictive modeling.
+##Code for various stagest of the project - loading and cleaning data, creating datsets, descriptive and regression analysis.
 
-##Results/Output for various stages of the project - descriptives, regression, predictive
-
-##(eventually) example datasets
+##Mock datasets
