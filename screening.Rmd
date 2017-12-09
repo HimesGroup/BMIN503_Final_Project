@@ -1,0 +1,163 @@
+---
+title: "Screening"
+output:
+  html_document: default
+---
+
+
+```{r include=FALSE}
+library(knitr)
+library(kableExtra)
+library(lubridate)
+library(tidyverse)
+library(dplyr)
+purl("creating_datasets.Rmd", output = "creating_datasets.R", documentation = 2)
+source(file="creating_datasets.R")
+```
+
+```{r include=FALSE}
+##FI screening by year
+#total screens by year - totals 16,297
+screensbyyear<-distinctFI %>% #dataset with one line per visit per child
+  group_by(year(Visitdate)) %>% #group all visits by year
+  dplyr::summarize(FI_total_screens=n())  #count screens (by year group)
+
+#positive screens by year
+positivesbyyear<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="yes") %>% 
+  dplyr::summarize(FI_positive_screens=n())
+
+#RXes for positive screens by year
+RXforposFI<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="yes") %>% 
+  filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_positives=n()) 
+
+ 
+RXforscreenstable<-suppressMessages(full_join(screensbyyear,positivesbyyear))
+RXforscreenstable2<-full_join(RXforscreenstable,RXforposFI)
+
+
+#negative screens by year
+negativesbyyear<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="no") %>% 
+  dplyr::summarize(FI_negative_screens=n())
+
+#RXes for negative screens by year
+RXfornegFI<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="no") %>% 
+  filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_negatives=n()) 
+
+
+RXforscreenstable3<-suppressMessages(full_join(RXforscreenstable2,negativesbyyear))
+RXforscreenstable4<-full_join(RXforscreenstable3,RXfornegFI)
+
+
+
+#FIrate by year
+screensbyyeartb<-suppressMessages(full_join(screensbyyear,positivesbyyear))
+screensbyyearrate<-screensbyyeartb %>% 
+  mutate(`FI_rate%`=round((FI_positive_screens/FI_total_screens)*100))
+
+
+
+#RXforscreenstable
+m<-sum(RXforscreenstable4$FI_total_screens)
+n<-sum(RXforscreenstable4$FI_positive_screens)
+o<-sum(na.omit(RXforscreenstable4$RX_for_positives))
+p<-sum(RXforscreenstable4$FI_negative_screens)
+q<-sum(na.omit(RXforscreenstable4$RX_for_negatives))
+
+FItabletotals<-c("totals",m,n,o,p,q)
+RXforscreenstable5<-rbind(RXforscreenstable4,FItabletotals)
+```
+
+```{r echo=FALSE}
+screensbyyearrate %>% 
+  knitr::kable("html", caption="FI rate by year (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r echo=FALSE}
+ RXforscreenstable5 %>% 
+  knitr::kable("html", caption="FI screening by year (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r include=FALSE}
+RXforscreenstable6<-RXforscreenstable4[4:6,] %>% 
+  mutate(RX_for_FI_Pos_rate=round((RX_for_positives/FI_positive_screens)*100)) %>% 
+  mutate(RX_for_FI_Neg_rate=round((RX_for_negatives/FI_negative_screens)*100))
+
+RXbyresultrate<-RXforscreenstable6 %>% 
+  select('year(Visitdate)',RX_for_FI_Pos_rate,RX_for_FI_Neg_rate)
+```
+
+```{r echo=FALSE}
+ RXbyresultrate %>% 
+  knitr::kable("html", caption="RX rate (%) by screen type (2015-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+```{r include=FALSE}
+posredemps<-fullmerge %>% 
+  filter(FI.x=="yes"|FI.y=="yes") %>% 
+  filter(Status=="Complete") %>% 
+  summarize(`FI_redemps`=n())
+
+posnonredemps<-fullmerge %>% 
+  filter(FI.x=="yes"|FI.y=="yes") %>% 
+  filter(Status!="Complete") %>% 
+  summarize(`FI_non_redemps`=n())
+
+positives<-cbind(posredemps,posnonredemps)
+
+negredemps<-fullmerge %>% 
+  filter(FI.x=="no"|FI.y=="no") %>%
+  filter(Status=="Complete") %>% 
+  summarize(`FI_redemps`=n())
+
+negnonredemps<-fullmerge %>% 
+  filter(FI.x=="no"|FI.y=="no") %>%
+  filter(Status!="Complete") %>% 
+  summarize(`FI_non_redemps`=n())
+
+negatives<-cbind(negredemps,negnonredemps)
+
+t2t<-rbind(positives,negatives)
+
+results<-c("positive","negative")
+
+total<-cbind(results, t2t)
+```
+
+```{r echo=FALSE}
+total %>% 
+  knitr::kable("html", caption="Redemptions by screen results") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+```{r echo=FALSE, eval=TRUE}
+FIredemps<-c(11,65)
+FInonredemps<-c(49,213)
+redempbyscreen<-cbind(FIredemps,FInonredemps)
+redempbyscreen<-as.data.frame(redempbyscreen)
+row.names(redempbyscreen)<-c("positive","negative")
+redempbyscreen
+chisq.test(redempbyscreen,correct=FALSE)
+```

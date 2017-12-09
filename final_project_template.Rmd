@@ -1,6 +1,6 @@
 ---
-title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+title: "Participation in a pediatric outpatient produce program"
+author: "Kelly Courts"
 output: 
   html_document:
     toc: false 
@@ -11,22 +11,896 @@ output:
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
-***
-Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
 
 ### Overview
-In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+This project explores participation in a weekly produce box program in an outpatient pediatric primary care setting. Existing EHR and programmatic datasets are merged to describe referrals to and participation in the program and to assess factors associtated with referral and participation. These questions are of particular interest as health systems seek to address social determinants of health, including food insecurity, through interventions with little evidence of program effectiveness or relevant target populations.
+
 
 
 ### Introduction 
-In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
+Recently, and especially thanks to the ACA, healthcare systems are placing increasing focus on addressing the social determinants of health (food security, housing, etc.) of patients in addition to their medical issues.  This stems from evidence showing that social factors play a much greater role in health (40-75%) than does healthcare provision (10%).  Research on which interventions are best suited for which populations are scant, however, especially as regards food insecurity.
 
-In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+Food insecurity (FI) is of particular concern in Philadelphia, where the FI rate is nearly twice that of the national rate, ~22% vs. ~13%, respectively.  While research shows that parents often attempt to shield their children from the more drastic aspects of FI (i.e. cutting meals), evidence also shows that children living in food insecure households experience a variety of negative health outcomes, immediately and over the lifecourse.  This evidence has led many pediatric primary care practices to begin screening for FI during well-child checks, a practice eventually endorsed and officially recommended by the American Association of Pediatrics.
+
+The practice studied here is located in the most poverty-stricken (and food insecure) neighborhood of Philadelphia and sees 20,000+ children each year, many of them living in low-income families.  Practice physicians instituted screening for social determinants, including FI, in 2011 and an on-site produce program was launched in 2012 as an actionable response to FI+ screens.  A complementary referral ("RX") program was also created that allows practitioners to "prescribe" program participation for their patients, which functionally translates into a program discount.  Initially, those referrals were provided manually using paper pads, but both the screen and the referral were eventually integrated into the practice EHR, though at slightly different times.
+
+Addressing the social determinants of health in clinic settings is inherently interdisciplinary, as it brings together clinicians with social service providers to address health outcomes via a public health lens.  Each brings knowledge of the issues, but efforts will only be successful if evaluation is conducted that shows intervention programs truly impact the health of recipients.  Unfortunately for that endeavor, program data is often collected without forethought for how it will be analyzed which seriously limits what conclusions can be drawn and requires methods that take the provenance and shortcomings of the data into consideration. 
 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+For this project, three separate, but related, datasets were merged, incorporating aspects of patient visit information and programmatic data into one complete set.  As the original datasets each contain identifiable information, only mock examples are included here.  Additionally, a redacted version of the code to load and clean the datasets is included, as the full code for cleaning includes identifiable elements.
+
+The first dataset was an FI registry drawn from an EHR system. This dataset contained visit records of all patients screened for FI at any point beginning in April 2012, when a two item screener was incorporated into the EHR, thru October 2017.The registry contained 79,286 observations of 30 variables, including demographics, referral, provider, location, and insurance information, health stats, and all diagnoses associated with each visit.
+
+The second dataset was drawn from the same EHR and contained visit records of all patients who received an (electronic) referral to the produce program between February 2015, when the referral was added to the EHR, thru October 2017.  This registry contained 14,492 observations of the same 30 variables in the FI registry.
+
+The third dataset was an excel spreadsheet maintained by produce program staff containing any referral written from February 2014 thru October 2017, including paper referrals written prior to and after referral inclusion in the EHR.  This dataset contained 2736 observations of 21 variables, including caregiver contact information, referral provider, location, and date, as well as follow-up and outcomes for each referral.
+
+The three datasets were manipulated to determine both distinct visits and distinct families for each.  In order to create a combined dataset for analysis, first the two sets originating in the EHR were merged to remove duplicates.  The resulting dataset was then merged with the programmatic dataset to create the main set, for which distinct visits and families was also determined.  Subsets of data regarding referrals and redemptions for the produce program were also created.
+
+
+```{r}
+suppressMessages(library(tidyverse))
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+suppressMessages(library(lubridate))
+```
+
+```{r include=FALSE}
+#read in files
+FIreg <- suppressMessages(read_csv("C:/Users/Kelly Courts/FakeFIregistry.csv"))
+FR<-dim(FIreg)
+RXreg <- suppressMessages(read_csv("C:/Users/Kelly Courts/FakeRXregistry.csv"))
+RR<-dim(RXreg)
+FullRX <- suppressMessages(read_csv("C:/Users/Kelly Courts/FakeRXtracking.csv"))
+FRX<-dim(FullRX)
+```
+
+```{r include=FALSE}
+#data cleanup - FIReg
+#inspect file varible types
+#str(FIreg)
+
+#change column names
+FIreg<-plyr::rename(FIreg,c(
+      "Person #"="ID",
+      "Patient Last Name"="Plast",
+      "Patient First Name"="PfirstFI",
+      "Patient DOB"="DOB",
+      "Caregiver Last Name"="ClastFI",
+      "Caregiver First Name"="CfirstFI",
+      "Patient Gender"="Gender",
+      "Patient Race"="Race",
+      "Screening Date"="FISdate",
+      "Screen Result -worried"= "FIworry",
+      "Screen Result -food did not last"="FInotlast",
+      "Provider"="FIProvider",
+      "Location"="FIDept",
+      "BMI calculate"="BMI",
+      "BMI %"="BMI%",
+      "Edinburgh Score"= "Edinburgh",
+      "Same Day Dental Referral"="DentalRX",
+      "lead screening"="LSdate",
+      "Dx Code"="DxCode",
+      "Dx Code Desc"="DxDesc"))
+                           
+#create new columns
+FIreg<-FIreg %>% 
+  dplyr::mutate(Visitdate=FISdate)
+
+#convert fields to dates 
+makedatesFI<-c("DOB","FISdate","DentalRX","LSdate","Visitdate")
+FIreg[makedatesFI] <- lapply(FIreg[makedatesFI], as.Date, "%m/%d/%Y")
+
+#convert fields to factors
+makefactors<-c("FIworry","FInotlast","FI","SNAP","WIC","TANF","Payer")
+FIreg[makefactors] <- lapply(FIreg[makefactors], factor)
+
+#convert fields to integers
+FIreg$Edinburgh<-as.numeric(FIreg$Edinburgh)
+
+#convert fields to character
+FIreg$Payer<-as.character(FIreg$Payer)
+
+#capitalization
+FIreg<-FIreg %>% 
+  mutate(FIworry=str_to_title(as.character(FIworry)),
+         FInotlast=str_to_title(as.character(FInotlast)),
+         Race=str_to_title(as.character(Race)))
+
+#simplify Zip
+FIreg<-FIreg %>%
+  mutate(cleanzip=word(Zip,sep=fixed("-")))
+
+#answer normalization
+FIreg<-FIreg %>% 
+  mutate(FIDept = str_replace(FIDept, "FAKE location","Fake")) %>%
+  mutate(FIDept = str_replace(FIDept, "faek location","Fake"))
+```
+
+```{r include=FALSE}
+#data cleanup - RXReg
+#inspect file varible types
+#str(FIreg)
+
+#change column names
+RXreg<-plyr::rename(RXreg,c(
+      "Person #"="ID",
+      "Patient Last Name"="Plast",
+      "Patient First Name"="PfirstFI",
+      "Patient DOB"="DOB",
+      "Caregiver Last Name"="ClastFI",
+      "Caregiver First Name"="CfirstFI",
+      "Patient Gender"="Gender",
+      "Patient Race"="Race",
+      "Screening Date"="FISdate",
+      "Screen Result -worried"= "FIworry",
+      "Screen Result -food did not last"="FInotlast",
+      "Provider"="FIProvider",
+      "Location"="FIDept",
+      "BMI calculate"="BMI",
+      "BMI %"="BMI%",
+      "Edinburgh Score"= "Edinburgh",
+      "Dental Referral"="DentalRX",
+      "Lead Screen"="LSdate",
+      "Dx Code"="DxCode",
+      "Dx Code Desc"="DxDesc"))
+                           
+#create new columns
+RXreg<-RXreg %>% 
+  dplyr::mutate(Visitdate=FISdate,RXdate=".") %>% 
+  filter(FreshRX=="FreshRX") %>% 
+  dplyr::mutate(RXdate=Visitdate)
+
+#convert fields to dates 
+makedatesFI<-c("DOB","FISdate", "RXdate", "DentalRX","LSdate","Visitdate")
+RXreg[makedatesFI] <- lapply(RXreg[makedatesFI], as.Date, "%m/%d/%Y")
+
+#convert fields to factors
+makefactors<-c("FIworry","FInotlast","FI","SNAP","WIC","TANF","Payer")
+RXreg[makefactors] <- lapply(RXreg[makefactors], factor)
+
+#convert fields to character
+RXreg<-RXreg %>% 
+  mutate(Payer=as.character(Payer),
+         FIworry=as.character(FIworry),
+          FInotlast=as.character(FInotlast)
+          )
+
+#simplify Zip
+RXreg<-RXreg %>%
+  mutate(cleanzip=word(Zip,sep=fixed("-")))
+
+#answer normalization
+RXreg<-RXreg %>% 
+  mutate(FIDept = str_replace(FIDept, "FAKE location","Fake")) %>%
+  mutate(FIDept = str_replace(FIDept, "faek location","Fake"))
+```
+
+
+```{r include=FALSE}
+#data cleanup - FullRX
+#inspect file varible types
+#str(FullRX)
+
+#change column names
+FullRX<-plyr::rename(FullRX,c(
+  "Date"="Visitdate",
+  "Phone Number"="Phone",
+  "Patient LAST Name"="Plast",
+  "Patient FIRST Name"="PfirstRX",
+  "Caregiver LAST Name"="ClastRX",
+  "Caregiver FIRST Name"="CfirstRX",
+  "Department"="RXDept",
+  "Provider"="RXProvider",
+  "Called Back?"="Called",
+  "Callback Date"="Calldate",
+  "Phone Issue"="Issue",
+  "Left Message"="Message?",
+  "Order Status"="Status",
+  "Date of first purchase"="firstpurchdate",
+  "RX to purchase"="RX2purch",
+  "call to purchase"="call2purch",
+  "Farm Stand"="stand",
+  "total purchases"="totpurch"))
+
+#convert fields to dates
+makedatesRX<-c("Visitdate", "Calldate","firstpurchdate","stand")
+FullRX[makedatesRX] <- lapply(FullRX[makedatesRX], as.Date, "%m/%d/%Y")
+
+#convert fields to numeric
+makenumeric<-c("RX2purch","call2purch","totpurch")
+FullRX[makenumeric] <- suppressMessages(lapply(FullRX[makenumeric],as.numeric))
+
+
+#answer normalization
+
+#capitalization
+FullRX<-FullRX %>% 
+  mutate(RXDept=str_to_title(RXDept),
+        RXProvider=str_to_title(RXProvider),
+        Rx_Type=str_to_title(Rx_Type),
+        Status=str_to_title(Status),
+        Called=str_to_title(Called),
+        Issue=str_to_title(Issue)
+        )
+
+#variations
+FullRX<-FullRX %>% 
+  mutate(RXDept = str_replace(RXDept, "FAKE location","Fake")) %>%
+  mutate(RXDept = str_replace(RXDept, "faek location","Fake")) %>%
+  mutate(RXProvider = str_replace(RXProvider, "faekdoctor","Fakedoctor"))
+```
+
+
+```{r}
+#creating registries w/no diagnoses datasets (in order to get one line per visit)
+FIregnoD<-FIreg %>%
+  select(-DxCode,-DxDesc)
+RXregnoD<-RXreg %>% 
+  select(-DxCode,-DxDesc)
+```
+
+
+```{r}
+#merging registries with RX tracking set
+#create FI reg w/one line per visit (i.e. total screens) - returns 16,297 (by ID & FISdate)
+distinctFI<-FIregnoD [!duplicated(FIreg[c(1,11)]),]
+x<-dim(distinctFI)
+#create RX reg w/one line per visit, begins Feb '15 - returns 2433 (by ID and FISdate)
+distinctRX<-RXregnoD [!duplicated(RXreg[c(1,11)]),]
+z<-dim(distinctRX)
+#merge registries
+NGmerge<-merge(distinctFI, distinctRX, by=c("ID","Visitdate","DOB","Plast","FreshRX","Phone"),all=TRUE)
+fullmerge<-full_join(NGmerge,FullRX)
+f<-dim(fullmerge)
+#create total unique visits - returns 19,174 (by ID,Clast,Plast,visitdate)
+fulluniquevisits<-as_tibble(fullmerge[!duplicated(fullmerge[c(1,2,3,56)]),])
+g<-dim(fulluniquevisits)
+```
+
+```{r}
+#RX tracking breakdown
+#create RXtracking unique visits - returns 2674 (by Visitdate, Plast,Phone, ClastRX)
+distinctRXtrack<-FullRX[!duplicated(FullRX[c(1,3,5,7)]),]
+b<-dim(distinctRXtrack)
+#create RXtracking unique families - returns 2584 (by Plast,Phone, ClastRX)
+distinctRXtrackfams<-FullRX[!duplicated(distinctRXtrack[c(3,5,7)]),]
+c<-dim(distinctRXtrackfams)
+```
+
+```{r}
+#RX recipients and redemptions
+#create RX recipients dataset (not unique, multivisits) - returns 4104 (on FreshRX & RXType not blank)
+RXrecips<-fullmerge %>%
+  filter(FreshRX=="FreshRX"|Rx_Type!="")
+r<-dim(RXrecips)
+#create unique RX recipient visits dataset - returns 3932 (on Plast, Phone, Clast, Visitdate)
+distinctRXrecips<-as_tibble(RXrecips [!duplicated(RXrecips[c(2,4,6,56)]),])
+s<-dim(distinctRXrecips)
+#create unique RX recipient families - returns 3598 (on Plast, Phone,Clast)
+distinctRXrecipfams<-as_tibble(distinctRXrecips [!duplicated(distinctRXrecips[c(4,6,56)]),])
+t<-dim(distinctRXrecipfams)
+#create RX redemptions per visit dataset (not unique) - returns 375
+RXredemps<-fullmerge %>%
+  filter(Status=="Complete")
+u<-dim(RXredemps)
+#create distinct RX redemptions dataset - returns 373 (match on Phone, Plast, Clast, visitdate)
+distinctRXredemps<-as_tibble(RXredemps [!duplicated(RXredemps[c(2,4,6,56)]),])
+v<-dim(distinctRXredemps)
+#create distinct RX redemption families dataset - returns 363 (on Phone,Plast, Clast)
+distinctRXredempfams<-as_tibble(RXredemps [!duplicated(RXredemps[c(4,6,56)]),])
+w<-dim(distinctRXredempfams)
+```
+            
+```{r}
+#unique fams sets
+#create FI unique fams - returns 11,438 (by ID)
+distinctFIfams<-as_tibble(distinctFI [!duplicated(distinctFI[c(1)]),])
+y<-dim(distinctFIfams)
+#create RX reg unique fams - returns 2245 (by ID)
+distinctRXfams<-as_tibble(distinctRX [!duplicated(distinctRX[c(1)]),])
+a<-dim(distinctRXfams)
+#create total unique fams - returns 12,988 (by Phone, Plast, Clast)
+fulluniquefams<-as_tibble(fullmerge[!duplicated(fullmerge[c(4,6,56)]),])
+h<-dim(fulluniquefams)
+```
+
+```{r}
+#adding columns for later analysis
+#adding columns for normal and overweight/obese categories
+fulluniquefams<-fulluniquefams %>% 
+  mutate(normal=BMI.x<25,
+         over=BMI.x>=25)
+#create participation ever/never category
+fullmerge$participation <- ifelse(fullmerge$Status == "Complete",1, 0)
+fulluniquefams$participation <- ifelse(fulluniquefams$Status == "Complete",1, 0)
+#refactor FI.x for regression
+fullmerge$FI.x <- ifelse(fullmerge$FI.x=="yes",1,0)
+fulluniquefams$FI.x <- ifelse(fulluniquefams$FI.x=="yes",1,0)
+#create age
+age <- function(dob, age.day = today(), units = "years", floor = TRUE) {
+    calc.age = interval(dob, age.day) / duration(num = 1, units = units)
+    if (floor) return(as.integer(floor(calc.age)))
+    return(calc.age)
+}
+#add age column to fullmerge set
+fullmerge<-fullmerge %>% 
+  mutate(age=age(DOB))
+#add age column to fulluniquefams set
+fulluniquefams<-fulluniquefams %>% 
+  mutate(age=age(DOB))
+```
+
+```{r}
+dataset<-c("FIreg","RXreg","FullRX","Fullmerge","RXrecips","RXredemps")
+observations<-c(FR[1],RR[1],FRX[1],f[1],r[1],u[1])
+distinct_visits<-c(x[1],z[1],b[1],g[1],s[1],v[1])
+distinct_families<-c(y[1],a[1],c[1],h[1],t[1],w[1])
+datasettable<-as.data.frame(cbind(dataset,observations,distinct_visits,distinct_families))
+```
+```{r}
+datasettable %>% 
+  knitr::kable("html", caption="Overview of datasets used and created") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
 
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+Of the 12,591 unique families in the dataset, few had complete data for all fields.  Of those with responses, the majority were black and the patient was a male child.  The average age of included patients was 7.5 and the average BMI was 22.34, which is well within the "normal" range (overweight is defined as BMI>25).
+
+```{r}
+Gender<-fulluniquefams %>% 
+  filter((`Gender.x`=="M")) %>% 
+  summarize(`Gender(male)`= n())
+Race_Black<-fulluniquefams %>% 
+  filter((`Race.x`=="Black Or African American")) %>% 
+  summarize(`Race(Black)`= n())
+Race_White<-fulluniquefams %>% 
+  filter((`Race.x`=="Caucasian Or White")) %>% 
+  summarize(`Race(White)`= n())
+Race_Hispanic<-fulluniquefams %>% 
+  filter((`Race.x`=="Hispanic Or Latino")) %>% 
+  summarize(`Race(Hispanic)`= n())
+Mean_Age<-fulluniquefams %>% 
+  summarize(Mean_Age= mean(na.omit(age)))
+Mean_Age<-round(Mean_Age,digits=1)
+Mean_BMI<-fulluniquefams %>% 
+  summarize(Mean_BMI=mean(na.omit(BMI.x)))
+Mean_BMI<-round(Mean_BMI,digits=2)
+cohortstats<-cbind(Gender,Race_Black,Race_White,Race_Hispanic)
+percentofcohort<-cbind(Gender/10048,Race_Black/10048,Race_White/10048,Race_Hispanic/10048)
+percentofcohort<-round(percentofcohort,digits=2)*100
+Table1<-rbind(cohortstats,percentofcohort)
+row.names(Table1)<-c("families", "percent")
+Table1<-as.data.frame(Table1)
+Table2<-cbind(Mean_Age,Mean_BMI)
+```
+
+```{r}
+Table1 %>% 
+  knitr::kable("html", caption="Cohort characteristics - Gender/Race (n=10,048)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+
+Table2 %>% 
+  knitr::kable("html", caption="Cohort characteristics - Age (n=11,242), BMI (n=5577)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+```{r}
+fulluniquefamshist<-fulluniquefams %>% 
+  filter(age<100) #removed DOB data entry error (117 years old)
+
+ggplot(data=fulluniquefamshist, aes(age)) + 
+    geom_histogram(color="blue", binwidth=1,fill="blue",na.rm=TRUE)
+```
+          
+#####Screening
+
+Since screening began, volume of screens has generally increased, while the FI rate (% of screens that were positive) has declined.  While the national FI rate has declined over the past few years, it has not done so in Philadelphia, according to the census surveys that track FI.  The decline noted in the practice warrants further investigation, which may perhaps show that at least some of the decline is the result of practice interventions, including but not limited to the produce program.    
+
+```{r}
+##FI screening by year
+#total screens by year - totals 16,297
+screensbyyear<-distinctFI %>% #dataset with one line per visit per child
+  group_by(year(Visitdate)) %>% #group all visits by year
+  dplyr::summarize(FI_total_screens=n())  #count screens (by year group)
+#positive screens by year
+positivesbyyear<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="yes") %>% 
+  dplyr::summarize(FI_positive_screens=n())
+#RXes for positive screens by year
+RXforposFI<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="yes") %>% 
+  filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_positives=n()) 
+RXforscreenstable<-suppressMessages(full_join(screensbyyear,positivesbyyear))
+RXforscreenstable2<-full_join(RXforscreenstable,RXforposFI)
+
+#negative screens by year
+negativesbyyear<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="no") %>% 
+  dplyr::summarize(FI_negative_screens=n())
+#RXes for negative screens by year
+RXfornegFI<-distinctFI %>% 
+  group_by(year(Visitdate)) %>% 
+  filter(FI=="no") %>% 
+  filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_negatives=n()) 
+RXforscreenstable3<-suppressMessages(full_join(RXforscreenstable2,negativesbyyear))
+RXforscreenstable4<-full_join(RXforscreenstable3,RXfornegFI)
+
+
+#FIrate by year
+screensbyyeartb<-suppressMessages(full_join(screensbyyear,positivesbyyear))
+screensbyyearrate<-screensbyyeartb %>% 
+  mutate(`FI_rate%`=round((FI_positive_screens/FI_total_screens)*100))
+#RXforscreenstable
+m<-sum(RXforscreenstable4$FI_total_screens)
+n<-sum(RXforscreenstable4$FI_positive_screens)
+o<-sum(na.omit(RXforscreenstable4$RX_for_positives))
+p<-sum(RXforscreenstable4$FI_negative_screens)
+q<-sum(na.omit(RXforscreenstable4$RX_for_negatives))
+FItabletotals<-c("totals",m,n,o,p,q)
+RXforscreenstable5<-rbind(RXforscreenstable4,FItabletotals)
+```
+
+```{r}
+screensbyyearrate %>% 
+  knitr::kable("html", caption="FI rate by year (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+        
+The rate of overweight/obesity for this cohort fluctuated consistently around 12-13% from 2012-2017, a result warranting further analysis as it is much lower than the estimated 40% overweight/obese rate of practice.
+
+```{r}
+#BMI by year
+BMIbyyear<-fulluniquefams %>%
+  group_by(year(Visitdate)) %>% 
+  filter(!is.na(BMI.x)) %>% 
+  dplyr::summarize(total_BMI_assessments=n())
+#BMI normal by year
+BMInormbyyear<-fulluniquefams %>%
+  group_by(year(Visitdate)) %>% 
+  filter(!is.na(BMI.x) & normal==TRUE) %>% 
+  dplyr::summarize(BMI_normal=n())
+#RX for normal by year
+RXfornorm<-fulluniquefams %>%
+  group_by(year(Visitdate)) %>% 
+  filter(!is.na(BMI.x) & normal==TRUE) %>% 
+   filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_normal=n())
+normaltable<-full_join(BMInormbyyear,RXfornorm)
+
+BMIRXtable<-full_join(BMIbyyear,normaltable)
+
+#BMI overweight/obese by year
+BMIoverbyyear<-fulluniquefams %>%
+  group_by(year(Visitdate)) %>% 
+  filter(!is.na(BMI.x) & over==TRUE) %>% 
+  dplyr::summarize(BMI_over=n())
+#RX for overweight/obese by year
+RXforover<-fulluniquefams %>%
+  group_by(year(Visitdate)) %>% 
+  filter(!is.na(BMI.x) & over==TRUE) %>% 
+   filter(FreshRX=="FreshRX") %>% 
+  dplyr::summarize(RX_for_over=n())
+overtable<-full_join(BMIoverbyyear,RXforover)
+BMIRXtable2<-full_join(BMIRXtable,overtable)
+
+#Overweight/obese rate by year
+BMIbyyeartb<-suppressMessages(full_join(BMIbyyear,BMIoverbyyear))
+BMIbyyearrate<-BMIbyyeartb %>% 
+  mutate(`Overweight/Obese_rate%`=round((BMI_over/total_BMI_assessments)*100))
+#RXforBMItable totals
+m<-sum(BMIRXtable2$total_BMI_assessments)
+n<-sum(BMIRXtable2$BMI_normal)
+o<-sum(na.omit(BMIRXtable2$RX_for_normal))
+p<-sum(BMIRXtable2$BMI_over)
+q<-sum(na.omit(BMIRXtable2$RX_for_over))
+RXforBMItabletotals<-c("totals",m,n,o,p,q)
+BMIRXtable3<-rbind(BMIRXtable2,RXforBMItabletotals)
+```
+
+```{r}
+BMIbyyearrate %>% 
+  knitr::kable("html", caption="Overweight/Obese rate by year (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+          
+
+#####Referrals
+
+Referrals to the produce program began in 2014, reached a peak in 2015, and have leveled off and remained consistent in the two years since.  Referrals began via paper pads in 2014 and an electronic option was added in 2015.  Since then, paper referrals have declined, while electronic referrals have increased.  Interestingly, and worth further exploration, even as of 2017, the redemption rate remains higher for paper referrals than for electronic (10% vs. 6%, respectively).
+
+
+```{r}
+##Rxes written and redeemed by year by type
+RXesbyyear<-distinctRXrecips %>%
+  group_by(year(Visitdate)) %>%
+  dplyr::summarize(Total_referrals=n())
+RXesbyyear<-na.omit(RXesbyyear)
+#paperRX
+PRXbyyear<-distinctRXrecips %>%
+  group_by(year(Visitdate)) %>%
+  filter(Rx_Type=="Paper") %>% 
+  dplyr::summarize(Paper_referrals=n())
+PRXbyyear<-na.omit(PRXbyyear)
+#ERXes written by year
+ERXbyyear<-distinctRXrecips %>%
+  group_by(year(Visitdate)) %>%
+  filter(Rx_Type=="Electronic") %>% 
+  dplyr::summarize(Electronic_referrals=n())
+RXtypebyyeartb<-full_join(PRXbyyear,ERXbyyear)
+RXtypebyyeartb2<-full_join(RXesbyyear,RXtypebyyeartb)
+
+#paper redeemed
+PRedbyyear<-distinctRXredemps %>%
+  group_by(year(Visitdate)) %>%
+  filter(Rx_Type=="Paper") %>% 
+  dplyr::summarize(Paper_redemptions=n())
+PRedbyyear<-na.omit(PRedbyyear)
+#electronic redeemed
+ERedbyyear<-distinctRXredemps %>%
+  group_by(year(Visitdate)) %>%
+  filter(Rx_Type=="Electronic") %>% 
+  dplyr::summarize(Electronic_redemptions=n())
+RXRedbyyeartb<-full_join(PRedbyyear,ERedbyyear)
+fullRXtypebyyeartb<-full_join(RXtypebyyeartb2,RXRedbyyeartb)
+```
+```{r}
+ fullRXtypebyyeartb %>% 
+  knitr::kable("html", caption="Referrals written and redeemed by year by type (2014-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+```{r}
+#paper referral redemption 2017
+paperredemps2017<-fullRXtypebyyeartb %>% 
+  filter(`year(Visitdate)`==2017) %>% 
+  mutate(paper_redemption_rate=round((Paper_redemptions/Paper_referrals)*100)) %>% 
+  select(paper_redemption_rate) %>% 
+  print()
+#electronic referral redemption 2017
+electronicredemps2017<-fullRXtypebyyeartb %>% 
+  filter(`year(Visitdate)`==2017) %>% 
+  mutate(electronic_redemption_rate=round((Electronic_redemptions/Electronic_referrals)*100)) %>% 
+  select(electronic_redemption_rate) %>% 
+  print()
+```
+      
+  
+For those years where screening information is available for those receiving referrals (2015-2017), the rate of referrals in response to positive screens has grown each year, reaching 59% as of October 2017.  Referrals for negative screens has remained low, under 5%.  This implies that the protocol of providing referrals for FI+ screens is largely being followed.  While 100% compliance with any protocol is a challenge, the 41% of FI+ screens (in 2017) that did not receive referrals can be explored and potentially improved via a QI project.
+
+```{r}
+ RXforscreenstable5 %>% 
+  knitr::kable("html", caption="FI screening by year (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r}
+RXforscreenstable6<-RXforscreenstable4[4:6,] %>% 
+  mutate(RX_for_FI_Pos_rate=round((RX_for_positives/FI_positive_screens)*100)) %>% 
+  mutate(RX_for_FI_Neg_rate=round((RX_for_negatives/FI_negative_screens)*100))
+RXbyresultrate<-RXforscreenstable6 %>% 
+  select('year(Visitdate)',RX_for_FI_Pos_rate,RX_for_FI_Neg_rate)
+```
+
+```{r}
+ RXbyresultrate %>% 
+  knitr::kable("html", caption="RX rate (%) by screen type (2015-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+For those years where BMI information is available for those receiving referrals (2015-2017), an equal percentage of normal weight and overweight/obese assessments received referrals.  It should be noted, however,that this data subset is not representative of BMI status of the practice as a whole.  Determining referrals by BMI assessment for the entire practice is likely to be more informative regarding how frequently referrals are used for various BMI statuses.  This data simply shows how frequently referrals were provided by BMI status for those patient families that were screened for FI.
+
+```{r}
+BMIRXtable3 %>% 
+  knitr::kable("html", caption="RX rate (%) by BMI status (2012-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r}
+BMIRXtable4<-BMIRXtable2[4:6,] %>% 
+  mutate(RX_for_normal_rate=round((RX_for_normal/BMI_normal)*100)) %>% 
+  mutate(RX_for_over_rate=round((RX_for_over/BMI_over)*100))
+RXbyBMIrate<-BMIRXtable4 %>% 
+  select('year(Visitdate)',RX_for_normal_rate,RX_for_over_rate)
+```
+
+```{r}
+ RXbyBMIrate %>% 
+  knitr::kable("html", caption="RX rate (%) by BMI status (2015-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+      
+      
+      
+Contact information is available for those receiving referrals for 2014-2017.  At the launch of the program, there is a documented first contact for most referrals (86%) and for the majority (91%) it was an introductory phone call from program staff soon after the referral was provided.  The other option for first contact is "walk-in", meaning that the family brings their referral to program staff in the absence of a phone call.  The percent of referrals with a documented first contact has greatly declined since launch, hovering in the 30-35% range.  Of those with a documented first contact, those reached with an introductory call has largely remained high (mid-90%s), except for 2015 when a low of 66% have a documented contact by phone call.
+
+
+```{r}
+#Recips by year
+recipsbyyear<- distinctRXrecips %>%
+  group_by(year(Visitdate)) %>% 
+  dplyr::summarize(recipients=n())
+recipsbyyear<-na.omit(recipsbyyear)
+#Recips contacted by year
+contacted<-distinctRXrecips %>%
+  filter(Called=="Yes" | Called=="Walk-In") 
+#create set for contacted
+contactedbyyear<-contacted %>%
+  group_by(year(Visitdate)) %>% 
+  dplyr::summarize(contacted=n())
+contactedbyyear<-na.omit(contactedbyyear)
+#contacted by call by year
+calledbyyear<-contacted %>%
+  group_by(year(Visitdate)) %>% 
+  filter(Called=="Yes") %>% 
+  dplyr::summarize(called=n())
+#contacted by walk-in by year
+walkedbyyear<-contacted %>%
+  group_by(year(Visitdate)) %>% 
+  filter(Called=="Walk-In") %>% 
+  dplyr::summarize(walked_in=n())
+contacttable<-full_join(recipsbyyear,contactedbyyear)
+methodtable<-full_join(calledbyyear,walkedbyyear)
+
+recipcontactedtable<-full_join(contacttable,methodtable)
+
+mm<-sum(recipcontactedtable$recipients)
+nn<-sum(recipcontactedtable$contacted)
+oo<-sum(recipcontactedtable$called)
+pp<-sum(recipcontactedtable$walked_in)
+
+recipcontactedtabletotals<-c("totals",mm,nn,oo,pp)
+recipcontactedtable2<-rbind(recipcontactedtable,recipcontactedtabletotals)
+recipcontactedtable2
+
+#convert fields to numeric
+makenumeric2<-c("recipients","contacted","called","walked_in")
+recipcontactedtable2[makenumeric2] <- lapply(recipcontactedtable2[makenumeric2],as.numeric)
+
+recipcontactedpercent<-recipcontactedtable2 %>% 
+  mutate(percent_contacted=round((contacted/recipients)*100)) %>% 
+  mutate(percent_called=round((called/contacted)*100)) %>% 
+  mutate(percent_walked_in=round((walked_in/contacted)*100)) %>% 
+  select(-recipients,-contacted,-called,-walked_in)
+```
+```{r}
+recipcontactedtable2 %>% 
+  knitr::kable("html", caption="Referral recipient contact by method by year (2014-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+recipcontactedpercent %>% 
+  knitr::kable("html", caption="Referral recipient contact rate by method by year (2014-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+
+#####Redemptions      
+
+The redemption rate has greatly declined since the start of the referral program, from an initial high of 26% to a low, as of October 2017, of 5%.  Understanding this drop in redemptions is the root of this project.
+
+```{r}
+##Rxes written and redeemed by year
+#RXes written by year
+RXesbyyear<-distinctRXrecips %>%
+  group_by(year(Visitdate)) %>%
+  dplyr::summarize(Total_referrals=n())
+RXesbyyear<-na.omit(RXesbyyear)
+#RXes redeemed by year
+Redempsbyyear<-distinctRXredemps %>% 
+  group_by(year(Visitdate)) %>% 
+  dplyr::summarize(Redeemed=n())
+RXestable<-suppressMessages(full_join(RXesbyyear,Redempsbyyear))
+RXestable<-RXestable %>% 
+  mutate(`redemption_rate%`=round((Redeemed/Total_referrals)*100))
+aa<-sum(RXestable$Total_referrals)
+bb<-sum(RXestable$Redeemed)
+cc<-sum(RXestable$`redemption_rate%`/4)
+RXestabletotals<-c("totals",aa,bb,cc)
+RXestable2<-rbind(RXestable,RXestabletotals)
+```
+
+```{r}
+ RXestable2 %>% 
+  knitr::kable("html", caption="Referrals written and redeemed by year (2014-17)") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+To begin exploring which factors may be associated with referral redemptions, univariate analysis was conducted to assess any relationship between program participation (i.e. redemption) and (1) FI screening result, (2) BMI, and (3) contact status.
+
+Chi-squared analysis of redemptions based on screen result lacked significance, with a p=0.3957
+
+```{r}
+posredemps<-fullmerge %>% 
+  filter(FI.x=="yes"|FI.y=="yes") %>% 
+  filter(Status=="Complete") %>% 
+  summarize(`FI_redemps`=n())
+posnonredemps<-fullmerge %>% 
+  filter(FI.x=="yes"|FI.y=="yes") %>% 
+  filter(Status!="Complete") %>% 
+  summarize(`FI_non_redemps`=n())
+positives<-cbind(posredemps,posnonredemps)
+negredemps<-fullmerge %>% 
+  filter(FI.x=="no"|FI.y=="no") %>%
+  filter(Status=="Complete") %>% 
+  summarize(`FI_redemps`=n())
+negnonredemps<-fullmerge %>% 
+  filter(FI.x=="no"|FI.y=="no") %>%
+  filter(Status!="Complete") %>% 
+  summarize(`FI_non_redemps`=n())
+negatives<-cbind(negredemps,negnonredemps)
+t2t<-rbind(positives,negatives)
+results<-c("positive","negative")
+total<-cbind(results, t2t)
+```
+```{r}
+total %>% 
+  knitr::kable("html", caption="Redemptions by screen results") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r}
+FIredemps<-c(11,65)
+FInonredemps<-c(49,213)
+redempbyscreen<-cbind(FIredemps,FInonredemps)
+redempbyscreen<-as.data.frame(redempbyscreen)
+row.names(redempbyscreen)<-c("positive","negative")
+redempbyscreen
+chisq.test(redempbyscreen,correct=FALSE)
+```
+Analysis of redemptions by BMI status were not significant by either Chi-square test (p=0.13) or Fisher's exact test (p=0.17).
+
+```{r}
+normalredemps<-fulluniquefams %>% 
+  filter(Status=="Complete") %>% 
+  filter(normal==TRUE) %>% 
+  summarize(redemps=n())
+normalnonredemps<-fulluniquefams %>% 
+  filter(Status!="Complete") %>% 
+  filter(normal==TRUE) %>% 
+  summarize(non_redemps=n())
+normals<-cbind(normalredemps,normalnonredemps)
+overredemps<-fulluniquefams %>% 
+  filter(Status=="Complete") %>% 
+  filter(over==TRUE) %>% 
+  summarize(redemps=n())
+overnonredemps<-fulluniquefams %>% 
+  filter(Status!="Complete") %>% 
+  filter(over==TRUE) %>% 
+  summarize(non_redemps=n())
+overs<-cbind(overredemps,overnonredemps)
+tbyt<-rbind(normals,overs)
+categories<-c("normal weight","overweight/obese")
+bmitable<-cbind(categories, tbyt)
+```
+```{r}
+bmitable %>% 
+  knitr::kable("html", caption="Redemptions by BMI status") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+
+
+```{r}
+BMIredemps<-c(14,6)
+BMInonredemps<-c(32,5)
+redempbyBMI<-cbind(BMIredemps,BMInonredemps)
+redempbyBMI<-as.data.frame(redempbyBMI)
+row.names(redempbyBMI)<-c("normal weight","overweight/obese")
+chisq.test(redempbyBMI,correct=FALSE)
+fisher.test(redempbyBMI)
+```
+Analysis of redemptions by contact status was significant (p=.03).  However, all but 3 of the redemptions received a contact, rendering this result logically useless.
+
+```{r}
+contactedredemps<-distinctRXrecips%>% 
+  filter(Called=="Yes"|Called=="Walk-In") %>% 
+  filter(Status=="Complete") %>% 
+  summarize(redemps=n())
+contactednonredemps<-distinctRXrecips %>% 
+  filter(Called=="Yes"|Called=="Walk-In") %>% 
+  filter(Status!="Complete") %>% 
+  summarize(non_redemps=n())
+contact<-cbind(contactedredemps, contactednonredemps)
+nocontactredemps<-distinctRXrecips %>% 
+  filter(Called!="Yes"& Called!="Walk-In") %>% 
+  filter(Status=="Complete") %>% 
+  summarize(redemps=n())
+nocontactnonredemps<-distinctRXrecips%>% 
+  filter(Called!="Yes"& Called!="Walk-In") %>% 
+  filter(Status!="Complete") %>% 
+  summarize(non_redemps=n())
+nocontact<-cbind(nocontactredemps,nocontactnonredemps)
+redempbycontact<-rbind(contact,nocontact)
+categories<-c("contacted","no contact")
+redempbycontacttable<-cbind(categories, redempbycontact)
+```
+```{r}
+redempbycontacttable %>% 
+  knitr::kable("html", caption="Redemptions by contact status") %>%
+  kable_styling(bootstrap_options = c("bordered","striped"),
+                full_width = FALSE,
+                position="left")
+```
+```{r}
+contactedcounts<-c(342,505)
+nocontactcounts<-c(3,0)
+redempbycontact<-cbind(contactedcounts,nocontactcounts)
+redempbycontact<-as.data.frame(redempbycontact)
+row.names(redempbycontact)<-c("contacted","no contact")
+chisq.test(redempbycontact,correct=FALSE)
+fisher.test(redempbycontact)
+```
+
+Logistic regression was used to further explore potential associations.  None of the family characteristics assessed (FI status, BMI, race, age, gender, and zip code) were significant at the p=.05 level individually or using a multivariate model, though a few zip codes did become significant at the p=.10 level in the multivariate model.  Looking at characteristics of the referral, contact method was significant (p=.000186) individually, with those being called more likely to participate than those who walked in.  Neither department nor provider of referral were significant individually (provider analysis omitted due to its identifiable nature).  However, a multivariate model including contact status and dept of referral showed significance for those that were called (p=.0013) and those who received a referral from the Special Needs (SN) department (p=.02).  Multivariate regression incorporating patient demographics (age, race, gender, and zip code) found no further significance, though being called and having received a referral from the SN department remained significant.
+
+```{r include=FALSE}
+#quick fix of a zip code error
+fullmerge<-fullmerge %>% 
+  mutate(`cleanzip.x` = str_replace(`cleanzip.x`, "19111 570","19111"))
+```
+
+```{r}
+#participation by family characteristics
+#summary(glm(participation~FI.x,data=fullmerge))
+#summary(glm(participation~BMI.x,data=fullmerge))
+#summary(glm(participation ~ `Race.x` ,data=fullmerge))
+#summary(glm(participation ~ age ,data=fullmerge))
+#summary(glm(participation ~ `Gender.x` ,data=fullmerge))
+#summary(glm(participation ~ `cleanzip.x` ,data=fullmerge))
+summary(glm(participation~FI.x+BMI.x+`Race.x`+age+`Gender.x`+`cleanzip.x`,data=fullmerge))
+```
+
+```{r}
+#participation by RX characteristics
+summary(glm(participation~Called,data=fullmerge))
+#summary(glm(participation~FIDept.x,data=fullmerge))
+summary(glm(participation~Called+FIDept.x,data=fullmerge))
+#summary(glm(participation~Called+FIDept.x+age+Race.x,data=fullmerge))
+summary(glm(participation~Called+FIDept.x+age+Race.x+cleanzip.x,data=fullmerge))
+```
+
+###Conclusions
+This project sought to to describe and assess factors associated with referrals to and participation in a pediatric primary care clinic-based produce program that is chiefly used as an actionable response to food insecurity screening.  Preliminary analysis has uncovered multiple avenues for further exploration and QI including qualitative research to understand the drivers of a downward trend in FI+ screens, exploring the ~41% of FI+ screens that did not receive referrals, and analyzing redemptions based on BMI status using practice-wide BMI assessments.  Describing and analyzing FI screening and referral redemption related to patient diagnoses proved beyond the scope of this project, as did looking at families who received multiple produce program referrals over the years.  Both will be explored as next steps.  Finally, in terms of factors that drive redemption, this analysis found that being contacted, dept of referral, and potentially zip code play a role, but other family characteristics, including FI status, do not.
