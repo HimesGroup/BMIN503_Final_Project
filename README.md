@@ -1,12 +1,8 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project: Predicting Multi-Drug Resistant Pathogens at a Veterinary Hospital
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains my final project for EPID600.  The final_project_template.rmd file contains the code and accomanying text introducing my topic, describing the data source, and the analysis. At this point, the data has been cleaned and initial analyses have been started. My plan is to use random forest analysis to develop a predictive model for admissions during which a canine patient will be flagged for multi-drug resistant bacteria. Because this event is so rare (occuring in only about 1% of admissions) but so serious, I will also be evaluating four methods to handle the imbalance of cases and controls: undersampling controls, oversampling cases, both, and using synthetic sampling techniques.   
 
-1. To start, [**fork** this BMIN503_Final_Project repository][forking].
-1. [**Clone**][ref-clone] the forked repository to your computer.
-1. Modify the files provided, add your own, and [**commit**][ref-commit] changes to complete your final project.
-1. [**Push**][ref-push]/sync the changes up to your GitHub account.
-1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Due to the sensitive nature of the specific data, it has not been uploaded to git.  I hope to be able to generate a fake dataset to show how the models perform. 
 
 
 DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
