@@ -5,4 +5,4 @@ The two main files that are needed to reproduce the results:
 1. data_processing.py : To transorm the raw CSV files into more manageable format
 2. Final_Project_name.RMD: R code that is used to analyse the Air Quality data.
 
-The final output of the project can be viewed by accessing  [Final_Project_name.html](https://github.com/sauravbose/BMIN503_Final_Project/blob/master/Final_Project_name.html). Double clicking on the Download tab and selecting "Download linked file as" to same as .html on your local computer.  
+The final output of the project can be viewed by accessing  [Final_Project_name.html](https://github.com/sauravbose/BMIN503_Final_Project/blob/master/Final_Project_name.html). Right clicking on the Download tab and selecting "Download linked file as" to same as .html on your local computer.  
