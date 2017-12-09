@@ -1,0 +1,366 @@
+---
+title: "Genome Wide RNA-Seq Profile in Megakaryocytes Depleted Mouse"
+author: "Yan Che"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+### Overview
+The goal of my final project is to compare the RNA expression profiles of Gr1+ CD115- neutrophils between megakaryocytes depleted and normal mice. I acquired the single cell RNA-seq expression information from a publicly available database and applied statistical and machine learning approaches to constrast the two different populations. I used maximum likelihood modeling to identify potenial significant genes that drives the difference. In addition, I compared the performance of two commonly used RNA-seq methods, namely bulk RNA-seq and single cell RNA-seq.
+
+### Introduction 
+Megakaryocyte (abbreviated as MK) is a type of blood cells specialized for platelet production[1]. Malfunction of MK cells has been observed in various diseases[2]. In particular, scientists have shown that defecting MK cell function could lead to idiopathic myelofibrosis, which later result in severe thrombocytopenia[3]. Centurione et al observed increased neutrophil emperipolesis surrounding the defected MK cells and proposed that the increase would lead to a more abundant release of fibrogenic MK cytokines and neutrophil proteases in the microenvironment, resulting in myelofibrosis[4]. However, how the presence of MK cells regulate neutrophil emperipolesis remains unknown, nor have the cellular and molecular mechanisms been fully studied. In this project, I will analyze the RNA-seq data of neutrophils, and compare the expression profiles between megakaryocytes depleted and normal samples. Since mice and humans share similar morphologic changes associated with MK development[5], I used the mouse data since I was not able to find human single cell neutrophil data online.
+
+The main technique I used in this project was RNA sequencing, among which two methods, namely bulk RNA-seq and single cell RNA-seq, has been developed and populated in the past 15 years. During the bulk RNA sequencing process, tissues are dissociated, sorted and the RNA molecules from the cell mixture are collected. The RNA is then reverse trancribed into cDNA, which is amplified and sequenced to generate an expression profile. Single cell RNA-seq resembles most of the process, except that cells are isolated and sequenced individually instead of as a mixture. To correct for the differences in cell sizes, a set of fixed amount of exogenous sequences, named spike-ins, is added to each cells. After the sequencing step, all singlE cells are normalized with respect to their spike-in counts detected.
+
+The analysis of single cell data requires interdisciplinary approaches. A comprehensive knowledge in biology, especially in gene regulation pathways could reduce the dimensionality of data and interpret the final output. Computer science could expedite the data retrieval and transformation process and provide insights into finding hidden subpopulataions within the cells. Statistical models can be used to regress out unwanted cell to cell variations as well as to identify statistically significant differentially expressed genes between subpopulations. Finally, since other well-established packages are used in this project, mathematical transformation need to be applied in order for the results to be comparable. 
+
+
+### Methods
+I obtained the single bone marrow RNAseq data from Gene Expression Omnibus (DataSet ID GSM2367678). The dataset contains 3 megakaryocytes depleted and 3 control C57Bl/6 mice. Out of each mouse 96 Gr1+ CD115- neutrophils were collected and sequenced.
+
+As for the data preprocessing step, raw gene count matrices were reformatted and merged together to form a complete count matrix consisting of all mouse samples and all genes expressed in at least one cell. To generate bulk RNA expression matrix, for each gene I pooled the expression of 96 cells in each sample together. For single cell RNA expression matrix, to reduce bias related to different cell sizes, the count matrix was normalized with respect to ERCC spike-ins using program SCNorm[7]. Data preprocessing was performed using Linux and R, and was time consuming. Thus this step was not evaluated in this Rmd file to reduce the time to generate the final html. However, the code was provided as below.
+
+``` {r eval=FALSE}
+###### Linux Portion ######
+wget https://www.ncbi.nlm.nih.gov/geo/download/GSE89378/GSE89378_RAW.tar
+tar -xvf GSE89378_RAW.tar
+gunzip *.coutt.csv.gz
+```
+```{r warning=FALSE, message=FALSE}
+###### R Portion ######
+# construct a complete single cell gene count matrix from the 6 raw count matrices
+library(readr)
+C1P1 <- read_delim("~/Course/BMIN503/final project/GSM2367673_sc-C1P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C1P1_name <- c("GENEID", unlist(lapply(colnames(C1P1)[2:97], function(x) paste("C1P1_", x, sep=""))))
+colnames(C1P1) <- C1P1_name
+C1P1 <- na.omit(C1P1)
+C2P1 <- read_delim("~/Course/BMIN503/final project/GSM2367675_sc-C2P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C2P1_name <- c("GENEID", unlist(lapply(colnames(C2P1)[2:97], function(x) paste("C2P1_", x, sep=""))))
+colnames(C2P1) <- C2P1_name
+C2P1 <- na.omit(C2P1)
+C3P1 <- read_delim("~/Course/BMIN503/final project/GSM2367677_sc-C3P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C3P1_name <- c("GENEID", unlist(lapply(colnames(C3P1)[2:97], function(x) paste("C3P1_", x, sep=""))))
+colnames(C3P1) <- C3P1_name
+C3P1 <- na.omit(C3P1)
+
+D1P1 <- read_delim("~/Course/BMIN503/final project/GSM2367679_sc-D1P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D1P1_name <- c("GENEID", unlist(lapply(colnames(D1P1)[2:97], function(x) paste("D1P1_", x, sep=""))))
+colnames(D1P1) <- D1P1_name
+D1P1 <- na.omit(D1P1)
+D2P1 <- read_delim("~/Course/BMIN503/final project/GSM2367681_sc-D2P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D2P1_name <- c("GENEID", unlist(lapply(colnames(D2P1)[2:97], function(x) paste("D2P1_", x, sep=""))))
+colnames(D2P1) <- D2P1_name
+D2P1 <- na.omit(D2P1)
+D3P1 <- read_delim("~/Course/BMIN503/final project/GSM2367683_sc-D3P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D3P1_name <- c("GENEID", unlist(lapply(colnames(D3P1)[2:97], function(x) paste("D3P1_", x, sep=""))))
+colnames(D3P1) <- D3P1_name
+D3P1 <- na.omit(D3P1)
+
+count_data <- merge(C1P1,C2P1,by="GENEID", all=TRUE)
+count_data <- merge(count_data, C3P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D1P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D2P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D3P1, by="GENEID", all=TRUE)
+
+count_data[is.na(count_data)] <- 0
+rownames(count_data) <- count_data$GENEID
+count_data$GENEID <- NULL
+gene_names <- rownames(count_data)
+count_data <- count_data[,which(!apply(count_data, 2, function(x) all(x==0)))]
+rownames(count_data) <- gene_names
+
+# for each gene pool the 96 cells in each plate together to form a bulk RNA expression matrix
+C1_mat <- count_data[,grepl("C1", colnames(count_data))]
+C1_sum <- rowSums(C1_mat)
+C2_mat <- count_data[,grepl("C2", colnames(count_data))]
+C2_sum <- rowSums(C2_mat)
+C3_mat <- count_data[,grepl("C3", colnames(count_data))]
+C3_sum <- rowSums(C3_mat)
+D1_mat <- count_data[,grepl("D1", colnames(count_data))]
+D1_sum <- rowSums(D1_mat)
+D2_mat <- count_data[,grepl("D2", colnames(count_data))]
+D2_sum <- rowSums(D2_mat)
+D3_mat <- count_data[,grepl("D3", colnames(count_data))]
+D3_sum <- rowSums(D3_mat)
+bulk_rna <- as.data.frame(C1_sum)
+bulk_rna$C2 <- C2_sum
+bulk_rna$C3 <- C3_sum
+bulk_rna$D1 <- D1_sum
+bulk_rna$D2 <- D2_sum
+bulk_rna$D3 <- D3_sum
+colnames(bulk_rna) <- c("C1", "C2", "C3", "D1", "D2", "D3")
+```
+```{r eval=FALSE}
+# normalize the single cell expression profile with respect to ERCC spike-ins using SCNorm
+library(devtools)
+devtools::install_github("rhondabacher/SCnorm")
+library(SCnorm)
+
+DataNorm <- SCnorm(count_data, Conditions=rep(1,573), useSpikes = TRUE, FilterCellNum = 10)
+normalized_exp <- DataNorm@metadata$NormalizedData
+```
+
+
+The cells in the two expression matrices were then filtered by their gene expression profiles in order to eliminate the low quality cells. Genes rarely expressed in cells were also filtered out to reduce computational burden and potential unwanted variations. The cleaned data was analyzed either: 1) using the bulk RNA expression profile and analyzing using the pacakge "DESeq"[6] we learned in class, or 2) utilizing all individual cell expression information and analyzing using package "Seurat". The outputs from these two methods were then compared.
+
+
+### Results
+#### Bulk RNA-seq Analysis
+##### Gene Expression Summary
+``` {r warning=FALSE, message=FALSE}
+library(readr)
+normalized_exp <- read_csv("~/Course/BMIN503/final project/normalized_matrix.csv")
+sample_name <-colnames(normalized_exp[,2:574])
+condition_name <- unlist(lapply(sample_name, function(x) unlist(strsplit(x, "_", fixed = TRUE))[1]))
+gene_expressed_bulk <- bulk_rna
+gene_expressed_bulk[gene_expressed_bulk > 0] <- 1
+gene_expressed_count_bulk <- colSums(gene_expressed_bulk, na.rm = TRUE)
+summary(gene_expressed_count_bulk)
+barplot(gene_expressed_count_bulk, col=c(1,1,1,2,2,2), border=as.factor(condition_name), ylab="Expressed Gene count", xlab="sample", main="Number of Genes Expressed in each Sample")
+```
+
+The summary statistics for the number of genes expressed per sample is shown as the table and the figure above. The samples are expressing 7593 genes on average, with a range of 3737 to 9418. From the figure it can be seen that cells are expressing genes at different levels. In particular, sample D2 has a much lower number of expressed genes compared to other samples. This is likely due to the fact that the tissue collected for mouse D2 is in poor condition, or contains many dead cells.
+
+##### PCA and t-SNE Analysis of Bulk RNA-seq Data
+Genes that have at least one gene count are retained in the PCA analysis. The counts are then log normalized to account for different scales of expressions. 
+``` {r warning=FALSE, message=FALSE}
+# Build annotation file for input into DESeq
+annotation  <- as.data.frame(c("C", "C", "C", "D", "D", "D"))
+annotation$type <- c("BM","BM","BM","BM","BM","BM")
+rownames(annotation) <- c("C1", "C2", "C3", "D1", "D2", "D3")
+colnames(annotation) <- c("condition", "type")
+
+library(DESeq2)
+library(pheatmap)
+library(Rtsne)
+
+# import data into DESeq format
+dds <- DESeqDataSetFromMatrix(countData=round(bulk_rna), colData=annotation, design=~condition)
+
+# set factor level (which is not necessary for this part)
+dds$condition <- factor(dds$condition, levels=c("C","D"))
+
+nt <- normTransform(dds)
+plotPCA(nt, intgroup=c("condition"))
+```
+
+PCA analysis was conducted to evaluate the differences between the two groups and the plot is shown as the above figure. No obvious clustering of samples has been observed. It is likely due to the small number of bulk RNA samples analyzed in this study.
+
+``` {r warning=FALSE, message=FALSE}
+# Generate tSNE plot to visualize 
+nt_mat <- as.data.frame(assay(nt))
+tsne <- Rtsne(t(nt_mat), dims = 2,  perplexity=1, verbose=TRUE, max_iter=10000, check_duplicates = FALSE)
+group <- rownames(annotation)
+cell_location <- annotation$condition
+codes = c(C=1, D=2)
+location_color <- sapply(cell_location, function(x) codes[x])
+plot(tsne$Y, col=location_color,pch=19, main="Perplexity = 1")
+text(tsne$Y, labels = group, col=location_color, cex=0.6, pos=4)
+leg.txt <- c("C","D")
+legend("bottomleft",legend = leg.txt, col=1:2, pch=19)
+```
+
+t-distributed stochastic neighbor embedding (t-SNE) was also performed on the bulk RNA sequencing data. t-SNE is a machine learning algorithm used for dimensionality reduction[8]. In contrast to PCA which generates the principal components as a linear combination of variables, t-SNE is non-linear which models the probability distribution between pairs of variables and projects onto a lower dimensional space. In this project, t-SNE plot was generated using the R package "Rtsne" and the plot with perplexity of 1 is shown as the figure above. Similar to the PCA plot, no clustering of samples can be observed. 
+
+##### Differential Expression Analysis of the bulk RNA-seq data
+The differential expression analysis was performed using the DESeq method in package "Deseq2". The method models gene expression as a negative binomial distribution and estimates the mean-variance relationships empirically from the data. The p-values were then adjusted for multiple comparisons using Benjamini & Hochberg FDR procedure.
+``` {r warning=FALSE, message=FALSE}
+# differential expression analysis
+dds <- DESeq(dds)
+result <- results(dds, alpha=0.01)
+summary(result)
+```
+Using  FDR adjusted p-value cutoff of 0.05, no significant genes were found. The result agrees with the observation from PCA and t-SNE plot that the control and depleted mice do not cluster with samples within the same group. 
+``` {r warning=FALSE, message=FALSE}
+# plot heatmap and hierarchical cluster
+df1 <- as.data.frame(colData(dds)[,c("condition")])
+colnames(df1) <- c("condition")
+rownames(df1) <- c("C1","C2","C3","D1","D2","D3")
+select <- order(result$padj)[1:30]
+original_counts <- assay(dds)[select,]
+z_score <- t(apply(original_counts, 1, scale))
+colnames(z_score)<- c("C1","C2","C3","D1","D2","D3")
+pheatmap(z_score, cluster_rows=TRUE, show_rownames=TRUE,cluster_cols=TRUE,annotation_col=df1, fontsize_row=6, border_color = NA)
+```
+
+To visualize the potential difference between the control and MK depleted mice, I generated the heatmap and its corresponding hierarchical clustering using the top 30 most significantly differentially expressed genes, which are the genes having the smallest adjusted p-values. From the figure we can see that samples from the same group does not cluster with each other. Moreover, sample D2 and D3 show very different expression profiles as compared to other samples. This implies that the within group gene expression heterogeneity is even larger than between group heterogeneity. In conclusion, bulk RNA-seq of this dataset could not provide sufficient information to illustrate the potential gene expression differences between normal and MK deleted mice.  
+
+#### single cell RNA-seq Analysis
+##### Quality Control
+I then went on to see if more information could be obtained using single cell RNA-seq data from the exactly same populations. In contrast to handling bulk RNA-seq data, the processing of single cell data requires a more stringent quality control and is shown as the steps below:
+``` {r warning=FALSE, message=FALSE}
+ercc <- normalized_exp[grepl("ERCC", normalized_exp$X1),]
+ercc_count <- colSums(ercc[,2:574])
+real_gene <- normalized_exp[!grepl("ERCC", normalized_exp$X1),]
+real_gene_count <- colSums(real_gene[,2:574], na.rm = TRUE)
+ercc_ratio <- ercc_count*100/(ercc_count + real_gene_count)
+
+gene_expressed <- real_gene
+gene_expressed[gene_expressed > 0] <- 1
+gene_expressed_count <- colSums(gene_expressed[,2:574], na.rm = TRUE)
+
+
+
+names(gene_expressed_count) <- NULL
+barplot(gene_expressed_count, col=as.factor(condition_name), border=as.factor(condition_name), ylab="Expressed Gene count", xlab="sample", main="Number of Genes Expressed in each Cell")
+legend("topleft", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+
+names(ercc_ratio) <- NULL
+barplot(ercc_ratio, col=as.factor(condition_name), border=as.factor(condition_name),ylab="ERCC/total_counts (%)", xlab="sample", main="Proportion of ERCC Spike-in Counts in each Cell") 
+legend("topright", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+```
+
+The first figure shows the distribution of the number of genes expressed in each cell and the second figure shows the distribution of the proportion of ERCC Spike-ins in each cell. Ideally, a high quality cell would have a relatively abundant expressed genes as well as a low ERCC percentage. A cell with low number of expressed genes and a high ERCC content might imply death before the experiment, and a extremely high gene expression might indicates that the cell is a multiplet instead of a singlet. 
+
+##### Data Filtering
+From the information provided above, the cells were retained in downstream analyses if: 
+
+1) the total number of genes expressed is greater or equal to 200
+
+2) the total number of genes expressed is smaller or equal to 3000
+
+3) the ERCC spike-in fraction is smaller than 30%
+
+The filtering criteria was shown in the figure below:
+``` {r warning=FALSE, message=FALSE}
+plot(gene_expressed_count, ercc_ratio, pch=19, col=as.factor(condition_name), xlab="Number of Expressed Genes", ylab="Proportion of ERCC Spike-in Counts(%)", main="Expressed Gene Counts vs Proportion of ERCC Spike-in Counts", xlim=c(0, 3000), ylim=c(0,100))
+legend("topright", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+segments(200, 30, x1=3000, y1=30, lwd=3)
+segments(200, -3, x1=200, y1=30, lwd=3)
+segments(3000, -3, x1=3000, y1=30, lwd=3)
+segments(200, -3, x1=3000, y1=-3, lwd=3)
+```
+
+The cell selection step is shown as below:
+``` {r warning=FALSE, message=FALSE}
+# only select cells with expressed genes >= 200 and <= 3000
+data1<- as.data.frame(normalized_exp)
+rownames(data1) <- normalized_exp$X1
+data1$X1 <- NULL
+filter1 <- data1[,colSums(gene_expressed[,2:574], na.rm=TRUE) >= 200 & colSums(gene_expressed[,2:574], na.rm=TRUE) <= 3000]
+
+# only select cells with spike-in ratio <= 30%
+ercc2 <- colSums(filter1[grep("ERCC", rownames(filter1)),])
+total_count2 <- colSums(filter1, na.rm = TRUE)
+ercc_ratio2 <- ercc2 * 100/total_count2
+filter2 <- filter1[, ercc_ratio2 <= 30]
+```
+
+After the selection for high-quality cells, genes were filtered with respect to their expression frequencies among the cells to reduce computational burden and unwanted variations. Genes were retained in downstream analyses if the number of expressed cells were greater or equal to 3.
+``` {r warning=FALSE, message=FALSE}
+# see the distribution of number of cells across genes
+expressed_cell <- filter2
+expressed_cell[expressed_cell > 0] <- 1
+expressed_cell_count <- rowSums(expressed_cell, na.rm=TRUE)
+names(expressed_cell_count) <- NULL
+hist(expressed_cell_count, main="Number of Cells Expressed in Each Gene", xlab="Number of Cells Expressed", xlim=c(0, 500), breaks=30)
+filter3 <- filter2[expressed_cell_count > 3,]
+dim(filter3)
+```
+
+After the overall filtering process, a total number of 473 cells and 8347 genes were retained in this study.
+
+##### PCA and t-SNE analysis of single cell RNA-seq
+The filtered single cell RNA-seq data was then input into the R implemented package "Seurat". PCA and t-SNE plot was generated using two coloring schemes, with repect to the groups and with respect to each individual sample. 
+``` {r warning=FALSE, message=FALSE}
+library(Seurat)
+library(dplyr)
+library(annotables)
+sample_name_reduced <- colnames(filter3)
+condition_reduced <- unlist(lapply(sample_name_reduced, function(x) unlist(strsplit(x, "_", fixed = TRUE))[1]))
+cell.bone=CreateSeuratObject(raw.data = filter3, project = "single_cell")
+cell.bone=SetIdent(cell.bone, ident.use = condition_reduced)
+
+# identify variable genes across the single cells
+cell.bone <- NormalizeData(object = cell.bone)
+# scaling the data and removing unwanted sources of variation
+cell.bone <- ScaleData(object=cell.bone, vars.to.regress = c("nUMI"))
+cell.bone <- FindVariableGenes(object = cell.bone, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.75, y.cutoff = 1, do.plot = FALSE)
+
+# Using different label for graphing
+condition2 <- unlist(lapply(sample_name_reduced, function(x) unlist(strsplit(x, "", fixed = TRUE))[1]))
+cell.bone1=CreateSeuratObject(raw.data = filter3, project = "single_cell")
+cell.bone1=SetIdent(cell.bone1, ident.use = condition2)
+
+# identify variable genes across the single cells
+cell.bone1 <- NormalizeData(object = cell.bone1)
+# scaling the data and removing unwanted sources of variation
+cell.bone1 <- ScaleData(object=cell.bone1, vars.to.regress = c("nUMI"))
+cell.bone1 <- FindVariableGenes(object = cell.bone1, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.75, y.cutoff = 1, do.plot = FALSE)
+
+# Perform PCA for color scheme 1
+cell.bone1=RunPCA(cell.bone1, do.print=FALSE)
+PCAPlot(cell.bone1,1,2,pt.size = 2)
+
+# Perform TSNE for color scheme 1
+cell.bone1=RunTSNE(cell.bone1, dims.use=1:10, max_iter=4000, perplexity=40)
+TSNEPlot(cell.bone1, pt.size=2)
+```
+
+The PCA plots with two different coloring schemes are shown in the figure above. In both figures, no obvious clustering pattern between normal and MK depleted mice can be observed. However, in some samples, for mice C1 and D3 in particular, cells from the same sample tends to cluster together. This implies that the individual effect of samples plays a role in gene expression and cannot be neglected. 
+``` {r warning=FALSE, message=FALSE}
+# Perform PCA for color scheme 2
+cell.bone=RunPCA(cell.bone, do.print=FALSE)
+PCAPlot(cell.bone,1,2,pt.size = 2)
+
+# Perform TSNE for color scheme 2
+cell.bone=RunTSNE(cell.bone, dims.use=1:10, max_iter=4000, perplexity=40)
+TSNEPlot(cell.bone, pt.size=2)
+```
+
+T-SNE was also conducted and the figures are shown as above. Similar to the PCA plot, no obvious clustering pattern is observed between normal and MK depleted mice and but cells tends to cluster with respect to the sample they collected from. This also confirms the presence of individual effect. In addition, it is interesting to note that for sample C1, the cells seems to cluster into three smaller clusters. This might indicate that the neutrophils collected from sample C1 contains some types of of subpopulation. However, more in-depth experiments need to be conducted to validate this hypothesis.
+
+##### Differential Expression Analysis of Single cell RNA-seq data
+The differential expression analysis was performed using the "FindMarkers" function in Seurat. The function utilizes a likelihood-ratio test for zero-inflated data[9]. The p-values were then adjusted for multiple comparisons using Benjamini & Hochberg FDR procedure. Under of adjusted p-value cutoff of 0.01, 15 genes are identified as significantly differencially expressed between normal and MK depleted samples. The gene ids and their correponding p-values are shown as below:
+``` {r warning=FALSE, message=FALSE}
+DE_lst <- FindMarkers(cell.bone1, ident.1="C", ident.2 = "D", thresh.use = 0, min.pct = 0)
+DE_lst[DE_lst$p_val_adj < 0.01, ]
+```
+##### Biological Interpretation of Some Examples of Differentially Expressed Genes
+To interpret the result, I have searched a few differentially expressed genes in literature. Some of them are house-keeping genes while some of them are reported to be closely related to immune responses. Below are some examples of such genes. Their biological functions were obtained from GeneCards Human Gene Database (http://www.genecards.org/). 
+
+One example is gene S100a9, which is the most significantly differencially expressed gene identified from the project. S100a9 is known to encode S100 Calcium Binding Protein A9, which is known to induce neutrophil chemotaxis and adhesion. In addition, it has been reported to increase the bactericidal activity of neutrophiles.
+
+Another example is gene CEBPB, which ranks No.5 on the differentially expression list. The gene encodes for CCAAT/Enhancer Binding Protein Beta, which is known to play an important role in the regulation of genes involved in immune and inflammatory responses.
+
+### Discussion
+In this project, I compared the expression profiles of normal and MK-depleted mice neutrophils using both bulk and single cell RNA sequencing. Under an adjusted p-value cutoff of 0.01, no genes were identified to be differentially expressed between the two populations using bulk RNA-seq. On the other hand, using single cell RNA-seq, 15 differentially expressed genes were identified. Moreover, some identified genes are reported to be closely related to the immune system.
+
+I also compared the performance if bulk and single cell RNA-seq in this project. For this dataset, single cell RNA-seq seems to provide more informative result compared to bulk RNA-seq. It is able to identify more differentially expressed genes between the two groups, which is likely due to the fact that the sample size is larger in single cell data, resulting in a higher statistical power. Moreover, single cell RNA-seq makes it possible to uncover some hidden information such as the presence of subpopulations and the individual effect. 
+
+The study, however, has a lot to improve. The dataset was not well selected since the difference between the two condition groups are minimal, making it hard to visualize group differences using PCA and t-SNE. It is also one of the reasons why I cannot identify any significant genes from bulk RNA-seq.
+
+As for the future plan of this project, I would like to include more biological replicates for each mouse sample for a higher power. In addition, I would normalize the data with respect to the sample groups to account for the between-group differences. According to my analysis, individual effect plays a role in RNA expression. So my other potential step is to regress out the individual effect and re-normalize the data using linear modeling. This can be done using several R implemented packages such as "simpleSingleCell".
+
+### Acknowledgement
+I would like to thank Prof. Mingyao Li for introducing me the concept of single cell RNA-seq and the analysis pipeline including the package "Seurat". Without her help I would not be able to analyze the data from a single cell point of view.
+
+I would also like to thank Dr. Peter Clark and Dr. Jia Zhang from the Gene Therapy Program for the enlightening talks on NGS experimental design and data processing.
+
+### Reference
+[1]Italiano JE Jr, Shivdasani RA. Megakaryocytes and beyond: the birth of platelets. J Thromb Haemost. 2003;1: 1174-1182.
+
+[2]Tefferi A. Myelofibrosis with myeloid metaplasia. N Engl J Med. 2000;342: 1255-1265.
+
+[3]Barosi G. Myelofibrosis with myeloid metaplasia: diagnostic definition and prognostic classification for clinical studies and treatment guidelines. J Clin Oncol. 1999;17: 2954-2970.
+
+[4]Centurione L, Di Baldassarre A, Zingariello M, Bosco D, Gatta V, Rana RA, et al. Increased and pathologic emperipolesis of neutrophils within megakaryocytes associated with marrow fibrosis in GATA-1low mice. Blood. 2004;104:3573-80. 
+
+[5] Schmitt A, Guichard J, Masse JM, et al. Of mice and men: comparison of the ultrastructure of megakaryocytes and platelets. Exp Hematol. 2001;29: 1295-1302.
+
+[6] Anders S and Huber W (2010). "Differential expression analysis for sequence count data." Genome Biology, 11, pp. R106.
+
+[7] Bacher R, Chu L, Leng N, Gasch AP, Thomson JA, Stewart RM, Newton MA and Kendziorski C (2017). "SCnorm: robust normalization of single-cell RNA-seq data." Nature Methods.
+
+[8] van der Maaten, L.J.P.; Hinton, G.E. "Visualizing High-Dimensional Data Using t-SNE". Journal of Machine Learning Research.
+
+[9] McDavid A, Finak G, Chattopadyay PK, Dominguez M, Lamoreaux L, Ma SS, Roederer M, Gottardo R. Data exploration, quality control and testing in single-cell qPCR-based gene expression experiments. Bioinformatics. 2013;29:461-467.
