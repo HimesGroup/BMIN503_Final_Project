@@ -15,18 +15,172 @@ options(width = 400)
 Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
 
 ### Overview
-In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
-
+In my final project, I would like to study cell-to-cell gene expression variation among a population of mouse bone marrow cells.The data will be acquired from a published database and will be analyzed using statistical and machine learning methods.
 
 ### Introduction 
-In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
 
-In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+Single cell RNA-seq is a recently developed technique which is able to generate expression profiles for individual cells. Compared to traditional bulk RNA sequencing, single cell RNA-seq makes it possible to identify specific cell types as well as to evaluate the variation between cell populations. In this project, I would like to apply the machine learning methods introduced in this class to find patterns among different cell stages of single cells. If time allowed, I would also like to compare some well-developed scRNA analysis packages (mostly in R) and evaluate their performances.
+
+The analysis of single cell data requires interdisciplinary approaches. A comprehensive knowledge in biology, especially in gene regulation pathways could aid in eliminating highly correlated genes and thus reducing the dimensionality of data. Computer science could expedite the data retrieval and transformation process and provide insights into finding hidden subpopulataions within the cells. Statistical models can be used to regress out unwanted cell to cell variations as well as to identify statistically significant differentially expressed genes between subpopulations. Finally, If other well-established packages are used in this project, mathematical transformation need to be applied in order for the results to be comparable.
 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+I obtained the single bone marrow RNAseq data from Gene Expression Omnibus (DataSet ID GSM2367678). The dataset contains 3 megakaryocytes depleted and 3 control C57Bl/6 mice. Out of each mouse 96 Gr1+ CD115- neutrophils were collected and sequenced.
+
+As for the data preprocessing step, raw gene count matrices were reformatted and merged together to form a complete count matrix consisting of all mouse samples and all genes expressed in at least one cell. To reduce bias related to different cell sizes, the count matrix was normalized with respect to ERCC spike-ins using program SCNorm. Data preprocessing was performed using Linux and R, and was time consuming. Thus this step was not evaluated in this Rmd file to reduce the time to generate the final html. However, the code was provided as below.
+
+``` {r eval=FALSE}
+###### Linux Portion ######
+wget https://www.ncbi.nlm.nih.gov/geo/download/GSE89378/GSE89378_RAW.tar
+tar -xvf GSE89378_RAW.tar
+gunzip *.coutt.csv.gz
+
+###### R Portion ######
+library(readr)
+C1P1 <- read_delim("~/Course/BMIN503/final project/GSM2367673_sc-C1P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C1P1_name <- c("GENEID", unlist(lapply(colnames(C1P1)[2:97], function(x) paste("C1P1_", x, sep=""))))
+colnames(C1P1) <- C1P1_name
+C1P1 <- na.omit(C1P1)
+C2P1 <- read_delim("~/Course/BMIN503/final project/GSM2367675_sc-C2P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C2P1_name <- c("GENEID", unlist(lapply(colnames(C2P1)[2:97], function(x) paste("C2P1_", x, sep=""))))
+colnames(C2P1) <- C2P1_name
+C2P1 <- na.omit(C2P1)
+C3P1 <- read_delim("~/Course/BMIN503/final project/GSM2367677_sc-C3P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+C3P1_name <- c("GENEID", unlist(lapply(colnames(C3P1)[2:97], function(x) paste("C3P1_", x, sep=""))))
+colnames(C3P1) <- C3P1_name
+C3P1 <- na.omit(C3P1)
+
+D1P1 <- read_delim("~/Course/BMIN503/final project/GSM2367679_sc-D1P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D1P1_name <- c("GENEID", unlist(lapply(colnames(D1P1)[2:97], function(x) paste("D1P1_", x, sep=""))))
+colnames(D1P1) <- D1P1_name
+D1P1 <- na.omit(D1P1)
+D2P1 <- read_delim("~/Course/BMIN503/final project/GSM2367681_sc-D2P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D2P1_name <- c("GENEID", unlist(lapply(colnames(D2P1)[2:97], function(x) paste("D2P1_", x, sep=""))))
+colnames(D2P1) <- D2P1_name
+D2P1 <- na.omit(D2P1)
+D3P1 <- read_delim("~/Course/BMIN503/final project/GSM2367683_sc-D3P1.coutt.csv", "\t", escape_double = FALSE, trim_ws = TRUE)
+D3P1_name <- c("GENEID", unlist(lapply(colnames(D3P1)[2:97], function(x) paste("D3P1_", x, sep=""))))
+colnames(D3P1) <- D3P1_name
+D3P1 <- na.omit(D3P1)
+
+count_data <- merge(C1P1,C2P1,by="GENEID", all=TRUE)
+count_data <- merge(count_data, C3P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D1P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D2P1, by="GENEID", all=TRUE)
+count_data <- merge(count_data, D3P1, by="GENEID", all=TRUE)
+
+count_data[is.na(count_data)] <- 0
+rownames(count_data) <- count_data$GENEID
+count_data$GENEID <- NULL
+gene_names <- rownames(count_data)
+count_data <- count_data[,which(!apply(count_data, 2, function(x) all(x==0)))]
+rownames(count_data) <- gene_names
+
+library(devtools)
+devtools::install_github("rhondabacher/SCnorm")
+library(SCnorm)
+
+DataNorm <- SCnorm(count_data, Conditions=rep(1,573), useSpikes = TRUE, FilterCellNum = 10)
+normalized_exp <- DataNorm@metadata$NormalizedData
+```
+
+
+The cells in the normalized matrix were then filtered by their gene expression profiles as well as their ERCC spike-in percentages in order to eliminate the low quality cells. Genes rarely expressed in cells were also filtered out to reduce potential unwanted variations. The cleaned data was analyzed either by: 1) combining single cell information together with repect to individual and genotype status to form bulk RNA expression profiles and analyzing using DESeq, or 2) utilizing all individual cell expression information and analyzing using Seurat. The outputs from these two methods were then compared.
 
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+Gene Expression Summary
+``` {r eval=TRUE}
+library(readr)
+normalized_exp <- read_csv("~/Course/BMIN503/final project/normalized_matrix.csv")
+
+ercc <- normalized_exp[grepl("ERCC", normalized_exp$X1),]
+ercc_count <- colSums(ercc[,2:574])
+real_gene <- normalized_exp[!grepl("ERCC", normalized_exp$X1),]
+real_gene_count <- colSums(real_gene[,2:574], na.rm = TRUE)
+ercc_ratio <- ercc_count*100/(ercc_count + real_gene_count)
+
+gene_expressed <- real_gene
+gene_expressed[gene_expressed > 0] <- 1
+gene_expressed_count <- colSums(gene_expressed[,2:574], na.rm = TRUE)
+
+sample_name <-colnames(normalized_exp[,2:574])
+condition_name <- unlist(lapply(sample_name, function(x) unlist(strsplit(x, "_", fixed = TRUE))[1]))
+
+names(gene_expressed_count) <- NULL
+barplot(gene_expressed_count, col=as.factor(condition_name), border=as.factor(condition_name), ylab="Expressed Gene count", xlab="sample", main="Number of Genes Expressed in each Cell")
+legend("topleft", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+
+names(ercc_ratio) <- NULL
+barplot(ercc_ratio, col=as.factor(condition_name), border=as.factor(condition_name),ylab="ERCC/total_counts (%)", xlab="sample", main="Proportion of ERCC Spike-in Counts in each Cell") 
+legend("topright", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+```
+The first figure shows the distribution of the number of genes expressed in each cell and the second figure shows the distribution of the proportion of ERCC Spike-ins in each cell. Ideally, a high quality cell would have a relatively abundant expressed genes as well as a low ERCC percentage. A cell with low number of expressed genes and a high ERCC content might imply death before the experiment, and a extremely high gene expression might indicates that the cell is a multiplet instead of a singlet. 
+
+
+Data Filtering
+The cells were retained in downstream analyses if: 
+1) the total number of genes expressed is greater or equal to 200
+2) the total number of genes expressed is smaller or equal to 3000
+3) the ERCC spike-in fraction is smaller tha 30%
+The filtering criteria was shown in the figure below:
+``` {r eval=TRUE}
+plot(gene_expressed_count, ercc_ratio, pch=19, col=as.factor(condition_name), xlab="Number of Expressed Genes", ylab="Proportion of ERCC Spike-in Counts(%)", main="Expressed Gene Counts vs Proportion of ERCC Spike-in Counts", xlim=c(0, 3000), ylim=c(0,100))
+legend("topright", legend=c("C1P1", "C2P1", "C3P1", "D1P1", "D2P1", "D3P1"), fill=c(1,2,3,4,5,6), border = c(1,2,3,4,5,6), ncol=3)
+segments(200, 30, x1=3000, y1=30, lwd=3)
+segments(200, -3, x1=200, y1=30, lwd=3)
+segments(3000, -3, x1=3000, y1=30, lwd=3)
+segments(200, -3, x1=3000, y1=-3, lwd=3)
+```
+The cell selection step is shown as below:
+``` {r eval=TRUE}
+# only select cells with expressed genes >= 200 and <= 3000
+data1<- as.data.frame(normalized_exp)
+rownames(data1) <- normalized_exp$X1
+data1$X1 <- NULL
+filter1 <- data1[,colSums(gene_expressed[,2:574], na.rm=TRUE) >= 200 & colSums(gene_expressed[,2:574], na.rm=TRUE) <= 3000]
+
+# only select cells with spike-in ratio <= 30%
+ercc2 <- colSums(filter1[grep("ERCC", rownames(filter1)),])
+total_count2 <- colSums(filter1, na.rm = TRUE)
+ercc_ratio2 <- ercc2 * 100/total_count2
+filter2 <- filter1[, ercc_ratio2 <= 30]
+```
+After the selection for high-quality cells, genes were filtered with respect to their expression frequencies among the cells to reduce unwanted variations. Genes were retained in downstream analyses if the number of expressed cells were greater or equal to 3.
+``` {r eval=TRUE}
+# see the distribution of number of cells across genes
+expressed_cell <- filter2
+expressed_cell[expressed_cell > 0] <- 1
+expressed_cell_count <- rowSums(expressed_cell, na.rm=TRUE)
+names(expressed_cell_count) <- NULL
+hist(expressed_cell_count, main="Number of Cells Expressed in Each Gene", xlab="Number of Cells Expressed", xlim=c(0, 500), breaks=30)
+filter3 <- filter2[expressed_cell_count > 3,]
+dim(filter3)
+```
+After the overall filtering process, a total number of 473 cells and 8347 genes were retained in this study.
+
+Single Cell Analysis Using Seurat
+``` {r eval=TRUE}
+library(Seurat)
+library(dplyr)
+library(annotables)
+sample_name_reduced <- colnames(filter3)
+condition_reduced <- unlist(lapply(sample_name_reduced, function(x) unlist(strsplit(x, "_", fixed = TRUE))[1]))
+cell.bone=CreateSeuratObject(raw.data = filter3, project = "single_cell")
+cell.bone=SetIdent(cell.bone, ident.use = condition_reduced)
+
+# identify variable genes across the single cells
+cell.bone <- NormalizeData(object = cell.bone)
+# scaling the data and removing unwanted sources of variation
+cell.bone <- ScaleData(object=cell.bone, vars.to.regress = c("nUMI"))
+cell.bone <- FindVariableGenes(object = cell.bone, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.75, y.cutoff = 1, do.plot = TRUE)
+
+# Perform PCA
+cell.bone=RunPCA(cell.bone, do.print=FALSE)
+PCAPlot(cell.bone,1,2,pt.size = 2)
+
+cell.bone=RunTSNE(cell.bone, dims.use=1:15, max_iter=4000, perplexity=40)
+TSNEPlot(cell.bone, pt.size=2)
+
+```
+
