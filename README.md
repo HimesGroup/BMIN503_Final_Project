@@ -9,7 +9,7 @@ This repository contains templates for your final written report and GitHub repo
 1. [Create a **pull request**][pull-request] on this, the original BMIN503_Final_Project, repository to turn in your final project.
 
 
-DUE DATE FOR FINAL VERSION: 12/8/17 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
 
 <!-- Links -->
