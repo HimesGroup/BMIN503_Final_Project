@@ -6,29 +6,131 @@ output: html_notebook
 Building, training the n-gram model.
 
 ```{r}
-install.packages("RSQLite")
-install.packages("dplyr")
-install.packages("BiocManager")
-BiocManager::install("mygene")
+#install.packages("RSQLite")
+#install.packages("dplyr")
+#install.packages("BiocManager")
+#BiocManager::install("biomaRt")
+#library(biomaRt)
 library(dplyr)
 library(DBI)
-library(mygene)
+#library(mygene)
+library(RSQLite)
+
 ```
 
 First things first, load the data.
 
 ```{r}
-browseVignettes("mygene")
-gene <- query("9006323", fields="all")
-
 con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
 dbListTables(con)
 
-y = dbGetQuery(con, "SELECT * FROM amyloid")
-train_sample <- dbGetQuery(con, "SELECT * FROM train ORDER BY RANDOM() LIMIT 10")
+# Get list of amyloids to map with
+y <- dbGetQuery(con, "SELECT * FROM amyloid")
+amyloids <- filter(y, amyloid==1)
+non_amyloids <- filter(y, amyloid==0)
+
+# Get amyloid training data from sqlite server
+amy_str <- toString(sprintf("'%s'", amyloids$protein))
+train_base_query <- paste("SELECT * FROM train WHERE protein in (",amy_str,")")
+train_base = dbGetQuery(con, train_base_query)
+train_base <- merge(y, train_base, on="protein", how="left")
+
+# I'll have to test multiple balances of known amyloids and non-amyloids to see which produces the best model
+n_base <- nrow(train_base)
+# Lets first get a sample of equivalent size
+#non_amy_str <- toString(sprintf("'%s'", non_amyloids$protein))
+train_non_query <- paste("SELECT * FROM train WHERE protein not in (",amy_str,") ORDER BY RANDOM() LIMIT ",n_base)
+train_non_query
+train_sample <- dbGetQuery(con, train_non_query)
+train_sample <- merge(y, train_sample, on="protein", how="left")
 
 dbDisconnect(con)
+```
 
-table(y$amyloid)
+```{r}
+# Combine into one frame
+train <- rbind(train_base, train_sample)
+# Factorize the amino acid annotations
+factor_cols <- c("gram_1","gram_2","gram_3","gram_4","gram_5")
+# Make a consistent amino acid map
+amino_acid_factors <- c("R"=0,"H"=1,"K"=2,"D"=3,"E"=4,"S"=5,"T"=6,"N"=7,"Q"=8,"C"=9,"U"=10,"G"=11,"P"=12,"A"=13,
+                        "V"=14,"I"=15,"L"=16,"M"=17,"F"=18,"Y"=19,"W"=20)
+
+train[factor_cols] <- lapply(train[factor_cols], function(i){i = amino_acid_factors[i]})
+train_names <- make.names(paste(train$protein, train$gram_num, sep="_"), unique=TRUE)
+rownames(train) <- train_names
+
+sample_n(train, 10)
+```
+
+```{r}
+# Scale certain columns
+non_scale_cols <- c("protein","gram_num","amyloid","gram_1","gram_2","gram_3","gram_4","gram_5","amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")
+scale_cols <- names(train)[!names(train) %in% non_scale_cols]
+train[,scale_cols] <- lapply(train[,scale_cols], scale)
+# Drop protein, gram_num, U_num, U_perc and the amyloid_num cols
+train$protein <- NULL
+train$gram_num <- NULL
+train$U_num <- NULL
+train$U_perc <- NULL
+train$amyloid_1 <- NULL
+train$amyloid_2 <- NULL
+train$amyloid_3 <- NULL
+train$amyloid_4 <- NULL
+train$amyloid_5 <- NULL
+
+split_size <- floor(0.3 * nrow(train))
+
+train_ind <- sample(seq_len(nrow(train)), size=split_size)
+
+data_train <- train[-train_ind, ]
+data_test <- train[train_ind, ]
+
+sample_n(train, 10)
+```
+
+```{r}
+# Random forest
+#install.packages("randomForest")
+library(randomForest)
+
+rf <- randomForest(amyloid ~ ., data=data_train, ntree=100, importance=TRUE)
+
+rf_importances <- importance(rf, scale=TRUE)
+head(rf_importances[order(rf_importances[,1], decreasing=TRUE), ])
+```
+
+```{r}
+log_reg <- glm(amyloid ~ ., data = data_train, family = "binomial")
+
+summary(log_reg)
+log_reg$coefficients
+head(sort(log_reg$coefficients, decreasing = TRUE), 5)
+```
+
+
+```{r}
+# See how good the model is
+#install.packages("pROC")
+#install.packages("caret")
+library(pROC)
+library(caret)
+
+rf.preds <- predict(rf, data_test, probability=TRUE)
+glm.preds <- predict(log_reg, data_test, probability=TRUE)
+# ACC
+confusionMatrix(
+  factor(rf.preds, levels=c(0,1)),
+  factor(data_test$amyloid)
+)
+confusionMatrix(
+  factor(glm.preds, levels=c(0,1)),
+  factor(data_test$amyloid, levels=c(0,1))
+)
+# ROC
+roc(data_test$amyloid, rf.preds, ci=TRUE)
+roc(data_test$amyloid, glm.preds, ci=TRUE)
+plot.roc(data_test$amyloid, rf.preds)
+plot.roc(data_test$amyloid, glm.preds)
 ```
 
