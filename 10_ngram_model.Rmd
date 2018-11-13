@@ -67,7 +67,59 @@ sample_n(train, 10)
 # Scale certain columns
 non_scale_cols <- c("protein","gram_num","amyloid","gram_1","gram_2","gram_3","gram_4","gram_5","amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")
 scale_cols <- names(train)[!names(train) %in% non_scale_cols]
-train[,scale_cols] <- lapply(train[,scale_cols], scale)
+# I have to scale each column based on ALL of the data. So I have to normalize manually
+sql_mean_func <- function(column_name){
+  con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+  mean_query <- paste("SELECT AVG(",column_name,") FROM train")
+  col_mean <- dbGetQuery(con, mean_query)[[1]][1]
+  dbDisconnect(con)
+  return(col_mean)
+}
+
+sql_stdev_func <- function(column_name){
+  con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+  var_query <- paste(
+    "SELECT SUM((",column_name,"-(SELECT AVG(",column_name,") FROM train))*(",column_name,
+    "-(SELECT AVG(",column_name,") FROM train)) ) / (COUNT(",column_name,")-1) AS Variance FROM train")
+  col_stdev <- sqrt(dbGetQuery(con, var_query)[[1]][1])
+  dbDisconnect(con)
+  return(col_stdev)
+}
+#test_st_dev <- sql_stdev_func(scale_cols[[1]][1])
+#test_mean <- sql_mean_func(scale_cols[[1]][1])
+
+scale_func <- function(x, x_mean, x_stdev){
+  return((x - x_mean) / x_stdev)
+}
+
+#con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+#test_x <- dbGetQuery(con, paste("SELECT MAX(",scale_cols[[1]][1],") FROM train"))[[1]][1]
+#dbDisconnect(con)
+#test_scale <- scale_func(test_x, test_mean, test_st_dev)
+
+#Test on column
+#con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+#test_col <- dbGetQuery(con, paste("SELECT ",scale_cols[[1]][1]," FROM train"))
+#dbDisconnect(con)
+# Check my mean and st.dev functions
+#all.equal(mean(test_col[[1]]),test_mean)
+#all.equal(sd(test_col[[1]]), test_st_dev)
+
+######
+# Build scaler dataframe
+scale_df <- data.frame("col" = scale_cols, "mean" = NA, "st_dev" = NA)
+for (col in scale_cols){
+  scale_df[col,"mean"] <- sql_mean_func(col)
+  scale_df[col,"st_dev"] <- sql_stdev_func(col)
+}
+# Scale columns manually
+for (col in scale_cols){
+  print(col)
+  col_mean <- sql_mean_func(col)
+  col_st_dev <- sql_stdev_func(col)
+  train[,col] <- lapply(train[,col], FUN = function(x) scale_func(x, col_mean, col_st_dev))
+}
+#train[,scale_cols] <- lapply(train[,scale_cols], scale)
 # Drop protein, gram_num, U_num, U_perc and the amyloid_num cols
 train$protein <- NULL
 train$gram_num <- NULL
