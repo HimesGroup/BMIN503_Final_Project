@@ -1,0 +1,93 @@
+---
+title: "10_train_wrangle"
+author: "Jake Bergren"
+date: "November 16, 2018"
+output: html_document
+---
+
+Wrangling, scaling data for downstream machine learning.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#install.packages("RSQLite")
+#install.packages("dplyr")
+#install.packages("BiocManager")
+
+library(dplyr)
+library(DBI)
+#library(mygene)
+library(RSQLite)
+
+```
+
+First things first, load the data.
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+# This takes a little while
+train_df <- dbGetQuery(con, "SELECT * FROM train")
+# gram_num_df <- dbGetQuery(con, "SELECT protein, COUNT(gram_num) as gram_total FROM train GROUP BY protein")
+# Get list of amyloids to map with
+# amyloid_df <- dbGetQuery(con, "SELECT * FROM amyloid")
+dbDisconnect(con)
+```
+
+Wrangle the data for machine learning purposes! Factor, scale, drop columns of low utility, add the labels for training and eval.
+
+```{r}
+# Drop protein, gram_num, U_num, U_perc and the amyloid_num cols
+#train_df$protein <- NULL
+train_df$U_num <- NULL
+train_df$U_perc <- NULL
+train_df$amyloid_1 <- NULL
+train_df$amyloid_2 <- NULL
+train_df$amyloid_3 <- NULL
+train_df$amyloid_4 <- NULL
+train_df$amyloid_5 <- NULL
+
+factor_cols <- c("gram_1","gram_2","gram_3","gram_4","gram_5")
+# Make a consistent amino acid map, factor gram columns
+amino_acid_factors <- c("R"=0,"H"=1,"K"=2,"D"=3,"E"=4,"S"=5,"T"=6,"N"=7,"Q"=8,"C"=9,"U"=10,"G"=11,"P"=12,"A"=13,
+                        "V"=14,"I"=15,"L"=16,"M"=17,"F"=18,"Y"=19,"W"=20)
+
+train_df[factor_cols] <- lapply(train_df[factor_cols], function(i){i = amino_acid_factors[i]})
+
+# Scale certain columns
+non_scale_cols <- c("protein","gram_num","amyloid","gram_1","gram_2","gram_3","gram_4","gram_5")
+scale_cols <- names(train_df)[!names(train_df) %in% non_scale_cols]
+train_df[,scale_cols] <- lapply(train_df[,scale_cols], scale)
+```
+
+Now we record the scaled table in our sqlite database.
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+dbWriteTable(con, "train_scaled", train_df)
+dbDisconnect(con)
+```
+
+Finally we mark each n-gram with it's amyloid marker. This will take awhile.
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+dbExecute(con,
+  "ALTER TABLE train_scaled ADD amy INTEGER;"
+)
+# THIS TAKES A LONG TIME!
+dbExecute(con,
+  "UPDATE train_scaled 
+  SET amy = (
+    SELECT amyloid as amy
+    FROM amyloid
+    WHERE protein = train_scaled.protein
+    );"
+)
+dbDisconnect(con)
+
+```
+
+And now the data are ready for training!

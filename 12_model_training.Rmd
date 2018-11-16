@@ -1,0 +1,84 @@
+---
+title: "11_model_training"
+author: "Jake Bergren"
+date: "November 16, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, eval=TRUE}
+library(dplyr)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+```
+
+First things first, load the data.
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+
+# This takes a little while
+train_df <- dbGetQuery(con, "SELECT * FROM train_scaled")
+
+dbDisconnect(con)
+
+row_names <- paste(train_df$protein, train_df$gram_num, sep="_")
+.rowNamesDF(train_df, make.names=TRUE) <- row_names
+
+train_df$protein <- NULL
+train_df$gram_num <- NULL
+head(train_df)
+```
+
+Lets start with a handful of models typically used for binary classification
+
+```{r}
+# Random forest
+#install.packages("randomForest")
+library(randomForest)
+
+rf <- randomForest(amyloid ~ ., data=data_train, ntree=100, importance=TRUE)
+
+rf_importances <- importance(rf, scale=TRUE)
+head(rf_importances[order(rf_importances[,1], decreasing=TRUE), ])
+```
+
+```{r}
+log_reg <- glm(amyloid ~ ., data = data_train, family = "binomial")
+
+summary(log_reg)
+log_reg$coefficients
+head(sort(log_reg$coefficients, decreasing = TRUE), 5)
+```
+
+
+```{r}
+# See how good the model is
+#install.packages("pROC")
+#install.packages("caret")
+library(pROC)
+library(caret)
+
+rf.preds <- predict(rf, data_test, probability=TRUE)
+glm.preds <- predict(log_reg, data_test, probability=TRUE)
+# ACC
+confusionMatrix(
+  factor(rf.preds, levels=c(0,1)),
+  factor(data_test$amyloid)
+)
+confusionMatrix(
+  factor(glm.preds, levels=c(0,1)),
+  factor(data_test$amyloid, levels=c(0,1))
+)
+# ROC
+roc(data_test$amyloid, rf.preds, ci=TRUE)
+roc(data_test$amyloid, glm.preds, ci=TRUE)
+plot.roc(data_test$amyloid, rf.preds)
+plot.roc(data_test$amyloid, glm.preds)
+```

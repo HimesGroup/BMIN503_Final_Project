@@ -1,0 +1,212 @@
+---
+title: "11_data_viz"
+author: "Jake Bergren"
+date: "November 16, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, eval=TRUE}
+library(dplyr)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+library(lattice)
+```
+
+First things first, load the data.
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+
+# This takes a little while
+train_df <- dbGetQuery(con, "SELECT * FROM train_scaled")
+
+dbDisconnect(con)
+
+row_names <- paste(train_df$protein, train_df$gram_num, sep="_")
+.rowNamesDF(train_df, make.names=TRUE) <- row_names
+
+train_df$protein <- NULL
+train_df$gram_num <- NULL
+head(train_df)
+```
+
+Lets get a handle on the data I'm working with with some visuals.
+
+```{r, eval=TRUE}
+
+amino_acid_factors <- c("R"=0,"H"=1,"K"=2,"D"=3,"E"=4,
+                        "S"=5,"T"=6,"N"=7,"Q"=8,"C"=9,
+                        "U"=10,"G"=11,"P"=12,"A"=13,"V"=14,
+                        "I"=15,"L"=16,"M"=17,"F"=18,"Y"=19,
+                        "W"=20)
+
+# Plot amino acid proportion present, grouped by amyloid status
+all_grams_grouped <- train_df %>%
+  select(c(gram_1, gram_2, gram_3, gram_4, gram_5, amy)) %>%
+  split(train_df$amy) %>%
+  melt(select=c(gram_1, gram_2, gram_3, gram_4, gram_5)) %>%
+  count(value, L1)
+
+colnames(all_grams_grouped) <- c("aa","amy","count")
+
+# Make the make-up relative to all amino acids per group
+non_amy_aa <- sum(filter(all_grams_grouped, amy==0)$count)
+amy_aa <- sum(filter(all_grams_grouped, amy==1)$count)
+
+all_grams_grouped$aa <- factor(all_grams_grouped$aa, labels=names(amino_acid_factors))
+
+aa_scaler <- function(amy, count){
+  if (amy=="1"){
+    return(as.numeric(count)/amy_aa)
+  } else {
+    return(as.numeric(count)/non_amy_aa)
+  }
+}
+
+all_grams_grouped$count_scaled <- apply(all_grams_grouped, 1, function(row) aa_scaler(row['amy'],row['count']))
+
+# FANCY THIS UP
+ggplot(all_grams_grouped, aes(x=reorder(aa, count_scaled), y=count_scaled, fill=amy)) +
+  geom_bar(stat="identity")
+```
+
+```{r, eval=TRUE}
+# What about for the percentages? And "nums"?
+# Get these values by protein
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/protein_training.db")
+
+# This takes a little while
+protein_df <- dbGetQuery(
+  con, 
+  "SELECT * 
+  FROM protein_seq_features
+  LEFT JOIN 
+    amyloid
+  ON protein_seq_features.protein = amyloid.protein"
+  )
+
+dbDisconnect(con)
+
+# Some extra protein column got appended so lets remove it
+protein_df$protein..72 <- NULL
+protein_df$U_num <- NULL
+protein_df$U_perc <- NULL
+
+non_scale_cols <- c("protein","amyloid")
+scale_cols <- names(protein_df)[!names(protein_df) %in% non_scale_cols]
+protein_df[,scale_cols] <- lapply(protein_df[,scale_cols], scale)
+
+protein_df$amyloid <- factor(protein_df$amyloid, levels=c(0,1), labels=c("Normal","Amyloid"))
+
+head(protein_df)
+
+perc_data <- protein_df %>%
+  select(c(amyloid, R_perc, H_perc, K_perc, D_perc, E_perc, S_perc, T_perc, N_perc, Q_perc, C_perc,
+           G_perc, P_perc,A_perc, V_perc, I_perc, L_perc, M_perc, F_perc, Y_perc, W_perc)) %>%
+  melt(id=c("amyloid"))
+
+colnames(perc_data) <- c("amy","perc","val")
+# Test and see if any of these percentages are significantly different between amyloid and non-amyloid
+
+perc_data <- na.omit(perc_data)
+
+viz_cols <- c()
+
+filter(perc_data, amy=="Normal")
+
+
+for (col in c("R_perc", "H_perc", "K_perc", "D_perc", "E_perc", "S_perc", "T_perc", "N_perc", "Q_perc", "C_perc", "G_perc", "P_perc","A_perc", "V_perc", "I_perc", "L_perc", "M_perc", "F_perc", "Y_perc", "W_perc")){
+  perc_col = filter(perc_data, perc==col)
+  amy_i = filter(perc_col, amy=="Amyloid")$val
+  non_amy_i = filter(perc_col, amy=="Normal")$val
+  
+  t_res = t.test(amy_i, non_amy_i)
+  if (t_res$p.value <= 0.05){
+    viz_cols <- append(viz_cols, col)
+  }
+}
+
+# PRETTY THIS UP LATER
+ggplot(na.omit(filter(perc_data, perc %in% viz_cols)), aes(perc, val, fill=amy)) +
+  geom_boxplot() +
+  ylim(-4,25)
+
+```
+
+```{r, eval=TRUE}
+num_data <- protein_df %>%
+  select(c(amyloid, R_num, H_num, K_num, D_num, E_num, S_num, T_num, N_num, Q_num, C_num,
+           G_num, P_num, A_num, V_num, I_num, L_num, M_num, F_num, Y_num, W_num)) %>%
+  melt(id=c("amyloid"))
+
+colnames(num_data) <- c("amy","num","val")
+
+numviz_cols <- c()
+
+for (col in c("R_num", "H_num", "K_num", "D_num", "E_num", "S_num", "T_num", "N_num", "Q_num", "C_num", "G_num", "P_num","A_num", "V_num", "I_num", "L_num", "M_num", "F_num", "Y_num", "W_num")){
+  num_col = filter(num_data, num==col)
+  amy_i = filter(num_col, amy=="Amyloid")$val
+  non_amy_i = filter(num_col, amy=="Normal")$val
+  
+  t_res = t.test(amy_i, non_amy_i)
+  if (t_res$p.value <= 0.05){
+    numviz_cols <- append(numviz_cols, col)
+  }
+}
+
+num_data <- na.omit(num_data)
+
+# PRETTY THIS UP LATER
+ggplot(filter(num_data, num %in% numviz_cols), aes(val, fill=amy)) +
+  geom_density(alpha=0.2) +
+  facet_grid(num ~ .) +
+  xlim(-1,3)
+```
+
+```{r, eval=TRUE}
+# Mol weight, arom, insta, gravy, isoel, helix_perc, turn_perc, sheet_perc
+ggplot(na.omit(protein_df), aes(mol_weight, fill = amyloid)) +
+  geom_density(alpha=0.2) +
+  ggtitle("Molecular Weight")
+
+ggplot(na.omit(protein_df), aes(arom, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Aromaticity")
+
+ggplot(na.omit(protein_df), aes(insta, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Instability")
+
+ggplot(na.omit(protein_df), aes(gravy, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Gravy")
+
+ggplot(na.omit(protein_df), aes(isoel, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Isoelectric Point")
+
+ggplot(na.omit(protein_df), aes(helix_perc, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Helix Percentage")
+
+ggplot(na.omit(protein_df), aes(turn_perc, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Turn Percentage")
+
+ggplot(na.omit(protein_df), aes(sheet_perc, fill=amyloid)) +
+  geom_density(alpha=0.2)+
+  ggtitle("Sheet Percentage")
+```
+
+```{r, eval=TRUE}
+# Get the flex values plotted and evaluated
+
+```
