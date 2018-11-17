@@ -16,6 +16,9 @@ library(RSQLite)
 library(ggplot2)
 library(tidyr)
 library(reshape2)
+library(randomForest)
+library(caret)
+library(pROC)
 ```
 
 First things first, load the data.
@@ -25,23 +28,95 @@ con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/prote
 
 # This takes a little while
 train_df <- dbGetQuery(con, "SELECT * FROM train_scaled")
+train_df$amy <- factor(train_df$amy, levels=c(0,1), labels=c("Normal","Amyloid"))
 
 dbDisconnect(con)
 
-row_names <- paste(train_df$protein, train_df$gram_num, sep="_")
-.rowNamesDF(train_df, make.names=TRUE) <- row_names
+.rowNamesDF(train_df, make.names=TRUE) <- paste(train_df$protein, train_df$gram_num, sep="_")
 
 train_df$protein <- NULL
 train_df$gram_num <- NULL
-head(train_df)
+
+train_df[sample(nrow(train_df), 5),]
+```
+
+```{r}
+# Last minute checks on features before I go ahead
+corrs <- list()
+
+for (col_1 in names(train_df)){
+  for (col_2 in names(train_df)){
+    if (col_1 == col_2 | col_1 == "amy" | col_2 == "amy"){
+      next
+      } else {
+        pair <- sort(c(col_1, col_2))
+        combined <- paste(pair, collapse="_")
+        if (combined %in% corrs == FALSE) {
+          cor_res <- cor(train_df[col_1], train_df[col_2])[1]
+          corrs[[combined]] <- cor_res
+        }
+      #corrs <- append(corrs, combined)
+    }
+  }
+}
+
+corr_df <- melt(as.data.frame(corrs[corrs >= 0.95]))
+
+ggplot(corr_df, aes(x=reorder(variable, value), weight=value)) +
+  geom_bar()
+
+```
+
+The challenge with this dataset will be balancing the positives vs. the negatives.
+
+Lets start at equivalent sizes, then scale up the non-amyloids to 50x amyloids and see how that goes.
+
+```{r}
+
+base_n <- nrow(filter(train_df, amy=="Amyloid"))
+non_amy_index <- nrow(filter(train_df, amy=="Normal"))
+
+fold_diff <- non_amy_index / base_n
+
+holdout <- 0.3
+
+rand_ind <- sample(non_amy_index)
+
+aucs <- c()
+
+colors <- c("red","orange","yellow","green","blue","purple",
+            "pink","sandybrown", "khaki1","mediumseagreen",
+            "navy","magenta","maroon","lightsteelblue","orchid",
+            "slategray","wheat","lavender","gray8")
+
+for (i in c(1, 5, 10, 25, 50)){#, 75, 100, 125, 150, 175, 200, 225, 250, 275)){
+  samp_n <- ceiling(base_n * i)
+  train_df_sample <- rbind(
+    filter(train_df, amy=="Amyloid"), 
+    filter(train_df, amy=="Normal")[rand_ind[1:samp_n],]
+    )
+  test_samp_size <- floor(holdout * nrow(train_df_sample))
+  test_ind <- sample(seq_len(nrow(train_df_sample)), size=test_samp_size)
+  
+  train_i <- train_df_sample[-test_ind,]
+  test_i <- train_df_sample[test_ind,]
+  
+  glm_reg <- glm(amy ~ ., data = train_i, family = binomial(logit))
+  glm_preds <- predict(glm_reg, test_i[, names(test_i) != "amy"], probability=TRUE)
+  
+  aucs <- append(aucs, roc(test_i$amy, glm_preds, ci=TRUE)$auc)
+
+  print(i)
+}
+
+# ggplot(aucs) +
+#   geom_bar()
 ```
 
 Lets start with a handful of models typically used for binary classification
 
 ```{r}
 # Random forest
-#install.packages("randomForest")
-library(randomForest)
 
 rf <- randomForest(amyloid ~ ., data=data_train, ntree=100, importance=TRUE)
 
