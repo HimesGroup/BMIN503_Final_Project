@@ -40,33 +40,6 @@ train_df$gram_num <- NULL
 train_df[sample(nrow(train_df), 5),]
 ```
 
-```{r}
-# Last minute checks on features before I go ahead
-corrs <- list()
-
-for (col_1 in names(train_df)){
-  for (col_2 in names(train_df)){
-    if (col_1 == col_2 | col_1 == "amy" | col_2 == "amy"){
-      next
-      } else {
-        pair <- sort(c(col_1, col_2))
-        combined <- paste(pair, collapse="_")
-        if (combined %in% corrs == FALSE) {
-          cor_res <- cor(train_df[col_1], train_df[col_2])[1]
-          corrs[[combined]] <- cor_res
-        }
-      #corrs <- append(corrs, combined)
-    }
-  }
-}
-
-corr_df <- melt(as.data.frame(corrs[corrs >= 0.95]))
-
-ggplot(corr_df, aes(x=reorder(variable, value), weight=value)) +
-  geom_bar()
-
-```
-
 The challenge with this dataset will be balancing the positives vs. the negatives.
 
 Lets start at equivalent sizes, then scale up the non-amyloids to 50x amyloids and see how that goes.
@@ -82,35 +55,44 @@ holdout <- 0.3
 
 rand_ind <- sample(non_amy_index)
 
-aucs <- c()
+aucs <- list()
 
 colors <- c("red","orange","yellow","green","blue","purple",
             "pink","sandybrown", "khaki1","mediumseagreen",
             "navy","magenta","maroon","lightsteelblue","orchid",
             "slategray","wheat","lavender","gray8")
 
-for (i in c(1, 5, 10, 25, 50)){#, 75, 100, 125, 150, 175, 200, 225, 250, 275)){
+for (i in c(0.1, 0.25, 0.5, 1, 5, 10, 25, 50, 75)){#, 75, 100, 125, 150, 175, 200, 225, 250, 275)){
   samp_n <- ceiling(base_n * i)
+  # Get full train set
   train_df_sample <- rbind(
     filter(train_df, amy=="Amyloid"), 
     filter(train_df, amy=="Normal")[rand_ind[1:samp_n],]
     )
+  # Split into train and test
   test_samp_size <- floor(holdout * nrow(train_df_sample))
   test_ind <- sample(seq_len(nrow(train_df_sample)), size=test_samp_size)
   
   train_i <- train_df_sample[-test_ind,]
   test_i <- train_df_sample[test_ind,]
   
+  # Train the logistic regression model
   glm_reg <- glm(amy ~ ., data = train_i, family = binomial(logit))
   glm_preds <- predict(glm_reg, test_i[, names(test_i) != "amy"], probability=TRUE)
   
-  aucs <- append(aucs, roc(test_i$amy, glm_preds, ci=TRUE)$auc)
+  aucs[[length(aucs)+1]] <- list(i, roc(test_i$amy, glm_preds, ci=TRUE)$auc[1])
 
   print(i)
+  
+  rm(test_i, train_i, train_df_sample)
 }
 
-# ggplot(aucs) +
-#   geom_bar()
+aucs_df <- as.data.frame(t(matrix(unlist(aucs), nrow=length(unlist(aucs[1])))))
+colnames(aucs_df) <- c("rel_size","auc")
+aucs_df$rel_size <- as.character(aucs_df$rel_size)
+
+ggplot(aucs_df, aes(x=rel_size, y=auc)) +
+  geom_bar(stat="identity")
 ```
 
 Lets start with a handful of models typically used for binary classification
