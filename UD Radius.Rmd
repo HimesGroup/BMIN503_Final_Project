@@ -1,0 +1,1249 @@
+---
+title: "Ultradistal Radius Bone Mineral Density in Children: Results from the Bone Mineral Density in Childhood Study"
+author: "Joseph M. Kindler, Ph.D."
+output:
+  pdf_document:
+    toc: no
+  html_document:
+    depth: 3
+    highlight: tango
+    theme: paper
+    toc: no
+---
+    
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```    
+
+###FACULTY SUPPORT
+- Babette Zemel
+- Heidi Kalkwarf
+- Shana McCormack
+
+###INTRODUCTION
+> The Bone Mineral Density in Childhood Study (BMDCS) has been instrumental in characterizing bone growth during childhood and identifying the factors that contribute to these complex processes. Several traditional and non-traditional bone phenotypes have been explored using BMDCS data, with the exception of bone mineral density (BMD) at the ultradistal radius (i.e., the forearm). Understanding the factors associated with ultradistal radius BMD during childhood, such as age, sex, race, and bone geometry, will be criticial in developing this specific phenotype for clinical application, as well as understanding fracture etiology during growth since the forearm is the most common fracture site in youth.
+
+> Both modifiable and non-modifiable factors are involved in achieving optimal bone health during childhood. The attainment of "peak bone mass" during growth has significant ramifications on the risk for fracture and osteoporosis in adulthood. Bone-augmenting modifiable factors include physical activity, diet, and medications, while non-modifiable factors include genetics, population ancestry, sex, age, and sexual maturation. I am a nutritionist and bone biologist by training and my post-doc mentor, Dr. Babette Zemel, is a biological anthropologist with vast knowledge of human growth. Dr. Zemel was the principal investigator on the BMDCS, which was a prospective multi-site study of greater than 2,000 children funded by the NIH, and has identified maturational, dietary, and genetic determinants of bone health in this cohort. Dr. Kalkwarf is also a nutritionist and bone biologist, and has extensive expertise in childhood growth. Finally, Dr. McCormack is an endocrinologist and is an expert in childhood growth and R programming. Collectively, this collaborative team has aided in developing the study aims, conducting longitudinal statistical analyses in R, and developing a plan of action to further develop this new phenotype (i.e., ultradistal radius BMD) in future studies with respect to understanding the genetic and behavioral factors involved in forearm bone density accrual. Current pediatric recommendations for clincal bone health assessment suggest either the total body or lumbar spine as the two most appropriate skeletal regions for osteoporosis diagnosis. However, developing the ultradistal radius BMD phenotype  will help efforts toward establishing this outcome as an ancillary measure of bone health in instances that a total body or lumbar spine bone density scan is not feasible or appropriate at these skeletal regions of interest.  
+
+###METHODS
+
+#Install Packages
+```{r eval=TRUE}
+require(foreign)
+require(haven)
+library(gamlss)
+#library(xlsx) #not working for some reason?
+install.packages("foreign")
+install.packages("haven")
+install.packages("gamlss")
+install.packages("xlsx")
+install.packages("tidyverse")
+install.packages("powerlmm")
+install.packages("nlme")
+install.packages("lme4")
+install.packages("lm.beta")
+install.packages("plotly")
+install.packages("mass")
+install.packages("ppcor")
+library(dplyr)
+library(ggplot2)
+library(gamlss)
+library(broom)
+library(lm.beta)
+library(reshape2)
+library(plyr)
+#library(melt)
+library(lme4)
+library(lmerTest)
+install.packages("bbmle")
+
+```
+
+#Import research data
+```{r eval=TRUE}
+#Data set containing forearm cortical bone measurements
+library(haven)
+old_pqct.dta <- read_dta("~/Desktop/BMIN_503/Final_Project/BMDCS Data/old_pqct.dta")
+pqct <- subset(old_pqct.dta, select = c(1:54))
+head(pqct)
+
+#Data set containing filter variable to exclude necessary measurements due to a variety of reasons (e.g., developed chronic condition, bedrest, unexplained weight loss/gain, initiation of exclusionary medication, etc.)
+library(haven)
+excl <- read_dta("~/Desktop/BMIN_503/Final_Project/BMDCS Data/old_excluded.dta")
+head(excl)
+
+#Data set containing pertinent deomgraphic, anthropometric, and forearm DXA data
+library(haven)
+old_ultradistal_radius_workfile_2018.09.10.dta <- read_dta("~/Desktop/BMIN_503/Final_Project/BMDCS Data/old_ultradistal_radius_workfile_2018.09.10.dta")
+dxa <- subset(old_ultradistal_radius_workfile_2018.09.10.dta, select = c(randid, visit, sex, gender, height, weight, age, black, race, fore_r_ud_bmd_pc, fore_r_ud_bmc_pc, wb_tot_fat, wb_tot_lean, brknbone))
+head(dxa)
+
+#Data set containing UD BMD Z scores
+ultra_distal_radius_bmd <- read_dta("~/Desktop/BMIN_503/Final_Project/BMDCS Data/ultra_distal_radius_bmd.dta")
+
+ultra_distal_radius_bmd$bid <- NULL
+ultra_distal_radius_bmd$age <- NULL
+ultra_distal_radius_bmd$gender <- NULL
+ultra_distal_radius_bmd$site <-NULL
+ultra_distal_radius_bmd$visit_num <-NULL
+ultra_distal_radius_bmd$black <-NULL
+ultra_distal_radius_bmd$weight <- NULL
+ultra_distal_radius_bmd$height <- NULL
+#ultra_distal_radius_bmd$waz <- NULL
+#ultra_distal_radius_bmd$bmiz <- NULL
+#ultra_distal_radius_bmd$haz <- NULL
+ultra_distal_radius_bmd$fore_r_ud_bmd_pc <- NULL
+ultra_distal_radius_bmd$fore_r_ud_bmd_fulc <- NULL
+
+```
+
+#Merge the data files (merge on 'randid' and 'visit')
+```{r eval=TRUE}
+fake <- dplyr::full_join(pqct, dxa, by = c("randid", "visit"))
+bmdcs <- dplyr::full_join(fake, excl, by = c("randid", "visit"))
+bmdcs <- dplyr::full_join(bmdcs, ultra_distal_radius_bmd, by = c("randid", "visit"))
+```
+
+##Removing necessary measurements/subjects from the dataset
+```{r eval=TRUE}
+bmdcs$exclude.filter <- as.factor(is.na(bmdcs$extype)) #This command allows us to create a new variable for the participants that should be deleted. If a person has a number (1-7) (meaning, they need to be deleted), they'll receive a "FALSE", but if they have a "NA", then they'll receive a "TRUE".
+bmdcs$dummy <- bmdcs$extype #This command allows us to copy the 'extype' variable so it appears next to the newly generated variable from above... scroll through to confirm that this worked properly (all numbers (1 to 7) should have a corresponding "FALSE", and NA's should have a corresponding "TRUE").
+bmdcs <- bmdcs[bmdcs$exclude.filter==TRUE,] #This command uses the "exclude.filter" variable that we created in command 1 to get rid of the "FALSE" rows, thereby deleting the the necessary measures/subjects and retaining our final and valid measurements.
+```
+
+#Identifying and Removing 0s
+```{r eval=TRUE}
+summary(bmdcs)
+
+hist(bmdcs$age)
+hist(bmdcs$height)
+hist(bmdcs$fore_r_ud_bmd_pc)
+hist(bmdcs$tot_a_r30)
+hist(bmdcs$crt_thk_r30)
+hist(bmdcs$crt_den_r30)
+
+
+#df[df == 0] <- NA
+
+#uuu <- bmdcs
+#hist(uuu$tot_a_r30)
+#summary(uuu$crt_thk_r30)
+#uuu[uuu == 0] <- NA
+```
+
+#Creating new gender variable
+```{r eval=TRUE}
+bmdcs$gender.2 = as.factor(bmdcs$gender) #gender was numeric in 'bmdcs', but need it to be a factor
+```
+
+##Creating polynomial terms for age (for regression analyses)
+```{r eval=TRUE}
+bmdcs$age_squared <- bmdcs$age * bmdcs$age
+
+bmdcs$age_cubed <- bmdcs$age * bmdcs$age * bmdcs$age
+
+bmdcs$age_four <- bmdcs$age * bmdcs$age * bmdcs$age * bmdcs$age
+
+```
+
+##Creating data frames for males and females, as well as for AA males, AA females, non-AA males, and non-AA females
+```{r eval=TRUE}
+#Males (includes both AA and non-AA)
+bmdcs.male <- bmdcs[bmdcs$gender==1, ] 
+#head(bmdcs.male$gender, 20)
+#head(bmdcs.male$sex, 20)
+#head(bmdcs.male$black, 20)
+#head(bmdcs.male$race, 20) 
+
+#Females (includes both AA and non-AA)
+bmdcs.female <- bmdcs[bmdcs$gender==2, ] 
+#head(bmdcs.female$gender, 20)
+#head(bmdcs.female$sex, 20)
+#head(bmdcs.female$black, 20)
+#head(bmdcs.female$race, 20) 
+
+
+#AA Male
+bmdcs.AA.male <- bmdcs[bmdcs$gender==1 & bmdcs$black==1, ] 
+#head(bmdcs.AA.male$gender)
+#head(bmdcs.AA.male$sex)
+#head(bmdcs.AA.male$black)
+#head(bmdcs.AA.male$race) 
+
+#AA Female
+bmdcs.AA.female <- bmdcs[bmdcs$gender==2 & bmdcs$black==1, ] 
+#head(bmdcs.AA.female$gender)
+#head(bmdcs.AA.female$sex)
+#head(bmdcs.AA.female$black)
+#head(bmdcs.AA.female$race) 
+
+#non-AA Male
+bmdcs.nonAA.male <- bmdcs[bmdcs$gender==1 & bmdcs$black==0, ] 
+#head(bmdcs.nonAA.male$gender)
+#head(bmdcs.nonAA.male$sex)
+#head(bmdcs.nonAA.male$black)
+#head(bmdcs.nonAA.male$race)
+
+#non-AA Female
+bmdcs.nonAA.female <- bmdcs[bmdcs$gender==2 & bmdcs$black==1, ] 
+#head(bmdcs.nonAA.female$gender)
+#head(bmdcs.nonAA.female$sex)
+#head(bmdcs.nonAA.female$black)
+#head(bmdcs.nonAA.female$race) 
+```
+
+#Creating interaction terms for regression analyses
+```{r eval=TRUE}
+#Main BMDCS data set
+#Age squared
+bmdcs$age_squared_by_black <- bmdcs$age_squared * bmdcs$black
+bmdcs$age_squared_by_gender <- bmdcs$age_squared * bmdcs$gender
+bmdcs$age_squared_by_gender_by_black <- bmdcs$age_squared * bmdcs$gender * bmdcs$black
+
+#Age cubed
+bmdcs$age_cubed_by_black <- bmdcs$age_cubed * bmdcs$black
+bmdcs$age_cubed_by_gender <- bmdcs$age_cubed * bmdcs$gender
+bmdcs$age_cubed_by_gender_by_black <- bmdcs$age_cubed * bmdcs$gender * bmdcs$black
+
+#Age fourth
+bmdcs$age_four_by_black <- bmdcs$age_four * bmdcs$black
+bmdcs$age_four_by_gender <- bmdcs$age_four * bmdcs$gender
+bmdcs$age_four_by_gender_by_black <- bmdcs$age_four * bmdcs$gender * bmdcs$black
+
+##
+#BMDCS male and female data sets
+bmdcs.male$black_by_age_cubed <- bmdcs.male$age_cubed * bmdcs.male$black
+bmdcs.female$black_by_age_cubed <- bmdcs.female$age_cubed * bmdcs.female$black
+
+```
+
+#New data frames with labels for figures.
+```{r eval=TRUE}
+#BMDCS
+bmdcs.figs <- mutate(bmdcs, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs <- mutate(bmdcs.figs, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+#Female
+bmdcs.figs.female <- mutate(bmdcs.female, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.female <- mutate(bmdcs.figs.female, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+#Male
+bmdcs.figs.male <- mutate(bmdcs.male, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.male <- mutate(bmdcs.figs.male, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+#AA Female
+bmdcs.figs.aa.female <- mutate(bmdcs.AA.female, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.aa.female <- mutate(bmdcs.figs.aa.female, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+##AA Male
+bmdcs.figs.aa.male <- mutate(bmdcs.AA.male, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.aa.male <- mutate(bmdcs.figs.aa.male, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+##non-AA Female
+bmdcs.figs.non.aa.female <- mutate(bmdcs.nonAA.female, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.non.aa.female <- mutate(bmdcs.figs.non.aa.female, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+
+#non-AA Male
+bmdcs.figs.non.aa.male <- mutate(bmdcs.nonAA.male, black = factor(black, levels=c(0, 1), labels=c("non-African American", "African American")))
+bmdcs.figs.non.aa.male <- mutate(bmdcs.figs.non.aa.male, gender.2 = factor(gender.2, levels=c(1, 2), labels=c("Male", "Female")))
+```
+
+###RESULTS
+
+#New DF for just baseline measurements to acquire participant characteristics
+```{r eval=TRUE}
+#save a new df
+baseline <- bmdcs[bmdcs$visit==0, ] 
+head(baseline)
+```
+
+#Descriptives
+```{r eval=TRUE}
+library(psych)
+describe(bmdcs$black)
+
+
+table(baseline$black)
+table(baseline$gender)
+mean(baseline$age)
+```
+
+#Characterization of UD radius BMD during childhood in African American and non-African American Males and Females
+
+#UD Radius by race and sex (box plot)
+```{r eval=TRUE}
+#Raw Values
+ggplot(data=bmdcs.figs, aes(x=factor(gender.2), fore_r_ud_bmd_pc)) + 
+    geom_boxplot(color="black", fill="lightblue") +
+    facet_grid(. ~black) +
+    labs(title="UD Radius BMD in African American and non-African American Males and Females") +
+    labs(x="Gender", y="UD Radius BMD")
+
+#Z Scores
+ggplot(data=bmdcs.figs, aes(x=factor(gender.2), ud_radius_bmd_z)) + 
+    geom_boxplot(color="black", fill="lightblue") +
+    facet_grid(. ~black) +
+    labs(title="UD Radius BMD in African American and non-African American Males and Females") +
+    labs(x="Gender", y="UD Radius BMD")
+
+```
+
+#UD Radius by age (scatter plot), raw values
+```{r eval=TRUE}
+
+ggplot(data=bmdcs.figs.aa.female, aes(age, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Female: Age vs. UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    labs(x="Age (years)", y="UD Radius BMD (g/cm2)")
+
+ggplot(data=bmdcs.figs.aa.male, aes(age, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Male: Age vs. UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    labs(x="Age (years)", y="UD Radius BMD (g/cm2)")
+    
+ggplot(data=bmdcs.figs.non.aa.female, aes(age, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA Female: Age vs. UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    labs(x="Age (years)", y="UD Radius BMD (g/cm2)")
+    
+ggplot(data=bmdcs.figs.non.aa.male, aes(age, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA male: Age vs. UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    labs(x="Age (years)", y="UD Radius BMD (g/cm2)")
+
+
+```
+
+#Changes in UD Radius BMD with age during childhood
+```{r eval=TRUE}
+ud.radius.model.1.1 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age), data = bmdcs)
+summary(ud.radius.model.1.1)
+#confint(ud.radius.model.1.1)
+#nobs(ud.radius.model.1.1)
+#extractAIC(ud.radius.model.1.1)
+
+ud.radius.model.1.2 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared), data = bmdcs)
+summary(ud.radius.model.1.2)
+#confint(ud.radius.model.1.2)
+#nobs(ud.radius.model.1.2)
+#extractAIC(ud.radius.model.1.2)
+
+ud.radius.model.1.3 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_cubed), data = bmdcs)
+summary(ud.radius.model.1.3)
+#confint(ud.radius.model.1.3)
+#nobs(ud.radius.model.1.3)
+#extractAIC(ud.radius.model.1.3)
+
+ud.radius.model.1.4 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_four), data = bmdcs)
+summary(ud.radius.model.1.3)
+#confint(ud.radius.model.1.3)
+#nobs(ud.radius.model.1.3)
+#extractAIC(ud.radius.model.1.3)
+```
+
+#Compare which model has best fit based on AIC (lower AIC means better fit)
+```{r eval=TRUE}
+bbmle::AICtab(ud.radius.model.1.1,ud.radius.model.1.2,ud.radius.model.1.3,ud.radius.model.1.4)
+```
+> Based on the AICs, it appears that the squared age term provides the best fit with respect to UD radius BMD. 
+
+#Changes in UD Radius BMD during childhood - controlling for race and sex
+```{r eval=TRUE}
+ud.radius.model.2.a = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared), data = bmdcs)
+summary(ud.radius.model.2.a)
+#confint(ud.radius.model.2.a)
+#nobs(ud.radius.model.2.a)
+#extractAIC(ud.radius.model.2.a)
+```
+
+#Changes in UD Radius BMD during childhood - race and sex interactions
+```{r eval=TRUE}
+#Including a 3-way interaction
+ud.radius.model.2.b = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared) + scale(age_squared_by_black) + scale(age_squared_by_gender) + scale(age_squared_by_gender_by_black), data = bmdcs)
+summary(ud.radius.model.2.b)
+#confint(ud.radius.model.2.b)
+nobs(ud.radius.model.2.b)
+extractAIC(ud.radius.model.2.b)
+```
+
+#Removing the non-significant 3-way interaction
+```{r eval=TRUE}
+ud.radius.model.2.c = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared) + scale(age_squared_by_black) + scale(age_squared_by_gender), data = bmdcs)
+summary(ud.radius.model.2.c)
+confint(ud.radius.model.2.c)
+nobs(ud.radius.model.2.c)
+extractAIC(ud.radius.model.2.c)
+```
+>Although there was no three way interaction between age squared, gender, and race, the significant two way interactions supports the importance of examining relationships with UD radius BMD within race by sex groups... Due to our limited sample size with pQCT measurements, we will perform our analyses in males and females separately, but including race as a covariate (fixed).
+
+
+#Characterization of radius Ct.vBMD during childhood in African American and non-African American Males and Females
+
+#Ct.vBMD by race and sex (box plot)
+```{r eval=TRUE}
+ggplot(data=bmdcs.figs, aes(x=factor(gender.2), crt_den_r30)) + 
+    geom_boxplot(color="black", fill="lightblue") +
+    facet_grid(. ~black) +
+    labs(title="Radius Ct.vBMD in African American and non-African American Males and Females") +
+    labs(x="Gender", y="Ct.vBMD (g/cm3)")
+
+```
+
+#Ct.vBMD by age (scatter plot)
+```{r eval=TRUE}
+ggplot(data=bmdcs.figs.aa.female, aes(age, crt_den_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Female: Age vs. Radius Ct.vBMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Ct.vBMD (g/cm3)")
+
+ggplot(data=bmdcs.figs.aa.male, aes(age, crt_den_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Male: Age vs. Radius Ct.vBMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Ct.vBMD (g/cm3)")
+
+ggplot(data=bmdcs.figs.non.aa.female, aes(age, crt_den_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA Female: Age vs. Radius Ct.vBMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Ct.vBMD (g/cm3)")
+
+ggplot(data=bmdcs.figs.non.aa.male, aes(age, crt_den_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA Male: Age vs. Radius Ct.vBMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    labs(x="Age (years)", y="Ct.vBMD (g/cm3)")
+```
+
+#Changes in radius Ct.vBMD with age during childhood
+```{r eval=TRUE}
+vbmd.model.1.1 = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age), data = bmdcs)
+summary(vbmd.model.1.1)
+#confint(vbmd.model.1.1)
+#nobs(vbmd.model.1.1)
+#extractAIC(vbmd.model.1.1)
+
+vbmd.model.1.2 = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared), data = bmdcs)
+summary(vbmd.model.1.2)
+confint(vbmd.model.1.2)
+nobs(vbmd.model.1.2)
+extractAIC(vbmd.model.1.2)
+
+vbmd.model.1.3 = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_cubed), data = bmdcs)
+summary(vbmd.model.1.3)
+#confint(vbmd.model.1.3)
+#nobs(vbmd.model.1.3)
+#extractAIC(vbmd.model.1.3)
+
+vbmd.model.1.4 = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_four), data = bmdcs)
+summary(vbmd.model.1.3)
+#confint(vbmd.model.1.3)
+#nobs(vbmd.model.1.3)
+#extractAIC(vbmd.model.1.3)
+```
+
+#Compare which model has best fit based on AIC (lower AIC means better fit)
+```{r eval=TRUE}
+bbmle::AICtab(vbmd.model.1.1,vbmd.model.1.2,vbmd.model.1.3,vbmd.model.1.4)
+```
+> Based on the AICs, it appears that the squared age term provides the best fit with respect to radius Ct.vBMD 
+
+#Changes in radius Ct.vBMD during childhood - controlling for race and sex
+```{r eval=TRUE}
+#Without a 3-way interaction
+vbmd.model.2.a = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared), data = bmdcs)
+summary(vbmd.model.2.a)
+confint(vbmd.model.2.a)
+nobs(vbmd.model.2.a)
+extractAIC(vbmd.model.2.a)
+```
+
+#Changes in Ct.vBMD during childhood - race and sex interactions
+```{r eval=TRUE}
+#Including a 3-way interaction
+vbmd.model.2.b = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared) + scale(age_squared_by_black) + scale(age_squared_by_gender) + scale(age_squared_by_gender_by_black), data = bmdcs)
+summary(vbmd.model.2.b)
+confint(vbmd.model.2.b)
+nobs(vbmd.model.2.b)
+extractAIC(vbmd.model.2.b)
+```
+
+```{r eval=TRUE}
+#Removing the non-significant 3-way interaction
+vbmd.model.2.c = lmer(scale(crt_den_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared) + scale(age_squared_by_black) + scale(age_squared_by_gender), data = bmdcs)
+summary(vbmd.model.2.c)
+confint(vbmd.model.2.c)
+nobs(vbmd.model.2.c)
+extractAIC(vbmd.model.2.c)
+```
+>Although there was no three way interaction between age squared, gender, and race, the significant two way interaction between age and gender supports the importance of examining relationships with UD radius BMD within sex groups... Due to our limited sample size with pQCT measurements, we will perform our analyses in males and females separately, but including race as a covariate (fixed).
+
+#Create Standardized Scores in Males and Females separately
+#...accounting for age (----), race, and the age by race interaction
+```{r eval=TRUE}
+#Use the results from above to guide our decision to use age squared as the age variable
+#To save standardized residuals, need to run the model as a linear regression... this is a similar approach to the DXA reference data since the LMS procedure assumes independence of observations 
+
+#Males
+#vbmd.model.2.c <- lm(scale(crt_den_r30) ~ black + scale(age) + scale(age_squared) + scale(age_squared_by_black), data = bmdcs.male)
+#male.vbmd.stdres = rstandard(vbmd.model.2.c)
+
+
+
+```
+
+#Characterization of radius Tt.Ar during childhood in African American and non-African American Males and Females
+
+#Handling an outlier in Tt.Ar
+```{r eval=TRUE}
+#There is an outlier in Tt.Ar that needs to be removed, so we're going to save new DFs for the Tt.Ar analyses to bypass this biologically implausable value 
+new.ttar.df <- bmdcs.figs
+new.ttar.df.males <- bmdcs.figs.male
+new.ttar.df.females <- bmdcs.figs.female
+new.ttar.df.nonAA.male <- bmdcs.figs.non.aa.male
+
+#This df replaces the 'bmdcs' data set
+new.ttar.df <- new.ttar.df[new.ttar.df$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.males' data set
+new.ttar.df.males <- new.ttar.df.males[new.ttar.df.males$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.females' data set
+new.ttar.df.females <- new.ttar.df.females[new.ttar.df.females$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.nonAA.male' data set
+new.ttar.df.nonAA.male <- new.ttar.df.nonAA.male[new.ttar.df.nonAA.male$tot_a_r30>=10, ]
+
+```
+
+#Handling an outlier in Tb.vBMD
+```{r eval=TRUE}
+#There is an outlier in Tt.Ar that needs to be removed, so we're going to save new DFs for the Tt.Ar analyses to bypass this biologically implausable value 
+new.ttar.df <- bmdcs.figs
+new.ttar.df.males <- bmdcs.figs.male
+new.ttar.df.females <- bmdcs.figs.female
+new.ttar.df.nonAA.male <- bmdcs.figs.non.aa.male
+
+#This df replaces the 'bmdcs' data set
+new.ttar.df <- new.ttar.df[new.ttar.df$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.males' data set
+new.ttar.df.males <- new.ttar.df.males[new.ttar.df.males$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.females' data set
+new.ttar.df.females <- new.ttar.df.females[new.ttar.df.females$tot_a_r30>=10, ]
+
+#This df replaces the 'bmdcs.nonAA.male' data set
+new.ttar.df.nonAA.male <- new.ttar.df.nonAA.male[new.ttar.df.nonAA.male$tot_a_r30>=10, ]
+
+```
+
+#Tt.Ar by race and sex (box plot)
+```{r eval=TRUE}
+ggplot(data=new.ttar.df, aes(x=factor(gender.2), tot_a_r30)) + 
+    geom_boxplot(color="black", fill="lightblue") +
+    facet_grid(. ~black) +
+    labs(x="Gender", y="Tt.Ar (cm2)")
+```
+
+#Tt.Ar by age (scatter plot)
+```{r eval=TRUE}
+ggplot(data=bmdcs.AA.female, aes(age, tot_a_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Female: Age vs. Radius Tt.Ar") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Tt.Ar (cm2)")
+
+ggplot(data=bmdcs.AA.male, aes(age, tot_a_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="AA Male: Age vs. Radius Tt.Ar") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Tt.Ar (cm2)")
+
+ggplot(data=bmdcs.nonAA.female, aes(age, tot_a_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA Female: Age vs. Radius Tt.Ar") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Tt.Ar (cm2)")
+
+#Had to use the new df (above) to get rid of the Tt.Ar outlier for this plot only (non-AA Males)
+ggplot(data=new.ttar.df.nonAA.male, aes(age, tot_a_r30)) + 
+    geom_point(color = "gray") +
+    labs(title="non-AA Male: Age vs. Radius Tt.Ar") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)+
+    labs(x="Age (years)", y="Tt.Ar (cm2)")
+```
+
+#Changes in radius Tt.Ar with age during childhood
+```{r eval=TRUE}
+ttar.model.1.1 = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age), data = new.ttar.df)
+summary(ttar.model.1.1)
+#confint(ttar.model.1.1)
+nobs(ttar.model.1.1)
+#extractAIC(ttar.model.1.1)
+
+ttar.model.1.2 = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_squared), data = new.ttar.df)
+summary(ttar.model.1.2)
+#confint(ttar.model.1.2)
+#nobs(ttar.model.1.2)
+#extractAIC(ttar.model.1.2)
+
+ttar.model.1.3 = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_cubed), data = new.ttar.df)
+summary(ttar.model.1.3)
+#confint(ttar.model.1.3)
+#nobs(ttar.model.1.3)
+#extractAIC(ttar.model.1.3)
+
+ttar.model.1.4 = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_four), data = new.ttar.df)
+summary(ttar.model.1.4)
+#confint(ttar.model.1.4)
+#nobs(ttar.model.1.4)
+#extractAIC(ttar.model.1.4)
+```
+
+#Compare which model has best fit based on AIC (lower AIC means better fit)
+```{r eval=TRUE}
+bbmle::AICtab(ttar.model.1.1,ttar.model.1.2,ttar.model.1.3,ttar.model.1.4)
+```
+> Based on the AICs, it appears that the fourth age term provides the best fit with respect to radius Ct.vBMD 
+
+#Changes in radius Ct.vBMD during childhood - controlling for race and sex
+```{r eval=TRUE}
+#Without a 3-way interaction
+ttar.model.2.a = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_four), data = new.ttar.df)
+summary(ttar.model.2.a)
+confint(ttar.model.2.a)
+nobs(ttar.model.2.a)
+extractAIC(ttar.model.2.a)
+```
+
+#Changes in UD Radius BMD during childhood - race and sex interactions
+```{r eval=TRUE}
+#Including a 3-way interaction
+ttar.model.2.b = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_four) + scale(age_four_by_black) + scale(age_four_by_gender) + scale(age_four_by_gender_by_black), data = new.ttar.df)
+summary(ttar.model.2.b)
+confint(ttar.model.2.b)
+nobs(ttar.model.2.b)
+extractAIC(ttar.model.2.b)
+```
+
+#Removing the non-significant 3-way interaction
+```{r eval=TRUE}
+ttar.model.2.c = lmer(scale(tot_a_r30) ~ (1 | randid) + black + gender + scale(age) + scale(age_four) + scale(age_four_by_black) + scale(age_four_by_gender), data = new.ttar.df)
+summary(ttar.model.2.c)
+confint(ttar.model.2.c)
+nobs(ttar.model.2.c)
+extractAIC(ttar.model.2.c)
+```
+>Although there was no three way interaction between age cubed, gender, and race, the significant two way interactions between age and gender and age and ancestry support the importance of examining relationships with UD radius BMD within sex and ancestry groups... Howver, due to our limited sample size with pQCT measurements, we will perform our analyses in males and females separately, but including race as a covariate (fixed).
+
+
+#Characterizing the relationship between radius cortical bone and UD radius BMD during childhood
+
+################################################################################################
+################################################################################################
+################################################################################################
+################################################################################################
+################################################################################################
+#NOTE: Since cortical bone measures were collected longitudinally and each patient likely has a different intecept, should these variabels be added in with random intercepts (like we did for randid)? If so, how do we assess the relationship between each bone measure with UD radius BMD? Do we use the approach outlined by Bodo Winter... create a null model that contains all predictors excluding the cortical bone outcome. Then a full model that includes the cortical bone outcome.. then compare the two models using an ANOVA test? This will tell us whether adding the cortical bone measure into the model provides a better prediction compared to without the cortical bone measure.
+################################################################################################
+################################################################################################
+################################################################################################
+################################################################################################
+
+#Ct.vBMD and UD Radius BMD
+```{r eval=TRUE}
+#Male
+full.ctvbmd.udBMD.males = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(crt_den_r30), data = bmdcs.male)
+summary(full.ctvbmd.udBMD.males)
+#confint(full.ctvbmd.udBMD.males)
+nobs(full.ctvbmd.udBMD.males)
+extractAIC(full.ctvbmd.udBMD.males)
+
+#Female
+full.ctvbmd.udBMD.females = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(crt_den_r30), data = bmdcs.female)
+summary(full.ctvbmd.udBMD.females)
+#confint(full.ctvbmd.udBMD.females)
+nobs(full.ctvbmd.udBMD.females)
+extractAIC(full.ctvbmd.udBMD.females)
+
+#Sex interaction
+bmdcs$gender_by_crt_den_r30 <- bmdcs$gender * bmdcs$crt_den_r30
+
+full.ctvbmd.udBMD.interaction = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + gender + black + scale(age) + scale(age_squared) + scale(crt_den_r30) + scale(gender_by_crt_den_r30), data = bmdcs)
+summary(full.ctvbmd.udBMD.interaction)
+#confint(full.ctvbmd.udBMD.interaction)
+nobs(full.ctvbmd.udBMD.interaction)
+extractAIC(full.ctvbmd.udBMD.interaction)
+
+```
+>Ct.vBMD is associated with UD radius BMD in females but not males. No significant sex interaction, which is odd due to the strong relationship in the females, but not males.... not sure what explains this?
+
+```{r eval=TRUE}
+ggplot(data=bmdcs.figs.male, aes(crt_den_r30, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Males: Radius Ct.vBMD vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") #+ 
+    geom_smooth(color = "green", method = lm) +
+  #  geom_smooth(color = "lightblue", method = loess) + 
+    labs(x="Radius Ct.vBMD (g/cm3)", y="UD Radius (g/cm2)")
+
+
+ggplot(data=bmdcs.figs.female, aes(crt_den_r30, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Females: Radius Ct.vBMD vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") #+
+    geom_smooth(color = "green", method = lm) +
+  #  geom_smooth(color = "lightblue", method = loess) +   
+    labs(x="Radius Ct.vBMD (g/cm3)", y="UD Radius (g/cm2)")
+
+
+```
+
+#Tt.Ar and UD Radius BMD
+```{r eval=TRUE}
+#Male
+full.ttar.udBMD.males = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(tot_a_r30), data = new.ttar.df.males)
+summary(full.ttar.udBMD.males)
+#confint(full.ttar.udBMD.males)
+nobs(full.ttar.udBMD.males)
+extractAIC(full.ttar.udBMD.males)
+
+#Female
+full.ttar.udBMD.female = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(tot_a_r30), data = new.ttar.df.females)
+summary(full.ttar.udBMD.female)
+#confint(full.ttar.udBMD.female)
+nobs(full.ttar.udBMD.female)
+extractAIC(full.ttar.udBMD.female)
+
+#Sex interaction
+new.ttar.df$gender_by_tot_a_r30 <- new.ttar.df$gender * new.ttar.df$tot_a_r30
+
+full.ttar.udBMD.interaction = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + gender + black + scale(age) + scale(age_squared) + scale(tot_a_r30) + scale(gender_by_tot_a_r30), data = new.ttar.df)
+summary(full.ttar.udBMD.interaction)
+#confint(full.ttar.udBMD.interaction)
+nobs(full.ttar.udBMD.interaction)
+extractAIC(full.ttar.udBMD.interaction)
+```
+>Tt.Ar is positively associated with UD Radius BMD in both males and females while controlling for ancestry. The significant interaction tern between gender and Tt.Ar indicates that this relationship is significantly stronger in the females versus the males. 
+
+```{r eval=TRUE}
+ggplot(data=new.ttar.df.males, aes(tot_a_r30, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Males: Radius Tt.Ar vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    #geom_smooth(color = "lightblue", method = loess)
+    labs(x="Radius Tt.Ar (cm2)", y="UD Radius BMD (g/cm2)")
+
+ggplot(data=new.ttar.df.females, aes(tot_a_r30, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Females: Radius Tt.Ar vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") #+
+    geom_smooth(color = "green", method = lm) +
+    #geom_smooth(color = "lightblue", method = loess)
+    labs(x="Radius Tt.Ar (cm2)", y="UD Radius BMD (g/cm2)")
+
+```
+
+#Characterizing the tracking of UD Radius BMD during childhood
+
+```{r eval=TRUE}
+#save a new df
+bmdcs.tracking <- bmdcs[bmdcs$visit==0 | bmdcs$visit==6, ] 
+#save a df with only baseline data
+bmdcs.tracking.0 <- bmdcs.tracking[bmdcs.tracking$visit==0, ]
+#save a new df with only 6-year data
+bmdcs.tracking.6 <- bmdcs.tracking[bmdcs.tracking$visit==6, ]
+#merge the baseline and 6-year dfs
+final.bmdcs.tracking <- dplyr::full_join(bmdcs.tracking.0, bmdcs.tracking.6, all.x = TRUE, by = c("randid"))
+#check that they merged properly ---- good!
+head(final.bmdcs.tracking)
+```
+
+```{r eval=TRUE}
+final.bmdcs.tracking.male <- final.bmdcs.tracking[final.bmdcs.tracking$gender.x==1, ] #tracking df for males
+final.bmdcs.tracking.female <- final.bmdcs.tracking[final.bmdcs.tracking$gender.x==2, ]  #tracking df for females
+```
+
+#Age groups (at baseline)
+```{r eval=TRUE}
+track.age.young <- final.bmdcs.tracking[final.bmdcs.tracking$age.x <= 9.999, ]
+summary(track.age.young$age.x)
+
+track.age.medium <- final.bmdcs.tracking[final.bmdcs.tracking$age.x >= 10, ]
+track.age.medium <- track.age.medium[track.age.medium$age.x <= 14.999, ]
+summary(track.age.medium$age.x)
+
+track.age.old <- final.bmdcs.tracking[final.bmdcs.tracking$age.x >= 15, ]
+summary(track.age.old$age.x)
+
+```
+
+#HAZ groups (at baseline)
+```{r eval=TRUE}
+track.haz.short <- final.bmdcs.tracking[final.bmdcs.tracking$haz.x <= -1, ]
+summary(track.haz.short$haz.x)
+
+track.haz.average <- final.bmdcs.tracking[final.bmdcs.tracking$haz.x >= -1.001, ]
+track.haz.average <- track.haz.average[track.haz.average$haz.x <= 1, ]
+summary(track.haz.average$haz.x)
+
+track.haz.tall <- final.bmdcs.tracking[final.bmdcs.tracking$haz.x >= 1.0001, ]
+summary(track.haz.tall$haz.x)
+
+```
+
+#Correlation between baseline and 6-year UD radius BMD
+```{r eval=TRUE}
+#ALL SUBJECTS
+cor.test(final.bmdcs.tracking$fore_r_ud_bmd_pc.x, final.bmdcs.tracking$fore_r_ud_bmd_pc.y, method = "pearson")
+cor.test(final.bmdcs.tracking$ud_radius_bmd_z.x, final.bmdcs.tracking$ud_radius_bmd_z.y, method = "pearson")
+
+#MALES
+cor.test(final.bmdcs.tracking.male$fore_r_ud_bmd_pc.x, final.bmdcs.tracking.male$fore_r_ud_bmd_pc.y, method = "pearson")
+cor.test(final.bmdcs.tracking.male$ud_radius_bmd_z.x, final.bmdcs.tracking.male$ud_radius_bmd_z.y, method = "pearson")
+
+#FEMALES
+cor.test(final.bmdcs.tracking.female$fore_r_ud_bmd_pc.x, final.bmdcs.tracking.female$fore_r_ud_bmd_pc.y, method = "pearson")
+cor.test(final.bmdcs.tracking.female$ud_radius_bmd_z.x, final.bmdcs.tracking.female$ud_radius_bmd_z.y, method = "pearson")
+
+```
+
+#Linear regression between baseline and 6-year UD radius BMD
+```{r eval=TRUE}
+#regression to look at tracking relationshiop
+summary.lm(lm(ud_radius_bmd_z.x ~ ud_radius_bmd_z.y + black.x, data=final.bmdcs.tracking))
+```
+
+#Tracking of UD radius BMD, and whether there is a sex interaction
+```{r eval=TRUE}
+#Create the interaction term (i.e., sex and baseline BMD interaction)
+#raw values
+final.bmdcs.tracking$gender.interaction.variable.raw <- final.bmdcs.tracking$fore_r_ud_bmd_pc.y * final.bmdcs.tracking$gender.x
+summary.lm(lm(fore_r_ud_bmd_pc.x ~ fore_r_ud_bmd_pc.y + black.x + gender.x + gender.interaction.variable.raw, data=final.bmdcs.tracking))
+
+#Z scores
+final.bmdcs.tracking$gender.interaction.variable.Zscore <- final.bmdcs.tracking$ud_radius_bmd_z.y * final.bmdcs.tracking$gender.x
+summary.lm(lm(fore_r_ud_bmd_pc.x ~ ud_radius_bmd_z.y + gender.x + gender.interaction.variable.Zscore, data=final.bmdcs.tracking))
+```
+>There was a significant interaction between baseline UD radius BMD and sex, indicating that there is a difference in tracking between males and females. Based on the grouped correlation analyses performed above, it appears that the tracking relationship is stronger in 
+
+```{r eval=TRUE}
+#scatter plot to visualize tracking relationship in ALL
+ggplot(data=final.bmdcs.tracking, aes(fore_r_ud_bmd_pc.x, fore_r_ud_bmd_pc.y)) + 
+    geom_point(color = "gray") +
+    labs(title="Baseline UD Radius BMD vs. 6-Year UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)
+```
+
+```{r eval=TRUE}
+#scatter plot to visualize tracking relationship by sex
+ggplot(data=final.bmdcs.tracking, aes(fore_r_ud_bmd_pc.x, fore_r_ud_bmd_pc.y)) + 
+    geom_point(color = "gray") +
+    labs(title="Baseline UD Radius BMD vs. 6-Year UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess) +
+    facet_grid(. ~gender.x) 
+```
+
+
+#Tracking of UD Radius BMD based on baseline age
+```{r eval=TRUE}
+#Young
+cor.test(track.age.young$ud_radius_bmd_z.x, track.age.young$ud_radius_bmd_z.y, method = "pearson")
+
+#Medium
+cor.test(track.age.medium$ud_radius_bmd_z.x, track.age.medium$ud_radius_bmd_z.y, method = "pearson")
+
+#Old
+cor.test(track.age.old$ud_radius_bmd_z.x, track.age.old$ud_radius_bmd_z.y, method = "pearson")
+
+```
+
+#Relationship between UD Radius BMD and baseline HAZ
+```{r eval=TRUE}
+cor.test(bmdcs$haz, bmdcs$ud_radius_bmd_z, method = "pearson")
+
+ggplot(data=bmdcs, aes(haz, ud_radius_bmd_z)) + 
+    geom_point(color = "gray") +
+    labs(title="Baseline UD Radius BMD vs. 6-Year UD Radius BMD") + 
+    geom_smooth(color = "red") +
+    geom_smooth(color = "green", method = lm) +
+    geom_smooth(color = "lightblue", method = loess)
+```
+
+
+#Relationships between UD Radius BMD and fracture history
+
+```{r eval=TRUE}
+bmdcs.fracture <- bmdcs
+bmdcs.fracture$brknbone[bmdcs.fracture$brknbone == 2] <- 0
+head(bmdcs.fracture$brknbone, 20)
+```
+
+#Unadjusted model
+```{r eval=TRUE}
+summary((glm(brknbone~ ud_radius_bmd_z, data=bmdcs.fracture, family=binomial())))
+```
+
+
+
+```{r eval=TRUE}
+ggplot(data=bmdcs.fracture, aes(x=factor(brknbone), y=ud_radius_bmd_z)) +
+    geom_boxplot(color="black", fill="lightblue", na.action=na.exclude)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#regression in each sex group, including fixed race term
+```{r eval=TRUE}
+#randid - random effect, accounts for between-subject variability
+#ancestry - fixed effect
+#age_cubed - fixed effect
+#cortical bone outcome - fixed effect
+
+males.reg.1 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age_cubed) + scale(crt_thk_r30) + scale(black_by_crt_thk_r30), data = bmdcs.male)
+summary(males.reg.1)
+confint(males.reg.1)
+nobs(males.reg.1)
+extractAIC(males.reg.1)
+
+practice1 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age_cubed) + scale(black_by_age_cubed), data = bmdcs.male)
+summary(practice1)
+confint(practice1)
+nobs(practice1)
+extractAIC(practice1)
+
+practice2 = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + gender + scale(age_cubed), data = bmdcs)
+summary(practice2)
+confint(practice2)
+nobs(practice2)
+extractAIC(practice2)
+
+
+```
+
+
+#regressions in race by sex groups
+```{r eval=TRUE}
+#Not sure if visit is necessary in these models... the age term is what is basically the time variable, and the '1' added in the random effect for randid is basically telling r that there will be multiple observations per subject and that each subject will have a differnt intercept
+
+model1.age = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + scale(age_cubed) + scale(crt_thk_r30), data = bmdcs.AA.male)
+summary(model1.age)
+confint(model1.age)
+nobs(model1.age)
+extractAIC(model1.age)
+
+model1.age.x = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + scale(age_cubed) + scale(crt_thk_r30), data = bmdcs.nonAA.male)
+summary(model1.age.x)
+confint(model1.age.x)
+nobs(model1.age.x)
+extractAIC(model1.age.x)
+```
+
+#Compare fit of models with different age terms
+```{r eval=TRUE}
+bbmle::AICtab(model1.age,model2.age,model3.age)
+
+```
+
+
+###other practice regressions.... 
+```{r eval=TRUE}
+totA_on_rBMD <- lm(tot_a_r30 ~ age + age_squared + age_cubed + gender.2 + black ,data=bmdcs)
+summary(totA_on_rBMD)
+coef(totA_on_rBMD)
+tidy(totA_on_rBMD)
+confint(totA_on_rBMD)
+nobs(totA_on_rBMD)
+```
+
+```{r eval=TRUE}
+model.x = lm(height ~ age + randid, data=bmdcs)
+summary(model.x)
+coef(model.x)
+```
+
+```{r eval=TRUE}
+#model.xx = lme(height ~ age + (age | randid), data=bmdcs)
+model.xx = lme(height ~ age, random = ~ age | randid, data=bmdcs, na.action=na.exclude)
+summary(model.xx)
+coef(model.xx)
+```
+
+```{r eval=TRUE}
+summary(lmer(height ~ visit + (visit | randid), data=bmdcs, na.action=na.exclude))
+summary(lme(height ~ random = ~ visit | randid, data=bmdcs, na.action=na.exclude))
+```
+
+```{r eval=TRUE}
+##lmer(height ~ age + (age | randid), data=bmdcs)
+nlmer(height ~ age + (age | randid), data=bmdcs)
+```
+
+```{r eval=TRUE}
+summary((nlmer(height~age, data=bmdcs, family=binomial())))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+
+
+#LMS Method
+```{r eval=TRUE}
+install.packages("gamlss")
+```
+
+```{r eval=TRUE}
+#non-AA male
+lms.non.aa.male <- subset(bmdcs, select = c(randid, visit, age, gender, black, fore_r_ud_bmd_pc))
+lms.non.aa.male <- lms.non.aa.male[lms.non.aa.male$gender==1 & lms.non.aa.male$black==0, ]
+na.omit(lms.non.aa.male)
+
+#non-AA female
+lms.non.aa.female <- subset(bmdcs, select = c(randid, visit, age, gender, black, fore_r_ud_bmd_pc))
+lms.non.aa.female <- lms.non.aa.female[lms.non.aa.female$gender==2 & lms.non.aa.female$black==0, ]
+
+#AA male
+lms.aa.male <- subset(bmdcs, select = c(randid, visit, age, gender, black, fore_r_ud_bmd_pc))
+lms.aa.male <- lms.aa.male[lms.aa.male$gender==1 & lms.aa.male$black==1, ]
+
+#AA female
+lms.aa.female <- subset(bmdcs, select = c(randid, visit, age, gender, black, fore_r_ud_bmd_pc))
+lms.aa.female <- lms.aa.female[lms.aa.female$gender==2 & lms.aa.female$black==1, ]
+
+```
+
+####NON AA MALES
+```{r eval=TRUE}
+## Step 1. determine candidate distribution for outcome--for parameteric component 
+attach(na.omit(lms.non.aa.male))
+fb1<-fitDist(fore_r_ud_bmd_pc, type="realplus")
+fb1$fits
+fb1$failed
+detach(na.omit(lms.non.aa.male))
+#The families that appear in the "fits" command are those that we should start with... the families under "failed" can be eliminated
+```
+## Step 2. find the most appropriate smoother as well as power terms for the non-parametric component--- this could be lengthy process
+## There are several smoothers to try - check on the additive terms in the Gamlss manual for the various smoothers.
+##different distribution families would need smoother tweaks to find the best fit.
+```{r eval=TRUE}
+gamlss.non.AA.male <- gamlss(lms.non.aa.male$fore_r_ud_bmd_pc~cs(lms.non.aa.male$age, df=8, c.spar=c(-1.5,3.0)), 
+               mu.formula=~cs(lms.non.aa.male$age),
+               sigma.fo=~cs(lms.non.aa.male$age, df=5, c.spar=c(-1.5,3.0)),
+               nu.fo=~cs(lms.non.aa.male$age),
+               tau.fo=~cs(lms.non.aa.male$age),             
+#              weights=rexamfwt,
+               family=BCT)
+
+
+```
+## Step 3: Model dx/plots
+```{r eval=TRUE}
+summary(gamlss.non.AA.male)
+plot(gamlss.non.AA.male)
+centiles(gamlss.non.AA.male,xvar=na.omit(lms.non.aa.male)$age)
+##show you how your fitted centiles overlaid on your empiricals
+
+
+```
+```{r eval=TRUE}
+wp(gamlss.non.AA.male, ylim.all=1.5)
+
+dtop(gamlss.non.AA.male,xvar=na.omit(lms.non.aa.male)$age) 
+##d-trended plots, by age binds to diagnose suitability of fit##
+```
+##Step 4: Using the fitted, suitablity of fit ascertained object from steps 2 & 3 above to calculate specified centiles and LMS to exact ages.
+```{r eval=TRUE}
+### LMS parameters-by exact ages in dataframe 1-20y
+#creating time/age vector for prediction purposes
+age20.bmdcs=seq(5,20,0.5)
+```
+```{r eval=TRUE}
+##first calculate the LMS params from fitted object##
+lmsmbm.bmdcs.nonAA.male <- data.frame(predictAll(gamlss.non.AA.male,
+                              newdata=data.frame(age=age20.bmdcs),
+                              data=na.omit(lms.non.aa.male),
+                              save=T))
+
+```
+#lmsmbm
+```{r eval=TRUE}
+#2nd calculate the centiles from the fitted object#
+bmcents.bmdcs.nonAA.male<-centiles.pred(gamlss.non.AA.male,xname="agedec",
+                       xvalues=age20.bmdcs,
+                       cent=c(3,5,10,25,50,75,90,95,97),
+                       save=F,plot=F)
+```
+#bmcents
+```{r eval=TRUE}
+#Merge the 2 dataframes: Cbinding the 2 age-function predicted outputs##
+mfaboys=cbind(bmcents.bmdcs.nonAA.male,lmsmbm.bmdcs.nonAA.male)
+```
+##peel off tau column vec -- if you want to show this, then no need for this step##
+```{r eval=TRUE}
+boysmage_table=subset(mfaboys,select=-tau)
+```
+## Renaming nu mu sigma to lms in final dataframe;
+```{r eval=TRUE}
+bmage_tab6mo=setnames(boysmage_table, old = c('mu','sigma',"nu"),
+                      new = c('M','S',"L"))
+```
+
+###IMPORTANT final diagnostic check. IF the fitted centile/median C50 does not MATCH EXACTLY
+#to MU in your LMS dataframe, then your fitted function is not appropriate 
+#for your data. You would neeed to repeat the steps,change distr family, smoothers, df etc##
+
+
+############
+##Your final data: export this data elsewhere as your final estimates##;
+############;
+
+
+
+
+
+#######################################
+#######################################
+#######################################
+####################################### Figures (extra)
+#######################################
+#######################################
+#######################################
+```{r eval=TRUE}
+ggplot(data=bmdcs, aes(age, weight, color=gender.2)) + 
+    geom_point() +
+    facet_grid(. ~black) +
+    labs(title="Age vs. Weight")
+```
+
+
+
+
+#Tb.vBMD and UD Radius BMD
+```{r eval=TRUE}
+#Male
+full.tbvbmd.udBMD.males = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(trab_den_r3), data = bmdcs.male)
+summary(full.tbvbmd.udBMD.males)
+#confint(full.tbvbmd.udBMD.males)
+nobs(full.tbvbmd.udBMD.males)
+extractAIC(full.tbvbmd.udBMD.males)
+
+#Female
+full.tbvbmd.udBMD.females = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + black + scale(age) + scale(age_squared) + scale(trab_den_r3), data = bmdcs.female)
+summary(full.tbvbmd.udBMD.females)
+#confint(full.tbvbmd.udBMD.females)
+nobs(full.tbvbmd.udBMD.females)
+extractAIC(full.tbvbmd.udBMD.females)
+
+#Sex interaction
+bmdcs$gender_by_trab_den_r3 <- bmdcs$gender * bmdcs$trab_den_r3
+
+full.tbvbmd.udBMD.interaction = lmer(scale(fore_r_ud_bmd_pc) ~ (1 | randid) + gender + black + scale(age) + scale(age_squared) + scale(trab_den_r3) + scale(gender_by_trab_den_r3), data = bmdcs)
+summary(full.tbvbmd.udBMD.interaction)
+#confint(full.tbvbmd.udBMD.interaction)
+nobs(full.tbvbmd.udBMD.interaction)
+extractAIC(full.tbvbmd.udBMD.interaction)
+
+```
+>Tb.vBMD is associated with UD radius BMD in females and males. No significant sex interaction, which is odd due to the strong relationship in the females.... not sure what explains this?
+
+```{r eval=TRUE}
+ggplot(data=bmdcs.figs.male, aes(trab_den_r3, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Males: Radius Ct.vBMD vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") #+ 
+    geom_smooth(color = "green", method = lm) +
+  #  geom_smooth(color = "lightblue", method = loess) + 
+    labs(x="Radius Tb.vBMD (g/cm3)", y="UD Radius (g/cm2)")
+
+
+ggplot(data=bmdcs.figs.female, aes(trab_den_r3, fore_r_ud_bmd_pc)) + 
+    geom_point(color = "gray") +
+    labs(title="Females: Radius Ct.vBMD vs. UD Radius BMD") + 
+    #geom_smooth(color = "red") #+
+    geom_smooth(color = "green", method = lm) +
+  #  geom_smooth(color = "lightblue", method = loess) +   
+    labs(x="Radius Tb.vBMD (g/cm3)", y="UD Radius (g/cm2)")
+
+```
+
