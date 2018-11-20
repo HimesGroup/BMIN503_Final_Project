@@ -25,7 +25,7 @@ Given the interdisciplinary nature of this project, I sought advice from represe
 
 ### Introduction 
 
-In May 2005, the Organ Procurement and Transplantation Network (OPTN) modified their lung transplantation policy from one in which potential recipients were prioritized based on the amount of time spent on the waiting list to one in which donor lungs were allocated to recipients based on a lung allocation score (LAS). The LAS essentially compares patients' transplant benefit to their waiting list urgency, assigning individuals with higher values greater priority for transplant. Since the adoption of the LAS, studies have shown that the mortality rate for patients on the lung transplant waiting list has decreased. However, resource use and geographic and gender disparities in lung allocation have increased. Additionally, while the statistical models used to construct the LAS control for patients’ demographics, diagnoses, and laboratory values, the model itself is static in nature. That is, a derivation cohort is assembled, model coefficients are estimated based on this cohort, and then those coefficients are applied to individuals outside the cohort. To date, the LAS coefficients have been updated using three different cohorts at three different times: 2005, 2010, and 2015. Yet no one has investigated how LAS coefficients have changed over time, or whether such changes impact the predictive accuracy of the LAS. 
+In May 2005, the Organ Procurement and Transplantation Network (OPTN) modified their lung transplantation policy from one in which potential recipients were prioritized based on the amount of time spent on the waiting list to one in which donor lungs were allocated to recipients based on a lung allocation score (LAS) [1,2]. The LAS essentially compares patients' transplant benefit to their waiting list urgency, assigning individuals with higher values greater priority for transplant. Since the adoption of the LAS, studies have shown that the mortality rate for patients on the lung transplant waiting list has decreased [2]. However, resource use and geographic and gender disparities in lung allocation have increased [3-6]. Additionally, while the statistical models used to construct the LAS control for patients’ demographics, diagnoses, and laboratory values, the model itself is static in nature. That is, a derivation cohort is assembled, model coefficients are estimated based on this cohort, and then those coefficients are applied to individuals outside the cohort. To date, the LAS coefficients have been updated using three different cohorts at three different times: 2005, 2010, and 2015 [7]. Yet no one has investigated how LAS coefficients have changed over time, or whether such changes impact the predictive accuracy of the LAS. 
 
 In this project, we aim to explore the prevalence and risk factors of lung transplantation in the United States using publicly available  data from the United Network for Organ Sharing (UNOS) collected between 2007 and 2015. We will also investigate how the coefficients of the lung allocation score (LAS; a prediction model used to prioritize patients for lung transplant) have changed over time. Finally, we will assess how well the current LAS model predicts post-transplant survival, and compare its performance to that of a logistic regression model which allows the coefficients of important predictors to vary with time.
 
@@ -35,7 +35,7 @@ Given the interdisciplinary nature of this project, I sought advice from represe
 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
 #### Data Source
   The United Network for Organ Sharing (UNOS) is a private organization charged by the Organ Procurement and Transplantation Network (OPTN) to coordinate the allocation of donor organs in the United States. Toward this end, UNOS has developed a database to keep track of all potential transplant recipients. By law, every patient who would like to receive a transplant is required to be registered on the UNOS waiting list. UNOS then follows these patients until they either 1) receive transplant; 2) die; or 3) are removed from the waiting list (i.e., censored) due to illness or loss to follow up. The database contains information on patients' lab values, demographic characteristics, and any predictive scores used to aid the allocation process (e.g., the Lung Allocation Score (LAS) for allocating lungs; the Model for End Stage Liver Disease (MELD) score for allocating livers). This data is publicly available, although researchers must submit a [Data Request](https://optn.transplant.hrsa.gov/data/) prior to using it. (As an aside, I have obtained access to this data through my advisor, Dr. Stephen Kimmel. For the purposes of this project, however, I have provided a simulated data set on my [GitHub repository](https://github.com/eschnell/BMIN503_Final_Project).)
 
@@ -58,11 +58,465 @@ In the first paragraph, describe the data used and general methodological approa
 6. Dichotomize the _mechanical ventilation_ and _functional status_ variables.
 
 ```{r}
-## PASTE CODE FROM "VARIABLE CLEANING" SECTION OF SUMMARIES FOR SIMULATIONS 4.RMD HERE!!
+# Attach relevant packages on which this code relies
+library(haven)
+library(stats)
+library(ggplot2)
+library(gcookbook)
+library(survival)
+library(gdata)
+library(gtools)
+library(gmodels)
+library(gplots)
+library(cmprsk)
+library(ipw)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(zoo)
+library(gsubfn)
+library(tidyr)
+library(pastecs)
+
+# Load the raw data sets
+LAS_hist <- read_dta("K:/Data/UNOS-Lung/THORACIC_LAS_HISTORY_DATA.DTA")
+LAS_audit <- read_dta("K:/Data/UNOS-Lung/THORACIC_LAS_AUDIT_DATA.DTA")
+thoracic <- read_dta("K:/Data/UNOS-Lung/THORACIC_DATA.DTA")
+
+# Load the temp data set from Michael's Stata code
+UNOSclean <- read_dta("K:/Data/_temp.dta")
+
+# Format the variables
+UNOSclean$pstatus <- as.numeric(UNOSclean$pstatus)
+UNOSclean$age <- as.numeric(UNOSclean$age)
+
+UNOSclean$white <- as.numeric(UNOSclean$ethcat %in% 1)
+UNOSclean$race <- factor(UNOSclean$ethcat)
+levels(UNOSclean$race) <- c("White","Black","Hispanic","Others","Others","Others","Others","Others")
+
+# Patient's variables
+UNOSclean$gender <- factor(UNOSclean$gender, labels=c("Female","Male"))
+UNOSclean$reg <- factor(UNOSclean$region)
+UNOSclean$insur <- factor(UNOSclean$pri_payment_trr)
+levels(UNOSclean$insur) <- c("Private","Medicaid","Medicare","Medicare","Medicaid","VA/Gov","VA/Gov","Other","Other","Other","VA/Gov")
+UNOSclean$insur2 <- as.character(UNOSclean$insur)
+UNOSclean$insur2[is.na(UNOSclean$insur)] <- "Unknown"
+UNOSclean$insur2 <- factor(UNOSclean$insur2)
+UNOSclean$insur2 <- reorder(UNOSclean$insur2, new.order=c(4,2,1,6,3,5))
+UNOSclean$aboc <- factor(UNOSclean$abo)
+levels(UNOSclean$aboc) <- c("A","A","A","A","AB","AB","B","O")
+
+UNOSclean <- UNOSclean[UNOSclean$txed==1,]
+
+#UNOSclean$tx <- factor(UNOSclean$tx_type, labels=c("BLT","SLT"))
+UNOSclean$las <- UNOSclean$end_match_las
+
+UNOSclean$bmic <- factor(cut(UNOSclean$bmi_calc, c(12.5,18.5,25,30,35,45), right=F), labels=c("<18.5","18.5-25","25-30","30-35","35+"))
+
+
+UNOSclean$dongender <- factor(UNOSclean$gender_don, labels=c("Female","Male"))
+UNOSclean$donrace <- factor(UNOSclean$ethcat_don)
+levels(UNOSclean$donrace) <- c("White","Non-white","Non-white","Non-white","Non-white","Non-white","Non-white")
+
+UNOSclean$donpulmi <- factor(UNOSclean$pulm_inf_don, labels=c("No","Yes"))
+UNOSclean$donsmoke2 <- factor(UNOSclean$hist_cig_don)
+levels(UNOSclean$donsmoke2) <- c("Unkown","No","Unkown","Yes")
+UNOSclean$donsmoke2 <- reorder(UNOSclean$donsmoke2, new.order=c(2,3,1))
+UNOSclean$donsmoke <- UNOSclean$donsmoke2
+levels(UNOSclean$donsmoke) <- c("No","Yes",NA)
+UNOSclean$dondrug2 <- factor(UNOSclean$hist_oth_drug_don)
+levels(UNOSclean$dondrug2) <- c("Unkown","No","Unkown","Yes")
+UNOSclean$dondrug2 <- reorder(UNOSclean$dondrug2, new.order=c(2,3,1))
+UNOSclean$dondrug <- UNOSclean$dondrug2
+levels(UNOSclean$dondrug) <- c("No","Yes",NA)
+UNOSclean$pO2 <- factor(cut(UNOSclean$po2, c(0,300,770), right=F), labels=c("Low pO2","Normal pO2"))
+UNOSclean$pO2 <- reorder(UNOSclean$pO2, new.order=c(2,1))
+UNOSclean$caudec <- factor(UNOSclean$cod_cad_don, labels=c("Anoxia","CVA/Stroke", "Head trauma","CNS tumor","Other"))
+UNOSclean$dx <- factor(UNOSclean$diag_group, labels=c("Obstructive dx", "Pulm Htx", "CF", "Pulm fibrosis"))
+
+UNOSclean$ytx <- as.numeric(as.character(UNOSclean$yr_trxp))
+UNOSclean$calc_vent_use <- as.factor(UNOSclean$calc_vent_use)
+
+
+# Remove 2006 data due to incompleteness, 
+# remove 2016 data due to the fact that nearly 50% of patients have follow-up times < 1 year,
+# center the resulting year around 2007
+UNOSclean2 <- subset(UNOSclean, !(UNOSclean$ytx %in% c(2006, 2016)))
+UNOSclean2$ytx_cent <- UNOSclean2$ytx - 2007
+
+# Use Last Observation Carried Forward on the LAS history file to fill in missing values (within individuals)
+# See https://stackoverflow.com/questions/23818493/carry-last-observation-forward-by-id-in-r
+
+LAS_hist2 <- transform(LAS_hist, ci = fn$ave(ci, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_o2 = fn$ave(calc_o2, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_vent_use = fn$ave(calc_vent_use, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, creatinine = fn$ave(creatinine, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, serum = fn$ave(serum, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, func_stat = fn$ave(func_stat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_func_stat = fn$ave(calc_func_stat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_six_min_walk = fn$ave(calc_six_min_walk, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+
+# Use Last Observation Carried Forward on the Thoracic file to fill in missing values (within individuals)
+thoracic2 <- transform(thoracic, age = fn$ave(age, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, init_creat = fn$ave(init_creat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, end_creat = fn$ave(end_creat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+#thoracic2 <- transform(thoracic2, most_rcnt_creat=fn$ave(most_rcnt_creat,wl_id_code, FUN=~na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, func_stat_trr = fn$ave(func_stat_trr, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+
+# Create the "complete creatinine" variable, which equals "serum" in 2007-2014 and "creatinine" in 2015
+LAS_hist2$compcreat <- rep(NA, nrow(LAS_hist2))
+
+for (i in 1:nrow(LAS_hist2)){
+  if (LAS_hist2$chg_date[i]<"2015-01-01"){
+    LAS_hist2$compcreat[i] <- LAS_hist2$serum[i]
+  } else {
+    LAS_hist2$compcreat[i] <- LAS_hist2$creatinine[i]
+  }
+}
+
+
+# Lag the "compcreat", "serum" and "chg_date" values by 1 within individuals
+# See: https://stackoverflow.com/questions/26291988/how-to-create-a-lag-variable-within-each-group/26292059
+
+LAS_hist3 <- 
+    LAS_hist2 %>%
+    group_by(wl_id_code) %>%
+    mutate(lag.compcreat = dplyr::lag(compcreat, n = 1, default = NA),
+           lag.serum = dplyr::lag(serum, n = 1, default = NA),
+           lag.chg_date = dplyr::lag(chg_date, n = 1, default = NA))
+
+# Compute creatinine increase (compare values between visits within 6 months of each other), and flag if >= 150%
+LAS_hist3$creatincp <- rep(NA, nrow(LAS_hist3))  # initialize creatinine increase indicator
+
+for (i in 1:nrow(LAS_hist3)){
+  if (!is.na(LAS_hist3$chg_date[i]) && !is.na(LAS_hist3$lag.chg_date[i])){
+    if(as.numeric(abs(LAS_hist3$chg_date[i]-LAS_hist3$lag.chg_date[i]))< 182.5){  # Ensure visits are within 6 months
+      LAS_hist3$creatincp[i]<-(abs(LAS_hist3$compcreat[i]-LAS_hist3$lag.compcreat[i])/LAS_hist3$lag.compcreat[i])*100
+    } else {
+      LAS_hist3$creatincp[i] <- 0
+  }
+    } else {
+      LAS_hist3$creatincp[i] <- NA
+  }
+}
+
+
+
+# Initialize creatinine increase flag
+LAS_hist3$creatincp_flag <- rep(NA, nrow(LAS_hist3))
+
+for (i in 1:nrow(LAS_hist3)){ # Loop over each row
+  if (!is.na(LAS_hist3$creatincp[i]) && LAS_hist3$creatincp[i] >= 150 &&
+      max(LAS_hist3$compcreat[i], LAS_hist3$lag.compcreat[i]) >= 1){
+    LAS_hist3$creatincp_flag[i] <- 1
+    } else if (!is.na(LAS_hist3$creatincp[i]) && 
+               ((LAS_hist3$creatincp[i] < 150) | (max(LAS_hist3$compcreat[i], LAS_hist3$lag.compcreat[i]) < 1))){
+      LAS_hist3$creatincp_flag[i] <- 0
+    }
+}
+
+
+
+# Convert creatinine increase flag to a factor variable
+LAS_hist3$creatincp_flag <- as.factor(LAS_hist3$creatincp_flag)
+summary(LAS_hist3$creatincp_flag)
+
+
+# Merge the filled-in data sets together, and then merge these with the post-transplant data set provided by Michael Harhay
+raw_locf <- merge(x=thoracic2, y=LAS_hist3, by=c("wl_id_code"))
+
+temp_locf <- merge(x=UNOSclean2, y=LAS_hist3, by=c("wl_id_code", "chg_date"))
+
+temp_locf2 <- merge(x=UNOSclean2, y=raw_locf, by=c("wl_id_code", "chg_date"))
+
+UNOSclean3 <- temp_locf2
+UNOSclean3$calc_vent_use.y <- as.factor(UNOSclean3$calc_vent_use.y)
+
+# Rename filled-in variables back to their original names
+UNOSclean4 <- dplyr::rename(UNOSclean3, 
+                            age = age.y,
+                            ci = ci.y,
+                            calc_o2 = calc_o2.y,
+                            calc_vent_use = calc_vent_use.y,
+                            creatinine = creatinine.y,
+                            init_creat = init_creat.y,
+                            end_creat = end_creat.y,
+                            func_stat_trr = func_stat_trr.y,
+                            calc_six_min_walk = calc_six_min_walk.y,
+                            tx_date = tx_date.y)
+
+
+# Create an "ever increase" indicator which equals 1 if a patient ever experienced an increase in creatinine >= 150%,
+# and 0 if a patient never experienced an increase in creatinine >= 150%
+
+UNOSclean4$ever_creatinc <- rep(NA, nrow(UNOSclean4))  # initialize "ever increase" indicator
+creatincids <- LAS_hist3$wl_id_code[which(LAS_hist3$creatincp_flag==1)]  # Get ID # of people with flag==1
+nocreatincids <- LAS_hist3$wl_id_code[which(LAS_hist3$creatincp_flag==0)]  # Get ID # of people with flag==0
+
+for (i in 1:nrow(UNOSclean4)){ # Loop over each row in the clean data set
+    if (UNOSclean4$wl_id_code[i] %in% creatincids){  # If ID # matches and flag==1
+      UNOSclean4$ever_creatinc[i] <- 1
+      } else if (UNOSclean4$wl_id_code[i] %in% nocreatincids){  # If ID # matches and flag==0
+         UNOSclean4$ever_creatinc[i] <- 0
+      } else {  # Otherwise, creatinine increase is missing
+        UNOSclean4$ever_creatinc[i] <- NA
+      }
+  }
+
+# Convert to a factor variable
+UNOSclean4$ever_creatinc <- as.factor(UNOSclean4$ever_creatinc)
+
+# Print ID # of people who have ever experienced a creatinine increase >=150%, and the years in which they appear
+summary(UNOSclean4$ever_creatinc)
+UNOSclean4$wl_id_code[which(UNOSclean4$wl_id_code %in% creatincids)]
+UNOSclean4$ytx[which(UNOSclean4$wl_id_code %in% creatincids)]
+
+
+# ALTERNATIVE APPROACH: Compute change in creatinine as difference between END_CREAT and LAG.COMPCREAT
+UNOSclean4$creatinc2 <- rep(NA, nrow(UNOSclean4))  # initialize creatinine increase indicator
+
+for (i in 1:nrow(UNOSclean4)){
+  if (!is.na(UNOSclean4$tx_date[i]) && !is.na(UNOSclean4$lag.chg_date[i])){
+    if(as.numeric(abs(UNOSclean4$tx_date[i]-UNOSclean4$lag.chg_date[i]))<182.5){ #Ensure visits are within 6 months
+  UNOSclean4$creatinc2[i]<-(abs(UNOSclean4$end_creat[i]-UNOSclean4$lag.compcreat[i])/UNOSclean4$lag.compcreat[i])*100
+    } else {
+      UNOSclean4$creatinc2[i] <- 0
+  }
+    } else {
+      UNOSclean4$creatinc2[i] <- NA
+  }
+}
+
+# Initialize creatinine increase flag
+UNOSclean4$creatinc2_flag <- rep(NA, nrow(UNOSclean4))
+
+for (i in 1:nrow(UNOSclean4)){ # Loop over each row
+  if (!is.na(UNOSclean4$creatinc2[i]) && (UNOSclean4$creatinc2[i] >= 150) && 
+      (max(UNOSclean4$end_creat[i],UNOSclean4$lag.compcreat[i]) >= 1)){
+    UNOSclean4$creatinc2_flag[i] <- 1
+    } else if (!is.na(UNOSclean4$creatinc2[i]) && 
+               ((UNOSclean4$creatinc2[i] < 150) | (max(UNOSclean4$end_creat[i],UNOSclean4$lag.compcreat[i]) < 1))){
+      UNOSclean4$creatinc2_flag[i] <- 0
+    }
+}
+
+# Convert creatinine increase flag to a factor variable
+UNOSclean4$creatinc2_flag <- as.factor(UNOSclean4$creatinc2_flag)
+summary(UNOSclean4$creatinc2_flag)
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2007)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2008)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2009)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2010)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2011)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2012)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2013)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2014)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2015)])
+
+
+# ALTERNATIVE APPROACH 2: Compute change in creatinine as difference between END_CREAT and LAG.SERUM
+UNOSclean4$creatinc3 <- rep(NA, nrow(UNOSclean4))  # initialize creatinine increase indicator
+
+for (i in 1:nrow(UNOSclean4)){
+  if (!is.na(UNOSclean4$tx_date[i]) && !is.na(UNOSclean4$lag.chg_date[i])){
+    if(as.numeric(abs(UNOSclean4$tx_date[i]-UNOSclean4$lag.chg_date[i]))<182.5){ #Ensure visits are within 6 months
+  UNOSclean4$creatinc3[i]<-(abs(UNOSclean4$end_creat[i]-UNOSclean4$lag.serum[i])/UNOSclean4$lag.serum[i])*100
+    } else {
+      UNOSclean4$creatinc3[i] <- 0
+  }
+    } else {
+      UNOSclean4$creatinc3[i] <- NA
+  }
+}
+
+# Initialize creatinine increase flag
+UNOSclean4$creatinc3_flag <- rep(NA, nrow(UNOSclean4))
+
+for (i in 1:nrow(UNOSclean4)){ # Loop over each row
+  if (!is.na(UNOSclean4$creatinc3[i]) && (UNOSclean4$creatinc3[i] >= 150) && 
+      (max(UNOSclean4$end_creat[i],UNOSclean4$lag.serum[i]) >= 1)){
+    UNOSclean4$creatinc3_flag[i] <- 1
+    } else if (!is.na(UNOSclean4$creatinc3[i]) && 
+               ((UNOSclean4$creatinc3[i] < 150) | (max(UNOSclean4$end_creat[i],UNOSclean4$lag.serum[i]) < 1))){
+      UNOSclean4$creatinc3_flag[i] <- 0
+    }
+}
+
+# Convert creatinine increase flag to a factor variable
+UNOSclean4$creatinc3_flag <- as.factor(UNOSclean4$creatinc3_flag)
+summary(UNOSclean4$creatinc3_flag)
+
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2007)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2008)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2009)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2010)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2011)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2012)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2013)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2014)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2015)])
+
+
+
+# Compute percentage of missingness for serum in LAS history data (both raw and LOCF) pre-2015
+# Compute percentage of missingness for creatinine in LAS history data (both raw and LOCF) post-2015
+
+# LAS History File - RAW
+misspct_LAShistraw_pre2015 <- (as.numeric(summary(LAS_hist$serum[which(LAS_hist$chg_date<"2015-01-01")])[7])/
+                                  length(LAS_hist$serum[which(LAS_hist$chg_date<"2015-01-01")]))*100
+
+misspct_LAShistraw_post2015 <- (as.numeric(summary(LAS_hist$creatinine[which(LAS_hist$chg_date>="2015-01-01")])[7])/
+                                   length(LAS_hist$creatinine[which(LAS_hist$chg_date>="2015-01-01")]))*100
+
+# LAS History File - LOCF
+misspct_LAShistLOCF_pre2015 <-(as.numeric(summary(LAS_hist3$serum[which(LAS_hist3$chg_date<"2015-01-01")])[7])/
+                                  length(LAS_hist3$serum[which(LAS_hist3$chg_date<"2015-01-01")]))*100
+
+misspct_LAShistLOCF_post2015<-(as.numeric(summary(LAS_hist3$creatinine[which(LAS_hist3$chg_date>="2015-01-01")])[7])/
+                                   length(LAS_hist3$creatinine[which(LAS_hist3$chg_date>="2015-01-01")]))*100
+
+
+# Create a table of the missingness percentages for creatinine 
+miss_creat_tab <- as.data.frame(rbind(c(misspct_LAShistraw_pre2015, misspct_LAShistraw_post2015),
+                                      c(misspct_LAShistLOCF_pre2015, misspct_LAShistLOCF_post2015)))
+
+colnames(miss_creat_tab) <- c("% Missing in 2007-2014", "% Missing in 2015")
+rownames(miss_creat_tab) <- c("LAS History: Serum Creatinine (Raw)", "LAS History: Serum Creatinine (LOCF)")
+
+print(miss_creat_tab)
+
+
+# Recode missing creatinine increase indicator values with 0 for modeling purposes
+for (i in 1:nrow(UNOSclean4)){
+  if (is.na(UNOSclean4$creatinc2_flag[i])){
+    UNOSclean4$creatinc2_flag[i] <- 0  # If creatinine increase flag is NA, replace with 0
+  }
+}
+  
+
+# Trim creatinine, cardiac index, and six-minute walk values above the 99th percentile
+UNOSclean4 <- UNOSclean4[UNOSclean4$end_creat < quantile(UNOSclean2$end_creat, 0.99), ]
+
+UNOSclean4 <- subset(UNOSclean4, (is.na(UNOSclean4$ci) | (UNOSclean4$ci < quantile(UNOSclean4$ci, 0.99, na.rm=TRUE))))
+
+UNOSclean4 <- subset(UNOSclean4, (is.na(UNOSclean4$calc_six_min_walk) | (UNOSclean4$calc_six_min_walk < quantile(UNOSclean4$calc_six_min_walk, 0.99, na.rm=TRUE))))
+
+
+# Re-print creatinc2 and creatinc3 flags at each year (after trimming creatinine)
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2007)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2007)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2008)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2008)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2009)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2009)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2010)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2010)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2011)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2011)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2012)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2012)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2013)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2013)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2014)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2014)])
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2015)])
+summary(UNOSclean4$creatinc3_flag[which(UNOSclean4$ytx==2015)])
+
+
+
+# Center the age variable and six minute walk variable
+UNOSclean4$age_cent <- UNOSclean4$age - 45.9972602
+UNOSclean4$walk_cent <- 1200-UNOSclean4$calc_six_min_walk
+
+
+# Recode functional status
+UNOSclean4$func_stat_trr <- as.numeric(UNOSclean4$func_stat_trr)
+
+# Initialize binary indicator (1 if >=2050, 0 otherwise)
+UNOSclean4$func_stat_trr_bin <- rep(NA, nrow(UNOSclean4))
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] == 998){
+  UNOSclean4$func_stat_trr[i] <- NA  # Replace "998" with missing
+  }
+  
+  if(!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] >= 2050){
+    UNOSclean4$func_stat_trr_bin[i] <- 1
+  } else if (!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] < 2050){
+    UNOSclean4$func_stat_trr_bin[i] <- 0
+  }
+}
+
+# Convert functional status into a factor variable
+UNOSclean4$func_stat_trr <- as.factor(UNOSclean4$func_stat_trr)
+UNOSclean4$func_stat_trr_bin <- as.factor(UNOSclean4$func_stat_trr_bin)
+
+
+# Recode Mechanical Ventilation
+# (indicator: 1=continuous mechanical ventilation, 0=everything else)
+
+UNOSclean4$calc_vent_use_bin <- rep(NA, nrow(UNOSclean4))  # Initialize indicator
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!is.na(UNOSclean4$calc_vent_use[i]) && UNOSclean4$calc_vent_use[i] == 2){
+    UNOSclean4$calc_vent_use_bin[i] <- 1
+  } else if (!is.na(UNOSclean4$calc_vent_use[i]) && !(UNOSclean4$calc_vent_use[i] == 2)){
+    UNOSclean4$calc_vent_use_bin[i] <- 0
+  }
+}
+
+# Convert indicator to a factor variable
+UNOSclean4$calc_vent_use_bin <- as.factor(UNOSclean4$calc_vent_use_bin)
+
+
+# Recode Cardiac Index
+# (indicator: 1 if cardiac index < 2 L/min/m^2, 0 otherwise)
+
+UNOSclean4$ci_bin <- rep(NA, nrow(UNOSclean4))  # Initialize indicator
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!is.na(UNOSclean4$ci[i]) && UNOSclean4$ci[i] == 2){
+    UNOSclean4$ci_bin[i] <- 1
+  } else if (!is.na(UNOSclean4$ci[i]) && !(UNOSclean4$ci[i] == 2)){
+    UNOSclean4$ci_bin[i] <- 0
+  }
+}
+
+# Convert indicator to a factor variable
+UNOSclean4$ci_bin <- as.factor(UNOSclean4$ci_bin)
+
+
+# Subset the data by year
+UNOSclean4 <- as.data.frame(UNOSclean4[order(UNOSclean4$ytx),])
+UNOSclean4$pstatus <- as.numeric(UNOSclean4$pstatus.y)
+UNOSclean4$ptime <- UNOSclean4$ptime.y
+
+UNOS2007 <- subset(UNOSclean4, ytx==2007)
+UNOS2008 <- subset(UNOSclean4, ytx==2008)
+UNOS2009 <- subset(UNOSclean4, ytx==2009)
+UNOS2010 <- subset(UNOSclean4, ytx==2010)
+UNOS2011 <- subset(UNOSclean4, ytx==2011)
+UNOS2012 <- subset(UNOSclean4, ytx==2012)
+UNOS2013 <- subset(UNOSclean4, ytx==2013)
+UNOS2014 <- subset(UNOSclean4, ytx==2014)
+UNOS2015 <- subset(UNOSclean4, ytx==2015)
+
+# Create a vector of years for results table
+years <- as.data.frame(c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015))
+names(years) <- "Year"
 ```
 
 
-#### Analyses: Part 1
+#### Exploratory Analyses
   Next, we conduct exploratory analyses to address the following questions:
   
 1. How has the post-transplant mortality risk changed over time?
@@ -72,41 +526,1703 @@ In the first paragraph, describe the data used and general methodological approa
 Mortality risk was estimated by fitting a null (intercept-only) logistic regression model with binary mortality as the outcome (1=dead within one year post-transplant, 0=alive). For comparison, we also display the Kaplan-Meier estimated survival for each year under study. 
 
 ```{r}
-## INSERT CODE FROM OBSERVED MORTALITY AND NULL LOGISTIC SECTION OF SUMMARIES FOR SIMULATIONS 4.RMD HERE!!
+# Fit null logistic regression model for mortality by year
+# pstatus: 1=dead, 0=alive
+logitmod_null_2007 <- glm(pstatus ~ 1, data=UNOS2007, family="binomial")
+logitmod_null_2008 <- glm(pstatus ~ 1, data=UNOS2008, family="binomial")
+logitmod_null_2009 <- glm(pstatus ~ 1, data=UNOS2009, family="binomial")
+logitmod_null_2010 <- glm(pstatus ~ 1, data=UNOS2010, family="binomial")
+logitmod_null_2011 <- glm(pstatus ~ 1, data=UNOS2011, family="binomial")
+logitmod_null_2012 <- glm(pstatus ~ 1, data=UNOS2012, family="binomial")
+logitmod_null_2013 <- glm(pstatus ~ 1, data=UNOS2013, family="binomial")
+logitmod_null_2014 <- glm(pstatus ~ 1, data=UNOS2014, family="binomial")
+logitmod_null_2015 <- glm(pstatus ~ 1, data=UNOS2015, family="binomial")
+
+# Create table of INTERCEPT coefficients
+int_only_tab <- rbind(coef(summary(logitmod_null_2007))[1,1:2],
+                      coef(summary(logitmod_null_2008))[1,1:2], 
+                      coef(summary(logitmod_null_2009))[1,1:2],
+                      coef(summary(logitmod_null_2010))[1,1:2], 
+                      coef(summary(logitmod_null_2011))[1,1:2],
+                      coef(summary(logitmod_null_2012))[1,1:2], 
+                      coef(summary(logitmod_null_2013))[1,1:2],
+                      coef(summary(logitmod_null_2014))[1,1:2], 
+                      coef(summary(logitmod_null_2015))[1,1:2])
+
+int_only_tab <- cbind(years, int_only_tab)
+
+# Plot the INTERCEPT coefficient over time
+p1 <- ggplot(data=int_only_tab, aes(x=Year, y=Estimate)) + 
+             geom_errorbar(aes(ymin=Estimate-`Std. Error`, 
+                               ymax=Estimate+`Std. Error`), 
+                           width=.2) +
+             geom_point() 
+
+# Format the axes
+p1 + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015), labels=c("2007", "2008", "2009", "2010", "2011", "2012", "2013", "2014", "2015")) +
+ggtitle("Null Logistic Model: Intercept by Year")
+
+
+# Exponentiate estimates to get intercept on Odds Ratio scale
+int_only_tab$expEst <- exp(int_only_tab$Estimate)
+int_only_tab$expUpB <- exp(int_only_tab$Estimate + int_only_tab$`Std. Error`)
+int_only_tab$expLowB <- exp(int_only_tab$Estimate - int_only_tab$`Std. Error`)
+
+# Plot the INTERCEPT coefficient over time (Odds Ratio Scale)
+p1b <- ggplot(data=int_only_tab, aes(x=Year, y=expEst)) + 
+             geom_errorbar(aes(ymin=expLowB, ymax=expUpB), width=.2) +
+             geom_point() 
+
+# Format the axes
+p1b + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015), labels=c("2007", "2008", "2009", "2010", "2011", "2012", "2013", "2014", "2015")) + ylab("Odds Ratio") +
+ggtitle("Null Logistic Model: Intercept by Year, Odds Ratio Scale")
+
+
+# Calculate the observed 1-year survival probability at each year 
+# (Kaplan-Meier Estimate)
+obsprob <- survfit(Surv(UNOSclean4$ptime/365.25, UNOSclean4$pstatus) ~ UNOSclean4$ytx, type="kaplan-meier", conf.type="log")
+
+# Construct table of the observed 1-year survival probabilities
+nrisk <- summary(obsprob, times=1.0)[3]  # Number at risk
+nevent <- summary(obsprob, times=1.0)[4] # Number of deaths
+ncensor <- summary(obsprob, times=1.0)[5] # Number censored
+survprob <- summary(obsprob, times=1.0)[6] # 1-year survival probability
+lowCI <- summary(obsprob, times=1.0)[10] # Lower 95% CI, log type
+upCI <- summary(obsprob, times=1.0)[11] # Upper 95% CI, log type
+
+survtab <- cbind(years, nrisk, nevent, ncensor, survprob, lowCI, upCI)
+names(survtab) <- c("Year", "# Risk", "# Deaths", "# Censored", "S(t)", "Lower 95% CI", "Upper 95% CI")
+print(survtab)
+
+
+# Plot S(t) estimate for each year
+St <- ggplot(data=survtab, aes(x=Year, y=`S(t)`)) + 
+             geom_errorbar(aes(ymin=`Lower 95% CI`, 
+                               ymax=`Upper 95% CI`), 
+                           width=.2) +
+             geom_point() 
+
+# Format the axes
+St + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015), labels=c("2007", "2008", "2009", "2010", "2011", "2012", "2013", "2014", "2015")) +
+ggtitle("Observed 1-Year Post-Transplant Survival Probability")
 ```
 
 Prevalence of risk factors was visualized via stacked bar charts or violin plots with boxplots overlaid, as appropriate. 
 
 ```{r}
-## INSERT CODE FROM RISK FACTOR PREVALENCE SECTION OF SUMMARIES FOR SIMULATIONS 4.RMD HERE!!
+# Sample size, by year
+sampsizevec <- c(nrow(UNOS2007), nrow(UNOS2008), nrow(UNOS2009),
+                 nrow(UNOS2010), nrow(UNOS2011), nrow(UNOS2012),
+                 nrow(UNOS2013), nrow(UNOS2014), nrow(UNOS2015))
+
+sampsizetab <- as.data.frame(cbind(years, sampsizevec))
+names(sampsizetab) <- c("Year", "SampleSize")
+
+ssbar <- ggplot(data=sampsizetab, aes(x=factor(Year), y=SampleSize)) +
+                geom_bar(stat="identity")
+
+ssbar + labs(title="Sample Size, by Year",
+             x = "Year", y = "Sample Size")
+
+
+# Sample size by disease category, by year
+numdx2007 <- c(summary(UNOS2007$dx)[1], summary(UNOS2007$dx)[2], summary(UNOS2007$dx)[3], summary(UNOS2007$dx)[4])
+
+numdx2008 <- c(summary(UNOS2008$dx)[1], summary(UNOS2008$dx)[2], summary(UNOS2008$dx)[3], summary(UNOS2008$dx)[4])
+
+numdx2009 <- c(summary(UNOS2009$dx)[1], summary(UNOS2009$dx)[2], summary(UNOS2009$dx)[3], summary(UNOS2009$dx)[4])
+
+numdx2010 <- c(summary(UNOS2010$dx)[1], summary(UNOS2010$dx)[2], summary(UNOS2010$dx)[3], summary(UNOS2010$dx)[4])
+
+numdx2011 <- c(summary(UNOS2011$dx)[1], summary(UNOS2011$dx)[2], summary(UNOS2011$dx)[3], summary(UNOS2011$dx)[4])
+
+numdx2012 <- c(summary(UNOS2012$dx)[1], summary(UNOS2012$dx)[2], summary(UNOS2012$dx)[3], summary(UNOS2012$dx)[4])
+
+numdx2013 <- c(summary(UNOS2013$dx)[1], summary(UNOS2013$dx)[2], summary(UNOS2013$dx)[3], summary(UNOS2013$dx)[4])
+
+numdx2014 <- c(summary(UNOS2014$dx)[1], summary(UNOS2014$dx)[2], summary(UNOS2014$dx)[3], summary(UNOS2014$dx)[4])
+
+numdx2015 <- c(summary(UNOS2015$dx)[1], summary(UNOS2015$dx)[2], summary(UNOS2015$dx)[3], summary(UNOS2015$dx)[4])
+
+numdxtab <- as.data.frame(rbind(numdx2007, numdx2008, numdx2009,
+                                numdx2010, numdx2011, numdx2012,
+                                numdx2013, numdx2014, numdx2015))
+
+numdxtab <- as.data.frame(cbind(years, numdxtab))
+numdxtab$Year <- factor(numdxtab$Year)
+
+# Convert into long format
+library(tidyr)
+dxtablong <- gather(numdxtab, dx, count, 
+                    `Obstructive dx`:`Pulm fibrosis`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+dxtablong2 <- plyr::arrange(dxtablong, Year, dx)
+
+# Compute the cumulative sum
+dxtablong2 <- plyr::ddply(dxtablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numdxbar <- ggplot(data=dxtablong2, aes(x=Year, y=count, fill=dx)) +
+  geom_bar(stat="identity") 
+
+numdxbar + labs(title="Sample size by primary disease category (frequency)", x = "Year", y = "Frequency")
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctdxtab <- plyr::ddply(dxtablong, "Year", transform, 
+                  pctdx = (count/sum(count))*100)
+
+pctdxbar <- ggplot(data=pctdxtab, aes(x=Year, y=pctdx, fill=dx)) +
+                   geom_bar(stat="identity")
+
+pctdxbar + labs(title="Sample size by primary disease category (percent)", x = "Year", y = "Percent")
+
+```
+
+As one can see, the number of transplants increase as year increases. Additionally, the proportion of pulmonary fibrosis patients increases over time.
+
+Next, we present violin plots of the key risk factors identified above, separately by year. Boxplots are overlaid on top of the violin plots to facilitate comparisons across years.
+
+```{r}
+# Violin plot with boxplot overlay for key LAS variables, separately by year
+
+# Age (age)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=age)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab("Age") +
+  ggtitle("Age over Time")
+
+
+# Cardiac index (CI)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=ci)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab(expression("Cardiac Index ( L/min/" ~ m^{2} ~ ")")) +
+  ggtitle("Cardiac Index over Time")
+
+
+
+# Sample size by cardiac index < 2 L/min/m^2 (dichotomous), by year
+numci2007 <- c(summary(UNOS2007$ci_bin)[1],
+                summary(UNOS2007$ci_bin)[2])
+
+numci2008 <- c(summary(UNOS2008$ci_bin)[1],
+                summary(UNOS2008$ci_bin)[2])
+
+numci2009 <- c(summary(UNOS2009$ci_bin)[1],
+                summary(UNOS2009$ci_bin)[2])
+
+numci2010 <- c(summary(UNOS2010$ci_bin)[1],
+                summary(UNOS2010$ci_bin)[2])
+
+numci2011 <- c(summary(UNOS2011$ci_bin)[1],
+                summary(UNOS2011$ci_bin)[2])
+
+numci2012 <- c(summary(UNOS2012$ci_bin)[1],
+                summary(UNOS2012$ci_bin)[2])
+
+numci2013 <- c(summary(UNOS2013$ci_bin)[1],
+                summary(UNOS2013$ci_bin)[2])
+
+numci2014 <- c(summary(UNOS2014$ci_bin)[1],
+                summary(UNOS2014$ci_bin)[2])
+
+numci2015 <- c(summary(UNOS2015$ci_bin)[1],
+                summary(UNOS2015$ci_bin)[2])
+
+numcitab <- as.data.frame(rbind(numci2007, numci2008, numci2009,
+                                numci2010, numci2011, numci2012,
+                                numci2013, numci2014, numci2015))
+
+numcitab <- as.data.frame(cbind(years, numcitab))
+numcitab$Year <- factor(numcitab$Year)
+
+# Convert into long format
+citablong <- gather(numcitab, ci_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+citablong2 <- plyr::arrange(citablong, Year, ci_cat)
+
+# Compute the cumulative sum
+citablong2 <- plyr::ddply(citablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numcibar <- ggplot(data=citablong2, aes(x=Year, y=count, 
+                                          fill=ci_cat)) +
+  geom_bar(stat="identity") 
+
+numcibar + labs(title="Sample size by cardiac index indicator (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c(expression("Cardiac Index >= 2 L/min/" ~ m^{2}), expression("Cardiac Index < 2 L/min/" ~ m^{2})))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctcitab <- plyr::ddply(citablong, "Year", transform, 
+                  pctci = (count/sum(count))*100)
+
+pctcibar <- ggplot(data=pctcitab, aes(x=Year, y=pctci, 
+                                        fill=ci_cat)) +
+                   geom_bar(stat="identity")
+
+pctcibar + labs(title="Sample size by cardiac index indicator (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c(expression("Cardiac Index >= 2 L/min/" ~ m^{2}), expression("Cardiac Index < 2 L/min/" ~ m^{2})))
+
+
+
+# Mechanical ventilation (CALC_VENT_USE)
+
+# Sample size by ventilation category, by year
+numvent2007 <- c(summary(UNOS2007$calc_vent_use)[1], summary(UNOS2007$calc_vent_use)[2], 
+                 summary(UNOS2007$calc_vent_use)[3], summary(UNOS2007$calc_vent_use)[4],
+                 summary(UNOS2007$calc_vent_use)[5], summary(UNOS2007$calc_vent_use)[6],
+                 summary(UNOS2007$calc_vent_use)[7])
+
+numvent2008 <- c(summary(UNOS2008$calc_vent_use)[1], summary(UNOS2008$calc_vent_use)[2], 
+                 summary(UNOS2008$calc_vent_use)[3], summary(UNOS2008$calc_vent_use)[4],
+                 summary(UNOS2008$calc_vent_use)[5], summary(UNOS2008$calc_vent_use)[6],
+                 summary(UNOS2008$calc_vent_use)[7])
+
+numvent2009 <- c(summary(UNOS2009$calc_vent_use)[1], summary(UNOS2009$calc_vent_use)[2], 
+                 summary(UNOS2009$calc_vent_use)[3], summary(UNOS2009$calc_vent_use)[4],
+                 summary(UNOS2009$calc_vent_use)[5], summary(UNOS2009$calc_vent_use)[6],
+                 summary(UNOS2009$calc_vent_use)[7])
+
+numvent2010 <- c(summary(UNOS2010$calc_vent_use)[1], summary(UNOS2010$calc_vent_use)[2], 
+                 summary(UNOS2010$calc_vent_use)[3], summary(UNOS2010$calc_vent_use)[4],
+                 summary(UNOS2010$calc_vent_use)[5], summary(UNOS2010$calc_vent_use)[6],
+                 summary(UNOS2010$calc_vent_use)[7])
+
+numvent2011 <- c(summary(UNOS2011$calc_vent_use)[1], summary(UNOS2011$calc_vent_use)[2], 
+                 summary(UNOS2011$calc_vent_use)[3], summary(UNOS2011$calc_vent_use)[4],
+                 summary(UNOS2011$calc_vent_use)[5], summary(UNOS2011$calc_vent_use)[6],
+                 summary(UNOS2011$calc_vent_use)[7])
+
+numvent2012 <- c(summary(UNOS2012$calc_vent_use)[1], summary(UNOS2012$calc_vent_use)[2], 
+                 summary(UNOS2012$calc_vent_use)[3], summary(UNOS2012$calc_vent_use)[4],
+                 summary(UNOS2012$calc_vent_use)[5], summary(UNOS2012$calc_vent_use)[6],
+                 summary(UNOS2012$calc_vent_use)[7])
+
+numvent2013 <- c(summary(UNOS2013$calc_vent_use)[1], summary(UNOS2013$calc_vent_use)[2], 
+                 summary(UNOS2013$calc_vent_use)[3], summary(UNOS2013$calc_vent_use)[4],
+                 summary(UNOS2013$calc_vent_use)[5], summary(UNOS2013$calc_vent_use)[6],
+                 summary(UNOS2013$calc_vent_use)[7])
+
+numvent2014 <- c(summary(UNOS2014$calc_vent_use)[1], summary(UNOS2014$calc_vent_use)[2], 
+                 summary(UNOS2014$calc_vent_use)[3], summary(UNOS2014$calc_vent_use)[4],
+                 summary(UNOS2014$calc_vent_use)[5], summary(UNOS2014$calc_vent_use)[6],
+                 summary(UNOS2014$calc_vent_use)[7])
+
+numvent2015 <- c(summary(UNOS2015$calc_vent_use)[1], summary(UNOS2015$calc_vent_use)[2], 
+                 summary(UNOS2015$calc_vent_use)[3], summary(UNOS2015$calc_vent_use)[4],
+                 summary(UNOS2015$calc_vent_use)[5], summary(UNOS2015$calc_vent_use)[6],
+                 summary(UNOS2015$calc_vent_use)[7])
+
+
+numventtab <- as.data.frame(rbind(numvent2007, numvent2008, numvent2009,
+                                  numvent2010, numvent2011, numvent2012,
+                                  numvent2013, numvent2014, numvent2015))
+
+numventtab <- as.data.frame(cbind(years, numventtab))
+numventtab$Year <- factor(numventtab$Year)
+
+# Convert into long format
+venttablong <- gather(numventtab, vent_cat, count, 
+                    `1`:`7`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+venttablong2 <- plyr::arrange(venttablong, Year, vent_cat)
+
+# Compute the cumulative sum
+venttablong2 <- plyr::ddply(venttablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numventbar <- ggplot(data=venttablong2, aes(x=Year, y=count, fill=vent_cat)) +
+  geom_bar(stat="identity") 
+
+numventbar + labs(title="Sample size by mechanical ventilation category (frequency)", x = "Year", y = "Frequency")
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctventtab <- plyr::ddply(venttablong, "Year", transform, 
+                  pctvent = (count/sum(count))*100)
+
+pctventbar <- ggplot(data=pctventtab, aes(x=Year, y=pctvent, fill=vent_cat)) +
+                   geom_bar(stat="identity")
+
+pctventbar + labs(title="Sample size by mechanical ventilation category (percent)", x = "Year", y = "Percent")
+
+
+
+# Sample size by mechanical ventilation (dichotomous), by year
+numvent2007 <- c(summary(UNOS2007$calc_vent_use_bin)[1],
+                summary(UNOS2007$calc_vent_use_bin)[2])
+
+numvent2008 <- c(summary(UNOS2008$calc_vent_use_bin)[1],
+                summary(UNOS2008$calc_vent_use_bin)[2])
+
+numvent2009 <- c(summary(UNOS2009$calc_vent_use_bin)[1],
+                summary(UNOS2009$calc_vent_use_bin)[2])
+
+numvent2010 <- c(summary(UNOS2010$calc_vent_use_bin)[1],
+                summary(UNOS2010$calc_vent_use_bin)[2])
+
+numvent2011 <- c(summary(UNOS2011$calc_vent_use_bin)[1],
+                summary(UNOS2011$calc_vent_use_bin)[2])
+
+numvent2012 <- c(summary(UNOS2012$calc_vent_use_bin)[1],
+                summary(UNOS2012$calc_vent_use_bin)[2])
+
+numvent2013 <- c(summary(UNOS2013$calc_vent_use_bin)[1],
+                summary(UNOS2013$calc_vent_use_bin)[2])
+
+numvent2014 <- c(summary(UNOS2014$calc_vent_use_bin)[1],
+                summary(UNOS2014$calc_vent_use_bin)[2])
+
+numvent2015 <- c(summary(UNOS2015$calc_vent_use_bin)[1],
+                summary(UNOS2015$calc_vent_use_bin)[2])
+
+
+numventtab <- as.data.frame(rbind(numvent2007, numvent2008, numvent2009,
+                                  numvent2010, numvent2011, numvent2012,
+                                  numvent2013, numvent2014, numvent2015))
+
+numventtab <- as.data.frame(cbind(years, numventtab))
+numventtab$Year <- factor(numventtab$Year)
+
+# Convert into long format
+venttablong <- gather(numventtab, vent_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+venttablong2 <- plyr::arrange(venttablong, Year, vent_cat)
+
+# Compute the cumulative sum
+venttablong2 <- plyr::ddply(venttablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numventbar <- ggplot(data=venttablong2, aes(x=Year, y=count, 
+                                          fill=vent_cat)) +
+  geom_bar(stat="identity") 
+
+numventbar + labs(title="Sample size by mechanical ventilation indicator (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c("Not on continuous mechanical ventilation", "On continuous mechanical ventilation"))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctventtab <- plyr::ddply(venttablong, "Year", transform, 
+                  pctvent = (count/sum(count))*100)
+
+pctventbar <- ggplot(data=pctventtab, aes(x=Year, y=pctvent, 
+                                        fill=vent_cat)) +
+                   geom_bar(stat="identity")
+
+pctventbar + labs(title="Sample size by mechanical ventilation indicator (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c("Not on continuous mechanical ventilation", "On continuous mechanical ventilation"))
+
+
+
+
+
+# Creatinine (END_CREAT)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=end_creat)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab("Creatinine (mg/dL)") +
+  ggtitle("Creatinine at transplant (END_CREAT) over Time")
+
+
+# Creatinine (SERUM)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=end_creat)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab("Creatinine (mg/dL)") +
+  ggtitle("Creatinine (SERUM) over Time")
+
+
+
+# Creatinine increase >= 150%
+# Sample size by creatinine increase indicator, by year
+numcii2007 <- c(summary(UNOS2007$creatinc2_flag)[1],
+                summary(UNOS2007$creatinc2_flag)[2])
+
+numcii2008 <- c(summary(UNOS2008$creatinc2_flag)[1],
+                summary(UNOS2008$creatinc2_flag)[2])
+
+numcii2009 <- c(summary(UNOS2009$creatinc2_flag)[1],
+                summary(UNOS2009$creatinc2_flag)[2])
+
+numcii2010 <- c(summary(UNOS2010$creatinc2_flag)[1],
+                summary(UNOS2010$creatinc2_flag)[2])
+
+numcii2011 <- c(summary(UNOS2011$creatinc2_flag)[1],
+                summary(UNOS2011$creatinc2_flag)[2])
+
+numcii2012 <- c(summary(UNOS2012$creatinc2_flag)[1],
+                summary(UNOS2012$creatinc2_flag)[2])
+
+numcii2013 <- c(summary(UNOS2013$creatinc2_flag)[1],
+                summary(UNOS2013$creatinc2_flag)[2])
+
+numcii2014 <- c(summary(UNOS2014$creatinc2_flag)[1],
+                summary(UNOS2014$creatinc2_flag)[2])
+
+numcii2015 <- c(summary(UNOS2015$creatinc2_flag)[1],
+                summary(UNOS2015$creatinc2_flag)[2])
+
+
+numciitab <- as.data.frame(rbind(numcii2007, numcii2008, numcii2009,
+                                 numcii2010, numcii2011, numcii2012,
+                                 numcii2013, numcii2014, numcii2015))
+
+numciitab <- as.data.frame(cbind(years, numciitab))
+numciitab$Year <- factor(numciitab$Year)
+
+# Convert into long format
+ciitablong <- gather(numciitab, cii_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and creatinine increase indicator
+ciitablong2 <- plyr::arrange(ciitablong, Year, cii_cat)
+
+# Compute the cumulative sum
+ciitablong2 <- plyr::ddply(ciitablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numciibar <- ggplot(data=ciitablong2, aes(x=Year, y=count, 
+                                          fill=cii_cat)) +
+  geom_bar(stat="identity") 
+
+numciibar + labs(title="Sample size by creatinine increase indicator (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c("< 150%", ">= 150%"))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctciitab <- plyr::ddply(ciitablong, "Year", transform, 
+                  pctcii = (count/sum(count))*100)
+
+pctciibar <- ggplot(data=pctciitab, aes(x=Year, y=pctcii, 
+                                        fill=cii_cat)) +
+                   geom_bar(stat="identity")
+
+pctciibar + labs(title="Sample size by creatinine increase indicator (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c("< 150%", ">= 150%"))
+
+
+# Creatinine increase >= 150%
+# Sample size by creatinine increase indicator, by year (alternative definition)
+numcii2007 <- c(summary(UNOS2007$creatinc3_flag)[1],
+                summary(UNOS2007$creatinc3_flag)[2])
+
+numcii2008 <- c(summary(UNOS2008$creatinc3_flag)[1],
+                summary(UNOS2008$creatinc3_flag)[2])
+
+numcii2009 <- c(summary(UNOS2009$creatinc3_flag)[1],
+                summary(UNOS2009$creatinc3_flag)[2])
+
+numcii2010 <- c(summary(UNOS2010$creatinc3_flag)[1],
+                summary(UNOS2010$creatinc3_flag)[2])
+
+numcii2011 <- c(summary(UNOS2011$creatinc3_flag)[1],
+                summary(UNOS2011$creatinc3_flag)[2])
+
+numcii2012 <- c(summary(UNOS2012$creatinc3_flag)[1],
+                summary(UNOS2012$creatinc3_flag)[2])
+
+numcii2013 <- c(summary(UNOS2013$creatinc3_flag)[1],
+                summary(UNOS2013$creatinc3_flag)[2])
+
+numcii2014 <- c(summary(UNOS2014$creatinc3_flag)[1],
+                summary(UNOS2014$creatinc3_flag)[2])
+
+numcii2015 <- c(summary(UNOS2015$creatinc3_flag)[1],
+                summary(UNOS2015$creatinc3_flag)[2])
+
+
+numciitab <- as.data.frame(rbind(numcii2007, numcii2008, numcii2009,
+                                 numcii2010, numcii2011, numcii2012,
+                                 numcii2013, numcii2014, numcii2015))
+
+numciitab <- as.data.frame(cbind(years, numciitab))
+numciitab$Year <- factor(numciitab$Year)
+
+# Convert into long format
+ciitablong <- gather(numciitab, cii_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and creatinine increase indicator
+ciitablong2 <- plyr::arrange(ciitablong, Year, cii_cat)
+
+# Compute the cumulative sum
+ciitablong2 <- plyr::ddply(ciitablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numciibar <- ggplot(data=ciitablong2, aes(x=Year, y=count, 
+                                          fill=cii_cat)) +
+  geom_bar(stat="identity") 
+
+numciibar + labs(title="Sample size by alternative creatinine increase indicator (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c("< 150%", ">= 150%"))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctciitab <- plyr::ddply(ciitablong, "Year", transform, 
+                  pctcii = (count/sum(count))*100)
+
+pctciibar <- ggplot(data=pctciitab, aes(x=Year, y=pctcii, 
+                                        fill=cii_cat)) +
+                   geom_bar(stat="identity")
+
+pctciibar + labs(title="Sample size by alternative creatinine increase indicator (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c("< 150%", ">= 150%"))
+
+
+
+# Functional Status (func_stat_trr)
+
+# Sample size by functional status category, by year
+numfst2007 <- c(summary(UNOS2007$func_stat_trr)[1],
+                summary(UNOS2007$func_stat_trr)[2],
+                summary(UNOS2007$func_stat_trr)[3],
+                summary(UNOS2007$func_stat_trr)[4],
+                summary(UNOS2007$func_stat_trr)[5],
+                summary(UNOS2007$func_stat_trr)[6],
+                summary(UNOS2007$func_stat_trr)[7],
+                summary(UNOS2007$func_stat_trr)[8],
+                summary(UNOS2007$func_stat_trr)[9],
+                summary(UNOS2007$func_stat_trr)[10])
+
+numfst2008 <- c(summary(UNOS2008$func_stat_trr)[1],
+                summary(UNOS2008$func_stat_trr)[2],
+                summary(UNOS2008$func_stat_trr)[3],
+                summary(UNOS2008$func_stat_trr)[4],
+                summary(UNOS2008$func_stat_trr)[5],
+                summary(UNOS2008$func_stat_trr)[6],
+                summary(UNOS2008$func_stat_trr)[7],
+                summary(UNOS2008$func_stat_trr)[8],
+                summary(UNOS2008$func_stat_trr)[9],
+                summary(UNOS2008$func_stat_trr)[10])
+
+numfst2009 <- c(summary(UNOS2009$func_stat_trr)[1],
+                summary(UNOS2009$func_stat_trr)[2],
+                summary(UNOS2009$func_stat_trr)[3],
+                summary(UNOS2009$func_stat_trr)[4],
+                summary(UNOS2009$func_stat_trr)[5],
+                summary(UNOS2009$func_stat_trr)[6],
+                summary(UNOS2009$func_stat_trr)[7],
+                summary(UNOS2009$func_stat_trr)[8],
+                summary(UNOS2009$func_stat_trr)[9],
+                summary(UNOS2009$func_stat_trr)[10])
+
+numfst2010 <- c(summary(UNOS2010$func_stat_trr)[1],
+                summary(UNOS2010$func_stat_trr)[2],
+                summary(UNOS2010$func_stat_trr)[3],
+                summary(UNOS2010$func_stat_trr)[4],
+                summary(UNOS2010$func_stat_trr)[5],
+                summary(UNOS2010$func_stat_trr)[6],
+                summary(UNOS2010$func_stat_trr)[7],
+                summary(UNOS2010$func_stat_trr)[8],
+                summary(UNOS2010$func_stat_trr)[9],
+                summary(UNOS2010$func_stat_trr)[10])
+
+numfst2011 <- c(summary(UNOS2011$func_stat_trr)[1],
+                summary(UNOS2011$func_stat_trr)[2],
+                summary(UNOS2011$func_stat_trr)[3],
+                summary(UNOS2011$func_stat_trr)[4],
+                summary(UNOS2011$func_stat_trr)[5],
+                summary(UNOS2011$func_stat_trr)[6],
+                summary(UNOS2011$func_stat_trr)[7],
+                summary(UNOS2011$func_stat_trr)[8],
+                summary(UNOS2011$func_stat_trr)[9],
+                summary(UNOS2011$func_stat_trr)[10])
+
+numfst2012 <- c(summary(UNOS2012$func_stat_trr)[1],
+                summary(UNOS2012$func_stat_trr)[2],
+                summary(UNOS2012$func_stat_trr)[3],
+                summary(UNOS2012$func_stat_trr)[4],
+                summary(UNOS2012$func_stat_trr)[5],
+                summary(UNOS2012$func_stat_trr)[6],
+                summary(UNOS2012$func_stat_trr)[7],
+                summary(UNOS2012$func_stat_trr)[8],
+                summary(UNOS2012$func_stat_trr)[9],
+                summary(UNOS2012$func_stat_trr)[10])
+
+numfst2013 <- c(summary(UNOS2013$func_stat_trr)[1],
+                summary(UNOS2013$func_stat_trr)[2],
+                summary(UNOS2013$func_stat_trr)[3],
+                summary(UNOS2013$func_stat_trr)[4],
+                summary(UNOS2013$func_stat_trr)[5],
+                summary(UNOS2013$func_stat_trr)[6],
+                summary(UNOS2013$func_stat_trr)[7],
+                summary(UNOS2013$func_stat_trr)[8],
+                summary(UNOS2013$func_stat_trr)[9],
+                summary(UNOS2013$func_stat_trr)[10])
+
+numfst2014 <- c(summary(UNOS2014$func_stat_trr)[1],
+                summary(UNOS2014$func_stat_trr)[2],
+                summary(UNOS2014$func_stat_trr)[3],
+                summary(UNOS2014$func_stat_trr)[4],
+                summary(UNOS2014$func_stat_trr)[5],
+                summary(UNOS2014$func_stat_trr)[6],
+                summary(UNOS2014$func_stat_trr)[7],
+                summary(UNOS2014$func_stat_trr)[8],
+                summary(UNOS2014$func_stat_trr)[9],
+                summary(UNOS2014$func_stat_trr)[10])
+
+numfst2015 <- c(summary(UNOS2015$func_stat_trr)[1],
+                summary(UNOS2015$func_stat_trr)[2],
+                summary(UNOS2015$func_stat_trr)[3],
+                summary(UNOS2015$func_stat_trr)[4],
+                summary(UNOS2015$func_stat_trr)[5],
+                summary(UNOS2015$func_stat_trr)[6],
+                summary(UNOS2015$func_stat_trr)[7],
+                summary(UNOS2015$func_stat_trr)[8],
+                summary(UNOS2015$func_stat_trr)[9],
+                summary(UNOS2015$func_stat_trr)[10])
+
+numfsttab <- as.data.frame(rbind(numfst2007, numfst2008, numfst2009,
+                                 numfst2010, numfst2011, numfst2012,
+                                 numfst2013, numfst2014, numfst2015))
+
+numfsttab <- as.data.frame(cbind(years, numfsttab))
+numfsttab$Year <- factor(numfsttab$Year)
+
+# Convert into long format
+fsttablong <- gather(numfsttab, fst_cat, count, 
+                    `2010`:`2100`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+fsttablong2 <- plyr::arrange(fsttablong, Year, fst_cat)
+
+# Compute the cumulative sum
+fsttablong2 <- plyr::ddply(fsttablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numfstbar <- ggplot(data=fsttablong2, aes(x=Year, y=count, 
+                                          fill=fst_cat)) +
+  geom_bar(stat="identity") 
+
+numfstbar + labs(title="Sample size by functional status category (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c("10%", "20%", "30%", "40%", "50%",
+                               "60%", "70%", "80%", "90%", "100%"))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctfsttab <- plyr::ddply(fsttablong, "Year", transform, 
+                  pctfst = (count/sum(count))*100)
+
+pctfstbar <- ggplot(data=pctfsttab, aes(x=Year, y=pctfst, 
+                                        fill=fst_cat)) +
+                   geom_bar(stat="identity")
+
+pctfstbar + labs(title="Sample size by functional status category (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c("10%", "20%", "30%", "40%", "50%",
+                               "60%", "70%", "80%", "90%", "100%"))
+
+
+
+# Sample size by functional status (dichotomous), by year
+numfst2007 <- c(summary(UNOS2007$func_stat_trr_bin)[1],
+                summary(UNOS2007$func_stat_trr_bin)[2])
+
+numfst2008 <- c(summary(UNOS2008$func_stat_trr_bin)[1],
+                summary(UNOS2008$func_stat_trr_bin)[2])
+
+numfst2009 <- c(summary(UNOS2009$func_stat_trr_bin)[1],
+                summary(UNOS2009$func_stat_trr_bin)[2])
+
+numfst2010 <- c(summary(UNOS2010$func_stat_trr_bin)[1],
+                summary(UNOS2010$func_stat_trr_bin)[2])
+
+numfst2011 <- c(summary(UNOS2011$func_stat_trr_bin)[1],
+                summary(UNOS2011$func_stat_trr_bin)[2])
+
+numfst2012 <- c(summary(UNOS2012$func_stat_trr_bin)[1],
+                summary(UNOS2012$func_stat_trr_bin)[2])
+
+numfst2013 <- c(summary(UNOS2013$func_stat_trr_bin)[1],
+                summary(UNOS2013$func_stat_trr_bin)[2])
+
+numfst2014 <- c(summary(UNOS2014$func_stat_trr_bin)[1],
+                summary(UNOS2014$func_stat_trr_bin)[2])
+
+numfst2015 <- c(summary(UNOS2015$func_stat_trr_bin)[1],
+                summary(UNOS2015$func_stat_trr_bin)[2])
+
+
+numfsttab <- as.data.frame(rbind(numfst2007, numfst2008, numfst2009,
+                                 numfst2010, numfst2011, numfst2012,
+                                 numfst2013, numfst2014, numfst2015))
+
+numfsttab <- as.data.frame(cbind(years, numfsttab))
+numfsttab$Year <- factor(numfsttab$Year)
+
+# Convert into long format
+fsttablong <- gather(numfsttab, fst_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+fsttablong2 <- plyr::arrange(fsttablong, Year, fst_cat)
+
+# Compute the cumulative sum
+fsttablong2 <- plyr::ddply(fsttablong2, "Year", transform, label_y = cumsum(count))
+
+# Stacked bar chart (frequency)
+numfstbar <- ggplot(data=fsttablong2, aes(x=Year, y=count, 
+                                          fill=fst_cat)) +
+  geom_bar(stat="identity") 
+
+numfstbar + labs(title="Sample size by functional status indicator (frequency)", x = "Year", y = "Frequency") +
+  scale_fill_discrete(labels=c("< 2050", ">= 2050"))
+
+
+# Stacked bar chart (percents)
+
+# Do a group-wise transform by year and compute percents 
+pctfsttab <- plyr::ddply(fsttablong, "Year", transform, 
+                  pctfst = (count/sum(count))*100)
+
+pctfstbar <- ggplot(data=pctfsttab, aes(x=Year, y=pctfst, 
+                                        fill=fst_cat)) +
+                   geom_bar(stat="identity")
+
+pctfstbar + labs(title="Sample size by functional status indicator (percent)", x = "Year", y = "Percent") +
+  scale_fill_discrete(labels=c("< 2050: Disabled", ">= 2050: Normal Function"))
+
+
+
+# Oxygen Requirement (calc_o2)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=calc_o2)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab("Oxygen Requirement (L/min)") +
+  ggtitle("Oxygen Requirement over Time")
+
+
+# Six Minute Walk Distance (calc_six_min_walk)
+ggplot(data=UNOSclean4, aes(x=factor(ytx), y=calc_six_min_walk)) + 
+  geom_violin(fill="lightblue") + 
+  geom_boxplot(width=0.1, outlier.color=NA) +
+  xlab("Year") +
+  ylab("Six Minute Walk Distance (feet)") +
+  ggtitle("Six Minute Walk Distance over Time")
 ```
 
 Changes in LAS coefficient estimates were examined by fitting adjusted logistic regression models with binary mortality as the outcome and the covariates included in the current LAS model as predictors. All models also include variable-by-year interaction terms, with 2007 being treated as the reference year. In each case, we first identify which interaction terms are significant, and then plot the actual coefficient estimates for these significant variables over time. Coefficient estimates for variables with non-significant interactions with time are not plotted.
 
 ```{r}
-## INSERT CODE FROM ADJUSTED LOGISTIC REGRESSION SECTION OF SUMMARIES FOR SIMULATIONS 4.RMD HERE!!
+# Test for variable-by-time interactions using the multivariable logistic regression model
+
+# Age-by-year
+logitmod_mv_ageyrint <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                              end_creat + creatinc2_flag +
+                            + dx + func_stat_trr_bin + calc_o2 +
+                              walk_cent + ytx_cent + age_cent*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_ageyrint)
+
+
+# Cardiac index-by-year
+logitmod_mv_ciyrint <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                             end_creat + creatinc2_flag +
+                            + dx + func_stat_trr_bin + calc_o2 +
+                              walk_cent + ytx_cent + ci_bin*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_ciyrint)
+
+
+# Mechanical ventilation-by-year
+logitmod_mv_ventyrint <- glm(pstatus ~ age_cent + ci_bin + 
+                               calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + func_stat_trr_bin +
+                               calc_o2 + walk_cent + ytx_cent +
+                               calc_vent_use_bin*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_ventyrint)
+
+
+# Creatinine-by-year
+logitmod_mv_creatyrint <- glm(pstatus ~ age_cent + ci_bin + 
+                                calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                                func_stat_trr_bin + 
+                                calc_o2 + walk_cent + ytx_cent +
+                                end_creat*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_creatyrint)
+
+
+# Creatinine increase-by-year
+logitmod_mv_creatincyrint <- glm(pstatus ~ age_cent + ci_bin + 
+                                calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                                func_stat_trr_bin + calc_o2 +
+                               walk_cent + ytx_cent +
+                                creatinc2_flag*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_creatincyrint)
+
+
+
+
+# Diagnosis-by-year
+logitmod_mv_dxyrint <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                             func_stat_trr_bin + calc_o2 +
+                               walk_cent + ytx_cent +
+                                dx*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_dxyrint)
+
+
+# Functional status-by-year
+logitmod_mv_funcstatyrint <- glm(pstatus ~ age_cent + ci_bin + 
+                                   calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                                 func_stat_trr_bin + calc_o2 +
+                               walk_cent + ytx_cent +
+                                func_stat_trr_bin*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_funcstatyrint)
+
+
+# o2-by-year
+logitmod_mv_o2yrint <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                             func_stat_trr_bin + calc_o2 +
+                               walk_cent + ytx_cent +
+                                calc_o2*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_o2yrint)
+
+
+# Six minute walk-by-year
+logitmod_mv_walkyrint <- glm(pstatus ~ age_cent + ci_bin + 
+                               calc_vent_use_bin +
+                               end_creat + creatinc2_flag + dx + 
+                               func_stat_trr_bin + calc_o2 +
+                               walk_cent + ytx_cent +
+                                walk_cent*ytx_cent,
+                            data=UNOSclean4, family="binomial")
+
+summary(logitmod_mv_walkyrint)
+
+
+
+# Create a table of the variable-by-time interaction terms
+intnum <- c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+
+intname <- c("age * year", 
+             "cardiac index * year", 
+             "mechanical ventilation * year", 
+             "creatinine * year", 
+             "creatinine increase * year",
+             "pulmonary hypertension * year", 
+             "cystic fibrosis * year",
+             "pulmonary fibrosis * year", 
+             "functional status * year", 
+             "oxygen need * year", 
+             "six-minute-walk * year")
+
+
+inttab2 <- as.data.frame(rbind(coef(summary(logitmod_mv_ageyrint))[14,],
+                               coef(summary(logitmod_mv_ciyrint))[14,],
+                               coef(summary(logitmod_mv_ventyrint))[14,],
+                               coef(summary(logitmod_mv_creatyrint))[14,],
+                               coef(summary(logitmod_mv_creatincyrint))[14,],
+                               coef(summary(logitmod_mv_dxyrint))[14,],
+                               coef(summary(logitmod_mv_dxyrint))[15,],
+                               coef(summary(logitmod_mv_dxyrint))[16,],
+                            coef(summary(logitmod_mv_funcstatyrint))[14,],
+                               coef(summary(logitmod_mv_o2yrint))[14,], 
+                               coef(summary(logitmod_mv_walkyrint))[14,]))
+
+inttab2 <- cbind(intnum, intname, inttab2)
+names(inttab2) <- c("TermNum", "Interaction Term", "Estimate", "Std. Error", "z value", "Pr(>|z|)")
+print(inttab2)
+
+
+# Plot the p-values for the variable-by-time interaction terms (with reference line at p=0.1)
+pvalint2 <- ggplot(data=inttab2, aes(x=TermNum, y=`Pr(>|z|)`)) + geom_point(size=2.5) + 
+  geom_hline(yintercept=0.1, color="red")
+
+# Format the axes
+pvalint2 + scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+                              labels=c("Age", "Cardiac Index", 
+                                     "Mechanical Ventilation", "Creatinine", 
+                                     "Creatinine Increase >= 150%",
+                                     "Pulmonary Hypertension", 
+                                     "Cystic Fibrosis", 
+                                     "Pulmonary Fibrosis", 
+                                     "Functional Status", 
+                                     "Oxygen Requirement",
+                                     "Six minute walk distance")) + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  xlab("Interaction Term") +
+  ggtitle("Multivariable Logistic Model: p-values for variable-by-time \ninteraction terms, after adjusting for other LAS variables")
 ```
 
-#### Analyses: Part 2
-  Next, we assessed the calibration and and discrimination of the current post-transplant LAS model. Note that for transplants occurring between 2005 and 2011, we use the coefficients from the 2005 LAS model, whereas for transplants occurring beetween 2012 and 2015, we use the coefficients from the 2010 LAS model. These coefficients were chosen because in clinical practice, the 2005 LAS was used during the years 2005-2011, while the 2010 LAS was used during the years 2012-2015.
+The above plot suggests that after adjusting for the other variables in the LAS, the age-by-year, mechanical ventilation-by-year, and cystic fibrosis-by-year interaction terms are statistically significant at the \(\alpha\)=0.1 significance level. Thus, we plot the coefficient estimates for these three variables over time.
+
+```{r}
+# Multivariable logistic regression model by year
+
+logitmod_mv_2007 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2007,
+                        family="binomial")
+
+summary(logitmod_mv_2007)
+
+
+logitmod_mv_2008 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2008,
+                        family="binomial")
+
+summary(logitmod_mv_2008)
+
+
+logitmod_mv_2009 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2009,
+                        family="binomial")
+
+summary(logitmod_mv_2009)
+
+
+logitmod_mv_2010 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2010,
+                        family="binomial")
+
+summary(logitmod_mv_2010)
+
+
+logitmod_mv_2011 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2011,
+                        family="binomial")
+
+summary(logitmod_mv_2011)
+
+
+# No one experienced a creatinine increase >=150% in 2012, so we cannot include this variable in the model for this year
+logitmod_mv_2012 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2012,
+                        family="binomial")
+
+summary(logitmod_mv_2012)
+
+
+# No one experienced a creatinine increase >=150% in 2013, so we cannot include this variable in the model for this year
+logitmod_mv_2013 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2013,
+                        family="binomial")
+
+summary(logitmod_mv_2013)
+
+
+logitmod_mv_2014 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2014,
+                        family="binomial")
+
+summary(logitmod_mv_2014)
+
+
+logitmod_mv_2015 <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + 
+                          func_stat_trr_bin + calc_o2 +
+                          calc_six_min_walk, data=UNOS2015,
+                        family="binomial")
+
+summary(logitmod_mv_2015)
+
+
+
+
+# Create table of coefficients if significant interactions with time
+
+# Age
+mv_tab_age <- rbind(coef(summary(logitmod_mv_2007))[2,1:2],
+                    coef(summary(logitmod_mv_2008))[2,1:2], 
+                    coef(summary(logitmod_mv_2009))[2,1:2],
+                    coef(summary(logitmod_mv_2010))[2,1:2], 
+                    coef(summary(logitmod_mv_2011))[2,1:2],
+                    coef(summary(logitmod_mv_2012))[2,1:2], 
+                    coef(summary(logitmod_mv_2013))[2,1:2],
+                    coef(summary(logitmod_mv_2014))[2,1:2], 
+                    coef(summary(logitmod_mv_2015))[2,1:2])
+
+mv_tab_age <- cbind(years, mv_tab_age)
+mv_tab_age <- as.data.frame(mv_tab_age)
+names(mv_tab_age) <- c("Year", "Estimate", "Std. Error")
+
+
+# Mechanical Ventilation
+mv_tab_vent <- rbind(coef(summary(logitmod_mv_2007))[4,1:2],
+                     coef(summary(logitmod_mv_2008))[4,1:2], 
+                     coef(summary(logitmod_mv_2009))[4,1:2],
+                     coef(summary(logitmod_mv_2010))[4,1:2], 
+                     coef(summary(logitmod_mv_2011))[4,1:2],
+                     coef(summary(logitmod_mv_2012))[4,1:2], 
+                     coef(summary(logitmod_mv_2013))[4,1:2],
+                     coef(summary(logitmod_mv_2014))[4,1:2], 
+                     coef(summary(logitmod_mv_2015))[4,1:2])
+
+mv_tab_vent <- cbind(years[1:9, ], mv_tab_vent)
+mv_tab_vent <- as.data.frame(mv_tab_vent)
+names(mv_tab_vent) <- c("Year", "Estimate", "Std. Error")
+
+
+# dxCF
+mv_tab_dxCF <- rbind(coef(summary(logitmod_mv_2007))[8,1:2],
+                          coef(summary(logitmod_mv_2008))[8,1:2], 
+                          coef(summary(logitmod_mv_2009))[8,1:2],
+                          coef(summary(logitmod_mv_2010))[8,1:2], 
+                          coef(summary(logitmod_mv_2011))[8,1:2],
+                          coef(summary(logitmod_mv_2012))[7,1:2], # CF="7" because creatinc2_flag not in model
+                          coef(summary(logitmod_mv_2013))[7,1:2], # CF="7" because creatinc2_flag not in model
+                          coef(summary(logitmod_mv_2014))[8,1:2], 
+                          coef(summary(logitmod_mv_2015))[8,1:2])
+
+mv_tab_dxCF <- cbind(years, mv_tab_dxCF)
+mv_tab_dxCF <- as.data.frame(mv_tab_dxCF)
+names(mv_tab_dxCF) <- c("Year", "Estimate", "Std. Error")
+
+
+# Plot these coefficients over time
+
+# Age
+mv1 <- ggplot(data=mv_tab_age, aes(x=Year, y=Estimate)) + 
+  geom_errorbar(aes(ymin=Estimate-`Std. Error`, 
+                    ymax=Estimate+`Std. Error`), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv1 + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011,
+                                  2012, 2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) +
+  ggtitle("Multivariable Logistic Model: Age Coefficient by Year, \n after adjusting for other LAS variables")
+
+
+# Exponentiate estimates to get AGE coefficient on Odds Ratio scale
+mv_tab_age$expEst <- exp(mv_tab_age$Estimate)
+mv_tab_age$expUpB <- exp(mv_tab_age$Estimate + mv_tab_age$`Std. Error`)
+mv_tab_age$expLowB <- exp(mv_tab_age$Estimate - mv_tab_age$`Std. Error`)
+
+# Plot the AGE coefficient over time (Odds Ratio Scale)
+mv1b <- ggplot(data=mv_tab_age, aes(x=Year, y=expEst)) +
+  geom_errorbar(aes(ymin=expLowB, ymax=expUpB), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv1b + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012,
+                                  2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) + ylab("Odds Ratio") +
+  ggtitle("Multivariable Logistic Model: Age Coefficient by Year \n(Odds Ratio Scale)")
+
+
+
+# Mechanical Ventilation
+mv2 <- ggplot(data=mv_tab_vent, aes(x=Year, y=Estimate)) + 
+  geom_errorbar(aes(ymin=Estimate-`Std. Error`, 
+                    ymax=Estimate+`Std. Error`), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv2 + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011,
+                                  2012, 2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) +
+  ggtitle("Multivariable Logistic Model: Mechanical Ventilation Coefficient by Year, \n after adjusting for other LAS variables")
+
+
+# Exponentiate estimates to get MECHANICAL VENTILATION coefficient on OR scale
+mv_tab_vent$expEst <- exp(mv_tab_vent$Estimate)
+mv_tab_vent$expUpB <- exp(mv_tab_vent$Estimate +
+                             mv_tab_vent$`Std. Error`)
+mv_tab_vent$expLowB <- exp(mv_tab_vent$Estimate - 
+                              mv_tab_vent$`Std. Error`)
+
+# Plot the MECHANICAL VENTILATION coefficient over time (Odds Ratio Scale)
+mv2b <- ggplot(data=mv_tab_vent, aes(x=Year, y=expEst)) +
+  geom_errorbar(aes(ymin=expLowB, ymax=expUpB), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv2b + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012,
+                                  2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) + ylab("Odds Ratio") +
+  ggtitle("Multivariable Logistic Model: Mechanical Ventilation Coefficient by Year \n(Odds Ratio Scale)")
+
+
+
+# Cystic Fibrosis
+mv3 <- ggplot(data=mv_tab_dxCF, aes(x=Year, y=Estimate)) + 
+  geom_errorbar(aes(ymin=Estimate-`Std. Error`, 
+                    ymax=Estimate+`Std. Error`), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv3 + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011,
+                                  2012, 2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) +
+  ggtitle("Multivariable Logistic Model: Cystic Fibrosis Coefficient by Year \n after adjusting for other LAS variables")
+
+
+# Exponentiate estimates to get CF coefficient on OR scale
+mv_tab_dxCF$expEst <- exp(mv_tab_dxCF$Estimate)
+mv_tab_dxCF$expUpB <- exp(mv_tab_dxCF$Estimate +
+                                 mv_tab_dxCF$`Std. Error`)
+mv_tab_dxCF$expLowB <- exp(mv_tab_dxCF$Estimate -
+                                  mv_tab_dxCF$`Std. Error`)
+
+# Plot the CF coefficient over time (Odds Ratio Scale)
+mv3b <- ggplot(data=mv_tab_dxCF, aes(x=Year, y=expEst)) +
+  geom_errorbar(aes(ymin=expLowB, ymax=expUpB), width=.2) +
+  geom_point() 
+
+# Format the axes
+mv3b + scale_x_continuous(breaks=c(2007, 2008, 2009, 2010, 2011, 2012,
+                                  2013, 2014, 2015),
+                         labels=c("2007", "2008", "2009", "2010", 
+                                  "2011", "2012", "2013", "2014", 
+                                  "2015")) + ylab("Odds Ratio") +
+  ggtitle("Multivariable Logistic Model: Cystic Fibrosis \nCoefficient by Year (Odds Ratio Scale)")
+
+```
+
+The above exploratory analyses suggest that the one year post-transplant mortality rate decreases over time, the prevalence of risk factors varies over time, and several coefficients of the LAS change significantly over time as well. In light of these findings, we proceed to evaluate the calibration and discrimination of the current LAS, and compare these to the calibration and discrimination of a multivariable logistic regression model which includes the same main effects, along with predictor-by-time interaction terms for the age, mechanical ventialtion, and diagnosis group covariates.
+
+### Results
+  
+  Here, we display the results of the calibration and discrimination assessments of the current post-transplant LAS model. Note that for transplants occurring between 2005 and 2011, we use the coefficients from the 2005 LAS model, whereas for transplants occurring beetween 2012 and 2015, we use the coefficients from the 2010 LAS model. These coefficients were chosen because in clinical practice, the 2005 LAS was used during the years 2005-2011, while the 2010 LAS was used during the years 2012-2015. The baseline survival probability at one year for these models was taken to be the value reported by UNOS at time t=364 days.
   Calibration was assessed by obtaining predicted probabilities of death from the fitted LAS model, and then comparing these predicted probabilities to the observed proportion of deaths across deciles of predicted probabilities. Discrimination was assessed by plotting ROC curves, both overall, and separately by year.
   
 ```{r}
-## INSERT CODE FROM LAS SECTION OF PREDICTED VS OBSERVED.RMD HERE!!
+# Load required packages
+library(pROC)
+library(ResourceSelection)
+library(ggplot2)
+library(dplyr)
+library(Hmisc)
+library(tidyverse)
+library(boot)
+
+# Read in the cleaned UNOS data
+# save(UNOSclean4, file="K:/Data/UNOSclean4.RData")
+load("K:/Data/UNOSclean4.RData")
+
+
+# Recode the outcome variable 
+# (only count death if it occurs within 1 year of transplantation)
+
+UNOSclean4$pstatus2 <- rep(NA, nrow(UNOSclean4))
+
+for (i in 1:nrow(UNOSclean4)){
+  if (UNOSclean4$ptime[i]/365.25 <= 1){  # if event occurs within 1 year,
+    UNOSclean4$pstatus2[i] <- UNOSclean4$pstatus[i]  # leave status as is
+  } else { # if event occurs after 1 year,
+    UNOSclean4$pstatus2[i] <- 0  # replace status with 0
+  }
+}
+
+
+
+# Compute predicted log hazard ratios of SURVIVAL at each year using LAS coefficients reported by UNOS
+
+# First set up indicator variables for each diagnosis group
+UNOSclean4$dxObstructive <- rep(0, nrow(UNOSclean4))
+UNOSclean4$dxPulmHtx <- rep(0, nrow(UNOSclean4))
+UNOSclean4$dxCF <- rep(0, nrow(UNOSclean4))
+UNOSclean4$dxPulmFib <- rep(0, nrow(UNOSclean4))
+
+for (i in 1:nrow(UNOSclean4)){
+  if (UNOSclean4$diag_group[i]==1){
+      UNOSclean4$dxObstructive[i] <- 1
+  } else if (UNOSclean4$diag_group[i]==2){
+      UNOSclean4$dxPulmHtx[i] <- 1
+  } else if (UNOSclean4$diag_group[i]==3){
+      UNOSclean4$dxCF[i] <- 1
+  } else if (UNOSclean4$diag_group[i]==4){
+      UNOSclean4$dxPulmFib[i] <- 1
+  }
+}
+
+
+pred_logHR <- rep(NA, nrow(UNOSclean4))  # Initialize vector to store predicted log HRs
+
+for (i in 1:nrow(UNOSclean4)){
+  
+  if (UNOSclean4$ytx[i]<2012){  # For transplants occurring from 2005 through 2011
+      if (UNOSclean4$dxObstructive[i]==1){  # For diagnosis group A
+          pred_logHR[i] <- 0.004*(UNOSclean4$age) +  # Age was NOT centered in the 2005 LAS
+              0*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +  # Cardiac index not in 2005 LAS
+              0.31*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.06*(UNOSclean4$end_creat[i]) +
+              0*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +  # Creat. inc. not in 2005 LAS
+              0.62*(UNOSclean4$dxPulmHtx[i]) + 
+              0.01*(UNOSclean4$dxCF[i]) + 
+              0.41*(UNOSclean4$dxPulmFib[i]) + 
+              -0.49*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0*(UNOSclean4$calc_o2[i]) +  # oxygen requirement not included in 2005 LAS
+              0*(UNOSclean4$walk_cent[i])  # six-minute walk distance not included in 2005 LAS
+  
+     } else if (UNOSclean4$dxPulmHtx[i]==1) {  # For diagnosis group B
+          pred_logHR[i] <- 0.004*(UNOSclean4$age) +  # Age was NOT centered in the 2005 LAS
+              0*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +  # Cardiac index not in 2005 LAS
+              0.31*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.06*(UNOSclean4$end_creat[i]) +
+              0*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +  # Creat. inc. not in 2005 LAS
+              0.62*(UNOSclean4$dxPulmHtx[i]) + 
+              0.01*(UNOSclean4$dxCF[i]) + 
+              0.41*(UNOSclean4$dxPulmFib[i]) + 
+              -0.003*(UNOSclean4$fvc_trr.x[i]) +  # FVC (%) included for groups B and D in 2005 LAS
+              -0.49*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0*(UNOSclean4$calc_o2[i]) +  # oxygen requirement not included in 2005 LAS
+              0*(UNOSclean4$walk_cent[i])  # six-minute walk distance not included in 2005 LAS
+          
+     } else if (UNOSclean4$dxCF[i]==1) {  # For diagnosis group C
+          pred_logHR[i] <- 0.004*(UNOSclean4$age) +  # Age was NOT centered in the 2005 LAS
+              0*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +  # Cardiac index not in 2005 LAS
+              0.31*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.06*(UNOSclean4$end_creat[i]) +
+              0*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +  # Creat. inc. not in 2005 LAS
+              0.62*(UNOSclean4$dxPulmHtx[i]) + 
+              0.01*(UNOSclean4$dxCF[i]) + 
+              0.41*(UNOSclean4$dxPulmFib[i]) + 
+              -0.49*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0*(UNOSclean4$calc_o2[i]) +  # oxygen requirement not included in 2005 LAS
+              0*(UNOSclean4$walk_cent[i])  # six-minute walk distance not included in 2005 LAS
+          
+     } else if (UNOSclean4$dxPulmFib[i]==1) {  # For diagnosis group D
+          pred_logHR[i] <- 0.004*(UNOSclean4$age) +  # Age was NOT centered in the 2005 LAS
+              0*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +  # Cardiac index not in 2005 LAS
+              0.31*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.06*(UNOSclean4$end_creat[i]) +
+              0*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +  # Creat. inc. not in 2005 LAS
+              0.62*(UNOSclean4$dxPulmHtx[i]) + 
+              0.01*(UNOSclean4$dxCF[i]) + 
+              0.41*(UNOSclean4$dxPulmFib[i]) + 
+              -0.003*(UNOSclean4$fvc_trr.x[i]) +  # FVC (%) included for groups B and D in 2005 LAS
+            
+             # if pulminary capillary wedge pressure > 20 mmHg, return 0.03 as coefficient, 
+             # otherwise coefficient=0. This coefficient only appears for group D in the 2005 LAS
+              ifelse(UNOSclean4$pcwp_post_don.x[i]>20, 0.03, 0) +  
+            
+              -0.49*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0*(UNOSclean4$calc_o2[i]) +  # oxygen requirement not included in 2005 LAS
+              0*(UNOSclean4$walk_cent[i])  # six-minute walk distance not included in 2005 LAS
+     }
+  }
+  
+  else if (UNOSclean4$ytx[i]>=2012 && UNOSclean4$ytx[i]<=2015){  # For transplants occurring 2012-2015
+      if (UNOSclean4$dxObstructive[i]==1){  # For diagnosis group A
+          pred_logHR[i] <- 0.02*(UNOSclean4$age_cent) + 
+              0.35*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) + 
+              0.61*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.09*(UNOSclean4$end_creat[i]) +
+              0.77*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +
+              0.61*(UNOSclean4$dxPulmHtx[i]) + 
+              0.36*(UNOSclean4$dxCF[i]) + 
+              0.46*(UNOSclean4$dxPulmFib[i]) + 
+              -0.19*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0.07*(UNOSclean4$calc_o2[i]) +
+              0.00*(UNOSclean4$walk_cent[i])
+  
+     } else{  # For diagnosis groups B, C, D
+          pred_logHR[i] <- 0.02*(UNOSclean4$age_cent) + 
+              0.35*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +
+              0.61*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.09*(UNOSclean4$end_creat[i]) +
+              0.77*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) + 
+              0.61*(UNOSclean4$dxPulmHtx[i]) + 
+              0.36*(UNOSclean4$dxCF[i]) + 
+              0.46*(UNOSclean4$dxPulmFib[i]) + 
+              -0.19*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) + 
+              0.02*(UNOSclean4$calc_o2[i]) + 
+              0.00*(UNOSclean4$walk_cent[i])  
+     }
+  } 
+  
+   else if (UNOSclean4$ytx[i]>2015){  # For transplants occurring after 2015
+      if (UNOSclean4$dxObstructive[i]==1){  # For diagnosis group A
+          pred_logHR[i] <- 0.0247*(UNOSclean4$age_cent) + 
+              0.3499*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) + 
+              0.6094*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.0896*(UNOSclean4$end_creat[i]) +
+              0.7709*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) +
+              0.6116*(UNOSclean4$dxPulmHtx[i]) + 
+              0.3627*(UNOSclean4$dxCF[i]) + 
+              0.4641*(UNOSclean4$dxPulmFib[i]) + 
+              -0.1900*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) +
+              0.0748*(UNOSclean4$calc_o2[i]) +
+              0.0005*(UNOSclean4$walk_cent[i])
+  
+     } else{  # For diagnosis groups B, C, D
+          pred_logHR[i] <- 0.0247*(UNOSclean4$age_cent) + 
+              0.3499*(as.numeric(as.character(UNOSclean4$ci_bin[i]))) +
+              0.6094*(as.numeric(as.character(UNOSclean4$calc_vent_use_bin[i]))) +
+              0.0896*(UNOSclean4$end_creat[i]) +
+              0.7709*(as.numeric(as.character(UNOSclean4$creatinc2_flag[i]))) + 
+              0.6116*(UNOSclean4$dxPulmHtx[i]) + 
+              0.3627*(UNOSclean4$dxCF[i]) + 
+              0.4641*(UNOSclean4$dxPulmFib[i]) + 
+              -0.1900*(as.numeric(as.character(UNOSclean4$func_stat_trr_bin[i]))) + 
+              0.0164*(UNOSclean4$calc_o2[i]) + 
+              0.0005*(UNOSclean4$walk_cent[i])  
+     }
+  }
+
+}
+
+
+# Convert the predicted log hazard ratios of survival into hazard ratios, and raise the baseline post-transplant
+# survival probability at 364 days to this power to get 1-year post-transplant survival probabilities
+pred_HR_LAS <- exp(pred_logHR)
+
+Stx0_364_2005 <- 0.914  # Estimated 2005 LAS Baseline post-transplant survival probability
+Stx0_364_2010 <- 0.941315  # Reported 2010 LAS Baseline post-transplant survival probability
+
+# Apply baseline survival probability to predicted hazard ratios to get predicted survival probability
+pred_surv_LAS <- as.data.frame(cbind(UNOSclean4$ytx, UNOSclean4$pstatus2, pred_HR_LAS))
+names(pred_surv_LAS) <- c("ytx", "pstatus", "pred_HR_LAS")
+
+# Initialize vector to store probabilities
+pred_surv_LAS$pred_prob_LASsurv <- rep(NA, nrow(pred_surv_LAS))  
+
+# Predicted 1-year post-transplant survival probability
+for (i in 1:nrow(pred_surv_LAS)){
+  if (pred_surv_LAS$ytx[i] < 2012){  # Use 2005 model for transplants occurring before 2012
+    pred_surv_LAS$pred_prob_LASsurv[i] <- Stx0_364_2005^(pred_surv_LAS$pred_HR_LAS[i])  
+  } 
+  else if (pred_surv_LAS$ytx[i] >= 2012){  # Use 2010 model for transplants occurring after 2012
+    pred_surv_LAS$pred_prob_LASsurv[i] <- Stx0_364_2010^(pred_surv_LAS$pred_HR_LAS[i])
+  }
+}
+
+
+# Convert the predicted survival probabilities into predicted death probabilities
+pred_prob_LAS <- 1 - pred_surv_LAS$pred_prob_LASsurv
+
+
+
+# Create matrix with year, pstatus2, predicted probability of death;
+# remove observations with missing probabilities
+predmatLAS <- as.data.frame(cbind(UNOSclean4$ytx, UNOSclean4$pstatus2, pred_prob_LAS))
+predmatLAS2 <- predmatLAS[which(!is.na(pred_prob_LAS)),]
+names(predmatLAS2) <- c("year", "pstatus", "predprobLAS")
+
+# Plot a histogram of predicted probabilities of death by outcome status (Count)
+ggplot(predmatLAS2, aes(x=predprobLAS)) + 
+  geom_histogram(bins=30) + 
+  facet_grid(~pstatus) +
+  xlab("Predicted Probability of Death") +
+  ylab("Count") +
+  ggtitle("Histogram of Predicted Probabilities of death (from LAS) by Outcome \n(1=Dead, 0=Alive)")
+
+# Plot a histogram of predicted probabilities by outcome status (Percent)
+ggplot(predmatLAS2, aes(x=predprobLAS)) + 
+  geom_histogram(aes(y=(..count../sum(..count..))*100), bins=30) + 
+  facet_grid(~pstatus) +
+  xlab("Predicted Probability of Death (from LAS)") +
+  ylab("Percent") +
+  ggtitle("Histogram of Predicted Probabilities of death (from LAS) by Outcome \n(1=Dead, 0=Alive)")
+
+# Compute the Brier Score
+LAS.BrierScore <- mean((predmatLAS2$predprob-predmatLAS2$pstatus)^2, na.rm=TRUE)
+print(LAS.BrierScore)
+
+# Hosmer-Lemeshow Goodness of Fit Test, using 10 groups (i.e., deciles) of predicted probabilities
+hl_gof2 <- hoslem.test(predmatLAS2$pstatus, predmatLAS2$predprobLAS, g=10)
+hl_gof2
+
+# Plot Observed Proportion of Deaths vs. Average Predicted Probability for each decile group from Hosmer-Lemeshow test
+
+# Create decile groups based on predicted probabilities
+predmatLAS2$group <- with(predmatLAS2, cut(predprobLAS, 
+                                           quantile(predprobLAS, probs=seq(0,1, by=0.1), na.rm=TRUE),
+                                           include.lowest=TRUE))
+
+# Average the predicted probabilities within each decile group
+avepp_tabLAS <- predmatLAS2 %>% dplyr::group_by(group) %>% dplyr::summarise(avepp = mean(predprobLAS))
+
+# Compute the observed proportion of deaths in each decile group
+obsp_tabLAS<- predmatLAS2 %>% dplyr::group_by(group) %>% dplyr::summarise(obsp = mean(pstatus))
+
+# Merge the observed and predicted probability tables together
+oeprob_tabLAS <- full_join(avepp_tabLAS, obsp_tabLAS, by="group")
+print(oeprob_tabLAS)
+
+# Create a scatter plot of the observed proportions vs. average predicted probabilities of death
+ggplot(data=oeprob_tabLAS, aes(x=avepp, y=obsp)) + 
+       geom_point(color="red") +
+       geom_abline(slope=1, intercept=0) +
+       xlim(0,1) +
+       ylim(0,1) +
+       xlab("Average Predicted Probabilities of Death") +
+       ylab("Observed Proportion of Deaths") +
+       ggtitle("Observed vs. Expected Probabilities of Death \nfrom LAS")
 ```
   
-  For comparison, we also assessed the calibration and discrimination of a multivariable logistic regression model which contained the same main effects as the current LAS, but which additionally included interactions between key predictors and time (as identified in Analyses: Part 1). 
+When we use the coefficients of the 2005 and 2010 LAS during the appropriate years, the Hosmer-Lemeshow statistic is 106.05 on 8 degrees of freedom, and the corresponding p-value is 2.2x10^-16. Similarly, when we use the coefficients of the 2015 LAS for all years, the Hosmer-Lemeshow statistic is 95.8 on 8 degrees of freedom, and the p-value is less than 2.2x10^-16. In both cases, the p-value is less than the significance level of \(\alpha\)=0.05, so we reject the null hypothesis, and conclude that the calibration of the LAS model is inadequate. More specifically, the plot of the observed proportion of deaths versus average predicted probabilities of death across deciles of predicted probabilities indicates that for all but the highest decile, the LAS underestimates the probability of death. For the highest decile, the LAS overestimates the probability of death.
+
+Next, we evaluate the discriminative ability of the LAS model by plotting ROC curve:
 
 ```{r}
-## INSERT CODE FROM LOGISTIC REGRESSION SECTION OF PREDICTED VS OBSERVED.RMD HERE!!
+# ROC Curve comparing observed outcome vs. LAS Prediction
+
+# Overall
+roc(UNOSclean4$pstatus2, pred_prob_LAS, ci=TRUE)
+
+plot.roc(UNOSclean4$pstatus2, pred_prob_LAS, ci=TRUE, legacy.axes=TRUE, xlim=c(1,0), print.auc=1)
+title("Observed Outcome vs. LAS Prediction: All Years")
 ```
 
+When the LAS is used to predict outcomes, the area under the “overall” ROC curve is estimated to be 0.578 (95% confidence interval: 0.564-0.593). This result implies that the LAS model exhibits poor discrimination.
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. 
+For comparison, we also assessed the calibration and discrimination of a multivariable logistic regression model which contained the same main effects as the current LAS, but which additionally included interactions between key predictors and time (as identified in Analyses: Part 1). 10-fold cross-validation was performed to avoid overfitting this model.
+
+```{r}
+# Multivariable logistic regression model with predictor-by-year interactions ("True" Model)
+logitmod_mv <- glm(pstatus2 ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + func_stat_trr_bin +
+                          calc_o2 + walk_cent + ytx_cent +
+                          age_cent*ytx_cent +
+                          calc_vent_use_bin*ytx_cent +
+                          dx*ytx_cent, 
+                   data=UNOSclean4, family="binomial")
+
+# Obtain predicted probabilities of death from multivariable logistic model
+logitmod_predprob <- predict(logitmod_mv, UNOSclean4, type="response")
+
+# Also obtain predicted probabilities using K-fold cross-validation for comparison
+N <- nrow(UNOSclean4)
+K <- 10  # 10-fold cross-validation
+set.seed(1234)
+s <- sample(1:K, size=N, replace=T)
+pred.outputs.logistic <- vector(mode="numeric", length=N)
+obs.outputs <- vector(mode="numeric", length=N)
+obs.year <- vector(mode="numeric", length=N)
+offset <- 0
+
+for (i in 1:K){
+  train <- filter(UNOSclean4, s != i)
+  test <- filter(UNOSclean4, s == i)
+  obs.outputs[1:length(s[s==i]) + offset] <- test$pstatus2
+  obs.year[1:length(s[s==i]) + offset] <- test$ytx
+  
+  # Logistic train/test
+  logistic <- glm(pstatus2 ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + func_stat_trr_bin +
+                          calc_o2 + walk_cent + ytx_cent +
+                          age_cent*ytx_cent +
+                          calc_vent_use_bin*ytx_cent +
+                          dx*ytx_cent, 
+                   data=train, family=binomial(logit))
+  
+  logistic.pred.curr <- predict(logistic, test, type="response")
+  pred.outputs.logistic[1:length(s[s==i]) + offset] <- logistic.pred.curr
+  
+  offset <- offset + length(s[s==i])
+}
+
+# Use cross-validated predicted probabilities in all subsequent analyses
+# to mitigate problem of overfitting
+
+# Create matrix containing year, pstatus2, & predicted probability; 
+# remove observations with missing probabilities
+predmat <- as.data.frame(cbind(obs.year, obs.outputs, pred.outputs.logistic))
+predmat2 <- predmat[which(!is.na(pred.outputs.logistic)),]
+names(predmat2) <- c("year", "pstatus", "predprob")
+
+
+# Plot a histogram of predicted probabilities by outcome status (Count)
+ggplot(predmat2, aes(x=predprob)) + 
+  geom_histogram(bins=30) + 
+  facet_grid(~pstatus) +
+  xlab("Predicted Probability of Death") +
+  ylab("Count") +
+  ggtitle("Histogram of Predicted Probabilities by Outcome \n(1=Dead, 0=Alive)")
+
+# Plot a histogram of predicted probabilities by outcome status (Percent)
+ggplot(predmat2, aes(x=predprob)) + 
+  geom_histogram(aes(y=(..count../sum(..count..))*100), bins=30) + 
+  facet_grid(~pstatus) +
+  xlab("Predicted Probability of Death") +
+  ylab("Percent") +
+  ggtitle("Histogram of Predicted Probabilities by Outcome \n(1=Dead, 0=Alive)")
+
+# Compute the Brier Score
+logitmod.BrierScore <- mean((predmat2$predprob-predmat2$pstatus)^2, na.rm=TRUE)
+print(logitmod.BrierScore)
+
+# Hosmer-Lemeshow Goodness of Fit Test, using 10 groups (i.e., deciles) of predicted probabilities
+hl_gof1 <- hoslem.test(predmat2$pstatus, predmat2$predprob, g=10)
+hl_gof1
+
+# Print table of observed vs. expected outcomes
+oe_data1 <- as.data.frame(cbind(hl_gof1$observed, hl_gof1$expected))
+print(oe_data1)
+
+# Plot Observed Proportion of Deaths vs. Average Predicted Probability for each decile group from Hosmer-Lemeshow test
+
+# Create decile groups based on predicted probabilities
+predmat2$group <- with(predmat2, cut(predprob, 
+                                     quantile(predprob, probs=seq(0,1, by=0.1), na.rm=TRUE),
+                                     include.lowest=TRUE))
+
+# Average the predicted probabilities within each decile group
+avepp_tab <- predmat2 %>% group_by(group) %>% summarise(avepp = mean(predprob))
+
+# Compute the observed proportion of deaths in each decile group
+obsp_tab <- predmat2 %>% group_by(group) %>% summarise(obsp = mean(pstatus))
+
+# Merge the observed and predicted probability tables together
+oeprob_tab <- full_join(avepp_tab, obsp_tab, by="group")
+print(oeprob_tab)
+
+# Create a scatter plot of the observed proportions vs. average predicted probabilities
+ggplot(data=oeprob_tab, aes(x=avepp, y=obsp)) + 
+       geom_point(color="red") +
+       geom_abline(slope=1, intercept=0) +
+       xlim(0,1) +
+       ylim(0,1) +
+       xlab("Average Predicted Probabilities of Death") +
+       ylab("Observed Proportion of Deaths") +
+       ggtitle("Observed vs. Expected Probabilities of Death \nfrom Logistic Model")
+```
+
+The Hosmer-Lemeshow statistic for the logistic regression model is 16.079 on 8 degrees of freedom, and the corresponding p-value is 0.0413. Since this p-value is less than the significance level of \(\alpha\)=0.05, we reject the null hypothesis, and conclude that the multivariable logistic model provides an inadequate fit to the data. Note that this fit is, however, better than the one provided by the LAS.
+
+Plotting the observed proportion of deaths versus the average predicted probabilities across deciles of predicted probability for all years yields data which lie approximately on a straight line through the origin with slope 1 (i.e, a 45-degree line). This result suggests that overall, the multivariable logistic model is marginally adequate. 
+
+Next, we plot the ROC curve for the multivariable logistic model:
+
+```{r}
+# ROC Curve comparing predicted vs. observed outcomes
+
+# Overall
+roc(UNOSclean4$pstatus2, logitmod_predprob, ci=TRUE)
+
+plot.roc(UNOSclean4$pstatus2, logitmod_predprob, ci=TRUE,
+         legacy.axes=TRUE, xlim=c(1,0), print.auc=1, 
+         print.auc.x=0.2, print.auc.y=0.8)  # All data
+
+roc(obs.outputs, pred.outputs.logistic, ci=TRUE)
+
+plot.roc(obs.outputs, pred.outputs.logistic, ci=TRUE, legacy.axes=TRUE,
+         xlim=c(1,0), print.auc=1, add=TRUE, col="red")  # cv
+title("Observed Outcome vs. Logistic Prediction: All Years")
+legend("bottomright", legend=c("Training", "Cross-Validation"), col=c("black", "red"), lwd=2)
+```
+
+The area under the “overall” ROC curve after 10-fold cross-validation is estimated to be 0.616 (95% confidence interval: 0.601-0.631). This result implies that the multivariable logistic model has better discrimination than the LAS, although it is still quite poor.
+
+Finally, we overlay the ROC curve from the LAS for ease of comparison:
+
+```{r}
+# ROC Curve comparing observed outcome vs. Logistic Prediction and LAS Prediction
+
+# Overall
+plot.roc(predmat2$pstatus, predmat2$predprob, ci=TRUE, 
+         legacy.axes=TRUE, xlim=c(1,0), 
+         print.auc=1, print.auc.x=1.3, print.auc.y=0.8,
+         col="red")
+
+plot.roc(UNOSclean4$pstatus2, UNOSclean4$predprobLAS, ci=TRUE,
+         legacy.axes=TRUE, xlim=c(1,0), 
+         print.auc=1, print.auc.x=0.4, print.auc.y=0.5,
+         col="blue", add=TRUE)
+
+legend("bottomright", legend=c("CV Logistic", "LAS"), col=c("red", "blue"), lwd=2)
+title("Observed vs. Predicted Outcomes: All Years")
+```
+
 
 
 ### Conclusions
 The analyses shown here suggest that the post-transplant mortality rate decreases over time, the prevalnce of risk factors varies over time, and the LAS coefficient values change over time. None of these changes are accounted for by the current LAS. Additionally, when comparing observed versus predicted mortality for both the LAS and our basic prediction model, we found that the former model exhibits worse calibration and worse discrimination than the latter. More specifically, the LAS tended to underestimate the probability of death.
 
-Taken together, these results are consistent with the notion that the LAS is "broken" [REF], and provide support for a dynamic prediction modelling strategy. This DPM strategy, however, will likely need to be more nuanced than simply allowing top predictors to vary with time, as our naive prediction model which included age-by-time, mechanical ventilation-by-time, and diagnosis-by-time interaction terms did not perform substantially better than the existing LAS.
+Taken together, these results are consistent with the notion that the LAS is "broken" [8, 9], and provide support for a dynamic prediction modelling strategy [10]. Such a strategy, however, will likely need to be more nuanced than simply allowing top predictors to vary with time, as our naive prediction model which included age-by-time, mechanical ventilation-by-time, and diagnosis-by-time interaction terms did not perform substantially better than the existing LAS.
+
+
+### References
+
+1. Egan TM, Murray S, Bustami RT et al. Development of the New Lung Allocation System in the United States. American Journal of Transplantation 2006; 6 (Part 2): 1212-1227.
+
+2. Gottlieb J. Lung allocation. J Thorac Dis 2017; 9(8): 2670-2674.
+
+3. Maxwell BG, Mooney JJ, Lee PHU, et al. Increased Resource Use in Lung Transplant Admissions in the Lung Allocation Score Era. Am J Respir Crit Care Med 2015; 191(3): 302-308.
+
+4. Russo MJ, Meltzer D, Merlo A, et al. Local Allocation of Lung Donors Results in Transplanting Lungs in Lower Priority Transplant Recipients. Ann Thorac Surg 2013; 95(4): 1231-1234.
+
+5. Wille KM, Harrington KF, Andrade JA, et al. Disparities in lung transplantation before and after introduction of the lung allocation score. J Heart Lung Transplant 2013; 32(7): 684-692.
+
+6. Thabut G, Munson J, Haynes K, et al. Geographic Disparities in Access to Lung Transplantation Before and After Implementation of the Lung Allocation Score. Am J Transplant 2012; 12(11): 3085-3093.
+
+7. United Network for Organ Sharing (2015). A Guide to Calculating the Lung Allocation Score. Available [here](https://www.unos.org/wp-content/uploads/unos/lung_allocation_score.pdf).
+
+8. Halpern S. Beyond “The LAS is Broken”: Ways to Improve Lung Allocation. American Journal of Respiratory and Critical Care Medicine 2015; 191(3): 245-246.
+
+9. Gries CJ, Rue TC, Heagerty PJ, et al. Development of a predictive model for long-term survival after lung transplantation and implications for the lung allocation score. J Heart Lung Transplant 2010; 29(7): 731-738.
+
+10. Steyerberg EW. Updating for a New Setting. In: Clinical Prediction Models. A Practical Approach to Development, Validation, and Updating. New York: Springer Science+Business Media, LLC. 2010.
+
