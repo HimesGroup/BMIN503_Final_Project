@@ -25,7 +25,7 @@ Integration of genetics and genomics into precision medicine has been successful
 ### Methods
 To identify an initial list of candidate genes for ASD, data available in DisGeNET (http://www.disgenet.org) was queried. The benefits of this database include that the reported ‘gene-disease associations' are identified by text-mining data from multiple sources and the data can be automatically pulled via the RCurl package in R. All of the Unified Medical Language System (UMLS)® Concept Unique Identifiers (CUI) that relate to ASD (e.g., ‘Autism Spectrum Disorder’, ‘Atypical autism’, ‘Autistic Behavior’, and ‘Autistic Disorder’) were identified from the disease mappings file provided by the database. An R function provided by DisGeNET was used to create a data frame of all genes with any level of evidence for a relationship with CUIs relating to ASD. These genes were then prioritized based on whether or not they are expressed in the brain, as this is the tissue most relevant to ASD etiology. A summary of baseline expression results from all available brain regions, expressed at the default level of FPKM≥0.5, included in the Genotype Tissue Expression (GTEx) project were downloaded from the Expression Atlas (https://www.ebi.ac.uk/gxa/home) and the resulting GTEx data frame was filtered for ASD risk genes. These genes were then be prioritized based on an associated (p<0.05) mouse phenotype term that reflects symptoms in ASD when manipulated in mice, by querying the genotype-phenotype representational state transfer (REST) application program interface (API) from the International Mouse Phenotyping Consortium (IMPC; http://www.mousephenotype.org/). To identify currently approved drugs that target or have drug ontology to proteins encoded by the prioritized genes implicated in ASD, a software request was sent via RCurl to the Pharos API (https://pharos.nih.gov/idg/dto). Only targets labeled ‘Tclin’ (i.e., currently approved) were considered. 
 
-The first step was to pull all genes with evidence for influencing risk for Autism Spectrum Disorders from DisGeNET.
++The first step was to pull all genes with evidence for influencing risk for Autism Spectrum Disorders from DisGeNET.
 ``` {r eval=TRUE}
 library(RCurl)
 library(tidyverse)
@@ -154,7 +154,8 @@ doQuery_modifiedOJV = function(inputFile, outFile, entity, identifier){
 
 ASDcuigenes<-doQuery_modifiedOJV(ASDcuis, "ASDcuigenes.txt", "disease", "cui") ### NOTE: input file is object from previous command prior to doQuery function call
 ```
-Next, we are interested in identifying genes that are specifically expressed in the tissue of most interest to ASD etiology (i.e., the human brain). Details for identifying genes with baseline expression in human tissue from GTEx are provided here: https://www.ebi.ac.uk/gxa/help/r-data-objects.html, here http://www.bioconductor.org/packages/release/bioc/html/ExpressionAtlas.html, and here https://www.ebi.ac.uk/arrayexpress/experiments/E-MTAB-5214/ and optional code is provided below if the user prefers. As the direct pull for all GTEx data is large and we are only interested in brain regions for this project, data for genes expressed at the GTEx default cut-off of FPKM≥0.5 in all brain regions available were downloaded directly and are made availalbe via github.
+
++Next, the list of ASD candidate genes was evaluated to identify genes that are specifically expressed in the tissue of most interest to ASD etiology (i.e., the human brain). Details for identifying genes with baseline expression in human tissue from GTEx are provided here: https://www.ebi.ac.uk/gxa/help/r-data-objects.html, here http://www.bioconductor.org/packages/release/bioc/html/ExpressionAtlas.html, and here https://www.ebi.ac.uk/arrayexpress/experiments/E-MTAB-5214/. Optional code is provided below if the user prefers. As the direct pull for all GTEx data is large and we were only interested in brain regions, data for genes expressed at the GTEx default cut-off of FPKM≥0.5 in all human brain regions available were downloaded directly.
 ``` {r eval=TRUE}
 # To download GTEx data in entirety
 #if (!requireNamespace("BiocManager", quietly = TRUE))
@@ -163,46 +164,76 @@ Next, we are interested in identifying genes that are specifically expressed in 
 #library('ExpressionAtlas')
 # GTExdata<-getAtlasData("E-MTAB-5214")
 
-GTExbraindata<-read.table(url("https://github.com/veatcho/BMIN503_Final_Project/blob/master/E-MTAB-5214-query-results.tsv?raw=true"), header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
+GTExbraindata <- read.table(url("https://github.com/veatcho/BMIN503_Final_Project/blob/master/E-MTAB-5214-query-results.tsv?raw=true"), header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
 summary(GTExbraindata)
 
 #Create dataframe with ASD candidate genes expressed in human brain
-ASDcuigenes<-ASDcuigenes %>% 
+ASDcuigenes <- ASDcuigenes %>% 
       select(c2.geneId, c2.symbol, c2.uniprotId, c0.score) %>%
       mutate(Gene.Name = as.character(c2.symbol))
-
-ASDbraingenes<-inner_join(ASDcuigenes, GTExbraindata[, c(1:2)], by='Gene.Name')
-ASDbraingenes<-distinct(ASDbraingenes, Gene.ID, .keep_all = TRUE)
+ASDcuigenesdistinct <- distinct(ASDcuigenes, c2.uniprotId, .keep_all = TRUE)
+ASDbraingenes <- left_join(ASDcuigenesdistinct, GTExbraindata, by='Gene.Name')
 ```
 
-Once all ASD candidate genes expressed in the brain have been identified, genes that when knocked out of mice have a phenotypic consequence that likley reflects phenotypes that are comparable to those observed in humans with ASD (e.g., Abnormal Brain Development=MP:0002152, Abnormal Behavior/Neurological Phenotype=MP:0004924). Details for requesting mouse-phenotype data can be found here: http://www.mousephenotype.org/data/documentation/data-access
++Once all ASD candidate genes expressed in the brain were identified, the list was queried to identify genes that when knocked out of mice have a phenotypic consequence that is comparable to symptoms of ASD observed in humans (e.g., Abnormal Nervous System Development=MP:0003631, Abnormal Behavior/Neurological Phenotype=MP:0004924). Details for requesting mouse-phenotype data can be found here: http://www.mousephenotype.org/data/documentation/data-access
 ``` {r eval=TRUE}
 library('jsonlite')
-#Identify genes that when knocked out of mice are associated (p<0.05) with ASD-related phenotypes
+#Identify genes that when knocked out of mice are associated (p<0.05) with ASD-related symptoms
 #Note: must pull 'top level terms' from IMPC
 AbnormalNervousSystemMouse0.05 <- fromJSON('https://www.ebi.ac.uk/mi/impc/solr/genotype-phenotype/select?q=top_level_mp_term_id:%22MP:0003631%22AND%20p_value:%5b0%20TO%200.05%5d&rows=100000&wt=json&indent=1', flatten = TRUE)
 
 AbnormalBehaviorNeuroMouse0.05 <- fromJSON('https://www.ebi.ac.uk/mi/impc/solr/genotype-phenotype/select?q=top_level_mp_term_id:%22MP:0005386%22AND%20p_value:%5b0%20TO%200.05%5d&rows=100000&wt=json&indent=1')
 
+#Reformat lists to pull mouse gene names and phenotypic consequences in KOs 
 AbnormalNervousSystemMouseGenes<-data.frame(phenotype=AbnormalNervousSystemMouse0.05$response$docs$mp_term_name[c(1:532)],  genes=AbnormalNervousSystemMouse0.05$response$docs$marker_symbol[c(1:532)], stringsAsFactors = FALSE)
 
 AbnormalBehaviorNeuroMouseGenes<-data.frame(phenotype=AbnormalBehaviorNeuroMouse0.05$response$docs$mp_term_name[c(1:7025)],  genes=AbnormalBehaviorNeuroMouse0.05$response$docs$marker_symbol[c(1:7025)], stringsAsFactors = FALSE)
 
 MouseKOASDtraits<-distinct(full_join(AbnormalNervousSystemMouseGenes, AbnormalBehaviorNeuroMouseGenes, by='genes'))
 
-#To identify the most likely human orthologs of mouse genes identified above, the mouse gene list was exported and batch searched using all prediction tools available via the DRSC Integrative Ortholog Prediction Tool (DIOPT; Version 7.1 March 2018; https://www.flyrnai.org/diopt) and filtering to return only best match when there is more than one match per input gene or protein
+#Identify the most likely human orthologs of mouse genes identified above
+#The mouse gene list was exported and batch searched using all prediction tools available via the DRSC Integrative Ortholog Prediction Tool (DIOPT; Version 7.1 March 2018; https://www.flyrnai.org/diopt) with filtering to return only best match when there is more than one match per input gene or protein
 
-MouseKOASDtraitsgenes<-distinct(MouseKOASDtraits, genes)
+MouseKOASDtraitsgenes <- distinct(MouseKOASDtraits, genes)
 write(MouseKOASDtraitsgenes$genes, file="MouseKOASDtraitsgenes.txt")
 
-MouseKOASDtraitsgenes.hsortho<-read.table(url("https://github.com/veatcho/BMIN503_Final_Project/blob/master/MouseKO_ASDtraitsgenes_hsortho.xls?raw=true"), header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
+#Pull results from mouse/human ortholog query using DIOPT
+MouseKOASDtraitsgenes.hsortho <- read.table(url("https://github.com/veatcho/BMIN503_Final_Project/blob/master/MouseKO_ASDtraitsgenes_hsortho.xls?raw=true"), header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
 
 #Identify ASD risk genes expressed in human brain that also have a relevant ASD-related phenotype when knocked out of mice
 ASDbraingenes <- mutate(ASDbraingenes, Human.GeneID = c2.geneId)
-ASDbraingenes.mousepheno<-inner_join(ASDbraingenes, MouseKOASDtraitsgenes.hsortho[, c(1, 6)], by='Human.GeneID')
+ASDbraingenes.mousegenes <- left_join(ASDbraingenes, MouseKOASDtraitsgenes.hsortho[, c(1, 6)], by='Human.GeneID')
+MouseKOASDtraits <- mutate(MouseKOASDtraits, Mouse.GeneID=MouseKOASDtraits$genes)
+ASDbraingenes.mouseKOpheno <- left_join(ASDbraingenes.mousegenes, MouseKOASDtraits, by='Mouse.GeneID')
+```
+
++Next, we determined if any ASD risk genes were currently FDA-approved drug targets
+``` {r eval=TRUE}
+#Details for pulling from Pharos can be found here: https://pharos.nih.gov/idg/api
+
+targets_pharos <- fromJSON("https://pharos.nih.gov/idg/api/v1/targets?facet=IDG+Development+Level&top=25000&wt=json&indent=1")
+drugtargets<-data.frame(genes=targets_pharos$content$gene[c(1:20244)], idgTDL=targets_pharos$content$idgTDL[c(1:20244)], uniprotId=targets_pharos$content$accession[c(1:20244)], stringsAsFactors = FALSE)
+
+#Pull tclin level (i.e. FDA-aproved) targets
+#To identify expected number of Tclin targets queried https://pharos.nih.gov/idg/targets?facet=IDG+Development+Level/Tclin
+
+tclintargets <- filter(drugtargets, grepl("Tclin", idgTDL))
+
+#Identify ASD risk genes expressed in human brain, have a relevant ASD-related phenotype when knocked out of mice and are FDA-approved drug targets
+tclintargets<-mutate(tclintargets, Gene.Name=genes)
+ASDbraingenes.mousepheno.drugtarget <- left_join(ASDbraingenes.mouseKOpheno, tclintargets, by='Gene.Name')
 ```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+``` {r eval=TRUE}
+#How many ASD candidate genes fall into categories of interest: 1) expressed in human brain, 2) have relevant mouse phenotype when knocked out, 3) are FDA-approved drug targets?
 
-#Compare my prioritized list to SFARI stats as high, ACMG genes, clinVar pathogenic, known drug targets?
+
+#Determine how many genes prioritized in this pipeline are ACMG recommendations
+#PPV, NPV
+
+#Determine confidence level of prioritized genes compared to expert review via SFARI
+
+#Determine how many genes encode targets of drugs used to treat symptoms in ASD & how many have evidence for pharmacogenomic variants
+```
