@@ -39,18 +39,235 @@ library(tmap)
 library(tmaptools)
 library(grid)
 library(leaflet)
+library(forecast)
+library(ggthemes)
 ```
 
-Next, data needs to be loaded and cleaned for analysis. The `dplyr` package from `tidyverse` will be used to organize the data. First, all of the necessary variables will be created to perform some geospatial analysis.
+Next, data needs to be loaded and cleaned for analysis. The `dplyr` package from `tidyverse` will be used to organize the data. First, all of the necessary variables will be created to perform some geospatial analysis to look at the total number of drug overdoses by state for the years 2015, 2016, and 2017. Our map shapefile was downloaded from the [US Census Bureau](https://www.census.gov/geo/maps-data/data/cbf/cbf_state.html). The package `sf` is used to import the shapefile as an sf object.
 
-```{r}
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+# load in data
+data <- read.csv("VSRR_drug_od.csv", header=TRUE)
 
+# need for subsequent analysis
+drop.cols <- "State.Name"
+
+# total deaths by state for each year
+totalDeathsbyState <- data %>% 
+  select(-one_of(drop.cols)) %>%
+  group_by(State, Year, Indicator) %>%
+  filter(Year %in% c("2015", "2016", "2017"), 
+         Indicator == "Number of Deaths", 
+         State != "US",
+         State != "YC") %>%
+  summarize(TotalDeath = sum(Data.Value))
+
+drugODbyState <- data %>% 
+  select(-one_of(drop.cols)) %>%
+  group_by(State, Year, Indicator) %>%
+  filter(Year  %in% c("2015", "2016", "2017"), 
+         Indicator == "Number of Drug Overdose Deaths",
+         State != "US",
+         State != "YC") %>%
+  summarize(TotalODDeath = sum(Data.Value))
+
+totalDeathsandOD <- inner_join(drugODbyState, totalDeathsbyState, by=c("State", "Year"))
+percentOD <- totalDeathsandOD %>%
+  mutate(percent = ((TotalODDeath / TotalDeath) * 100))
+
+# importing state shapefile as sf object
+US.sf <- st_read("cb_2017_us_state_20m/cb_2017_us_state_20m.shp")
+str(US.sf)
+US.sf <- US.sf %>%
+  select(STATENS, AFFGEOID, GEOID, STUSPS, NAME, LSAD, ALAND, AWATER, geometry) %>%
+  rename(State='STUSPS')
+
+# need to join data here so we can plot stuff!
+USdeaths <- inner_join(US.sf, drugODbyState, by = "State")
 ```
 
+Now, we can visualize the total number of overdose deaths across the entire United States by implementing the package `tmap`. Using a for loop to iterate over the 3 years of interest, a static map for each year can be generated and saved.
 
-we will look at a geospatial visualization of the total number of overdose deaths per state for the years 2015, 2016, and 2017.
+```{r, eval=TRUE, message=FALSE}
+# setting up for plotting static maps
+for (year in list("2015", "2016", "2017")){
 
+US_cont <- USdeaths %>% 
+  filter(Year == year) %>%
+  subset(!GEOID %in% c("02", "15", "72")) %>% 
+  simplify_shape(0.2)
 
+US_AK <- USdeaths %>%
+  filter(Year == year) %>%
+  subset(GEOID == "02") %>% 
+  simplify_shape(0.2) 
+
+US_HI <- USdeaths %>% 
+  filter(Year == year) %>%
+  subset(GEOID == "15") %>% 
+  simplify_shape(0.2) 
+
+US_states <- US_cont %>% 
+  dplyr::select(geometry) %>% 
+  aggregate(by = list(US_cont$State), FUN = mean)
+
+# Contiguous US map
+m_cont <- tm_shape(US_cont, projection = 2163) +
+  tm_polygons("TotalODDeath", title = "Number of Deaths", showNA = FALSE,
+              border.col = "white", border.alpha = .5,
+              style = "fixed",
+              labels = c("0 to 1k", "1k to 2.5k", 
+                         "2.5k to 5k", "5k to 10k", 
+                         "10k to 15k", "15k to 25k", 
+                         "25k to 50k", "50k to 100k"),
+              breaks = c(0, 1000, 2500, 5000, 10000, 15000, 25000, 50000, 100000),
+              palette = "YlOrRd") +
+  tm_shape(US_states) +
+  tm_borders(lwd=1, col = "black", alpha = .5) +
+  tm_layout(title = paste("Total Number of Overdose Deaths in the US,", year), 
+            title.size = 1,
+            title.position = c("center", "top"), 
+            legend.position = c("right", "bottom"),
+            legend.width = 0.5,
+            legend.title.size = 0.8,
+            legend.text.size = 0.5,
+            legend.outside = FALSE,
+            frame = FALSE,
+            inner.margins = c(0.1, 0.1, 0.1, 0.1))
+
+# Alaska map  
+m_AK <-  tm_shape(US_AK, projection = 3338) +
+  tm_polygons("TotalODDeath",
+              border.col = "white",
+              border.alpha = .5,
+              style = "fixed",
+              labels = c("0 to 1k", "1k to 2.5k", 
+                         "2.5k to 5k", "5k to 10k", 
+                         "10k to 15k", "15k to 25k", 
+                         "25k to 50k", "50k to 100k"),
+              breaks = c(0, 1000, 2500, 5000, 10000, 15000, 25000, 50000, 100000), 
+              palette = "YlOrRd") + 
+  tm_layout("Alaska",
+            legend.show = FALSE,
+            bg.color = NA,
+            title.size = 0.8,
+            frame = FALSE)
+
+# Hawaii map
+m_HI <-  tm_shape(US_HI, projection = 3759) +
+  tm_polygons("TotalODDeath",
+              border.col = "white",
+              border.alpha = .5,
+              style = "fixed",
+              labels = c("0 to 1k", "1k to 2.5k", 
+                         "2.5k to 5k", "5k to 10k", 
+                         "10k to 15k", "15k to 25k", 
+                         "25k to 50k", "50k to 100k"),
+              breaks = c(0, 1000, 2500, 5000, 10000, 15000, 25000, 50000, 100000),
+              palette = "YlOrRd") +
+  tm_layout("Hawaii",
+            legend.show = FALSE,
+            bg.color = NA,
+            title.position = c("LEFT", "BOTTOM"),
+            title.size = 0.8,
+            frame = FALSE)
+
+# Use grid package to set where AK and HI map should be plotted on the contiguous map
+vp_AK <- viewport(x = 0.15, y = 0.15, width = 0.3, height = 0.3)
+vp_HI <- viewport(x = 0.4, y = 0.1, width = 0.2, height = 0.1)
+
+# plot map to save individual figures
+tmap_save(m_cont, 
+          insets_tm = list(m_AK, m_HI), 
+          insets_vp = list(vp_AK, vp_HI),
+          filename=paste("ODinUS", year, ".png", sep=""))
+graphics.off() # clears after each plot
+}
+```
+
+The exported `.png` maps can be re-imported and printed for viewing:
+![](ODinUS2015.png)
+![](ODinUS2016.png)
+![](ODinUS2017.png)
+
+Next, the percentage of deaths attributed to drug overdoses was calculated for each state for the years 2015, 2016 and 2017.  The data for each year can be plotted as a interactive choropleth map using the `leaflet` package. 
+
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+## Leaflet Maps
+# OD percentage join with shapefile
+percentODinUS <- inner_join(US.sf, percentOD, by = "State")
+ODmap2015 <- percentODinUS %>% filter(Year == "2015")
+ODmap2016 <- percentODinUS %>% filter(Year == "2016")
+ODmap2017 <- percentODinUS %>% filter(Year == "2017")
+
+# favorite color palette
+pal_fun <- colorNumeric("PuRd", NULL)
+
+# 2015
+# popup message
+pu_message2015 <- paste0(ODmap2015$NAME, 
+                     "<br>Drug Overdose Rate: ",
+                     round(ODmap2015$percent, 1), "%")
+
+# leaflet map for OD percentage in 2015
+leaflet(ODmap2015) %>%
+  addPolygons(stroke = TRUE, weight=1, color="white", 
+              fillColor = ~pal_fun(percent),
+              fillOpacity = 1,
+              popup = pu_message2015) %>%
+  setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~percent,                 
+            title = "Drug Overdose Rate, 2015 (%)",                  
+            opacity = 1) %>%                         
+  addScaleBar()
+
+# 2016
+# popup message
+pu_message2016 <- paste0(ODmap2016$NAME, 
+                     "<br>Drug Overdose Rate: ",
+                     round(ODmap2016$percent, 1), "%")
+
+# leaflet map for OD percentage in 2016
+leaflet(ODmap2016) %>%
+  addPolygons(stroke = TRUE, weight=1, color="white", 
+              fillColor = ~pal_fun(percent),
+              fillOpacity = 1,
+              popup = pu_message2016) %>%
+  setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~percent,                 
+            title = "Drug Overdose Rate, 2016 (%)",                  
+            opacity = 1) %>%                         
+  addScaleBar()
+
+# 2017
+# popup message
+pu_message2017 <- paste0(ODmap2017$NAME, 
+                         "<br>Drug Overdose Rate: ",
+                         round(ODmap2017$percent, 1), "%")
+
+# leaflet map for OD percentage in 2017
+leaflet(ODmap2017) %>%
+  addPolygons(stroke = TRUE, weight=1, color="white", 
+              fillColor = ~pal_fun(percent),
+              fillOpacity = 1,
+              popup = pu_message2017) %>%
+  setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~percent,                 
+            title = "Drug Overdose Rate, 2017 (%)",                  
+            opacity = 1) %>%                         
+  addScaleBar()
+```
+
+**Want to implement a leaflet map to show percent change from 2015 to 2017... need to play with the data though**
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
