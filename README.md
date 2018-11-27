@@ -1,5 +1,10 @@
 # BMIN503/EPID600 Final Project
 
+My final project will be about predicting bike demand in various areas of Philadelphia using data from Indego's bike share data. Indego is Philadelphia's leading bike share resource for people to rent and drop off bikes at any Indego station throughout the city. Data is collected on time of rental, duration of rental, time of drop-off, location of rental and drop-off, weather and much more. Being able to accuractely predict where bike demand will grow will allow city planners to better design how many bikes should be in any given area and also where they should build new stations. 
+
+Files present in the repository will include the final .rmd and .html files, as well as the dataset used to make the algorithms and predictions. 
+
+
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
@@ -15,4 +20,8 @@ DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in w
 
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
+
+
+
+
 
