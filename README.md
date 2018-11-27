@@ -12,6 +12,7 @@ Follow the instructions [here][forking] if you are unsure what the above steps m
 
 DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
+Currently has intro and methods/results in separate files.
 
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
