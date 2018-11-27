@@ -1,22 +1,6 @@
 #Joseph M. Kindler
 # BMIN503/EPID600 Final Project
 
-#Instructions for Final Project
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
-
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
 #What this project is about
 This project seeks to characterize various aspects of forearm bone density development during childhood. The specific phenotype we are concentrating on is ultradistal (UD) radius areal bone mineral density (aBMD). UD radius aBMD has yet to be characterized during the rapidly growing years, so its utility in research and clinical practice is uncertain. Herein, we assess critical fundimental research questions before this particular measure can be used for further questioning. Our objectives include characterizing changes in UD radius bone density during childhood, and any race or sex differences; determining whether UD radius aBMD is reflective of radius cortical bone size or density; understand whether forearm bone density is confounded by stature; and finally, determine whether UD radius aBMD is reflective of fracture history. This work will provide the essential foundational knowledge needed to utilize this measure in subsequent studies involving the role of diet, physical activity, chronic disease, and genetics on forearm bone density in the present cohort (i.e., the Bone Mineral Density in Childhood Study) and other cohorts. 
 
