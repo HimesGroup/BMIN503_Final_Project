@@ -6,8 +6,12 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+#Load libraries and data set
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
 library(dplyr)
+library(ggplot2)
+data_all<- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_rows.csv", header=TRUE)
 ```
 ## Overview
 Racial disparities in pain management have been documented in the adult and pediatric population. Most studies have focused on pathologies with definitive diagnostic testing, such as appendicitis, long-bone fractures, and sickle cell disease. Few studies have assessed variability of pain management in pediatric migraine. The purpose of this project is to utilize secondary analysis of EHR data to determine if race/ethnicity-based differences exist in the management of pediatric migraine pain in the emergency room at the Children’s Hospital of Philadelphia (CHOP). 
@@ -17,35 +21,156 @@ Pain management cross-sects most fields of medical practice. In the case of migr
 In beginning to study this issue, thoughtful data queries in conjunction with data analysts is vital as the choices behind codifying race and ethnicity alone could significantly alter study results. Workflow analysis during direct observations in the ER provides insight into missing field factors, such as non-mandatory data entry in assigning a pain scale/score or completing demographic fields. Nurses’ feedback sheds light on why pain reassessment alerts were being ignored or pain scales not being assigned during registration. Discussions with ER physicians and the ER director provides background information on previous disparities study results and QI projects, identifying most relevant outcome to study, and factors in choosing which statistical result to report. Meeting with a pediatric neurologist, the director of the headache clinic, results in an additional view of focusing QI efforts on giving primary care providers better tools to care for migraine pain in order to decrease unnecessary neurology referrals or ER visits. 
 In short, data scientists and quality improvement (QI) teams can contribute to understanding the best methods to study where these disparities lie and how to rapidly conduct improvement projects to decrease known disparities. Clinical informaticists help to facilitate change management by navigating the socio-technical factors in hospital and clinic organizations. Thus, this is a multidisciplinary project with stakeholders spanning the field biomedical and health informatics.
 
+##Methods and Results
+# Data Quality: Describe data quality in terms of validity, missing variables, completeness.
 
+#Look at HCG, HCG results, n female to assess internal validity of data set
 
-## Descriptive Statistics
-
+#Summary of data set and missing variables
 ```{r, eval=TRUE}
-data_all_rows <- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_rows.csv", header=TRUE)
+install.packages("Hmisc") #descriptive statistics package
+library(Hmisc)
+Install.packages("naniar") #missing variables package
+library(naniar)
+install.packages("tableone")
+library(tableone)
 
-str(data_all_rows) # 3642 observations of 33 variables
-summary(data_all_rows)
+str(data_all) # 3642 observations of 33 variables
+summary(data_all) #First glance, it seems there are no missing variables. 
+pct_miss_var(data_all) #No missing data values
+table_miss_var <- miss_var_table(data_all) #all variables complete 
+sum(is.na(data_all)) #0 NAs
 
-sex <-data_all_rows$Sex #2561 F, 1080 M, 1: blank?
+Hmisc::describe(data_all) #But wait. Individual counts show values with blanks and dashes
+data_all_na <- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_rows.csv", header=T, na.strings=c(""," ","NA", "-")) #assign NAs to blanks, spaces, and dashes
+summary(data_all_na) #Now, NA's appear in the summary tables
+```
 
-race <-data_all_rows$Race.Ethnicity  #H 255, NHB 1487, NHW 1720, Other 179, blank 1
-sum(is.na(data_all_rows$Race.Ethnicity)) #0
+#Table 1. Categorical variables
+```{r}
+#Insert table of race, sex
+```
 
-payer_type <-data_all_rows$Payer.Type #Commercial 2047, MA 1480, missing 114, blank 1
-lang <- data_all_rows$Primary.Language #Eng 3573, Non-Eng 68, blank 1
-pathway <- data_all_rows$Pathway #No 637, Yes 3004, blank 1
+#Individual groups
+```{r}
+#Insert histogram of variables grouped by race/ethnicity
+```
+
+##Missing data analysis
+``` {r, eval=true }
+describe(data_all_na)#Frequency counts of missing values in easier to scan format
+
+pct_miss(data_all_na) # %15 total missing data
+table_all_missing_var <-miss_var_summary(data_all_na) # table of all missing variables with n and pct, in order
+table_all_missing_case <-miss_case_table(data_all_na) #table of all missing values by case. Max values missing: 23.5% of cases had 4 values missing. #Max case with values missing: 1 case had 21 values missing
+miss_case_sum <- miss_case_summary(data_all_na) #individual cases listed by total missing values
+top_6_miss_case <-head(miss_case_sum) #top 6 cases with missing values
+```
+
+#Visualizing missing data
+```{r}
+vis_miss(data_all_na) #Highest concentration of missing NA's are in second med metrics and HCG, because not everyone gets a second med or HCG test. 
+gg_miss_upset(data_all_na) #Different visualization of same data
+```
+
+#Make dataframe of select variables for statistical analysis
+```{r}
+data_select <- data_all_na %>%
+  select(Pathway,Sex, Race.Ethnicity, Payer.Type, Primary.Language, Acuity,Arrive.to.1st.Med.Given, Dispo, Team.Assessment. )
+
+summary(data_select)
+miss_var_summary(data_select) #12.1 % missing values in first med given. Race and ethnicity has one case that has a missing value. Payer type missing 3.1%
+```
+
+#Does the missing data in arrive to first line med given correlate with acuity?
+```{r}
+ggplot(data_select,
+       aes(x = data_select$Arrive.to.1st.Med.Given,
+           y = data_select$Acuity)) +
+ geom_miss_point()
+```
+
+#What is distribution of missing data across all variables by race/ethnicity?
+```{r}
+# these give total n's of missing data
+gg_miss_var(data_select,
+            facet = Race.Ethnicity)
+
+gg_miss_var(data_all_na,
+            facet = Race.Ethnicity)
+
+# these give pct's
+data_select %>%
+  group_by(Race.Ethnicity) %>%
+  miss_var_summary()
+gg_miss_fct(x = data_select, fct = Race.Ethnicity)
+gg_miss_fct(x = data_all_na, fct = Race.Ethnicity)
+
+```
+
+#Make a data set of select variables without NAs
+```{r}
+data_select_clean <- data_select[complete.cases(data_select[ , ]),]
+summary(data_select_clean)
+describe(data_select_clean)
+
+data_select_clean%>%
+  mutate(Team.Assessment.=factor(Team.Assessment., levels=c(0, 1), labels=c("no", "yes")))
+
+str(data_select_clean)
+```
+
+### Statistical Analyses
+
+#Linear regression models: data set of select variables without NAs
+```{r}
+ggplot(data_select_clean, aes(x=Race.Ethnicity, y= Arrive.to.1st.Med.Given))+
+  geom_boxplot(color="black", fill="lightblue")
+
+data_fit <- lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity, data=data_select_clean)
+summary(data_fit) #So the odds when the demographic is "0", is 258 minutes?
+coef(data_fit) #Coefficients of X
+confint(data_fit) #Confidence intervals
+
+summary.lm(lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity + Acuity, data=data_select_clean))
+
+```
+
+#Logistic regression models: data set of select variables without NAs
+```{r}
+ggplot(data=data_select_clean, aes(x=Race.Ethnicity, y=Arrive.to.1st.Med.Given)) +
+    geom_boxplot(color="black", fill="darkblue")
+
+summary((glm(Race.Ethnicity~Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial())))
 
 
-#Ethnicity (not on file on snapshot, not hispanic in demographics), race B, coded as nonhispanic black. Options in Epic: Not Hispanic, Hispanic, Refused / American Indian or Alaska Native, Asian, Black or African American, Indian, Native Hawaiian or Other Pacific Islander, Other, Refused, White
+first_med_fit <- glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given + Acuity + Payer.Type + Pathway + Team.Assessment. + Dispo , data=data_select_clean, family=binomial())
+summary(first_med_fit)
+exp(coef(first_med_fit)) #Odds ratios.
+confint(first_med_fit) #Confidence intervals for fit
+exp(cbind(OR=coef(first_med_fit), CI=confint(first_med_fit))) #OR and 95%CI
 
-#Language (preferred lang, not on file), coded as english. Options in Epic: Preferred language, spoken language, written language. 
+chisq.test(table(data_select_clean$Arrive.to.1st.Med.Given, data_select_clean$Race.Ethnicity)) 
+summary((glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial())))
+exp(coef(glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial()))) #Odds ratios
+```
 
-#Find and table all  missing fields for all data
-#For Race: Does other also include missing fields? Mandatory epic field?
-#Figure out this blank entry
-#Continue summarizing descriptive data stats for table 1
+### Data Visualizations
+```{r}
+# Histograms of arrival to first med in demographic groups
+data_select_clean %>%
+  group_by(Race.Ethnicity) %>%
+  mutate(Arrive.to.1st.Med.Given = as.numeric(Arrive.to.1st.Med.Given)) %>%
+  return
 
+ggplot(data_select_clean, aes(x = Race.Ethnicity, y = Arrive.to.1st.Med.Given)) +
+  geom_bar()
+
+data_select_clean %>%
+  mutate(Race.Ethnicity = as.numeric(Race.Ethnicity))%>%
+  return
+
+hist(data_select_clean$Race.Ethnicity, col = "green")
 
 ```
 
