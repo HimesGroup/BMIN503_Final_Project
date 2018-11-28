@@ -8,8 +8,9 @@ from multiprocessing import Pool
 def nGrammer(protein, seq, n):
     return [[protein, i+1]+list(x) for i, x in enumerate(nltk.ngrams(seq, n))]
 
-def dfNGrammer(protein_df, num_grams):
-    gram_cols = ["protein","gram_num"]+["gram_"+str(i+1) for i in range(num_grams)]
+def dfNGrammer(args):
+    protein_df = args[0]
+    num_grams = args[1]
     seq_grams = []
     seq_grams.extend([
         val for sublist in protein_df.apply(
@@ -18,8 +19,7 @@ def dfNGrammer(protein_df, num_grams):
             axis=1
         ) for val in sublist]
     )
-    gram_df = pd.DataFrame(seq_grams, columns=gram_cols)
-    return gram_df
+    return seq_grams
 
 def amyloidSeqMapper(seq_dict, protein, gram_num, grams, accession, amyloid_ref):
     n = len(grams)
@@ -75,9 +75,39 @@ if __name__ == "__main__":
     ]
     
     n = 5
+    n_chunk_size = 100
+    chunk_list = list(range(0, prot_df.shape[0],n_chunk_size))
+    ngram_chunk_pairs = [[chunk_list[i-1], chunk_list[i]] for i, x in enumerate(chunk_list) if i != 0]
+    # Add last little chunk
+    ngram_chunk_pairs.append([ngram_chunk_pairs[-1][-1], None])
     
+    ngram_chunks = []
+    for chunk_pair in ngram_chunk_pairs:
+        start = chunk_pair[0]
+        end = chunk_pair[1]
+        
+        if end != None:
+            ngram_chunk = prot_df.iloc[start:end, :]
+        else:
+            ngram_chunk = prot_df.iloc[start:, :]
+
+        ngram_chunks.append([ngram_chunk, n])
+            
     print("N-gramming...")
-    ngram_df = dfNGrammer(prot_df,n).merge(
+    
+    gram_cols = ["protein","gram_num"]+["gram_"+str(i+1) for i in range(n)]
+    ngram_vals = []
+    
+    p = Pool(processes = 7)
+    
+    for result in tqdm(p.map(dfNGrammer, ngram_chunks), total=len(ngram_chunks)):
+        ngram_vals.extend(result)
+    
+    conn.close() 
+    p.close()
+    p.join()
+    
+    ngram_df = pd.DataFrame(ngram_vals, columns=gram_cols).merge(
         prot_df[['protein','accession']],on='protein',how='left'
     )
     
@@ -116,13 +146,13 @@ if __name__ == "__main__":
         chunks.append([ngram_slice, amy_df, n, seq_dict, amyloid_cols])
 
     p = Pool(processes = 7)
-    conn = sqlite3.connect("protein_training.db")
+    conn = sqlite3.connect("training_final_test.db")
     
     c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS protein_ngram")
     
-    print("Processing chunks...")
-    for result in tqdm(p.imap_unordered(amyMapper, chunks), total=len(chunks)):
+    print("Mapping amyloid...")
+    for result in tqdm(p.map(amyMapper, chunks), total=len(chunks)):
         result.to_sql("protein_ngram", index=False, con=conn, if_exists="append")
     
     conn.close() 

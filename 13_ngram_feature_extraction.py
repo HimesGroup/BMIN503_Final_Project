@@ -81,7 +81,7 @@ if __name__ == "__main__":
     print("Chunk size selected as: ", str(chunk_size))
     
     print("Loading data...")
-    conn = sqlite3.connect("protein_training.db")
+    conn = sqlite3.connect("training_final.db")
     ngrams_df = pd.read_sql('SELECT * from protein_ngram',con=conn)
     protein_gram_num = pd.read_sql("SELECT DISTINCT protein, COUNT(gram_num) as gram_total FROM protein_ngram GROUP BY protein", con=conn)
     conn.close()
@@ -111,12 +111,12 @@ if __name__ == "__main__":
         
     print("Processing chunks...")
     p = Pool(processes = 7)
-    conn = sqlite3.connect("protein_training.db")
+    conn = sqlite3.connect("training_final.db")
     
     c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS protein_ngram_features")
     
-    for result in tqdm(p.imap_unordered(write_to_dbase, chunks), total=len(chunk_pairs)):
+    for result in tqdm(p.map(write_to_dbase, chunks), total=len(chunk_pairs)):
         result.to_sql("protein_ngram_features", index=False, con=conn, if_exists="append")
     
     conn.close() 
