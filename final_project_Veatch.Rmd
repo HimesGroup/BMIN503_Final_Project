@@ -162,8 +162,7 @@ ASDcuigenes<-doQuery_modifiedOJV(ASDcuis, "ASDcuigenes.txt", "disease", "cui") #
     #install.packages("BiocManager")
 #BiocManager::install("ExpressionAtlas", version = "3.8")
 #library('ExpressionAtlas')
-# GTExdata<-getAtlasData("E-MTAB-5214")
-
+#GTExdata<-getAtlasData("E-MTAB-5214")
 GTExbraindata <- read.table(url("https://github.com/veatcho/BMIN503_Final_Project/blob/master/E-MTAB-5214-query-resultsbrain_TPM.tsv?raw=true"), header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
 summary(GTExbraindata)
 
@@ -193,7 +192,6 @@ MouseKOASDtraits<-distinct(full_join(AbnormalNervousSystemMouseGenes, AbnormalBe
 
 #Identify the most likely human orthologs of mouse genes identified above
 #The mouse gene list was exported and batch searched using all prediction tools available via the DRSC Integrative Ortholog Prediction Tool (DIOPT; Version 7.1 March 2018; https://www.flyrnai.org/diopt) with filtering to return only best match when there is more than one match per input gene or protein
-
 MouseKOASDtraitsgenes <- distinct(MouseKOASDtraits, genes)
 write(MouseKOASDtraitsgenes$genes, file="MouseKOASDtraitsgenes.txt")
 
@@ -210,18 +208,41 @@ ASDbraingenes.mouseKOpheno <- left_join(ASDbraingenes.mousegenes, MouseKOASDtrai
 +Next, we determined if any ASD risk genes were currently FDA-approved drug targets
 ``` {r eval=TRUE}
 #Details for pulling from Pharos can be found here: https://pharos.nih.gov/idg/api
-
 targets_pharos <- fromJSON("https://pharos.nih.gov/idg/api/v1/targets?facet=IDG+Development+Level&top=25000&wt=json&indent=1")
 drugtargets<-data.frame(genes=targets_pharos$content$gene[c(1:20244)], idgTDL=targets_pharos$content$idgTDL[c(1:20244)], uniprotId=targets_pharos$content$accession[c(1:20244)], stringsAsFactors = FALSE)
 
 #Pull tclin level (i.e. FDA-aproved) targets
 #To identify expected number of Tclin targets queried https://pharos.nih.gov/idg/targets?facet=IDG+Development+Level/Tclin
-
 tclintargets <- filter(drugtargets, grepl("Tclin", idgTDL))
 
 #Identify ASD risk genes expressed in human brain, have a relevant ASD-related phenotype when knocked out of mice and are FDA-approved drug targets
 tclintargets<-mutate(tclintargets, Gene.Name=genes)
 ASDbraingenes.mousepheno.drugtarget <- left_join(ASDbraingenes.mouseKOpheno, tclintargets, by='Gene.Name')
+```
+
++Then we evaluated if the annotations observed for the 'ASD gene set' were unique to ASD risk genes by evaluating the same annotations in a random sample of human protein coding genes, equal to the number of ASD risk genes pulled from DisGeNET (n=917)
+```{r eval=TRUE}
+#Pull names for all protein coding genes known in humans that are included in the European Bioinformatics Institute database (https://www.ebi.ac.uk/)
+hsproteincodinggenes<-read.table(url('ftp://ftp.ebi.ac.uk/pub/databases/genenames/new/tsv/locus_types/gene_with_protein_product.txt'), header=TRUE, sep="\t", fill=TRUE, quote="")
+
+hsproteincodinggenes <- hsproteincodinggenes %>%
+  select(symbol) %>%
+  mutate(Gene.Name = as.character(symbol))
+set.seed(1234)
+randomhsgenesample1 <- hsproteincodinggenes %>%
+  sample_n(917)
+
+#Rerun annotation steps described above for ASD genes using random subset of 917 protein coding genes
+#Brain expression in GTEx
+randomgenes1.braingenes <- left_join(randomhsgenesample1, GTExbraindata, by='Gene.Name')
+
+#Mouse KO phenotype related to ASD
+randomgenes1.braingenes <- mutate(randomgenes1.braingenes, Human.Symbol = Gene.Name)
+randombraingenes1.mouseKOgenes <- left_join(randomgenes1.braingenes, MouseKOASDtraitsgenes.hsortho[, c(1, 8)], by='Human.Symbol')
+randombraingenes1.mouseKOpheno <- left_join(randombraingenes1.mouseKOgenes, MouseKOASDtraits, by='Mouse.GeneID')
+
+#Approved Drug Target
+randombraingenes1.mousepheno.drugtarget <- left_join(randombraingenes1.mouseKOpheno, tclintargets, by='Gene.Name')
 ```
 
 ### Results
@@ -231,7 +252,6 @@ library(reshape2)
 library(ggplot2)
 #Determine the proportion of ASD candidate genes pulled from DisGeNET that fall into categories of interest: 
 #1) expressed in human brain, #2) have relevant mouse phenotype when knocked out #3) are FDA-approved drug targets?
-
 ASDGeneAttributes<- ASDbraingenes.mousepheno.drugtarget %>%
     select(ASDRiskGene=c2.symbol, BrainGene=Gene.ID, MouseKOGene=Mouse.GeneID, DrugTarget=genes.y) %>%
     mutate(nASDriskgenes=n_distinct(ASDRiskGene)) %>%
@@ -240,52 +260,190 @@ ASDGeneAttributes<- ASDbraingenes.mousepheno.drugtarget %>%
     mutate(nMouseKOgenes=n_distinct(MouseKOGene)) %>%
     mutate(Mouse.KO.Phenotype = (sum(nMouseKOgenes)/sum(nASDriskgenes))) %>%
     mutate(nDrugtargets=n_distinct(DrugTarget)) %>%
-    mutate(Drug.Target = (sum(nDrugtargets)/sum(nASDriskgenes))) %>%
-    select(ASDRiskGene, Brain.Expression, Mouse.KO.Phenotype, Drug.Target) %>%
-    distinct(ASDRiskGene, .keep_all = TRUE)
+    mutate(Drug.Target = (sum(nDrugtargets)/sum(nASDriskgenes)))
 
-ASDGeneAttributes.melt<-melt(as.data.frame(ASDGeneAttributes), id.vars = "ASDRiskGene")
+ASDGeneAttributes.melt <- ASDGeneAttributes %>%
+  select(ASDRiskGene, Brain.Expression, Mouse.KO.Phenotype, Drug.Target) %>%
+  distinct(ASDRiskGene, .keep_all = TRUE)
+ASDGeneAttributes.melt <- melt(as.data.frame(ASDGeneAttributes.melt), id.vars = "ASDRiskGene")
 
 ggplot(data=ASDGeneAttributes.melt, aes(x=variable, y=value, fill=variable)) + 
       geom_bar(position="dodge", stat="identity") +
       scale_fill_brewer(palette="Set1") +
-      ggtitle("ASD Candidate Gene Attributes\n(n=917) ", ) +
+      ggtitle("ASD Candidate Gene Attributes\n(n=917)") +
       theme(plot.title = element_text(hjust = 0.5)) +
       xlab("Functional Annotation") + ylab("Proportion of ASD Genes") +
-      labs(fill = "Functional Annotation")
-
+      labs(fill = "Functional Annotation") + scale_y_continuous(breaks=seq(0,1,0.05))
 ```
-```{r eval=TRUE, fig.width=12, fig.height=10}
 
+```{r eval=TRUE}
+#Annotate random gene list and compare to ASD risk gene list
+RandomGene1Attributes <- randombraingenes1.mousepheno.drugtarget %>%
+    select(ProteinCodingGene=Gene.Name, BrainGene=Gene.ID, MouseKOGene=Mouse.GeneID, DrugTarget=genes.y) %>%
+    mutate(nRandomgenes=n_distinct(ProteinCodingGene)) %>%
+    mutate(nBraingenes=n_distinct(BrainGene)) %>%
+    mutate(Brain.Expression = (sum(nBraingenes)/sum(nRandomgenes))) %>%
+    mutate(nMouseKOgenes=n_distinct(MouseKOGene)) %>%
+    mutate(Mouse.KO.Phenotype = (sum(nMouseKOgenes)/sum(nRandomgenes))) %>%
+    mutate(nDrugtargets=n_distinct(DrugTarget)) %>%
+    mutate(Drug.Target = (sum(nDrugtargets)/sum(nRandomgenes)))
+
+#Determine if proportions are different
+ASDvsRandom1.brain<-prop.test(x=c(848, 764), n=c(917, 917))
+
+ASDvsRandom1.mouseko<-prop.test(x=c(99, 72), n=c(917, 917))
+
+ASDvsRandom1.drugs<-prop.test(x=c(129, 29), n=c(917, 917))
+
+ps <- c(ASDvsRandom1.brain$p.value, ASDvsRandom1.mouseko$p.value, ASDvsRandom1.drugs$p.value)
+  
+p.adjust(ps, method = "BH")
+
+#Plot comparisons
+RandomGene1Attributes.melt <- RandomGene1Attributes %>%
+    select(ProteinCodingGene, Brain.Expression, Mouse.KO.Phenotype, Drug.Target) %>%
+    distinct(ProteinCodingGene, .keep_all = TRUE)
+RandomGene1Attributes.melt <- melt(as.data.frame(RandomGene1Attributes.melt), id.vars = "ProteinCodingGene")
+
+RandomGene1Attributes.compare <- RandomGene1Attributes.melt %>%
+  distinct(variable, .keep_all = TRUE) %>%
+  distinct(value, .keep_all = TRUE) %>%
+  mutate(Gene = recode(ProteinCodingGene, 'CALM2'=as.factor('ProteinCodingGene'))) %>%
+  select(c(2:4))
+
+ASDGeneAttributes.compare<-ASDGeneAttributes.melt %>%
+  distinct(variable, .keep_all = TRUE) %>%
+  distinct(value, .keep_all = TRUE) %>%
+  mutate(Gene = recode(ASDRiskGene, 'PTEN'='ASDRiskGene')) %>%
+  select(c(2:4))
+
+ASDvsRandomGeneAttributes <- rbind(ASDGeneAttributes.compare, RandomGene1Attributes.compare)
+
+#p-values for plot pulled from p.adjust command above
+ggplot(data=ASDvsRandomGeneAttributes, aes(x=variable, y=value, fill=Gene)) + 
+      geom_bar(position=position_dodge(), stat="identity") +
+      scale_fill_brewer(palette="Set1") +
+      ggtitle("ASD vs Protein Coding Gene Attributes" ) +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      xlab("Functional Annotation") + ylab("Proportion of Genes") +
+      labs(fill = "Gene Set") + scale_y_continuous(breaks=seq(0,1,0.05)) +
+      annotate("text",x = 1, y = 0.98, label='p=4.23e-09', cex = 5, parse=F) +
+      annotate("text",x = 2, y = 0.15, label='p=3.68e-02', cex = 5, parse=F) +
+      annotate("text",x = 3, y = 0.20, label='p=5.21e-16', cex = 5, parse=F)
+```
+
+```{r eval=TRUE, fig.width=12, fig.height=10}
 #Identify the specific human brain regions that are enriched for ASD candidate gene expression
 library(limma)
 library(gplots)
 
-ASDgenebrainexpression <- inner_join(ASDbraingenes.mousepheno.drugtarget[, c(1, 5)], GTExbraindata, by="Gene.Name")
-ASDgenebrainexpression <- ASDgenebrainexpression %>%
-    select(as.numeric(c(4:16)))
-ASDgenebrainexpressionm<-as.matrix(ASDgenebrainexpression)
-
-ASDgenebrainexpressionTEST<-ASDbraingenes.mousepheno.drugtarget %>%
+ASDgenebrainexpression<-ASDbraingenes.mousepheno.drugtarget %>%
     filter(!is.na(Gene.ID)) %>%
-    select(as.numeric(c(4:16)))
+    select(as.numeric(c(7:19)))
+
+ASDgenebrainexpressionm <-as.matrix(ASDgenebrainexpression)
 
 #Determine the human brain regions with the strongest expression of ASD candidate genes
 coolmap(ASDgenebrainexpressionm, cluster.by = "de pattern", linkage.row = "none", linkage.col = "none", show.dendrogram = "none", main = "Brain Region Expression Normalized by ASD Gene", xlab="Brain Region", ylab="ASD Candidate Genes", keysize=0.75,  offsetCol = 0, margins = c(12, 5))
 
-#Determine the ASD candidate genes wtih the strongest expression in the human brain
+#Determine the ASD candidate genes with the strongest expression in the human brain
 coolmap(ASDgenebrainexpression, cluster.by = "expression level", linkage.row = "none", linkage.col = "none", show.dendrogram = "none", col="redblue", main = "Brain Region Expression Normalized by ASD Gene", xlab="Brain Region", ylab="ASD Candidate Genes", keysize=0.75,  offsetCol = 0, margins = c(12, 5))
 
+ASDgenepituitaryexpression<-ASDbraingenes.mousepheno.drugtarget %>%
+    filter(!is.na(Gene.ID)) %>%
+    select(as.numeric(c(2, 17))) %>%
+    arrange(desc(pituitary.gland)) %>%
+    distinct()
+head(ASDgenepituitaryexpression)
+
+#Compare distribution of brain regions with expression of ASD genes to random set of protein coding genes
+Randomgenebrainexpression<-randomgenes1.braingenes %>%
+    filter(!is.na(Gene.ID)) %>%
+    select(as.numeric(c(4:16)))
+
+Randomgenebrainexpressionm <- as.matrix(Randomgenebrainexpression)
+
+coolmap(Randomgenebrainexpressionm, cluster.by = "de pattern", linkage.row = "none", linkage.col = "none", show.dendrogram = "none", main = "Brain Region Expression Normalized by Gene", xlab="Brain Region", ylab="Protein Coding Genes", keysize=0.75,  offsetCol = 0, margins = c(12, 5))
 ```  
 
 ``` {r eval=TRUE}
 #Determine the most common mouse nervous system and behavioral/neurological phenotypes that are observed when ASD candidate genes are knocked out
+ASDgenemousekos <- ASDbraingenes.mousepheno.drugtarget %>%
+    filter(!is.na(Mouse.GeneID)) %>%
+    select(as.numeric(c(2, 22, 24)))
+    
+ASDgenemousekosmelt <- melt(as.data.frame(ASDgenemousekos), id.vars = "c2.symbol", na.rm = TRUE)
 
-ASDgenemousekos <- inner_join(ASDbraingenes.mousepheno.drugtarget[, c(1, 5)], GTExbraindata, by="Gene.Name")
-  select(, na.exclude=TRUE)
+ASDgenemousekosmelt <- ASDgenemousekosmelt %>%
+    group_by(value) %>%
+    mutate(ngenes.mouseKOpheno=n_distinct(c2.symbol)) 
+
+ASDgenemousekosmelt <- arrange(ASDgenemousekosmelt, desc(ngenes.mouseKOpheno))
+
+kophenos <- unique(ASDgenemousekosmelt$value)
+
+ASDgenemousekosmelt$value <- factor(ASDgenemousekosmelt$value, levels = kophenos)
   
+ggplot(data=ASDgenemousekosmelt, aes(x=value, y=ngenes.mouseKOpheno, fill=value)) + 
+  geom_bar(position="dodge", stat="identity") +
+  ggtitle("Most Common Phenotypes of Interest in ASD Gene Mouse KOs (n=99)") +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      xlab("Phenotypes of Interest") + ylab("Number of ASD Genes with Phenotype in KO") +
+      labs(fill = "Phenotypes of Interest") +
+      theme(axis.text.x=element_blank()) +
+      scale_y_continuous(breaks=seq(0,40,5)) 
 
+#Compare distribution of mouse phenotypes when KOing ASD genes to random set of protein coding genes
+Randomgenemousekos <- randombraingenes1.mouseKOpheno %>%
+    filter(!is.na(Mouse.GeneID)) %>%
+    select(as.numeric(c(2, 19, 21)))
+
+Randomgenemousekosmelt <- melt(as.data.frame(Randomgenemousekos), id.vars = "Gene.Name", na.rm = TRUE)
+
+Randomgenemousekosmelt <- Randomgenemousekosmelt %>%
+    group_by(value) %>%
+    mutate(ngenes.mouseKOpheno=n_distinct(Gene.Name)) 
+
+Randomgenemousekosmelt <- arrange(Randomgenemousekosmelt, desc(ngenes.mouseKOpheno))
+
+kophenos.random <- unique(Randomgenemousekosmelt$value)
+
+Randomgenemousekosmelt$value <- factor(Randomgenemousekosmelt$value, levels = kophenos.random)
+  
+ggplot(data=Randomgenemousekosmelt, aes(x=value, y=ngenes.mouseKOpheno, fill=value)) + 
+  geom_bar(position="dodge", stat="identity") +
+  ggtitle("Most Common Phenotypes of Interest in Protein Coding Gene Mouse KOs (n=72)") +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      xlab("Phenotypes of Interest") + ylab("Number of Genes with Phenotype in KO") +
+      labs(fill = "Phenotypes of Interest") +
+      theme(axis.text.x=element_blank()) +
+      scale_y_continuous(breaks=seq(0,40,5), limits = c(0,35))
 ```    
+
+``` {r eval=TRUE}
+#How many/which ASD Risk genes have evidence in all three functional categories
+ASDallannotations<-ASDbraingenes.mousepheno.drugtarget %>%
+  filter(!is.na(Gene.ID)) %>%
+  filter(!is.na(Mouse.GeneID)) %>%
+  filter(!is.na(genes.y)) %>%
+  distinct(c2.symbol, .keep_all=TRUE) %>%
+  select(ASD.Risk.Gene=c2.symbol, Brain.Expression=Gene.ID, Mouse.KO.Phenotype=Mouse.GeneID, Drug.Target=genes.y)
+
+df<-data.frame(Gene=ASDallannotations$ASD.Risk.Gene, Functionally.Relevant=NA, Drug.Ontology=NA)
+
+for (gene in df$Gene) {
+  
+  ASDallannotations[ASDallannotations$ASD.Risk.Gene %in% gene,"Brain.Expression"
+  
+  
+}
+
+
+ASDallannotations$Brain.Expression
+
+
+write.csv(ASDallannotations, file='ASDallannotations.csv')
+```
 
 ``` {r eval=TRUE}
 #Determine how many genes prioritized in this pipeline are ACMG recommendations
