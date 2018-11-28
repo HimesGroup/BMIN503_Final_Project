@@ -223,6 +223,10 @@ if __name__ == "__main__":
     print("Processing chunks...")
     p = Pool(processes = 7)
     conn = sqlite3.connect("protein_training.db")
+    
+    c = conn.cursor()
+    c.execute("DROP TABLE IF EXISTS protein_subngram_features")
+    
     for result in tqdm(p.imap_unordered(write_to_dbase, chunks), total=len(chunk_pairs)):
         result.to_sql("protein_subngram_features", con=conn, index=False,
                     if_exists="append")

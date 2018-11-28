@@ -1,0 +1,4 @@
+python 06_ngram_extract.py
+python 13_ngram_feature_extraction.py 10000
+python 14_ngram_sub_features_extraction.py 10000
+pause
