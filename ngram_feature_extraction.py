@@ -111,11 +111,11 @@ if __name__ == "__main__":
         
     print("Processing chunks...")
     p = Pool(processes = 7)
+    conn = sqlite3.connect("protein_training.db")
     for result in tqdm(p.imap_unordered(write_to_dbase, chunks), total=len(chunk_pairs)):
-        conn = sqlite3.connect("protein_training.db")
         result.to_sql("protein_ngram_features", index=False, con=conn, if_exists="append")
-        conn.close()
-        
+    
+    conn.close() 
     p.close()
     p.join()
     print("Processing done!")
