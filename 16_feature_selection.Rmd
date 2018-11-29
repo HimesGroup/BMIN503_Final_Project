@@ -1,0 +1,77 @@
+---
+title: "16_final_train_feature_selection"
+author: "Jake Bergren"
+date: "November 28, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Feature Selection
+
+The sheer size of my training set begs for feature slimming prior to training. This notebook will be used to determine which features to utilize.
+
+```{r}
+library("dplyr")
+library("tibble")
+library(tidyr)
+library(DBI)
+library(RSQLite)
+library(gtools)
+library(pbapply)
+library(R.cache)
+```
+
+```{r}
+.pb_env <- new.env(parent=emptyenv())
+pbmapply <- function(FUN, ..., MoreArgs = NULL, SIMPLIFY = TRUE, USE.NAMES = TRUE)
+{
+    ## setting up counter in .pb_env
+    .pb_env$FUN <- FUN
+    .pb_env$MAX <- max(sapply(list(...), length))
+    .pb_env$VALUE <- 0
+    .pb_env$pb <- startpb(0, .pb_env$MAX)
+    on.exit(closepb(.pb_env$pb), add=TRUE)
+    on.exit(rm(list=ls(envir=.pb_env), envir=.pb_env), add=TRUE)
+    ## setting tracer
+    suppressWarnings(suppressMessages(trace(quote(FUN), exit = quote({
+        .pb_env <- environment(pbmapply)$.pb_env
+        .pb_env$VALUE <- .pb_env$VALUE + 1
+        pbapply::setpb(.pb_env$pb, .pb_env$VALUE)
+    }), where = environment(pbmapply)$.pb_env, print = FALSE)))
+    ## piggy back on mapply
+    mapply(.pb_env$FUN, ..., MoreArgs = MoreArgs,
+        SIMPLIFY = SIMPLIFY, USE.NAMES = USE.NAMES)
+}
+
+convert_factor <- function(col){
+  if (is.numeric(col)==FALSE){
+    return(factor(col))
+  } else {
+    return(col)
+  }
+}
+```
+
+```{r eval=TRUE}
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+# This takes a little while
+train_df <- dbGetQuery(con, "SELECT * FROM train LIMIT 1000000")
+#train_df_cols <- dbGetQuery(con, "PRAGMA table_info(train)")
+dbDisconnect(con)
+
+num_cols <- unlist(pblapply(train_df, is.numeric))
+
+corrs <- train_df[, num_cols] %>%
+  as.matrix() %>%
+  cor() %>%
+  as.data.frame() %>%
+  rownames_to_column(var='var1') %>%
+  gather(var2, value, -var1)
+
+non_num_cols_df <- as.data.frame(lapply(train_df[, !num_cols], as.numeric))
+
+chi_sqs <- chisq.test(non_num_cols_df)
+```
