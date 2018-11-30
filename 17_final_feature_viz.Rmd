@@ -1,0 +1,237 @@
+---
+title: "17 Final Model Training"
+author: "Jake Bergren"
+date: "November 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Package import}
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(reshape2)
+library(neuralnet)
+library(GGally)
+``` 
+
+
+## Training models
+
+```{r Getting the selection columns}
+drop_cols <- read.delim("drop_cols.txt",header = FALSE, stringsAsFactors = FALSE)$V1
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+cols_df <- dbGetQuery(
+  con, 
+  "SELECT * FROM train LIMIT 1"
+  )
+
+n_row <- first(dbGetQuery(
+  con,
+  "SELECT COUNT(*) FROM train"
+))
+dbDisconnect(con)
+
+# Build the row index for sampling for 10 samples
+n <- 3000000
+sample_rows <- list()
+for (i in seq(1:10)){
+  sample_rows[[i]] <- sample(seq(1:n_row),n)
+}
+
+# Get the columns for selection, and the index I need
+# to determine which columns are numeric and which are factors
+select_cols_df <- cols_df[, colnames(cols_df) %in% drop_cols == FALSE]
+select_cols_list <- colnames(select_cols_df)
+select_cols_str <- paste(select_cols_list, collapse=", ")
+select_cols_str
+```
+
+
+
+```{r Training}
+row_ids <- paste0("(",paste(unlist(sample_rows[[1]]), collapse=", "),")")
+query <- paste0("SELECT ", select_cols_str, " FROM TRAIN WHERE rowid IN ", row_ids)
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+train_sample <- dbGetQuery(
+  con, 
+  query
+  )
+dbDisconnect(con)
+
+# Get which cols are numeric
+num_cols_index <- unlist(lapply(train_sample, is.numeric))
+
+# Identify num cols
+num_cols <- colnames(train_sample[, num_cols_index])
+# Identify non-num cols
+non_num_cols <- colnames(train_sample[, !num_cols_index])
+
+# Change non-num cols to factor
+train_sample[, non_num_cols] <- lapply(train_sample[, non_num_cols], factor)
+
+```
+
+Now I've got a sample to play with, lets plot the correlates and save the figure. Then we'll train the model.
+
+```{r Plotting correlation grid, fig.width=6, fig.height=6}
+library(RColorBrewer)
+# Keep this for the correlation values
+
+corr_mat <- train_sample[, num_cols] %>%
+  mutate_if(is.numeric, funs(replace(., is.na(.), 0))) %>%
+  scale() %>%
+  cor %>%
+  melt %>%
+  filter(Var1!=Var2 & !(grepl("amyloid",Var1)==TRUE & grepl("amyloid",Var2)==TRUE))
+
+# Use this to shorten the list and plot
+corr_mat_unique <- corr_mat[, c("Var1","Var2")] %>%
+  apply(1, sort) %>%
+  t() %>%
+  as.data.frame(stringsAsFactors=FALSE) %>%
+  distinct()
+
+colnames(corr_mat_unique) <- c("Var1","Var2")
+
+corr_mat_unique <- merge(corr_mat_unique, corr_mat, by=c("Var1","Var2"), all.x=TRUE)
+
+rm(corr_mat)
+
+corr_mat_unique$low <- ifelse(corr_mat_unique$value >= 0.25, 1, 0)
+corr_mat_unique$medium <- ifelse(corr_mat_unique$value >= 0.5, 1, 0)
+corr_mat_unique$high <- ifelse(corr_mat_unique$value >= 0.75, 1, 0)
+
+low_corrs <- filter(corr_mat_unique, low==1 & medium==0)
+med_corrs <- filter(corr_mat_unique, medium==1 & high==1)
+high_corrs <- filter(corr_mat_unique, high==1)
+
+ggplot(corr_mat_unique, aes(x=Var1, y=Var2, fill=low)) +
+  geom_tile()
+
+ggplot(corr_mat_unique, aes(x=Var1, y=Var2, fill=medium)) +
+  geom_tile()
+
+ggplot(corr_mat_unique, aes(x=Var1, y=Var2, fill=high)) +
+  geom_tile()
+
+ggplot(corr_mat_unique, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile()
+```
+
+
+```{r Plotting corr graph fig.width=20, fig.height=20}
+library(igraph)
+
+value_marker <- function(col){
+  if (grepl("gram", col)){
+    return("gram")
+  } else if (grepl("prot", col)){
+    return("protein")
+  } else if (grepl("amyloid", col)){
+    return("amyloid")
+  }
+}
+
+edge_marker <- function(cols){
+  col1 <- cols[1]
+  col2 <- cols[2]
+  if (grepl("gram", col1) & grepl("gram", col2)){
+    return("gram-gram")
+  } else if (grepl("prot", col1) & grepl("prot", col2)){
+    return("protein-protein")
+  } else if (grepl("amyloid", col1) & grepl("prot", col2)){
+    return("amyloid-protein")
+  } else if (grepl("amyloid", col1) & grepl("gram", col2)){
+    return("amyloid-gram")
+  } else {
+    return("protein-gram")
+  }
+} 
+
+color_pal_vert <- brewer.pal(3, 'BrBG')
+color_pal_edge <- brewer.pal(5, 'RdYlGn')
+
+map_vert_colors <- function(val){
+  if (grepl("gram", val)){
+    return(color_pal_vert[1])
+  } else if (grepl("prot", val)){
+    return(color_pal_vert[2])
+  } else if (grepl("amyloid", val)){
+    return(color_pal_vert[3])
+  }
+}
+
+map_edge_colors <- function(val){
+  if (val=="gram-gram"){
+    return(color_pal_edge[1])
+  } else if (val=="protein-protein"){
+    return(color_pal_edge[2])
+  } else if (val=="amyloid-protein"){
+    return(color_pal_edge[3])
+  } else if (val=="amyloid-gram"){
+    return(color_pal_edge[4])
+  } else if (val=="protein-gram"){
+    return(color_pal_edge[5])
+  }
+}
+
+get_graph <- function(cutoff){
+  nodes_df <- corr_mat_unique %>%
+    filter(value >= cutoff) %>%
+    select(c("Var1","Var2")) %>%
+    melt(measure.vars=c("Var1","Var2")) %>%
+    distinct(value, .keep_all = FALSE) %>%
+    select("value")
+
+  colnames(nodes_df) <- c("id")
+  nodes_df$type.label <- sapply(nodes_df$id, FUN=value_marker)
+
+  edges_df <- corr_mat_unique %>%
+    filter(value >= cutoff) %>%
+    select(c("Var1","Var2","value"))
+  
+  colnames(edges_df) <- c("to","from","weight")
+  edges_df$type <- apply(edges_df[,c("to","from")], 1, edge_marker)
+
+  corr_net <- graph_from_data_frame(d=edges_df, vertices=nodes_df, directed=F)
+  
+  V(corr_net)$label <- NA
+  V(corr_net)$size <- degree(corr_net, mode="all")
+  V(corr_net)$color <- sapply(V(corr_net)$name, map_vert_colors)
+  E(corr_net)$width <- E(corr_net)$weight
+  E(corr_net)$color <- sapply(E(corr_net)$type, map_edge_colors)
+  
+  return(corr_net)
+}
+
+graph_low <- get_graph(0.25)
+graph_medium <- get_graph(0.5)
+graph_high <- get_graph(0.75)
+
+graph_circle.low <- layout_in_circle(graph_low)
+graph_circle.medium <- layout_in_circle(graph_medium)
+graph_circle.high <- layout_in_circle(graph_high)
+
+graph_names <- c("Low Correlates (0.25 or higher)", "Medium Correlates (0.5 or higher)", "High Correlates (0.75 or higher)")
+
+i <- 1
+for (graph in list(graph_low, graph_medium, graph_high)){
+  l <- do.call(layout_with_kk, list(graph))
+  plot(graph, layout=l, main=graph_names[i])
+  legend(x=-1.5, y=-1.1, c("Gram","Protein", "Amyloid"), pch=21, col="#777777",
+         pt.bg=color_pal_vert, pt.cex=2, cex=.8, bty="n", ncol=1, title="Nodes")
+  legend(x=-0.5, y=-1.1, c("Gram-Gram","Protein-Protein", "Amyloid-Protein","Amyloid-Gram","Protein-Gram"), pch=22,col="#777777",
+         pt.bg=color_pal_edge, pt.cex=2, cex=.8, bty="n", ncol=1, title="Edges")
+  i <- i+1
+}
+
+```
