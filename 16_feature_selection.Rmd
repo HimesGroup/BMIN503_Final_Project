@@ -14,64 +14,217 @@ knitr::opts_chunk$set(echo = TRUE)
 The sheer size of my training set begs for feature slimming prior to training. This notebook will be used to determine which features to utilize.
 
 ```{r}
-library("dplyr")
-library("tibble")
+library(dplyr)
+library(tibble)
 library(tidyr)
 library(DBI)
 library(RSQLite)
-library(gtools)
-library(pbapply)
-library(R.cache)
+library(ggplot2)
+library(reshape2)
+library(pwr)
 ```
 
-```{r}
-.pb_env <- new.env(parent=emptyenv())
-pbmapply <- function(FUN, ..., MoreArgs = NULL, SIMPLIFY = TRUE, USE.NAMES = TRUE)
-{
-    ## setting up counter in .pb_env
-    .pb_env$FUN <- FUN
-    .pb_env$MAX <- max(sapply(list(...), length))
-    .pb_env$VALUE <- 0
-    .pb_env$pb <- startpb(0, .pb_env$MAX)
-    on.exit(closepb(.pb_env$pb), add=TRUE)
-    on.exit(rm(list=ls(envir=.pb_env), envir=.pb_env), add=TRUE)
-    ## setting tracer
-    suppressWarnings(suppressMessages(trace(quote(FUN), exit = quote({
-        .pb_env <- environment(pbmapply)$.pb_env
-        .pb_env$VALUE <- .pb_env$VALUE + 1
-        pbapply::setpb(.pb_env$pb, .pb_env$VALUE)
-    }), where = environment(pbmapply)$.pb_env, print = FALSE)))
-    ## piggy back on mapply
-    mapply(.pb_env$FUN, ..., MoreArgs = MoreArgs,
-        SIMPLIFY = SIMPLIFY, USE.NAMES = USE.NAMES)
-}
+Lets find which columns are numeric, then generate some sample indices for sampling.
 
-convert_factor <- function(col){
-  if (is.numeric(col)==FALSE){
-    return(factor(col))
-  } else {
-    return(col)
-  }
-}
-```
-
-```{r eval=TRUE}
+```{r eval=TRUE, fig.width=7, fig.height=10}
+# First lets get the numeric Columns.
 con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
-# This takes a little while
-train_df <- dbGetQuery(con, "SELECT * FROM train LIMIT 1000000")
-#train_df_cols <- dbGetQuery(con, "PRAGMA table_info(train)")
+cols_df <- dbGetQuery(
+  con, 
+  "SELECT * FROM train LIMIT 100"
+  )
+
+n_row <- first(dbGetQuery(
+  con,
+  "SELECT COUNT(*) FROM train"
+))
 dbDisconnect(con)
 
-num_cols <- unlist(pblapply(train_df, is.numeric))
+# Get rep sample size
+samp_size <- ceiling(pwr.r.test(r=0.01, sig.level = 0.01, power = 0.99)$n)
+train_ind <- seq(n_row)
 
-corrs <- train_df[, num_cols] %>%
-  as.matrix() %>%
-  cor() %>%
-  as.data.frame() %>%
-  rownames_to_column(var='var1') %>%
-  gather(var2, value, -var1)
+sample_inds <- list()
+for (i in seq(1,10)){
+  sample_inds[i] <- list(sample(train_ind, samp_size, replace=FALSE))
+}
 
-non_num_cols_df <- as.data.frame(lapply(train_df[, !num_cols], as.numeric))
+num_cols_index <- unlist(lapply(cols_df, is.numeric))
+num_cols <- colnames(cols_df[,num_cols_index])
+```
 
-chi_sqs <- chisq.test(non_num_cols_df)
+Now we can sample the dataset and get the columns that should be dropped.
+
+```{r}
+get_drop_cols <- function(dframe){
+  drop_cols_final<- c()
+  # Get ranked list of correlates (num of connections in correlation "graph")
+  rank_list <- dframe %>%
+    melt(measure.vars=c("V1","V2")) %>%
+    select(value) %>%
+    group_by(value) %>%
+    tally() %>%
+    arrange(desc(n))
+  # Get list of unique values to check for dropping
+  unique_list <- rank_list %>%
+    select(value) %>%
+    distinct()
+
+  while (length(unique_list$value)>0){
+    # Get top val
+    top_val <- first(rank_list$value)
+    
+    # Mark values connected to top value for dropping
+    drop_cols <- dframe %>%
+     filter(V1==top_val | V2==top_val) %>%
+     melt(measure.vars=c("V1","V2")) %>%
+     filter(value!=top_val) %>%
+     select(value)
+
+    drop_cols_final <- c(drop_cols_final, drop_cols$value)
+    # Build new rank list
+    rank_list <- filter(rank_list, value %in% drop_cols_final == FALSE & value!=top_val)
+    unique_list <- filter(unique_list, value %in% drop_cols_final == FALSE & value!=top_val)
+}
+  return(drop_cols_final)
+}
+
+get_sample <- function(cols, row_ids){
+  cols_str <- paste(cols, collapse = ", ")
+  row_ids_str <- paste(unlist(row_ids), collapse = ", ")
+  query <- paste0(
+    "SELECT ",cols_str," FROM train WHERE rowid IN (",row_ids_str,")"
+    )
+
+  con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+  # This takes a little while
+  sample <- dbGetQuery(
+    con, 
+    query
+    )
+  dbDisconnect(con)
+  sample$prot_U_num <- NULL
+  sample$prot_U_perc <- NULL
+  return(sample)
+}
+
+col_results <- c()
+pb = txtProgressBar(0, 10, initial=0)
+
+for (i in seq(1,10)){
+  # Get sample
+  sample <- get_sample(num_cols, sample_inds[i])
+
+  # Calculate correlation, with replacement of NA with zero
+  corr_mat <- sample %>%
+    mutate_if(is.numeric, funs(replace(., is.na(.), 0))) %>%
+    cor %>%
+    melt
+  
+  # Mark correlations as significant if they are 0.95 or greater
+  corr_mat$sig <- ifelse(corr_mat$value >= 0.95, 1, 0)
+
+  # Build the "graph" of correlates
+  corr_mat_unique <- corr_mat[, c("Var1","Var2","sig")] %>%
+    filter(sig == 1 & Var1!=Var2 & !(grepl("amyloid",Var1)==TRUE & grepl("amyloid",Var2)==TRUE)) %>%
+    select("Var1","Var2") %>%
+    apply(1,sort) %>%
+    t() %>%
+    apply(2, as.character) %>%
+    as.data.frame() %>%
+    distinct() %>%
+    group_by(V1, V2) %>%
+    tally()
+  
+  # For some reason melt turns everything into factors, lets reverse that
+  corr_mat_unique[,c("V1","V2")] <- lapply(corr_mat_unique[,c("V1","V2")], as.character)
+  
+  # Get the columns we can remove from the dataset for training
+  col_results <- c(col_results, get_drop_cols(corr_mat_unique))
+  setTxtProgressBar(pb, i)
+}
+
+col_res_df <- as.data.frame(col_results, stringsAsFactors = FALSE) %>%
+  group_by(col_results) %>%
+  tally()
+
+colnames(col_res_df) <- c("column_to_drop", "n_times_marked_for_deletion")
+
+ggplot(col_res_df) +
+  geom_bar(aes(x=column_to_drop, y=n_times_marked_for_deletion), stat="identity") +
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+```
+
+That's good that the vast majority of numerical values aren't correlative, that means there's a lot of good information in there!
+
+Lets remove the few variables that are correlative.
+
+```{r}
+drop_corr_cols_final <- unlist(filter(col_res_df, n_times_marked_for_deletion >= 5)$column_to_drop)
+drop_corr_cols_final
+```
+
+Now for the categoricals.
+
+```{r eval=TRUE, fig.width=7, fig.height=10}
+chisqmatrix <- function(x) {
+  names = colnames(x);  num = length(names)
+  m = matrix(nrow=num, ncol=num, dimnames=list(names,names))
+  for (i in 1:(num-1)) {
+    for (j in (i+1):num) {
+      p_val <- chisq.test(x[,i],x[,j], simulate.p.value = TRUE, B = 100)$p.value
+      m[i,j] = p_val
+      m[j,i] = p_val
+    }
+  }
+  return (m)
+}
+
+ignore_non_num_cols <- c("protein")
+non_num_col_names <- as.data.frame(colnames(cols_df[, !num_cols_index]), stringsAsFactors = FALSE)
+colnames(non_num_col_names) <- c("colnames")
+non_num_col_names <- filter(non_num_col_names, colnames %in% ignore_non_num_cols == FALSE)$colnames
+
+csqr_col_results <- c()
+pb = txtProgressBar(0, 10, initial=0)
+
+for (i in seq(1,10)){
+#  # Get sample
+  sample <- as.data.frame(lapply(get_sample(non_num_col_names, sample_inds[i]), factor))
+
+  chsq_mat = sample %>%
+    chisqmatrix %>%
+    melt
+
+  chsq_mat$sig <- ifelse(chsq_mat$value > 0.05, 1, 0)
+  if (nrow(filter(chsq_mat, sig==1))==0){
+    setTxtProgressBar(pb, i)
+    next
+  }
+  # Build the "graph" of correlates
+  chsqr_mat_unique <- chsq_mat[, c("Var1","Var2","sig")] %>%
+    filter(sig == 1 & Var1!=Var2) %>%
+    select("Var1","Var2") %>%
+    apply(1,sort) %>%
+    t() %>%
+    apply(2, as.character) %>%
+    as.data.frame() %>%
+    distinct()# %>%
+    #group_by(V1, V2) %>%
+    #tally()
+  
+  # For some reason melt turns everything into factors, lets reverse that
+  chsqr_mat_unique[,c("V1","V2")] <- lapply(chsqr_mat_unique[,c("V1","V2")], as.character)
+  # Get the columns we can remove from the dataset for training
+  csqr_col_results <- c(csqr_col_results, get_drop_cols(corr_mat_unique))
+  setTxtProgressBar(pb, i)
+  
+}
+
+length(csqr_col_results)
+```
+
+Looks like none of the categorical values are dependent on any other.
+
+```{r}
 ```

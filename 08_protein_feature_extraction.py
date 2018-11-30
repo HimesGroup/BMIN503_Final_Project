@@ -80,7 +80,7 @@ def proteinFeatureArrayizer(seq):
 
 def backfill(size, flex_array):
     flex_arr_size = len(flex_array)
-    if size % flex_arr_size == 0 and flex_arr_size!=1:
+    if size % flex_arr_size == 0 and flex_arr_size != 1:
         sizer = size / flex_arr_size
         return list(np.concatenate([list(np.repeat(x, sizer)) for x in flex_array]))
     elif flex_arr_size == 1:
