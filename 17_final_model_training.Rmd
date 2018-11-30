@@ -1,0 +1,90 @@
+---
+title: "17 Final Model Training"
+author: "Jake Bergren"
+date: "November 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r cars}
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(reshape2)
+library(neuralnet)
+library(GGally)
+``` 
+
+
+## Training models
+
+```{r Getting the selection columns}
+drop_cols <- read.delim("drop_cols.txt",header = FALSE, stringsAsFactors = FALSE)$V1
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+cols_df <- dbGetQuery(
+  con, 
+  "SELECT * FROM train LIMIT 1"
+  )
+
+n_row <- first(dbGetQuery(
+  con,
+  "SELECT COUNT(*) FROM train"
+))
+dbDisconnect(con)
+
+# Build the row index for sampling for 10 samples
+n <- 3000000
+sample_rows <- list()
+for (i in seq(1:10)){
+  sample_rows[[i]] <- sample(seq(1:n_row),n)
+}
+
+# Get the columns for selection, and the index I need
+# to determine which columns are numeric and which are factors
+select_cols_df <- cols_df[, colnames(cols_df) %in% drop_cols == FALSE]
+select_cols_list <- colnames(select_cols_df)
+select_cols_str <- paste(select_cols_list, collapse=", ")
+```
+
+
+
+```{r Training}
+row_ids <- paste0("(",paste(unlist(sample_rows[[1]]), collapse=", "),")")
+query <- paste0("SELECT ", select_cols_str, " FROM TRAIN WHERE rowid IN ", row_ids)
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+train_sample <- dbGetQuery(
+  con, 
+  query
+  )
+dbDisconnect(con)
+
+# Get which cols are numeric
+num_cols_index <- unlist(lapply(train_sample, is.numeric))
+
+# Identify num cols
+num_cols <- colnames(train_sample[, num_cols_index])
+# Identify non-num cols
+non_num_cols <- colnames(train_sample[, !num_cols_index])
+
+# Change non-num cols to factor
+train_sample[, non_num_cols] <- lapply(train_sample[, non_num_cols], factor)
+
+```
+
+Now I've got a sample to play with, lets plot the correlates and save the figure. Then we'll train the model.
+
+```{r Plotting, fig.width=6.5, fig.height=10.5}
+plot_cols <- colnames(train_sample)[colnames(train_sample) %in% c("protein") == FALSE]
+
+pairplot <- ggpairs(train_sample[,plot_cols], cardinality_threshold = 21)
+
+ggsave("train_sample_pairs.png", height=10.5, width=6.5, dpi=200)
+```
