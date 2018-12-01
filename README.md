@@ -17,3 +17,4 @@ DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in w
 [forking]: https://guides.github.com/activities/forking/
 
 This line is from RStudio
+This line is from GitHub
