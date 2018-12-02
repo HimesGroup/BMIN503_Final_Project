@@ -1,0 +1,241 @@
+---
+title: "18_model_train_final"
+author: "Jake Bergren"
+date: "December 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(reshape2)
+library(neuralnet)
+```
+
+Get the list of columns to select from the table.
+
+```{r Getting the selection columns and indices for sampling}
+drop_cols <- read.delim("drop_cols.txt",header = FALSE, stringsAsFactors = FALSE)$V1
+
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+cols_df <- dbGetQuery(
+  con, 
+  "SELECT * FROM train LIMIT 1"
+  )
+
+n_row <- first(dbGetQuery(
+  con,
+  "SELECT COUNT(*) FROM train"
+))
+
+amy_rows <- dbGetQuery(
+  con,
+  "SELECT rowid 
+    FROM train 
+    WHERE amyloid_1=1 OR amyloid_2=1 or amyloid_3=1 or amyloid_4=1 or amyloid_5=1"
+)
+
+n_U <- dbGetQuery(
+  con,
+  "SELECT COUNT(*)
+  FROM train
+  WHERE gram_1='U' OR gram_2='U' OR gram_3='U' OR gram_4='U' OR gram_5='U'"
+)
+
+dbDisconnect(con)
+
+sample_seq <- seq(1:1100000)
+non_amy_seq <- sample_seq[sample_seq %in% amy_rows$rowid == FALSE]
+
+# Build the row index for sampling for 10 samples
+gen_rand_indices <- function(size, samp_size, num_samples){
+  sample_rows <- list()
+  for (i in seq(1:num_samples)){
+    sample_seq <- seq(1:size)
+    non_amy_seq <- sample_seq[sample_seq %in% amy_rows$rowid == FALSE]
+    samp_rows <- sample(seq(1:size),samp_size-length(amy_rows$rowid))
+    sample_rows[[i]] <- c(samp_rows, amy_rows$rowid)
+  }
+  return(sample_rows)
+}
+sample_rows <- gen_rand_indices(n_row, length(amy_rows$rowid)*2, 10)
+typeof(sample_rows)
+# Get the columns for selection, and the index I need
+select_cols_df <- cols_df[, colnames(cols_df) %in% drop_cols == FALSE]
+select_cols_list <- colnames(select_cols_df)
+select_cols_str <- paste(select_cols_list, collapse=", ")
+select_cols_str
+# Get the index of numeric columns
+query <- paste0("SELECT ", select_cols_str, " FROM TRAIN LIMIT 1")
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+num_ind_df <- dbGetQuery(
+  con, 
+  query
+  )
+dbDisconnect(con)
+
+num_cols_index <- unlist(lapply(num_ind_df, is.numeric))
+num_cols <- colnames(num_ind_df[, num_cols_index])
+non_num_cols <- colnames(num_ind_df[, !num_cols_index])
+```
+
+Get a sample.
+
+```{r Getting a sample}
+library(caTools)
+get_sample <- function(row_ids){
+  row_id_str <- paste0("(",paste(unlist(row_ids), collapse=", "),")")
+  query <- paste0("SELECT ", select_cols_str, " FROM TRAIN WHERE rowid IN ", row_id_str)
+
+  con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+  train_sample <- dbGetQuery(
+    con, 
+    query
+    )
+  dbDisconnect(con)
+  
+  # Change U to C for training purposes
+  train_sample[,c("gram_1","gram_2","gram_3","gram_4","gram_5")] <- apply(train_sample[,c("gram_1","gram_2","gram_3","gram_4","gram_5")], 2, function(x) gsub("U","C", x))
+  # Change non-num cols to factor
+  train_sample[, non_num_cols] <- lapply(train_sample[, non_num_cols], factor)
+  return(train_sample)
+}
+
+train_test_split <- function(data, train_frac){
+  smp_size <- floor(train_frac * nrow(data))
+
+  ## set the seed to make your partition reproducible
+  set.seed(42)
+  train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+
+  train <- data[train_ind, ]
+  test <- data[-train_ind, ]
+  return(list(train,test))
+}
+
+
+# Generate the classes
+f.roland <- function(n, m) {
+  ind <- combn(seq_len(n), m)
+  ind <- t(ind) + (seq_len(ncol(ind)) - 1) * n
+  res <- rep(0, nrow(ind) * n)
+  res[ind] <- 1
+  matrix(res, ncol = n, nrow = nrow(ind), byrow = TRUE)
+}
+
+combos <- matrix(matrix(data = c(0,0,0,0,0)),ncol=5)
+
+for (i in seq(5)){
+  combos <- rbind(combos,f.roland(5, i))
+}
+
+combo_strs <- apply(combos, 1, paste, collapse=",")
+combo_factors <- factor(combo_strs)
+labels(combo_factors)
+sample_df <- get_sample(sample_rows[[1]])
+
+sample_df$amy_str <- apply(sample_df[,c("amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")], 1, paste, collapse=",")
+
+sample_df$amy_class <- factor(sample_df$amy_str, levels=levels(combo_factors), labels=labels(combo_factors))
+
+head(sample_df[, c("amy_str","amy_class")])
+
+head(sample_df)
+frames <- train_test_split(sample_df, 0.75)
+train_samp <- as.data.frame(frames[1])
+test_samp <- as.data.frame(frames[2])
+```
+
+Now we get to build the actual model. To build the model I will produce 1 classifier for each amino acid I want to predict (5 models in total) in the sequence using all the other variables as predictors.
+
+```{r Setting up for Model Building}
+# Get non amyloid columns
+non_amy_cols <- colnames(num_ind_df[, grepl("amyloid", colnames(num_ind_df))==FALSE])
+# Protein isn't a predictor either
+non_amy_cols <- non_amy_cols[non_amy_cols %in% c("protein","value","variable","amy_class")==FALSE]
+select(train_samp, c(non_amy_cols,"amy_class"))
+# Generate the functions to pass to our models
+amy_form <- formula(paste0(
+  "amy_class ~ ",
+  paste0(unlist(non_amy_cols), collapse=" + ")
+  ))
+
+```
+
+Ok now we know this structure works, lets build some models in earnest. Lets shoot at 1 million rows.
+
+Here's the pipeline;
+  1. Get the sample dataframe from the sqlite file
+  2. Melt it so we have a single "Y" value
+  3. Split it into train and test sets
+  4. Train models
+  5. Get predictions from models
+  6. Evaluate models
+
+```{r Now for the real training}
+library(caret)
+library(randomForest)
+library(progress)
+library(MLmetrics)
+
+train_rows_2 <- gen_rand_indices(n_row, length(amy_rows$rowid)*2, 1)
+train_rows_4 <- gen_rand_indices(n_row, length(amy_rows$rowid)*4, 1)
+train_rows_6 <- gen_rand_indices(n_row, length(amy_rows$rowid)*6, 1)
+train_rows_8 <- gen_rand_indices(n_row, length(amy_rows$rowid)*8, 1)
+
+train_rows <- list(train_rows_2, train_rows_4, train_rows_6, train_rows_8)
+
+results <- list()
+
+metric <- "logLoss"
+control <- trainControl(method="cv", number=10, classProbs= TRUE, summaryFunction = multiClassSummary)
+
+count <- 1
+for (index in train_rows){
+  print(count)
+  sample_df <- get_sample(index)
+  sample_df <- na.omit(sample_df)
+  sample_df$amy_str <- apply(sample_df[,c("amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")], 1, paste, collapse=",")
+
+  sample_df[, non_num_cols]<- sapply(sapply(sample_df[,non_num_cols], labels), as.numeric)
+  sample_df$amy_class <- make.names(factor(sample_df$amy_str, levels=levels(combo_factors), labels=labels(combo_factors)))
+  sample_df <- droplevels(sample_df)
+  #sample_df <- select(sample_df,non_amy_cols,"amy_class")
+  
+  frames <- train_test_split(sample_df, 0.75)
+  train_samp <- as.data.frame(frames[1])
+  test_samp <- as.data.frame(frames[2])
+
+  knn_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="kknn", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  pda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  sda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="sda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  slda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="slda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  c5_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="C5.0Tree", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  pls_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pls", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  
+  models <- list(knn_mod, pda_mod, sda_mod, slda_mod, c5_mod, pls_mod)
+  
+  count <- count + 1
+  
+  results[[length(results)+1]] <- models
+}
+
+```
+
+```{r Model eval}
+  
+#resample_results <- resamples(list(#MODELS HERE))
+```
