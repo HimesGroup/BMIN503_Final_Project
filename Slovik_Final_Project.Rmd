@@ -21,7 +21,7 @@ The opioid epidemic is a serious public health problem in the United States. The
 ### Introduction 
 Over the past 20 years, the United States has experienced an increase in the amount of deaths that can be attributed to drug overdoses.  In particular, opioids have been at the heart of this problem, including both prescription medications and illegal opioids. Opioids are used to treat pain by interacting with opioid receptors in the body and brain. In addition to pain relief, opioids also elicit a feeling of pleasure.  This combination of pain relief and pleasure provides some explanation for the addictive quality of opioid drugs. Over-prescribing by clinicians and access to illicit drugs have allowed this to become a severe epidemic that has shown little indication of slowing down, that both local and national agencies are attempting to address. 
 
-To understand the nature of the problem of drug overdose mortality, an interdisciplinary approach can provide the most insight.  Firstly this is a public health issue, requiring the knowledge of clinicians, psychiatrists, and public health officials. This is also an economic and geographic issue, as socioeconomic status and location may have a large affect on drug overdose mortality. Using additional data sets from SAMHSA, NIDA and the DEA to integrate with the drug overdose mortality data will provide more insight for correlative analysis and trends regarding the opioid epidemic.
+To understand the nature of the problem of drug overdose mortality, an interdisciplinary approach can provide the most insight.  Firstly this is a public health issue, requiring the knowledge of clinicians, psychiatrists, and public health officials. This is also an economic and geographic issue, as socioeconomic status and location may have a large affect on drug overdose mortality. It is possible to use additional data sets from SAMHSA, NIDA and the DEA to integrate with the drug overdose mortality data will provide more insight for correlative analysis and trends regarding the opioid epidemic.
 
 ### Methods
 The primary data set used for this project was obtained from the publicly available data from the National Vital Statistics System.  The link to the data download is [here](https://catalog.data.gov/dataset/vsrr-provisional-drug-overdose-death-counts-54e35). The data analyzed is titled "VSRR Provisional Drug Overdose Death Counts" and contains provisional monthly counts for drug overdose deaths and total number of deaths (from mortality data) for all 50 states in the United States over the years 2015-2017.  The data also includes information on the specific drug categories determined to be the cause of overdose for 18 states.
@@ -44,7 +44,7 @@ library(ggthemes)
 library(png)
 ```
 
-Next, data needs to be loaded and cleaned for analysis. The `dplyr` package from `tidyverse` will be used to organize the data. First, we load in the two data tables that will be used for further analysis. The first dataset is the actual VSRR drug overdose data and the second dataset is population estimates for each state for the years of interest from the U.S. Census Bureau. Then, all of the necessary variables will be created to perform some geospatial analysis to look at the total number of drug overdoses by state for the years 2015, 2016, and 2017.
+Next, data needs to be loaded and cleaned for analysis. The `dplyr` package from `tidyverse` will be used to organize the data. First, we load in the two data tables that will be used for further analysis. The first dataset is the actual VSRR drug overdose data and the second dataset is population estimates for each state for the years of interest from the [U.S. Census Bureau](https://www.census.gov/data/tables/2017/demo/popest/state-total.html). Then, all of the necessary variables will be created to perform some geospatial analysis to look at the total number of drug overdoses by state for the years 2015, 2016, and 2017.
 
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
 # load in data
@@ -115,12 +115,51 @@ A histogram can be used to get an idea of the distribution of the overdose perce
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
 ggplot(data=percentOD, aes(x=percent)) +
   geom_histogram(bins=20, aes(y=..density..), colour="black", fill="white") +
-  ggtitle("Percentage of Deaths Attributed to Overdose") +
+  ggtitle("Percentage of All Deaths Attributed to Overdose") +
   geom_density(alpha=.2, fill="lightblue") +
   facet_grid(~Year)
 ```
 
-Because geographical analysis is a goal, loading in the coordinate data is necessary. Our map shapefile was downloaded from the [US Census Bureau](https://www.census.gov/geo/maps-data/data/cbf/cbf_state.html). The package `sf` is used to import the shapefile as an sf object.
+For 18 states, there is data on the specific drug category the overdose deaths can be classified into.  To visualize this, we can generate a stacked bar plot for each year to show the differences between each year.
+
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
+# Specific drug categories
+specificDrugs <- data %>% 
+  select(-one_of(drop.cols)) %>%
+  group_by(State, Year, Indicator) %>%
+  filter(Year %in% c("2015", "2016", "2017"), 
+         Indicator %in% c("Heroin (T40.1)",
+                        "Natural & semi-synthetic opioids (T40.2)",
+                        "Synthetic opioids, excl. methadone (T40.4)",
+                        "Methadone (T40.3)",
+                        "Cocaine (T40.5)"),
+         State != "US",
+         State != "YC") %>%
+  summarize(TotalDeath = sum(Data.Value))
+
+allOD <- inner_join(drugODbyState, 
+                          specificDrugs, by=c("State", "Year"))
+
+ggplot(allOD, aes(x=State, group=Year)) +
+  geom_bar(stat="identity", aes(y=TotalDeath, fill=Indicator.y)) +
+  facet_grid(Year ~ .) + 
+  theme_bw() +
+  scale_y_continuous("Number of Deaths", 
+                     labels = c("0", "10k", "20k", "30k", "40k")) +
+  scale_fill_discrete(name="Drug Category", 
+                      labels=c("Cocaine", "Heroin", "Methadone", 
+                               "Natural Opioids", "Synthetic Opioids"),
+                      breaks=c("Cocaine (T40.5)",
+                               "Heroin (T40.1)", 
+                               "Methadone (T40.3)", 
+                               "Natural & semi-synthetic opioids (T40.2)", 
+                               "Synthetic opioids, excl. methadone (T40.4)")) +
+  ggtitle("Breakdown of Drug Overdose Deaths by Drug Category")
+```
+
+These are interesting plots as they convey several types of information. First, from 2015 to 2017 there has been an overall increase of total drug overdose deaths for all states. Focusing specifically on the opiods, heroin deaths seem to have increased each year for most states. Natural opioid deaths appear to remain relatively consistent over the 2015-2017 period.  The most striking difference is the increase of synthetic opioid deaths, which have nearly doubled for some states between 2016 and 2017.
+
+To address the goal of geographical analysis, loading in the coordinate data is necessary. Our map shapefile was downloaded from the [US Census Bureau](https://www.census.gov/geo/maps-data/data/cbf/cbf_state.html). The package `sf` is used to import the shapefile as an sf object.
 
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
 # importing state shapefile as sf object
@@ -142,7 +181,7 @@ More data manipulation will be employed in the Results section as part of severa
 
 ### Results
 
-To extract some interesting information, visualizing the total number of overdose deaths across the entire United States can be done by implementing the package `tmap`. Using a for loop to iterate over the 3 years of interest, a static map for each year can be generated and saved.
+To extract some interesting information, visualizing the overdose death rate across the entire United States can be done by implementing the package `tmap`. Using a for loop to iterate over the 3 years of interest, a static map for each year can be generated and saved.
 
 ```{r, eval=TRUE, message=FALSE}
 # setting up for plotting static maps
@@ -176,7 +215,7 @@ m_cont <- tm_shape(US_cont, projection = 2163) +
               palette = "YlOrRd") +
   tm_shape(US_states) +
   tm_borders(lwd=1, col = "black", alpha = .5) +
-  tm_layout(title = paste("Total Number of Overdose Deaths in the US (per 100,000),", year),
+  tm_layout(title = paste("Overdose Death Rates in the US (per 100,000),", year),
             title.size = 1,
             title.position = c("center", "top"), 
             legend.position = c("right", "bottom"),
@@ -235,91 +274,51 @@ The exported `.png` maps can be re-imported and printed for viewing:
 ![](ODinUS2016.png)
 ![](ODinUS2017.png)
 
-**ADD DESCRIPTION OF RESULTS FROM MAPS HERE**
+Comparison of these three maps show that in some states (particularly in the Northeast and Midwest region) have increased rates of drug overdoses from the years 2015 to 2017. For these states, it may be important for to allocate more resources to address this issue.  Also, virtually no states show a decrease in overdose death rate over time.  
 
-Next, the percentage of deaths attributed to drug overdoses was calculated (divide the total number of overdose deaths by the total number of deaths) for each state for the years 2015, 2016 and 2017.  The data for each year can be plotted as a interactive choropleth map using the `leaflet` package. 
+Another way to look at the data is by creating a more interactive map. The percentage of deaths attributed to drug overdoses is calculated (dividing the total number of overdose deaths by the total number of deaths) for each state for the years 2015, 2016 and 2017. Then, percent change from the year 2015 to 2017 is calculate.  The percent change in overdose death rate can be plotted as a interactive choropleth map using the `leaflet` package. 
 
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
 ## Leaflet Maps
 # OD percentage join with shapefile
 percentODinUS <- inner_join(US.sf, percentOD, by = "State")
-ODmap2015 <- percentODinUS %>% filter(Year == "2015")
-ODmap2016 <- percentODinUS %>% filter(Year == "2016")
-ODmap2017 <- percentODinUS %>% filter(Year == "2017")
+percentChange2017 <- percentODinUS %>%
+  group_by(State, Year) %>%
+  filter(Year == "2017")
+
+percentChange2015 <- percentODinUS %>%
+  group_by(State, Year) %>%
+  filter(Year == "2015") 
+
+percentChange2017$diff <- percentChange2017$percent - percentChange2015$percent
 
 # favorite color palette
 pal_fun <- colorNumeric("PuRd", NULL)
 
-# 2015
 # popup message
-pu_message2015 <- paste0(ODmap2015$NAME, 
-                     "<br>Drug Overdose Rate: ",
-                     round(ODmap2015$percent, 1), "%")
+pu_message <- paste0(percentChange2017$NAME, 
+                     "<br>Drug Overdose Rate Change: ",
+                     round(percentChange2017$diff, 2), "%")
 
-# leaflet map for OD percentage in 2015
-leaflet(ODmap2015) %>%
+# leaflet map OD percent change
+leaflet(percentChange2017) %>%
   addPolygons(stroke = TRUE, weight=1, color="white", 
-              fillColor = ~pal_fun(percent),
+              fillColor = ~pal_fun(diff),
               fillOpacity = 1,
-              popup = pu_message2015) %>%
+              popup = pu_message) %>%
   setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
   addProviderTiles(providers$CartoDB.Positron) %>%
   addLegend("bottomright",                           
             pal=pal_fun,                             
-            values=~percent,                 
-            title = "Drug Overdose Rate, 2015 (%)",                  
-            opacity = 1) %>%                         
-  addScaleBar()
-
-# 2016
-# popup message
-pu_message2016 <- paste0(ODmap2016$NAME, 
-                     "<br>Drug Overdose Rate: ",
-                     round(ODmap2016$percent, 1), "%")
-
-# leaflet map for OD percentage in 2016
-leaflet(ODmap2016) %>%
-  addPolygons(stroke = TRUE, weight=1, color="white", 
-              fillColor = ~pal_fun(percent),
-              fillOpacity = 1,
-              popup = pu_message2016) %>%
-  setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
-  addProviderTiles(providers$CartoDB.Positron) %>%
-  addLegend("bottomright",                           
-            pal=pal_fun,                             
-            values=~percent,                 
-            title = "Drug Overdose Rate, 2016 (%)",                  
-            opacity = 1) %>%                         
-  addScaleBar()
-
-# 2017
-# popup message
-pu_message2017 <- paste0(ODmap2017$NAME, 
-                         "<br>Drug Overdose Rate: ",
-                         round(ODmap2017$percent, 1), "%")
-
-# leaflet map for OD percentage in 2017
-leaflet(ODmap2017) %>%
-  addPolygons(stroke = TRUE, weight=1, color="white", 
-              fillColor = ~pal_fun(percent),
-              fillOpacity = 1,
-              popup = pu_message2017) %>%
-  setView(lat = 39.8283, lng = -98.5795, zoom = 3) %>%
-  addProviderTiles(providers$CartoDB.Positron) %>%
-  addLegend("bottomright",                           
-            pal=pal_fun,                             
-            values=~percent,                 
-            title = "Drug Overdose Rate, 2017 (%)",                  
+            values=~diff,                 
+            title = "Drug Overdose<br>Rate Change,<br>2015 to 2017 (%)",            
             opacity = 1) %>%                         
   addScaleBar()
 ```
 
-**ADD DESCRIPTION OF RESULTS HERE**
-
-**Want to implement a leaflet map to show percent change from 2015 to 2017... need to play with the data though**
+From this `leaflet` interactive map, like the static maps above, for the majority of states, a small increase (less than 1%) has occured from 2015 to 2017 in their drug overdose rates. However, some states exhibit a larger increase in the drug overdose rates, in particular, the District of Columbia has seen a 3.69% increase between those two years.
 
 The data can be visualized to show trends of the number of drug overdose deaths for each state by creating a faceted graph of each region of the US for each year. The four regions are as determined from the U.S. Census, the Northeast, Midwest, South, and West. For this, raw overdose death counts will be used. Additionally, using the `geom_smooth()` function, with `method` set to `auto`, a LOESS curve can be plotted through the points.  This method is intended to use local regression to fit the curve through points in the scatterplot. It is useful for revealing trends in data.   
-
 Using a `for` loop, similarly as above, we can output the facet grid plots for four regions.
 
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
@@ -365,85 +364,72 @@ The `.png` images can be reimported:
 ![](Midwest.png)
 ![](South.png)
 ![](West.png)
+By breaking it down by region, we can easily see that this is not a localized phenomenon. And in all US regions, there is at least one state that stands out with a much higher number of overdose deaths than its neighbors.  The state with the most deaths for the Northeast is Pennsylvania, for the Midwest is Ohio, for the South is Florida, and for the West is California.  The other information these plots provide is the overall trends for each state.  Most states hold relatively consistent drug overdose death counts over the entire year, and for the three years in question.  However, some states, specificially Pennsylvania, Ohio and Florida have seen large increases in drug overdose death counts.
+
+**Can I extract values from the loess regression?**
+```{r,eval=TRUE,message=FALSE,warning=FALSE}
+#smooth_vals = predict(loess(is.factor(Month)~Data.Value, dd), dd$Data.Value)
+```
+
 **ADD DESCRIPTION OF RESULTS HERE**
 
-For 18 states, there is data on the specific drug category the overdose deaths can be classified into.  To visualize this, we can generate a stacked bar plot for each year to show the differences between each year.
+Finally, the drug overdose data can be used to perform some simple forecasting for the future. This is of great interest, because it is necessary to predict how the opioid epidemic will trend spatially with time, for purposes of allocation of public health resources as well as policy changes.  To perform forecasting, we will employ the package `forecast`. Since this data is a time series, to predict future points the autoregressive integrated moving average (ARIMA) model can be used. First, the top 10 states with the highest number of drug overdose deaths are determined.  Then, for the top 5, ARIMA and forecasting will be employed to create our predictive model.
 
 ```{r, eval=TRUE, message=FALSE, warning=FALSE}
-# Specific drug categories
-specificDrugs <- data %>% 
-  select(-one_of(drop.cols)) %>%
-  group_by(State, Year, Indicator) %>%
-  filter(Year %in% c("2015", "2016", "2017"), 
-         Indicator %in% c("Heroin (T40.1)",
-                        "Natural & semi-synthetic opioids (T40.2)",
-                        "Synthetic opioids, excl. methadone (T40.4)",
-                        "Methadone (T40.3)",
-                        "Cocaine (T40.5)"),
-         State != "US",
-         State != "YC") %>%
-  summarize(TotalDeath = sum(Data.Value))
-
-allOD <- inner_join(drugODbyState, 
-                          specificDrugs, by=c("State", "Year"))
-
-ggplot(allOD, aes(x=State, group=Year)) +
-  geom_bar(stat="identity", aes(y=TotalDeath, fill=Indicator.y)) +
-  facet_grid(Year ~ .) + 
-  theme_bw() +
-  scale_y_continuous("Number of Deaths", 
-                     labels = c("0", "10k", "20k", "30k", "40k")) +
-  scale_fill_discrete(name="Drug Category", 
-                      labels=c("Cocaine","Heroin", "Methadone", 
-                               "Natural Opioids", "Synthetic Opioids"),
-                      breaks=c("Cocaine (T40.5)","Heroin (T40.1)", "Methadone (T40.3)", 
-                               "Natural & semi-synthetic opioids (T40.2)", 
-                               "Synthetic opioids, excl. methadone (T40.4)"))
-```
-
-**ADD DESCRIPTION OF RESULTS HERE**
-
-Finally, the drug overdose data can be used to perform some simple forecasting for the future. This is of great interest, because it is necessary to predict how the opioid epidemic will trend spatially with time, for purposes of allocation of public health resources as well as policy changes.  To perform forecasting, we will employ the package `forecast`. 
-
-```{r, eval=FALSE, message=FALSE, warning=FALSE}
-
-TOP_N = 10
-top = d %>% 
+# determine top 10 states with most amount of drug overdoses
+top_N = 10
+topStates = d %>% 
   group_by(State) %>% 
+  filter(State != "US",
+         State != "YC") %>%
   summarise(Total = sum(Data.Value)) %>% 
   arrange(desc(Total)) %>% 
-  top_n(TOP_N) %>% 
+  top_n(top_N) %>% 
   pull(State)
+print(topStates)
 
-top_nd = subset(d, State %in% top)
+top_nd = subset(d, State %in% topStates)
 top_nd$Date = sprintf("1%s%d", top_nd$Month, top_nd$Year)
 top_nd$Date = as.Date(top_nd$Date, "%d%B%Y")
+```
 
+Finally, the top 5 state forecasts can be plotted to show future trends. The 80% and 95% confidence intervals are also displayed on the plots.
+
+```{r, eval=TRUE, message=FALSE, warning=FALSE}
 CA = top_nd %>% filter(State == 'CA') %>% select(Data.Value)
-PA = d %>% filter(State == 'PA') %>% select(Data.Value)
-CA.ts = ts(CA$Data.Value, start=c(2015, 1), end=c(2018, 3), frequency = 12)
-PA.ts = ts(PA$Data.Value, start=c(2015, 1), end=c(2018, 3), frequency = 12)
-paca = cbind(PA=PA.ts, CA=CA.ts)
-PA.fits = auto.arima(PA.ts, seasonal = T)
-CA.fits = auto.arima(CA.ts, seasonal = T)
-pcast = forecast(PA.fits)
-ccast = forecast(CA.fits)
-ggtsdisplay(PA.ts, theme = theme_bw())
+FL = top_nd %>% filter(State == 'FL') %>% select(Data.Value)
+PA = top_nd %>% filter(State == 'PA') %>% select(Data.Value)
+OH = top_nd %>% filter(State == 'OH') %>% select(Data.Value)
+TX = top_nd %>% filter(State == 'TX') %>% select(Data.Value)
 
-autoplot(forecast(CA.fits), title="") +
- theme_excel() +
- ylab("# of deaths") +
- xlab("Year") +
- ggtitle("Opiate Death by State Since 2015")
+ts(CA$Data.Value, start=c(2015, 1), end=c(2018, 0), frequency = 12) %>% 
+  auto.arima() %>% 
+  forecast(h=20) %>% 
+  autoplot() + ggtitle("California Forecast") + ylab("Number of Drug Overdose Deaths")
 
-ggplot(top_nd, aes(x = Date, y = Data.Value, colour = State, group = State)) + 
-  geom_line() + 
-  theme_bw() +
-  scale_y_continuous(expand = c(0.015, 0)) + geom_smooth(size = 0.5) +
-  scale_x_date(expand = c(.0, 0)) + 
-  ylab("# of deaths") + 
-  xlab("Year") + 
-  ggtitle("Opiate Death by State Since 2015")
+ts(FL$Data.Value, start=c(2015, 1), end=c(2018, 1), frequency = 12) %>%
+    auto.arima() %>% 
+  forecast(h=20) %>% 
+  autoplot() + ggtitle("Florida Forecast") + ylab("Number of Drug Overdose Deaths")
+
+ts(PA$Data.Value, start=c(2015, 1), end=c(2018, 1), frequency = 12) %>%
+    auto.arima() %>% 
+  forecast(h=20) %>% 
+  autoplot() + ggtitle("Pennsylvania Forecast") + ylab("Number of Drug Overdose Deaths")
+
+ts(OH$Data.Value, start=c(2015, 1), end=c(2018, 1), frequency = 12) %>%
+    auto.arima() %>% 
+  forecast(h=20) %>% 
+  autoplot() + ggtitle("Ohio Forecast") + ylab("Number of Drug Overdose Deaths")
+
+ts(TX$Data.Value, start=c(2015, 1), end=c(2018, 1), frequency = 12) %>%
+    auto.arima() %>% 
+  forecast(h=20) %>% 
+  autoplot() + ggtitle("Texas Forecast") + ylab("Number of Drug Overdose Deaths")
 
 ```
 
+All of these plots of a simple forecasting model with the data we have available indicates that over the next few years, the number of drug overdose deaths will continue to increase.  This model doesn't take into account any other factors, like how individual states are currently responding to the crisis or how doctors are decreasing the rate at which they prescribe opioids.  It would be interesting to compare this model to newer data as it is released from the VSRR.  
+
+### Conclusion and Future Directions
+*CONCLUSION*
