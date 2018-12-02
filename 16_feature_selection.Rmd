@@ -56,6 +56,7 @@ num_cols <- colnames(cols_df[,num_cols_index])
 Now we can sample the dataset and get the columns that should be dropped.
 
 ```{r}
+library("corrplot")
 get_drop_cols <- function(dframe){
   drop_cols_final<- c()
   # Get ranked list of correlates (num of connections in correlation "graph")
@@ -111,6 +112,8 @@ get_sample <- function(cols, row_ids){
 col_results <- c()
 pb = txtProgressBar(0, 10, initial=0)
 
+corr_mats <- list()
+
 for (i in seq(1,10)){
   # Get sample
   sample <- get_sample(num_cols, sample_inds[i])
@@ -118,14 +121,16 @@ for (i in seq(1,10)){
   # Calculate correlation, with replacement of NA with zero
   corr_mat <- sample %>%
     mutate_if(is.numeric, funs(replace(., is.na(.), 0))) %>%
-    cor %>%
-    melt
+    cor
   
+  corr_mats[[i]] <- corr_mat
+  
+  corr_mat_melt <- melt(corr_mat)
   # Mark correlations as significant if they are 0.95 or greater
-  corr_mat$sig <- ifelse(corr_mat$value >= 0.95, 1, 0)
+  corr_mat_melt$sig <- ifelse(corr_mat_melt$value >= 0.95, 1, 0)
 
   # Build the "graph" of correlates
-  corr_mat_unique <- corr_mat[, c("Var1","Var2","sig")] %>%
+  corr_mat_unique <- corr_mat_melt[, c("Var1","Var2","sig")] %>%
     filter(sig == 1 & Var1!=Var2 & !(grepl("amyloid",Var1)==TRUE & grepl("amyloid",Var2)==TRUE)) %>%
     select("Var1","Var2") %>%
     apply(1,sort) %>%
@@ -156,7 +161,20 @@ ggplot(col_res_df) +
   ylim(0, 10)
 ```
 
-That's good that the vast majority of numerical values aren't correlative, that means there's a lot of good information in there!
+That's good that the vast majority of numerical values aren't correlative, that means there's a lot of good information in there! Lets build a correlation plot over all the matrices average for communication later.
+
+```{r Plotting average correlation matrix}
+library(RColorBrewer)
+
+cpal <- rev(brewer.pal(n=8, name="RdBu"))
+
+meanMat <- Reduce("+", corr_mats) / length(corr_mats)
+tiff(height=1400, width=1400, file="all_feat_corr_mat.tiff", pointsize=20, res = 200)
+corrplot(meanMat, type="lower", method="color", order="hclust",
+         tl.col="black",tl.srt=45, tl.cex = 0.2, col=cpal,
+         na.label="NA")
+dev.off()
+```
 
 Lets remove the few variables that are correlative.
 
@@ -183,6 +201,7 @@ chisqmatrix <- function(x) {
 
 ignore_non_num_cols <- c("protein")
 non_num_col_names <- as.data.frame(colnames(cols_df[, !num_cols_index]), stringsAsFactors = FALSE)
+
 colnames(non_num_col_names) <- c("colnames")
 non_num_col_names <- filter(non_num_col_names, colnames %in% ignore_non_num_cols == FALSE)$colnames
 
