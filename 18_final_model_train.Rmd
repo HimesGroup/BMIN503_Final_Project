@@ -139,12 +139,13 @@ for (i in seq(5)){
 
 combo_strs <- apply(combos, 1, paste, collapse=",")
 combo_factors <- factor(combo_strs)
-labels(combo_factors)
+fac_labels <- make.names(labels(combo_factors))
+
 sample_df <- get_sample(sample_rows[[1]])
 
 sample_df$amy_str <- apply(sample_df[,c("amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")], 1, paste, collapse=",")
 
-sample_df$amy_class <- factor(sample_df$amy_str, levels=levels(combo_factors), labels=labels(combo_factors))
+sample_df$amy_class <- make.names(factor(sample_df$amy_str, levels=levels(combo_factors), labels=fac_labels))
 
 head(sample_df[, c("amy_str","amy_class")])
 
@@ -174,10 +175,10 @@ Ok now we know this structure works, lets build some models in earnest. Lets sho
 
 Here's the pipeline;
   1. Get the sample dataframe from the sqlite file
-  2. Melt it so we have a single "Y" value
-  3. Split it into train and test sets
-  4. Train models
-  5. Get predictions from models
+  2. Split it into train and test sets
+  3. Train models
+  4. Get predictions from models
+  5. Record confusion matrices
   6. Evaluate models
 
 ```{r Now for the real training}
@@ -194,6 +195,7 @@ train_rows_8 <- gen_rand_indices(n_row, length(amy_rows$rowid)*8, 1)
 train_rows <- list(train_rows_2, train_rows_4, train_rows_6, train_rows_8)
 
 results <- list()
+conf_results <- list()
 
 metric <- "logLoss"
 control <- trainControl(method="cv", number=10, classProbs= TRUE, summaryFunction = multiClassSummary)
@@ -208,34 +210,75 @@ for (index in train_rows){
   sample_df[, non_num_cols]<- sapply(sapply(sample_df[,non_num_cols], labels), as.numeric)
   sample_df$amy_class <- make.names(factor(sample_df$amy_str, levels=levels(combo_factors), labels=labels(combo_factors)))
   sample_df <- droplevels(sample_df)
-  #sample_df <- select(sample_df,non_amy_cols,"amy_class")
-  
+
   frames <- train_test_split(sample_df, 0.75)
   train_samp <- as.data.frame(frames[1])
   test_samp <- as.data.frame(frames[2])
+  y_test <- factor(test_samp$amy_class, levels=fac_labels)
 
-  knn_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="kknn", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  knn_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="kknn", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  knn_pred <- factor(as.character(
+    predict(knn_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
   
-  pda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  knn_conf <- confusionMatrix(knn_pred, y_test)
   
-  sda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="sda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  pda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pda", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  pda_pred <- factor(as.character(
+    predict(pda_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
   
-  slda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="slda", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  pda_conf <- confusionMatrix(pda_pred, y_test)
   
-  c5_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="C5.0Tree", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  sda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="sda", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  sda_pred <- factor(as.character(
+    predict(sda_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
   
-  pls_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pls", metric=metric, trControl = control, preProcess = c("center", "scale"))
+  sda_conf <- confusionMatrix(sda_pred, y_test)
+  
+  slda_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="slda", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  slda_pred <- factor(as.character(
+    predict(slda_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
+  
+  slda_conf <- confusionMatrix(slda_pred, y_test)
+  
+  c5_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="C5.0Tree", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  c5_pred <- factor(as.character(
+    predict(c5_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
+  
+  c5_conf <- confusionMatrix(c5_pred, y_test)
+  
+  
+  pls_mod <- train(x=train_samp[,non_amy_cols], y=train_samp$amy_class, method="pls", metric=metric, trControl = control, preProcess = c("center", "scale"), verbose=FALSE)
+  pls_pred <- factor(as.character(
+    predict(pls_mod, newdata=test_samp, type="raw", dataType="Test")),
+    levels=fac_labels
+    )
+  
+  pls_conf <- confusionMatrix(pls_pred, y_test)
   
   models <- list(knn_mod, pda_mod, sda_mod, slda_mod, c5_mod, pls_mod)
+  conf_matrices <- list(knn_conf, pda_conf, sda_conf, slda_conf, c5_conf, pls_conf)
   
   count <- count + 1
   
   results[[length(results)+1]] <- models
+  conf_results[[length(conf_results)+1]] <- conf_matrices
 }
-
 ```
 
-```{r Model eval}
+Now lets make some visualizations of performance.
+
+```{r Model eval - metrics}
+# Metric figures
 count <- 0
 for (res in results){
   resample_results <- resamples(list(
@@ -274,4 +317,105 @@ for (res in results){
   count <- count + 1
 }
 
+```
+
+```{r Model eval - Confusion matrices}
+# Lets get the possible classes from the training table
+con <- dbConnect(RSQLite::SQLite(),dbname="D:/GitHub/BMIN503_Final_Project/training_final.db")
+amy_poss <- dbGetQuery(
+  con, 
+  "SELECT DISTINCT amyloid_1, amyloid_2, amyloid_3, amyloid_4, amyloid_5
+  FROM train"
+  )
+dbDisconnect(con)
+
+amy_poss$amy_str <- apply(amy_poss[,c("amyloid_1","amyloid_2","amyloid_3","amyloid_4","amyloid_5")], 1, paste, collapse=",")
+
+amy_poss$amy_class <- make.names(factor(amy_poss$amy_str, levels=levels(combo_factors), labels=labels(combo_factors)))
+amy_poss
+```
+```{r}
+library(scales)
+class_to_str <- function(class){
+  amy_str_map <- first(select(filter(amy_poss, amy_class==class), amy_str))
+  return(amy_str_map)
+}
+
+count <- 0
+for (lst in conf_results){
+  matrix <- lst[[5]]
+  conf_table <- as.data.frame(matrix$table) %>%
+    filter(Reference %in% amy_poss$amy_class & Prediction %in% amy_poss$amy_class) %>%
+    melt
+
+  conf_table$Prediction_class <- sapply(conf_table$Prediction, class_to_str)
+  conf_table$Reference_class <- sapply(conf_table$Reference, class_to_str)
+  conf_table$value_scaled <- conf_table$value / max(conf_table$value)
+
+  conf_plot_label <- ggplot(conf_table, aes(x=Reference_class, y=reorder(Prediction_class, desc(Prediction_class)), fill=rescale(log(value_scaled), to=c(-1,1)))) +
+    geom_tile() +
+    scale_fill_gradient(name="Log Value Scaled",low="white",high="steelblue") +
+    geom_text(aes(x=Reference_class, y=Prediction_class, label=value)) +
+    scale_x_discrete(position="top") +
+    theme(axis.text.x = element_text(angle=90, hjust=1)) +
+    labs(x="Reference", y="Prediction")
+  
+  ggsave(paste0("conf_plot_label_",count,".png"), conf_plot_label, width=8.6, height=8, units="in", dpi=200)
+  
+  conf_plot <- ggplot(conf_table, aes(x=Reference_class, y=reorder(Prediction_class, desc(Prediction_class)), fill=rescale(log(value_scaled), to=c(-1,1)))) +
+    geom_tile() +
+    scale_fill_gradient(name="Log Value Scaled", low="white",high="steelblue") +
+    scale_x_discrete(position="top") +
+    theme(axis.text.x = element_text(angle=90, hjust=1)) +
+    labs(x="Reference", y="Prediction")
+  
+  ggsave(paste0("conf_plot_",count,".png"), conf_plot, width=8.6, height=8, units="in", dpi=200)
+  
+  count <- count + 1
+}
+
+# Save one bad example
+bad_mat <- lst[[6]]
+conf_table <- as.data.frame(bad_mat$table) %>%
+  filter(Reference %in% amy_poss$amy_class & Prediction %in% amy_poss$amy_class) %>%
+  melt
+
+conf_table$Prediction_class <- sapply(conf_table$Prediction, class_to_str)
+conf_table$Reference_class <- sapply(conf_table$Reference, class_to_str)
+conf_table$value_scaled <- conf_table$value / max(conf_table$value)
+
+conf_plot_label <- ggplot(conf_table, aes(x=Reference_class, y=reorder(Prediction_class, desc(Prediction_class)), fill=rescale(log(value_scaled), to=c(-1,1)))) +
+  geom_tile() +
+  scale_fill_gradient(name="Log Value Scaled", low="white",high="steelblue") +
+  geom_text(aes(x=Reference_class, y=Prediction_class, label=value)) +
+  scale_x_discrete(position="top") +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) +
+  labs(x="Reference", y="Prediction")
+
+ggsave("bad_conf_plot_label.png", conf_plot_label, width=8.6, height=8, units="in", dpi=200)
+
+conf_plot <- ggplot(conf_table, aes(x=Reference_class, y=reorder(Prediction_class, desc(Prediction_class)), fill=rescale(log(value_scaled), to=c(-1,1)))) +
+  geom_tile() +
+  scale_fill_gradient(name="Log Value Scaled", low="white",high="steelblue") +
+  scale_x_discrete(position="top") +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) +
+  labs(x="Reference", y="Prediction")
+
+ggsave("bad_conf_plot.png", conf_plot, width=8.6, height=8, units="in", dpi=200)
+
+```
+
+```{r Save the models}
+model_names <- list("knn","pda","sda","slda","c5tree","pls")
+res_num <- 1
+model_count <- 1
+for (res in results){
+  for (model in res){
+    model_name <- paste0(model_names[[model_count]],"_",res_num,".RData")
+    save(model, file=model_name)
+    model_count <- model_count + 1
+  }
+  model_count <- 1
+  res_num <- res_num + 1
+}
 ```
