@@ -1,0 +1,1698 @@
+---
+title: "Baseline Simulation: Data Generation"
+author: "Erin Schnellinger"
+date: "October 11, 2018"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this document, we simulate a post-transplant population based on the UNOS 2007-2015 data. More specifically, we generate separate cohorts of individuals at each year, with the size of each cohort comparable to the UNOS post-transplant sample size at that year. The number of individuals within each diagnosis category are consistent with UNOS data as well. 
+
+We assume that continuous covariates (e.g., LAS predictors such as age, creatinine, oxygen requirement, and six-minute walk distance) follow normal distributions, with means and variances equal to those shown in the violin plots in the "Summaries For Simulations Part 2.Rmd" document. In situations where negative values would be nonsensical (e.g., negative oxygen or negative six-minute walk distance), we truncate the simulated data at reasonable values, as per Peter's email on 23 August 2018.
+
+Dichotomous covariates (e.g. cardiac index, mechanical ventilation, functional status) are drawn from a binomial distribution with success probabilities equal to the proportion of individuals receiving a "1" in the UNOS data.
+
+One-year post-transplant survival is initially treated as a binary outcome, allowing us to simulate it based on the estimated intercept of a null logistic regression model fitted at each year of interest. Plausible coefficient values are obtained from the aforementioned Summary document as well.
+
+
+## Data Generation
+
+Since we would like to make our simulations as epidemiologically realistic as possible, we start by re-running the portion of "Summaries For Simulations Part 2.Rmd" which loads and cleans the UNOS data:
+
+```{r}
+# Attach relevant packages on which this code relies
+library(haven)
+library(stats)
+library(ggplot2)
+library(gcookbook)
+library(survival)
+library(gdata)
+library(gtools)
+library(gmodels)
+library(gplots)
+library(cmprsk)
+library(ipw)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(zoo)
+library(gsubfn)
+library(tidyr)
+library(pastecs)
+library(reshape2)
+library(pROC)
+
+# Load the raw data sets
+LAS_hist <- read_dta("K:/Data/UNOS-Lung/THORACIC_LAS_HISTORY_DATA.DTA")
+LAS_audit <- read_dta("K:/Data/UNOS-Lung/THORACIC_LAS_AUDIT_DATA.DTA")
+thoracic <- read_dta("K:/Data/UNOS-Lung/THORACIC_DATA.DTA")
+
+# Load the temp data set from Michael's Stata code
+UNOSclean <- read_dta("K:/Data/_temp.dta")
+
+# Format the variables
+UNOSclean$pstatus <- as.numeric(UNOSclean$pstatus)
+UNOSclean$age <- as.numeric(UNOSclean$age)
+
+UNOSclean$white <- as.numeric(UNOSclean$ethcat %in% 1)
+UNOSclean$race <- factor(UNOSclean$ethcat)
+levels(UNOSclean$race) <- c("White","Black","Hispanic","Others","Others","Others","Others","Others")
+
+# Patient's variables
+UNOSclean$gender <- factor(UNOSclean$gender, labels=c("Female","Male"))
+UNOSclean$reg <- factor(UNOSclean$region)
+UNOSclean$insur <- factor(UNOSclean$pri_payment_trr)
+levels(UNOSclean$insur) <- c("Private","Medicaid","Medicare","Medicare","Medicaid","VA/Gov","VA/Gov","Other","Other","Other","VA/Gov")
+UNOSclean$insur2 <- as.character(UNOSclean$insur)
+UNOSclean$insur2[is.na(UNOSclean$insur)] <- "Unknown"
+UNOSclean$insur2 <- factor(UNOSclean$insur2)
+UNOSclean$insur2 <- reorder(UNOSclean$insur2, new.order=c(4,2,1,6,3,5))
+UNOSclean$aboc <- factor(UNOSclean$abo)
+levels(UNOSclean$aboc) <- c("A","A","A","A","AB","AB","B","O")
+
+UNOSclean <- UNOSclean[UNOSclean$txed==1,]
+
+#UNOSclean$tx <- factor(UNOSclean$tx_type, labels=c("BLT","SLT"))
+UNOSclean$las <- UNOSclean$end_match_las
+
+UNOSclean$bmic <- factor(cut(UNOSclean$bmi_calc, c(12.5,18.5,25,30,35,45), right=F), labels=c("<18.5","18.5-25","25-30","30-35","35+"))
+
+
+UNOSclean$dongender <- factor(UNOSclean$gender_don, labels=c("Female","Male"))
+UNOSclean$donrace <- factor(UNOSclean$ethcat_don)
+levels(UNOSclean$donrace) <- c("White","Non-white","Non-white","Non-white","Non-white","Non-white","Non-white")
+
+UNOSclean$donpulmi <- factor(UNOSclean$pulm_inf_don, labels=c("No","Yes"))
+UNOSclean$donsmoke2 <- factor(UNOSclean$hist_cig_don)
+levels(UNOSclean$donsmoke2) <- c("Unkown","No","Unkown","Yes")
+UNOSclean$donsmoke2 <- reorder(UNOSclean$donsmoke2, new.order=c(2,3,1))
+UNOSclean$donsmoke <- UNOSclean$donsmoke2
+levels(UNOSclean$donsmoke) <- c("No","Yes",NA)
+UNOSclean$dondrug2 <- factor(UNOSclean$hist_oth_drug_don)
+levels(UNOSclean$dondrug2) <- c("Unkown","No","Unkown","Yes")
+UNOSclean$dondrug2 <- reorder(UNOSclean$dondrug2, new.order=c(2,3,1))
+UNOSclean$dondrug <- UNOSclean$dondrug2
+levels(UNOSclean$dondrug) <- c("No","Yes",NA)
+UNOSclean$pO2 <- factor(cut(UNOSclean$po2, c(0,300,770), right=F), labels=c("Low pO2","Normal pO2"))
+UNOSclean$pO2 <- reorder(UNOSclean$pO2, new.order=c(2,1))
+UNOSclean$caudec <- factor(UNOSclean$cod_cad_don, labels=c("Anoxia","CVA/Stroke", "Head trauma","CNS tumor","Other"))
+UNOSclean$dx <- factor(UNOSclean$diag_group, labels=c("Obstructive dx", "Pulm Htx", "CF", "Pulm fibrosis"))
+
+UNOSclean$ytx <- as.numeric(as.character(UNOSclean$yr_trxp))
+UNOSclean$calc_vent_use <- as.factor(UNOSclean$calc_vent_use)
+
+
+# Remove 2006 data due to incompleteness, 
+# remove 2016 data due to the fact that nearly 50% of patients have follow-up times < 1 year,
+# center the resulting year around 2007
+UNOSclean2 <- subset(UNOSclean, !(UNOSclean$ytx %in% c(2006, 2016)))
+UNOSclean2$ytx_cent <- UNOSclean2$ytx - 2007
+
+
+
+# Use Last Observation Carried Forward on the LAS history file to fill in missing values (within individuals)
+# See https://stackoverflow.com/questions/23818493/carry-last-observation-forward-by-id-in-r
+
+LAS_hist2 <- transform(LAS_hist, ci = fn$ave(ci, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_o2 = fn$ave(calc_o2, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_vent_use = fn$ave(calc_vent_use, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, creatinine = fn$ave(creatinine, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, serum = fn$ave(serum, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, func_stat = fn$ave(func_stat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_func_stat = fn$ave(calc_func_stat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+LAS_hist2 <- transform(LAS_hist2, calc_six_min_walk = fn$ave(calc_six_min_walk, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+
+# Use Last Observation Carried Forward on the Thoracic file to fill in missing values (within individuals)
+thoracic2 <- transform(thoracic, age = fn$ave(age, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, init_creat = fn$ave(init_creat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, end_creat = fn$ave(end_creat, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+#thoracic2 <- transform(thoracic2, most_rcnt_creat=fn$ave(most_rcnt_creat,wl_id_code, FUN=~na.locf(x, na.rm=FALSE)))
+thoracic2 <- transform(thoracic2, func_stat_trr = fn$ave(func_stat_trr, wl_id_code, FUN = ~ na.locf(x, na.rm=FALSE)))
+
+# Create the "complete creatinine" variable, which equals "serum" in 2007-2014 and "creatinine" in 2015
+LAS_hist2$compcreat <- rep(NA, nrow(LAS_hist2))
+
+for (i in 1:nrow(LAS_hist2)){
+  if (LAS_hist2$chg_date[i]<"2015-01-01"){
+    LAS_hist2$compcreat[i] <- LAS_hist2$serum[i]
+  } else {
+    LAS_hist2$compcreat[i] <- LAS_hist2$creatinine[i]
+  }
+}
+
+
+# Lag the "compcreat" and date values by 1 within individuals
+# See: https://stackoverflow.com/questions/26291988/how-to-create-a-lag-variable-within-each-group/26292059
+
+LAS_hist3 <- 
+    LAS_hist2 %>%
+    group_by(wl_id_code) %>%
+    mutate(lag.compcreat = dplyr::lag(compcreat, n = 1, default = NA),
+           lag.chg_date = dplyr::lag(chg_date, n = 1, default = NA))
+
+# Compute creatinine increase (compare values between visits within 6 months of each other), and flag if >= 150%
+LAS_hist3$creatincp <- rep(NA, nrow(LAS_hist3))  # initialize creatinine increase indicator
+
+for (i in 1:nrow(LAS_hist3)){
+  if (!is.na(LAS_hist3$chg_date[i]) && !is.na(LAS_hist3$lag.chg_date[i])){
+    if(as.numeric(abs(LAS_hist3$chg_date[i]-LAS_hist3$lag.chg_date[i]))< 182.5){  # Ensure visits are within 6 months
+      LAS_hist3$creatincp[i]<-(abs(LAS_hist3$compcreat[i]-LAS_hist3$lag.compcreat[i])/LAS_hist3$lag.compcreat[i])*100
+    } else {
+      LAS_hist3$creatincp[i] <- 0
+  }
+    } else {
+      LAS_hist3$creatincp[i] <- NA
+  }
+}
+
+
+
+# Initialize creatinine increase flag
+LAS_hist3$creatincp_flag <- rep(NA, nrow(LAS_hist3))
+
+for (i in 1:nrow(LAS_hist3)){ # Loop over each row
+  if (!is.na(LAS_hist3$creatincp[i]) && LAS_hist3$creatincp[i] >= 150 &&
+      max(LAS_hist3$compcreat[i], LAS_hist3$lag.compcreat[i]) >= 1){
+    LAS_hist3$creatincp_flag[i] <- 1
+    } else if (!is.na(LAS_hist3$creatincp[i]) && 
+               ((LAS_hist3$creatincp[i] < 150) | (max(LAS_hist3$compcreat[i], LAS_hist3$lag.compcreat[i]) < 1))){
+      LAS_hist3$creatincp_flag[i] <- 0
+    }
+}
+
+
+
+# Convert creatinine increase flag to a factor variable
+LAS_hist3$creatincp_flag <- as.factor(LAS_hist3$creatincp_flag)
+summary(LAS_hist3$creatincp_flag)
+
+
+# Merge the filled-in data sets together, and then merge these with the post-transplant data set provided by Michael Harhay
+raw_locf <- merge(x=thoracic2, y=LAS_hist3, by=c("wl_id_code"))
+
+temp_locf <- merge(x=UNOSclean2, y=LAS_hist3, by=c("wl_id_code", "chg_date"))
+
+temp_locf2 <- merge(x=UNOSclean2, y=raw_locf, by=c("wl_id_code", "chg_date"))
+
+UNOSclean3 <- temp_locf2
+UNOSclean3$calc_vent_use.y <- as.factor(UNOSclean3$calc_vent_use.y)
+
+# Rename filled-in variables back to their original names
+UNOSclean4 <- dplyr::rename(UNOSclean3, 
+                            age = age.y,
+                            ci = ci.y,
+                            calc_o2 = calc_o2.y,
+                            calc_vent_use = calc_vent_use.y,
+                            creatinine = creatinine.y,
+                            init_creat = init_creat.y,
+                            end_creat = end_creat.y,
+                            func_stat_trr = func_stat_trr.y,
+                            calc_six_min_walk = calc_six_min_walk.y,
+                            tx_date = tx_date.y)
+
+
+# Create an "ever increase" indicator which equals 1 if a patient ever experienced an increase in creatinine >= 150%,
+# and 0 if a patient never experienced an increase in creatinine >= 150%
+
+UNOSclean4$ever_creatinc <- rep(NA, nrow(UNOSclean4))  # initialize "ever increase" indicator
+creatincids <- LAS_hist3$wl_id_code[which(LAS_hist3$creatincp_flag==1)]  # Get ID # of people with flag==1
+nocreatincids <- LAS_hist3$wl_id_code[which(LAS_hist3$creatincp_flag==0)]  # Get ID # of people with flag==0
+
+for (i in 1:nrow(UNOSclean4)){ # Loop over each row in the clean data set
+    if (UNOSclean4$wl_id_code[i] %in% creatincids){  # If ID # matches and flag==1
+      UNOSclean4$ever_creatinc[i] <- 1
+      } else if (UNOSclean4$wl_id_code[i] %in% nocreatincids){  # If ID # matches and flag==0
+         UNOSclean4$ever_creatinc[i] <- 0
+      } else {  # Otherwise, creatinine increase is missing
+        UNOSclean4$ever_creatinc[i] <- NA
+      }
+  }
+
+# Convert to a factor variable
+UNOSclean4$ever_creatinc <- as.factor(UNOSclean4$ever_creatinc)
+
+# Print ID # of people who have ever experienced a creatinine increase >=150%, and the years in which they appear
+summary(UNOSclean4$ever_creatinc)
+UNOSclean4$wl_id_code[which(UNOSclean4$wl_id_code %in% creatincids)]
+UNOSclean4$ytx[which(UNOSclean4$wl_id_code %in% creatincids)]
+
+
+# ALTERNATIVE APPROACH: Compute change in creatinine as difference between END_CREAT and LAG.COMPCREAT
+UNOSclean4$creatinc2 <- rep(NA, nrow(UNOSclean4))  # initialize creatinine increase indicator
+
+for (i in 1:nrow(UNOSclean4)){
+  if (!is.na(UNOSclean4$tx_date[i]) && !is.na(UNOSclean4$lag.chg_date[i])){
+    if(as.numeric(abs(UNOSclean4$tx_date[i]-UNOSclean4$lag.chg_date[i]))<182.5){ #Ensure visits are within 6 months
+  UNOSclean4$creatinc2[i]<-(abs(UNOSclean4$end_creat[i]-UNOSclean4$lag.compcreat[i])/UNOSclean4$lag.compcreat[i])*100
+    } else {
+      UNOSclean4$creatinc2[i] <- 0
+  }
+    } else {
+      UNOSclean4$creatinc2[i] <- NA
+  }
+}
+
+# Initialize creatinine increase flag
+UNOSclean4$creatinc2_flag <- rep(NA, nrow(UNOSclean4))
+
+for (i in 1:nrow(UNOSclean4)){ # Loop over each row
+  if (!is.na(UNOSclean4$creatinc2[i]) && (UNOSclean4$creatinc2[i] >= 150) && 
+      (max(UNOSclean4$end_creat[i],UNOSclean4$lag.compcreat[i]) >= 1)){
+    UNOSclean4$creatinc2_flag[i] <- 1
+    } else if (!is.na(UNOSclean4$creatinc2[i]) && 
+               ((UNOSclean4$creatinc2[i] < 150) | (max(UNOSclean4$end_creat[i],UNOSclean4$lag.compcreat[i]) < 1))){
+      UNOSclean4$creatinc2_flag[i] <- 0
+    }
+}
+
+# Convert creatinine increase flag to a factor variable
+UNOSclean4$creatinc2_flag <- as.factor(UNOSclean4$creatinc2_flag)
+summary(UNOSclean4$creatinc2_flag)
+
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2007)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2008)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2009)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2010)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2011)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2012)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2013)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2014)])
+summary(UNOSclean4$creatinc2_flag[which(UNOSclean4$ytx==2015)])
+
+
+# Compute percentage of missingness for serum in LAS history data (both raw and LOCF) pre-2015
+# Compute percentage of missingness for creatinine in LAS history data (both raw and LOCF) post-2015
+
+# LAS History File - RAW
+misspct_LAShistraw_pre2015 <- (as.numeric(summary(LAS_hist$serum[which(LAS_hist$chg_date<"2015-01-01")])[7])/
+                                  length(LAS_hist$serum[which(LAS_hist$chg_date<"2015-01-01")]))*100
+
+misspct_LAShistraw_post2015 <- (as.numeric(summary(LAS_hist$creatinine[which(LAS_hist$chg_date>="2015-01-01")])[7])/
+                                   length(LAS_hist$creatinine[which(LAS_hist$chg_date>="2015-01-01")]))*100
+
+# LAS History File - LOCF
+misspct_LAShistLOCF_pre2015 <-(as.numeric(summary(LAS_hist3$serum[which(LAS_hist3$chg_date<"2015-01-01")])[7])/
+                                  length(LAS_hist3$serum[which(LAS_hist3$chg_date<"2015-01-01")]))*100
+
+misspct_LAShistLOCF_post2015<-(as.numeric(summary(LAS_hist3$creatinine[which(LAS_hist3$chg_date>="2015-01-01")])[7])/
+                                   length(LAS_hist3$creatinine[which(LAS_hist3$chg_date>="2015-01-01")]))*100
+
+
+# Create a table of the missingness percentages for creatinine 
+miss_creat_tab <- as.data.frame(rbind(c(misspct_LAShistraw_pre2015, misspct_LAShistraw_post2015),
+                                      c(misspct_LAShistLOCF_pre2015, misspct_LAShistLOCF_post2015)))
+
+colnames(miss_creat_tab) <- c("% Missing in 2007-2014", "% Missing in 2015")
+rownames(miss_creat_tab) <- c("LAS History: Serum Creatinine (Raw)", "LAS History: Serum Creatinine (LOCF)")
+
+print(miss_creat_tab)
+
+
+# Recode missing creatinine increase indicator values with 0 for modeling purposes
+for (i in 1:nrow(UNOSclean4)){
+  if (is.na(UNOSclean4$creatinc2_flag[i])){
+    UNOSclean4$creatinc2_flag[i] <- 0  # If creatinine increase flag is NA, replace with 0
+  }
+}
+  
+
+# Trim creatinine, cardiac index, and six-minute walk values above the 99th percentile
+UNOSclean4 <- UNOSclean4[UNOSclean4$end_creat < quantile(UNOSclean2$end_creat, 0.99), ]
+
+UNOSclean4 <- subset(UNOSclean4, (is.na(UNOSclean4$ci) | (UNOSclean4$ci < quantile(UNOSclean4$ci, 0.99, na.rm=TRUE))))
+
+UNOSclean4 <- subset(UNOSclean4, (is.na(UNOSclean4$calc_six_min_walk) | (UNOSclean4$calc_six_min_walk < quantile(UNOSclean4$calc_six_min_walk, 0.99, na.rm=TRUE))))
+
+
+# Center the age variable and six minute walk variable
+UNOSclean4$age_cent <- UNOSclean4$age - 45.9972602
+UNOSclean4$walk_cent <- 1200-UNOSclean4$calc_six_min_walk
+
+# Recode functional status
+UNOSclean4$func_stat_trr <- as.numeric(UNOSclean4$func_stat_trr)
+
+# Initialize binary indicator (1 if >=2050, 0 otherwise)
+UNOSclean4$func_stat_trr_bin <- rep(NA, nrow(UNOSclean4))
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] == 998){
+  UNOSclean4$func_stat_trr[i] <- NA  # Replace "998" with missing
+  }
+  
+  if(!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] >= 2050){
+    UNOSclean4$func_stat_trr_bin[i] <- 1
+  } else if (!(is.na(UNOSclean4$func_stat_trr[i])) && UNOSclean4$func_stat_trr[i] < 2050){
+    UNOSclean4$func_stat_trr_bin[i] <- 0
+  }
+}
+
+# Convert functional status into a factor variable
+UNOSclean4$func_stat_trr <- as.factor(UNOSclean4$func_stat_trr)
+UNOSclean4$func_stat_trr_bin <- as.factor(UNOSclean4$func_stat_trr_bin)
+
+
+# Recode Mechanical Ventilation
+# (indicator: 1=continuous mechanical ventilation, 0=everything else)
+
+UNOSclean4$calc_vent_use_bin <- rep(NA, nrow(UNOSclean4))  # Initialize indicator
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!is.na(UNOSclean4$calc_vent_use[i]) && UNOSclean4$calc_vent_use[i] == 2){
+    UNOSclean4$calc_vent_use_bin[i] <- 1
+  } else if (!is.na(UNOSclean4$calc_vent_use[i]) && !(UNOSclean4$calc_vent_use[i] == 2)){
+    UNOSclean4$calc_vent_use_bin[i] <- 0
+  }
+}
+
+# Convert indicator to a factor variable
+UNOSclean4$calc_vent_use_bin <- as.factor(UNOSclean4$calc_vent_use_bin)
+
+
+# Recode Cardiac Index
+# (indicator: 1 if cardiac index < 2 L/min/m^2, 0 otherwise)
+
+UNOSclean4$ci_bin <- rep(NA, nrow(UNOSclean4))  # Initialize indicator
+  
+for (i in 1:nrow(UNOSclean4)){ # Loop over each patient
+  if (!is.na(UNOSclean4$ci[i]) && UNOSclean4$ci[i] == 2){
+    UNOSclean4$ci_bin[i] <- 1
+  } else if (!is.na(UNOSclean4$ci[i]) && !(UNOSclean4$ci[i] == 2)){
+    UNOSclean4$ci_bin[i] <- 0
+  }
+}
+
+# Convert indicator to a factor variable
+UNOSclean4$ci_bin <- as.factor(UNOSclean4$ci_bin)
+
+
+# Subset the data by year
+UNOSclean4 <- as.data.frame(UNOSclean4[order(UNOSclean4$ytx),])
+UNOSclean4$pstatus <- as.numeric(UNOSclean4$pstatus.y)
+UNOSclean4$ptime <- UNOSclean4$ptime.y
+
+UNOS2007 <- subset(UNOSclean4, ytx==2007)
+UNOS2008 <- subset(UNOSclean4, ytx==2008)
+UNOS2009 <- subset(UNOSclean4, ytx==2009)
+UNOS2010 <- subset(UNOSclean4, ytx==2010)
+UNOS2011 <- subset(UNOSclean4, ytx==2011)
+UNOS2012 <- subset(UNOSclean4, ytx==2012)
+UNOS2013 <- subset(UNOSclean4, ytx==2013)
+UNOS2014 <- subset(UNOSclean4, ytx==2014)
+UNOS2015 <- subset(UNOSclean4, ytx==2015)
+
+# Create a vector of years for results table
+years <- as.data.frame(c(2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015))
+names(years) <- "Year"
+
+```
+
+We now initialize data-generation parameters by setting the incidence of the outcome and prevalence of risk factors equal to the observed values in the UNOS data:
+
+```{r}
+# Initialize simulation parameters. Only these parameters need to be changed.
+# If these parameters are changed, the rest of the code will update accordingly.
+
+# Enter in the total sample size at each year:
+num2007 <- nrow(UNOS2007)
+num2008 <- nrow(UNOS2008)
+num2009 <- nrow(UNOS2009)
+num2010 <- nrow(UNOS2010)
+num2011 <- nrow(UNOS2011)
+num2012 <- nrow(UNOS2012)
+num2013 <- nrow(UNOS2013)
+num2014 <- nrow(UNOS2014)
+num2015 <- nrow(UNOS2015)
+
+
+
+# Sample size by disease category, by year
+numdx2007 <- c(summary(UNOS2007$dx)[1], summary(UNOS2007$dx)[2], summary(UNOS2007$dx)[3], summary(UNOS2007$dx)[4])
+numdx2008 <- c(summary(UNOS2008$dx)[1], summary(UNOS2008$dx)[2], summary(UNOS2008$dx)[3], summary(UNOS2008$dx)[4])
+numdx2009 <- c(summary(UNOS2009$dx)[1], summary(UNOS2009$dx)[2], summary(UNOS2009$dx)[3], summary(UNOS2009$dx)[4])
+numdx2010 <- c(summary(UNOS2010$dx)[1], summary(UNOS2010$dx)[2], summary(UNOS2010$dx)[3], summary(UNOS2010$dx)[4])
+numdx2011 <- c(summary(UNOS2011$dx)[1], summary(UNOS2011$dx)[2], summary(UNOS2011$dx)[3], summary(UNOS2011$dx)[4])
+numdx2012 <- c(summary(UNOS2012$dx)[1], summary(UNOS2012$dx)[2], summary(UNOS2012$dx)[3], summary(UNOS2012$dx)[4])
+numdx2013 <- c(summary(UNOS2013$dx)[1], summary(UNOS2013$dx)[2], summary(UNOS2013$dx)[3], summary(UNOS2013$dx)[4])
+numdx2014 <- c(summary(UNOS2014$dx)[1], summary(UNOS2014$dx)[2], summary(UNOS2014$dx)[3], summary(UNOS2014$dx)[4])
+numdx2015 <- c(summary(UNOS2015$dx)[1], summary(UNOS2015$dx)[2], summary(UNOS2015$dx)[3], summary(UNOS2015$dx)[4])
+
+numdxtab <- as.data.frame(rbind(numdx2007, numdx2008, numdx2009,
+                                numdx2010, numdx2011, numdx2012,
+                                numdx2013, numdx2014, numdx2015))
+
+numdxtab <- as.data.frame(cbind(years, numdxtab))
+numdxtab$Year <- factor(numdxtab$Year)
+
+# Convert into long format
+library(tidyr)
+dxtablong <- gather(numdxtab, dx, count, 
+                    `Obstructive dx`:`Pulm fibrosis`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+dxtablong2 <- plyr::arrange(dxtablong, Year, dx)
+
+# Compute the cumulative sum
+dxtablong2 <- plyr::ddply(dxtablong2, "Year", transform, label_y = cumsum(count))
+
+
+# Do a group-wise transform by year and compute percents 
+pctdxtab <- plyr::ddply(dxtablong, "Year", transform, 
+                  pctdx = (count/sum(count))*100)
+
+# Enter the percentage of individuals in each disease category at each year.
+# 1 = Obstructive dx; 2 = Pulm Htx; 3 = CF; 4 = Pulm fibrosis:
+pctdx1_2007 <- pctdxtab$pctdx[1]
+pctdx2_2007 <- pctdxtab$pctdx[2]
+pctdx3_2007 <- pctdxtab$pctdx[3]
+pctdx4_2007 <- pctdxtab$pctdx[4]
+
+pctdx1_2008 <- pctdxtab$pctdx[5]
+pctdx2_2008 <- pctdxtab$pctdx[6]
+pctdx3_2008 <- pctdxtab$pctdx[7]
+pctdx4_2008 <- pctdxtab$pctdx[8]
+
+pctdx1_2009 <- pctdxtab$pctdx[9]
+pctdx2_2009 <- pctdxtab$pctdx[10]
+pctdx3_2009 <- pctdxtab$pctdx[11]
+pctdx4_2009 <- pctdxtab$pctdx[12]
+
+pctdx1_2010 <- pctdxtab$pctdx[13]
+pctdx2_2010 <- pctdxtab$pctdx[14]
+pctdx3_2010 <- pctdxtab$pctdx[15]
+pctdx4_2010 <- pctdxtab$pctdx[16]
+
+pctdx1_2011 <- pctdxtab$pctdx[17]
+pctdx2_2011 <- pctdxtab$pctdx[18]
+pctdx3_2011 <- pctdxtab$pctdx[19]
+pctdx4_2011 <- pctdxtab$pctdx[20]
+
+pctdx1_2012 <- pctdxtab$pctdx[21]
+pctdx2_2012 <- pctdxtab$pctdx[22]
+pctdx3_2012 <- pctdxtab$pctdx[23]
+pctdx4_2012 <- pctdxtab$pctdx[24]
+
+pctdx1_2013 <- pctdxtab$pctdx[25]
+pctdx2_2013 <- pctdxtab$pctdx[26]
+pctdx3_2013 <- pctdxtab$pctdx[27]
+pctdx4_2013 <- pctdxtab$pctdx[28]
+
+pctdx1_2014 <- pctdxtab$pctdx[29]
+pctdx2_2014 <- pctdxtab$pctdx[30]
+pctdx3_2014 <- pctdxtab$pctdx[31]
+pctdx4_2014 <- pctdxtab$pctdx[32]
+
+pctdx1_2015 <- pctdxtab$pctdx[33]
+pctdx2_2015 <- pctdxtab$pctdx[34]
+pctdx3_2015 <- pctdxtab$pctdx[35]
+pctdx4_2015 <- pctdxtab$pctdx[36]
+
+
+# Enter the mean and standard deviation for continuous covariates, or the percentage of individuals in each category for categorical covariates:
+
+# Age
+age_mean_2007 <- mean(UNOS2007$age, na.rm=TRUE)
+age_sd_2007 <- sd(UNOS2007$age, na.rm=TRUE)
+
+age_mean_2008 <- mean(UNOS2008$age, na.rm=TRUE)
+age_sd_2008 <- sd(UNOS2008$age, na.rm=TRUE)
+  
+age_mean_2009 <- mean(UNOS2009$age, na.rm=TRUE)
+age_sd_2009 <- sd(UNOS2009$age, na.rm=TRUE)
+  
+age_mean_2010 <- mean(UNOS2010$age, na.rm=TRUE)
+age_sd_2010 <- sd(UNOS2010$age, na.rm=TRUE)
+  
+age_mean_2011 <- mean(UNOS2011$age, na.rm=TRUE)
+age_sd_2011 <- sd(UNOS2011$age, na.rm=TRUE)
+  
+age_mean_2012 <- mean(UNOS2012$age, na.rm=TRUE)
+age_sd_2012 <- sd(UNOS2012$age, na.rm=TRUE)
+  
+age_mean_2013 <- mean(UNOS2013$age, na.rm=TRUE)
+age_sd_2013 <- sd(UNOS2013$age, na.rm=TRUE)
+  
+age_mean_2014 <- mean(UNOS2014$age, na.rm=TRUE)
+age_sd_2014 <- sd(UNOS2014$age, na.rm=TRUE)
+  
+age_mean_2015 <- mean(UNOS2015$age, na.rm=TRUE)
+age_sd_2015 <- sd(UNOS2015$age, na.rm=TRUE)
+
+
+
+# Sample size by cardiac index < 2 L/min/m^2 (dichotomous), by year
+numci2007 <- c(summary(UNOS2007$ci_bin)[1], summary(UNOS2007$ci_bin)[2])
+numci2008 <- c(summary(UNOS2008$ci_bin)[1], summary(UNOS2008$ci_bin)[2])
+numci2009 <- c(summary(UNOS2009$ci_bin)[1], summary(UNOS2009$ci_bin)[2])
+numci2010 <- c(summary(UNOS2010$ci_bin)[1], summary(UNOS2010$ci_bin)[2])
+numci2011 <- c(summary(UNOS2011$ci_bin)[1], summary(UNOS2011$ci_bin)[2])
+numci2012 <- c(summary(UNOS2012$ci_bin)[1], summary(UNOS2012$ci_bin)[2])
+numci2013 <- c(summary(UNOS2013$ci_bin)[1], summary(UNOS2013$ci_bin)[2])
+numci2014 <- c(summary(UNOS2014$ci_bin)[1], summary(UNOS2014$ci_bin)[2])
+numci2015 <- c(summary(UNOS2015$ci_bin)[1], summary(UNOS2015$ci_bin)[2])
+
+numcitab <- as.data.frame(rbind(numci2007, numci2008, numci2009,
+                                numci2010, numci2011, numci2012,
+                                numci2013, numci2014, numci2015))
+
+numcitab <- as.data.frame(cbind(years, numcitab))
+numcitab$Year <- factor(numcitab$Year)
+
+# Convert into long format
+citablong <- gather(numcitab, ci_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+citablong2 <- plyr::arrange(citablong, Year, ci_cat)
+
+# Compute the cumulative sum
+citablong2 <- plyr::ddply(citablong2, "Year", transform, label_y = cumsum(count))
+
+
+# Do a group-wise transform by year and compute percents 
+pctcitab <- plyr::ddply(citablong, "Year", transform, 
+                  pctci = (count/sum(count))*100)
+
+# Cardiac index (dichotomized: 1 if <2 L/min/m^2, and 0 otherwise)
+pct_ci0_2007 <- pctcitab$pctci[1]
+pct_ci1_2007 <- pctcitab$pctci[2]
+
+pct_ci0_2008 <- pctcitab$pctci[3]
+pct_ci1_2008 <- pctcitab$pctci[4]
+  
+pct_ci0_2009 <- pctcitab$pctci[5]
+pct_ci1_2009 <- pctcitab$pctci[6]
+  
+pct_ci0_2010 <- pctcitab$pctci[7]
+pct_ci1_2010 <- pctcitab$pctci[8]
+  
+pct_ci0_2011 <- pctcitab$pctci[9]
+pct_ci1_2011 <- pctcitab$pctci[10]
+  
+pct_ci0_2012 <- pctcitab$pctci[11]
+pct_ci1_2012 <- pctcitab$pctci[12]
+  
+pct_ci0_2013 <- pctcitab$pctci[13]
+pct_ci1_2013 <- pctcitab$pctci[14]
+  
+pct_ci0_2014 <- pctcitab$pctci[15]
+pct_ci1_2014 <- pctcitab$pctci[16]
+  
+pct_ci0_2015 <- pctcitab$pctci[17]
+pct_ci1_2015 <- pctcitab$pctci[18]
+
+
+# Sample size by mechanical ventilation (dichotomous), by year
+numvent2007 <- c(summary(UNOS2007$calc_vent_use_bin)[1], summary(UNOS2007$calc_vent_use_bin)[2])
+numvent2008 <- c(summary(UNOS2008$calc_vent_use_bin)[1], summary(UNOS2008$calc_vent_use_bin)[2])
+numvent2009 <- c(summary(UNOS2009$calc_vent_use_bin)[1], summary(UNOS2009$calc_vent_use_bin)[2])
+numvent2010 <- c(summary(UNOS2010$calc_vent_use_bin)[1], summary(UNOS2010$calc_vent_use_bin)[2])
+numvent2011 <- c(summary(UNOS2011$calc_vent_use_bin)[1], summary(UNOS2011$calc_vent_use_bin)[2])
+numvent2012 <- c(summary(UNOS2012$calc_vent_use_bin)[1], summary(UNOS2012$calc_vent_use_bin)[2])
+numvent2013 <- c(summary(UNOS2013$calc_vent_use_bin)[1], summary(UNOS2013$calc_vent_use_bin)[2])
+numvent2014 <- c(summary(UNOS2014$calc_vent_use_bin)[1], summary(UNOS2014$calc_vent_use_bin)[2])
+numvent2015 <- c(summary(UNOS2015$calc_vent_use_bin)[1], summary(UNOS2015$calc_vent_use_bin)[2])
+
+numventtab <- as.data.frame(rbind(numvent2007, numvent2008, numvent2009,
+                                  numvent2010, numvent2011, numvent2012,
+                                  numvent2013, numvent2014, numvent2015))
+
+numventtab <- as.data.frame(cbind(years, numventtab))
+numventtab$Year <- factor(numventtab$Year)
+
+# Convert into long format
+venttablong <- gather(numventtab, vent_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+venttablong2 <- plyr::arrange(venttablong, Year, vent_cat)
+
+# Compute the cumulative sum
+venttablong2 <- plyr::ddply(venttablong2, "Year", transform, label_y = cumsum(count))
+
+
+# Do a group-wise transform by year and compute percents 
+pctventtab <- plyr::ddply(venttablong, "Year", transform, 
+                  pctvent = (count/sum(count))*100)
+
+# Mechanical Ventilation (dichotomized: 1 if continuous ventilation, 0 otherwise)
+pct_vent0_2007 <- pctventtab$pctvent[1]
+pct_vent1_2007 <- pctventtab$pctvent[2]
+
+pct_vent0_2008 <- pctventtab$pctvent[3]
+pct_vent1_2008 <- pctventtab$pctvent[4]
+  
+pct_vent0_2009 <- pctventtab$pctvent[5]
+pct_vent1_2009 <- pctventtab$pctvent[6]
+  
+pct_vent0_2010 <- pctventtab$pctvent[7]
+pct_vent1_2010 <- pctventtab$pctvent[8]
+  
+pct_vent0_2011 <- pctventtab$pctvent[9]
+pct_vent1_2011 <- pctventtab$pctvent[10]
+  
+pct_vent0_2012 <- pctventtab$pctvent[11]
+pct_vent1_2012 <- pctventtab$pctvent[12]
+  
+pct_vent0_2013 <- pctventtab$pctvent[13]
+pct_vent1_2013 <- pctventtab$pctvent[14]
+
+pct_vent0_2014 <- pctventtab$pctvent[15]
+pct_vent1_2014 <- pctventtab$pctvent[16]
+  
+pct_vent0_2015 <- pctventtab$pctvent[17]
+pct_vent1_2015 <- pctventtab$pctvent[18]
+
+
+# Creatinine
+creat_mean_2007 <- mean(UNOS2007$end_creat, na.rm=TRUE)
+creat_sd_2007 <- sd(UNOS2007$end_creat, na.rm=TRUE)
+
+creat_mean_2008 <- mean(UNOS2008$end_creat, na.rm=TRUE)
+creat_sd_2008 <- sd(UNOS2008$end_creat, na.rm=TRUE)
+  
+creat_mean_2009 <- mean(UNOS2009$end_creat, na.rm=TRUE)
+creat_sd_2009 <- sd(UNOS2009$end_creat, na.rm=TRUE)
+  
+creat_mean_2010 <- mean(UNOS2010$end_creat, na.rm=TRUE)
+creat_sd_2010 <- sd(UNOS2010$end_creat, na.rm=TRUE)
+  
+creat_mean_2011 <- mean(UNOS2011$end_creat, na.rm=TRUE)
+creat_sd_2011 <- sd(UNOS2011$end_creat, na.rm=TRUE)
+  
+creat_mean_2012 <- mean(UNOS2012$end_creat, na.rm=TRUE)
+creat_sd_2012 <- sd(UNOS2012$end_creat, na.rm=TRUE)
+  
+creat_mean_2013 <- mean(UNOS2013$end_creat, na.rm=TRUE)
+creat_sd_2013 <- sd(UNOS2013$end_creat, na.rm=TRUE)
+  
+creat_mean_2014 <- mean(UNOS2014$end_creat, na.rm=TRUE)
+creat_sd_2014 <- sd(UNOS2014$end_creat, na.rm=TRUE)
+  
+creat_mean_2015 <- mean(UNOS2015$end_creat, na.rm=TRUE)
+creat_sd_2015 <- sd(UNOS2015$end_creat, na.rm=TRUE)
+
+
+
+# Sample size by creatinine increase indicator, by year
+numcii2007 <- c(summary(UNOS2007$creatinc2_flag)[1],
+                summary(UNOS2007$creatinc2_flag)[2])
+
+numcii2008 <- c(summary(UNOS2008$creatinc2_flag)[1],
+                summary(UNOS2008$creatinc2_flag)[2])
+
+numcii2009 <- c(summary(UNOS2009$creatinc2_flag)[1],
+                summary(UNOS2009$creatinc2_flag)[2])
+
+numcii2010 <- c(summary(UNOS2010$creatinc2_flag)[1],
+                summary(UNOS2010$creatinc2_flag)[2])
+
+numcii2011 <- c(summary(UNOS2011$creatinc2_flag)[1],
+                summary(UNOS2011$creatinc2_flag)[2])
+
+numcii2012 <- c(summary(UNOS2012$creatinc2_flag)[1],
+                summary(UNOS2012$creatinc2_flag)[2])
+
+numcii2013 <- c(summary(UNOS2013$creatinc2_flag)[1],
+                summary(UNOS2013$creatinc2_flag)[2])
+
+numcii2014 <- c(summary(UNOS2014$creatinc2_flag)[1],
+                summary(UNOS2014$creatinc2_flag)[2])
+
+numcii2015 <- c(summary(UNOS2015$creatinc2_flag)[1],
+                summary(UNOS2015$creatinc2_flag)[2])
+
+
+numciitab <- as.data.frame(rbind(numcii2007, numcii2008, numcii2009,
+                                 numcii2010, numcii2011, numcii2012,
+                                 numcii2013, numcii2014, numcii2015))
+
+numciitab <- as.data.frame(cbind(years, numciitab))
+numciitab$Year <- factor(numciitab$Year)
+
+# Convert into long format
+ciitablong <- gather(numciitab, cii_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and creatinine increase indicator
+ciitablong2 <- plyr::arrange(ciitablong, Year, cii_cat)
+
+# Compute the cumulative sum
+ciitablong2 <- plyr::ddply(ciitablong2, "Year", transform, label_y = cumsum(count))
+
+# Do a group-wise transform by year and compute percents 
+pctciitab <- plyr::ddply(ciitablong, "Year", transform, 
+                  pctcii = (count/sum(count))*100)
+
+# Creatinine Increase>=150% (dichotomized, by year)
+pct_cii0_2007 <- pctciitab$pctcii[1]
+pct_cii1_2007 <- pctciitab$pctcii[2]
+
+pct_cii0_2008 <- pctciitab$pctcii[3]
+pct_cii1_2008 <- pctciitab$pctcii[4]
+
+pct_cii0_2009 <- pctciitab$pctcii[5]
+pct_cii1_2009 <- pctciitab$pctcii[6]
+  
+pct_cii0_2010 <- pctciitab$pctcii[7]
+pct_cii1_2010 <- pctciitab$pctcii[8]
+  
+pct_cii0_2011 <- pctciitab$pctcii[9]
+pct_cii1_2011 <- pctciitab$pctcii[10]
+  
+pct_cii0_2012 <- pctciitab$pctcii[11]
+pct_cii1_2012 <- pctciitab$pctcii[12]
+  
+pct_cii0_2013 <- pctciitab$pctcii[13]
+pct_cii1_2013 <- pctciitab$pctcii[14]
+  
+pct_cii0_2014 <- pctciitab$pctcii[15]
+pct_cii1_2014 <- pctciitab$pctcii[16]
+  
+pct_cii0_2015 <- pctciitab$pctcii[17]
+pct_cii1_2015 <- pctciitab$pctcii[18]
+
+
+
+# Sample size by functional status (dichotomous), by year
+numfst2007 <- c(summary(UNOS2007$func_stat_trr_bin)[1], summary(UNOS2007$func_stat_trr_bin)[2])
+numfst2008 <- c(summary(UNOS2008$func_stat_trr_bin)[1], summary(UNOS2008$func_stat_trr_bin)[2])
+numfst2009 <- c(summary(UNOS2009$func_stat_trr_bin)[1], summary(UNOS2009$func_stat_trr_bin)[2])
+numfst2010 <- c(summary(UNOS2010$func_stat_trr_bin)[1], summary(UNOS2010$func_stat_trr_bin)[2])
+numfst2011 <- c(summary(UNOS2011$func_stat_trr_bin)[1], summary(UNOS2011$func_stat_trr_bin)[2])
+numfst2012 <- c(summary(UNOS2012$func_stat_trr_bin)[1], summary(UNOS2012$func_stat_trr_bin)[2])
+numfst2013 <- c(summary(UNOS2013$func_stat_trr_bin)[1], summary(UNOS2013$func_stat_trr_bin)[2])
+numfst2014 <- c(summary(UNOS2014$func_stat_trr_bin)[1], summary(UNOS2014$func_stat_trr_bin)[2])
+numfst2015 <- c(summary(UNOS2015$func_stat_trr_bin)[1], summary(UNOS2015$func_stat_trr_bin)[2])
+
+numfsttab <- as.data.frame(rbind(numfst2007, numfst2008, numfst2009,
+                                 numfst2010, numfst2011, numfst2012,
+                                 numfst2013, numfst2014, numfst2015))
+
+numfsttab <- as.data.frame(cbind(years, numfsttab))
+numfsttab$Year <- factor(numfsttab$Year)
+
+# Convert into long format
+fsttablong <- gather(numfsttab, fst_cat, count, 
+                    `0`:`1`,
+                    factor_key=TRUE)
+
+# Sort the data by year and disease category
+fsttablong2 <- plyr::arrange(fsttablong, Year, fst_cat)
+
+# Compute the cumulative sum
+fsttablong2 <- plyr::ddply(fsttablong2, "Year", transform, label_y = cumsum(count))
+
+
+# Do a group-wise transform by year and compute percents 
+pctfsttab <- plyr::ddply(fsttablong, "Year", transform, 
+                  pctfst = (count/sum(count))*100)
+
+# Functional Status (dichotomized: 1 if >=2050, 0 otherwise)
+pct_fst0_2007 <- pctfsttab$pctfst[1]
+pct_fst1_2007 <- pctfsttab$pctfst[2]
+
+pct_fst0_2008 <- pctfsttab$pctfst[3]
+pct_fst1_2008 <- pctfsttab$pctfst[4]
+
+pct_fst0_2009 <- pctfsttab$pctfst[5]
+pct_fst1_2009 <- pctfsttab$pctfst[6]
+  
+pct_fst0_2010 <- pctfsttab$pctfst[7]
+pct_fst1_2010 <- pctfsttab$pctfst[8]
+  
+pct_fst0_2011 <- pctfsttab$pctfst[9]
+pct_fst1_2011 <- pctfsttab$pctfst[10]
+  
+pct_fst0_2012 <- pctfsttab$pctfst[11]
+pct_fst1_2012 <- pctfsttab$pctfst[12]
+  
+pct_fst0_2013 <- pctfsttab$pctfst[13]
+pct_fst1_2013 <- pctfsttab$pctfst[14]
+  
+pct_fst0_2014 <- pctfsttab$pctfst[15]
+pct_fst1_2014 <- pctfsttab$pctfst[16]
+  
+pct_fst0_2015 <- pctfsttab$pctfst[17]
+pct_fst1_2015 <- pctfsttab$pctfst[18]
+
+
+# Oxygen Requirement
+o2_mean_2007 <- mean(UNOS2007$calc_o2, na.rm=TRUE)
+o2_sd_2007 <- sd(UNOS2007$calc_o2, na.rm=TRUE)
+
+o2_mean_2008 <- mean(UNOS2008$calc_o2, na.rm=TRUE)
+o2_sd_2008 <- sd(UNOS2008$calc_o2, na.rm=TRUE)
+  
+o2_mean_2009 <- mean(UNOS2009$calc_o2, na.rm=TRUE)
+o2_sd_2009 <- sd(UNOS2009$calc_o2, na.rm=TRUE)
+  
+o2_mean_2010 <- mean(UNOS2010$calc_o2, na.rm=TRUE)
+o2_sd_2010 <- sd(UNOS2010$calc_o2, na.rm=TRUE)
+  
+o2_mean_2011 <- mean(UNOS2011$calc_o2, na.rm=TRUE)
+o2_sd_2011 <- sd(UNOS2011$calc_o2, na.rm=TRUE)
+  
+o2_mean_2012 <- mean(UNOS2012$calc_o2, na.rm=TRUE)
+o2_sd_2012 <- sd(UNOS2012$calc_o2, na.rm=TRUE)
+  
+o2_mean_2013 <- mean(UNOS2013$calc_o2, na.rm=TRUE)
+o2_sd_2013 <- sd(UNOS2013$calc_o2, na.rm=TRUE)
+  
+o2_mean_2014 <- mean(UNOS2014$calc_o2, na.rm=TRUE)
+o2_sd_2014 <- sd(UNOS2014$calc_o2, na.rm=TRUE)
+  
+o2_mean_2015 <- mean(UNOS2015$calc_o2, na.rm=TRUE)
+o2_sd_2015 <- sd(UNOS2015$calc_o2, na.rm=TRUE)
+
+
+
+# Six-minute walk distance (feet)
+walk_mean_2007 <- mean(UNOS2007$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2007 <- sd(UNOS2007$calc_six_min_walk, na.rm=TRUE)
+
+walk_mean_2008 <- mean(UNOS2008$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2008 <- sd(UNOS2008$calc_six_min_walk, na.rm=TRUE)
+log_walk_mean_2008 <- log(mean(UNOS2008$calc_six_min_walk, na.rm=TRUE))
+log_walk_sd_2008 <- log(sd(UNOS2008$calc_six_min_walk, na.rm=TRUE))
+  
+walk_mean_2009 <- mean(UNOS2009$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2009 <- sd(UNOS2009$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2010 <- mean(UNOS2010$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2010 <- sd(UNOS2010$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2011 <- mean(UNOS2011$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2011 <- sd(UNOS2011$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2012 <- mean(UNOS2012$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2012 <- sd(UNOS2012$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2013 <- mean(UNOS2013$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2013 <- sd(UNOS2013$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2014 <- mean(UNOS2014$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2014 <- sd(UNOS2014$calc_six_min_walk, na.rm=TRUE)
+  
+walk_mean_2015 <- mean(UNOS2015$calc_six_min_walk, na.rm=TRUE)
+walk_sd_2015 <- sd(UNOS2015$calc_six_min_walk, na.rm=TRUE)
+
+
+
+# Calculate the observed 1-year survival probability at each year 
+# (Kaplan-Meier Estimate)
+obsprob <- survfit(Surv(UNOSclean4$ptime.y/365.25, UNOSclean4$pstatus) ~ UNOSclean4$ytx, type="kaplan-meier", conf.type="log")
+
+# Construct table of the observed 1-year survival probabilities
+nrisk <- summary(obsprob, times=1.0)[3]  # Number at risk
+nevent <- summary(obsprob, times=1.0)[4] # Number of deaths
+ncensor <- summary(obsprob, times=1.0)[5] # Number censored
+survprob <- summary(obsprob, times=1.0)[6] # 1-year survival probability
+lowCI <- summary(obsprob, times=1.0)[10] # Lower 95% CI, log type
+upCI <- summary(obsprob, times=1.0)[11] # Upper 95% CI, log type
+
+survtab <- cbind(years, nrisk, nevent, ncensor, survprob, lowCI, upCI)
+names(survtab) <- c("Year", "# Risk", "# Deaths", "# Censored", "S(t)", "Lower 95% CI", "Upper 95% CI")
+print(survtab)
+
+# Enter the observed one-year survival probabilities for each year:
+survprob_2007 <- survtab$`S(t)`[1]
+survprob_2008 <- survtab$`S(t)`[2]
+survprob_2009 <- survtab$`S(t)`[3]
+survprob_2010 <- survtab$`S(t)`[4]
+survprob_2011 <- survtab$`S(t)`[5]
+survprob_2012 <- survtab$`S(t)`[6]
+survprob_2013 <- survtab$`S(t)`[7]
+survprob_2014 <- survtab$`S(t)`[8]
+survprob_2015 <- survtab$`S(t)`[9]
+
+
+# Enter the mean follow-up time (in days) for each year:
+mfupt_2007 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2007)])
+mfupt_2008 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2008)])
+mfupt_2009 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2009)])
+mfupt_2010 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2010)])
+mfupt_2011 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2011)])
+mfupt_2012 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2012)])
+mfupt_2013 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2013)])
+mfupt_2014 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2014)])
+mfupt_2015 <- mean(UNOSclean4$ptime[which(UNOSclean4$ytx==2015)])
+
+```
+
+Next, we use the above parameters to generate separate cohorts of transplanted individuals at each year, along with corresponding covariate values.
+
+```{r}
+# Generate a vector of transplanted individuals by replicating each year (2007-2015)
+# the same number of times as the corresponding post-transplant sample size in UNOS
+
+year <- c(rep(2007, times=num2007), rep(2008, times=num2008), 
+          rep(2009, times=num2009), rep(2010, times=num2010), 
+          rep(2011, times=num2011), rep(2012, times=num2012),
+          rep(2013, times=num2013), rep(2014, times=num2014), 
+          rep(2015, times=num2015))
+
+# Assign each individual to a disease category based on the UNOS post-transplant data
+# 1 = obstrutive dx; 2 = Pulm Htx; 3 = CF; 4 = Pulm fibrosis
+
+diag_group2007 <- c(rep("Obstructive dx", times=round((pctdx1_2007/100)*num2007)),
+                    rep("Pulm Htx", times=round((pctdx2_2007/100)*num2007)),
+                    rep("CF", times=round((pctdx3_2007/100)*num2007)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2007/100)*num2007)))
+
+diag_group2008 <- c(rep("Obstructive dx", times=round((pctdx1_2008/100)*num2008)), 
+                    rep("Pulm Htx", times=round((pctdx2_2008/100)*num2008)),
+                    rep("CF", times=round((pctdx3_2008/100)*num2008)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2008/100)*num2008)))
+
+diag_group2009 <- c(rep("Obstructive dx", times=round((pctdx1_2009/100)*num2009)), 
+                    rep("Pulm Htx", times=round((pctdx2_2009/100)*num2009)),
+                    rep("CF", times=round((pctdx3_2009/100)*num2009)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2009/100)*num2009)))
+
+diag_group2010 <- c(rep("Obstructive dx", times=round((pctdx1_2010/100)*num2010)), 
+                    rep("Pulm Htx", times=round((pctdx2_2010/100)*num2010)),
+                    rep("CF", times=round((pctdx3_2010/100)*num2010)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2010/100)*num2010)))
+
+diag_group2011 <- c(rep("Obstructive dx", times=round((pctdx1_2011/100)*num2011)), 
+                    rep("Pulm Htx", times=round((pctdx2_2011/100)*num2011)),
+                    rep("CF", times=round((pctdx3_2011/100)*num2011)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2011/100)*num2011)))
+
+diag_group2012 <- c(rep("Obstructive dx", times=round((pctdx1_2012/100)*num2012)), 
+                    rep("Pulm Htx", times=round((pctdx2_2012/100)*num2012)),
+                    rep("CF", times=round((pctdx3_2012/100)*num2012)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2012/100)*num2012)))
+
+diag_group2013 <- c(rep("Obstructive dx", times=round((pctdx1_2013/100)*num2013)), 
+                    rep("Pulm Htx", times=round((pctdx2_2013/100)*num2013)),
+                    rep("CF", times=round((pctdx3_2013/100)*num2013)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2013/100)*num2013)))
+
+diag_group2014 <- c(rep("Obstructive dx", times=round((pctdx1_2014/100)*num2014)), 
+                    rep("Pulm Htx", times=round((pctdx2_2014/100)*num2014)),
+                    rep("CF", times=round((pctdx3_2014/100)*num2014)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2014/100)*num2014)))
+
+diag_group2015 <- c(rep("Obstructive dx", times=round((pctdx1_2015/100)*num2015)), 
+                    rep("Pulm Htx", times=round((pctdx2_2015/100)*num2015)),
+                    rep("CF", times=round((pctdx3_2015/100)*num2015)), 
+                    rep("Pulm fibrosis", times=round((pctdx4_2015/100)*num2015)))
+
+
+# Combine the separate diagnoses vectors, and convert to a factor variable
+diag_group <- c(diag_group2007, diag_group2008, diag_group2009, diag_group2010,
+                diag_group2011, diag_group2012, diag_group2013, diag_group2014,
+                diag_group2015)
+
+
+# Simulate covariates by drawing from a normal or binomial distribution, as appropriate
+
+# Age
+age_2007 <- rnorm(n=length(year[which(year==2007)]), 
+                    mean=age_mean_2007, sd=(age_sd_2007))
+
+age_2008 <- rnorm(n=length(year[which(year==2008)]), 
+                    mean=age_mean_2008, sd=(age_sd_2008))
+
+age_2009 <- rnorm(n=length(year[which(year==2009)]), 
+                    mean=age_mean_2009, sd=(age_sd_2009))
+
+age_2010 <- rnorm(n=length(year[which(year==2010)]), 
+                   mean=age_mean_2010, sd=(age_sd_2010))
+
+age_2011 <- rnorm(n=length(year[which(year==2011)]), 
+                    mean=age_mean_2011, sd=(age_sd_2011))
+
+age_2012 <- rnorm(n=length(year[which(year==2012)]), 
+                    mean=age_mean_2012, sd=(age_sd_2012))
+
+age_2013 <- rnorm(n=length(year[which(year==2013)]), 
+                    mean=age_mean_2012, sd=(age_sd_2013))
+
+age_2014 <- rnorm(n=length(year[which(year==2014)]), 
+                    mean=age_mean_2014, sd=(age_sd_2014))
+
+age_2015 <- rnorm(n=length(year[which(year==2015)]), 
+                    mean=age_mean_2015, sd=(age_sd_2015))
+
+age <- c(age_2007, age_2008, age_2009, age_2010, age_2011, 
+         age_2012, age_2013, age_2014, age_2015)
+
+age <- as.vector(age)
+
+
+
+
+# Cardiac index (dichotomous)
+ci_2007 <- rbinom(n=length(year[which(year==2007)]), size=1, p=(pct_ci1_2007/100))
+ci_2008 <- rbinom(n=length(year[which(year==2008)]), size=1, p=(pct_ci1_2008/100))
+ci_2009 <- rbinom(n=length(year[which(year==2009)]), size=1, p=(pct_ci1_2009/100))
+ci_2010 <- rbinom(n=length(year[which(year==2010)]), size=1, p=(pct_ci1_2010/100))
+ci_2011 <- rbinom(n=length(year[which(year==2011)]), size=1, p=(pct_ci1_2011/100))
+ci_2012 <- rbinom(n=length(year[which(year==2012)]), size=1, p=(pct_ci1_2012/100))
+ci_2013 <- rbinom(n=length(year[which(year==2013)]), size=1, p=(pct_ci1_2013/100))
+ci_2014 <- rbinom(n=length(year[which(year==2014)]), size=1, p=(pct_ci1_2014/100))
+ci_2015 <- rbinom(n=length(year[which(year==2015)]), size=1, p=(pct_ci1_2015/100))
+
+ci <- c(ci_2007, ci_2008, ci_2009, ci_2010, ci_2011, ci_2012,
+        ci_2013, ci_2014, ci_2015)
+
+ci <- as.vector(ci)
+
+
+# Mechanical ventilation (dichotomous)
+vent_2007 <- rbinom(n=length(year[which(year==2007)]), size=1,
+                    p=(pct_vent1_2007/100))
+
+vent_2008 <- rbinom(n=length(year[which(year==2008)]), size=1,
+                    p=(pct_vent1_2008/100))
+
+vent_2009 <- rbinom(n=length(year[which(year==2009)]), size=1, 
+                    p=(pct_vent1_2009/100))
+
+vent_2010 <- rbinom(n=length(year[which(year==2010)]), size=1, 
+                  p=(pct_vent1_2010/100))
+
+vent_2011 <- rbinom(n=length(year[which(year==2011)]), size=1, 
+                  p=(pct_vent1_2011/100))
+
+vent_2012 <- rbinom(n=length(year[which(year==2012)]), size=1, 
+                  p=(pct_vent1_2012/100))
+
+vent_2013 <- rbinom(n=length(year[which(year==2013)]), size=1, 
+                  p=(pct_vent1_2013/100))
+
+vent_2014 <- rbinom(n=length(year[which(year==2014)]), size=1, 
+                  p=(pct_vent1_2014/100))
+
+vent_2015 <- rbinom(n=length(year[which(year==2015)]), size=1, 
+                  p=(pct_vent1_2015/100))
+
+vent <- c(vent_2007, vent_2008, vent_2009, vent_2010, vent_2011, vent_2012,
+          vent_2013, vent_2014, vent_2015)
+
+vent <- as.vector(vent)
+
+
+
+# Creatinine
+creat_2007 <- rnorm(n=length(year[which(year==2007)]), 
+                     mean=creat_mean_2007, sd=creat_sd_2007)
+
+creat_2008 <- rnorm(n=length(year[which(year==2008)]), 
+                     mean=creat_mean_2008, sd=creat_sd_2008)
+
+creat_2009 <- rnorm(n=length(year[which(year==2009)]), 
+                     mean=creat_mean_2009, sd=creat_sd_2009)
+
+creat_2010 <- rnorm(n=length(year[which(year==2010)]), 
+                     mean=creat_mean_2010, sd=creat_sd_2010)
+
+creat_2011 <- rnorm(n=length(year[which(year==2011)]), 
+                     mean=creat_mean_2011, sd=creat_sd_2011)
+
+creat_2012 <- rnorm(n=length(year[which(year==2012)]), 
+                     mean=creat_mean_2012, sd=creat_sd_2012)
+
+creat_2013 <- rnorm(n=length(year[which(year==2013)]), 
+                     mean=creat_mean_2013, sd=creat_sd_2013)
+
+creat_2014 <- rnorm(n=length(year[which(year==2014)]), 
+                     mean=creat_mean_2014, sd=creat_sd_2014)
+
+creat_2015 <- rnorm(n=length(year[which(year==2015)]), 
+                     mean=creat_mean_2015, sd=creat_sd_2015)
+
+creat <- c(creat_2007, creat_2008, creat_2009, creat_2010, creat_2011,
+           creat_2012, creat_2013, creat_2014, creat_2015)
+
+creat <- as.vector(creat)
+
+
+# Creatinine increase >= 150% (dichotomous)
+if (is.na(pct_cii1_2007)){
+  cii_2007 <- rbinom(n=length(year[which(year==2007)]), size=1, p=(0/100))
+} else{
+  cii_2007 <- rbinom(n=length(year[which(year==2007)]), size=1, p=(pct_cii1_2007/100))
+}
+
+if (is.na(pct_cii1_2008)){
+  cii_2008 <- rbinom(n=length(year[which(year==2008)]), size=1, p=(0/100))
+} else{
+  cii_2008 <- rbinom(n=length(year[which(year==2008)]), size=1, p=(pct_cii1_2008/100))
+}
+
+if (is.na(pct_cii1_2009)){
+  cii_2009 <- rbinom(n=length(year[which(year==2009)]), size=1, p=(0/100))
+} else{
+  cii_2009 <- rbinom(n=length(year[which(year==2009)]), size=1, p=(pct_cii1_2009/100))
+}
+
+if (is.na(pct_cii1_2010)){
+  cii_2010 <- rbinom(n=length(year[which(year==2010)]), size=1, p=(0/100))
+} else{
+  cii_2010 <- rbinom(n=length(year[which(year==2010)]), size=1, p=(pct_cii1_2010/100))
+}
+
+if (is.na(pct_cii1_2011)){
+  cii_2011 <- rbinom(n=length(year[which(year==2011)]), size=1, p=(0/100))
+} else{
+  cii_2011 <- rbinom(n=length(year[which(year==2011)]), size=1, p=(pct_cii1_2011/100))
+}
+
+if (is.na(pct_cii1_2012)){
+  cii_2012 <- rbinom(n=length(year[which(year==2012)]), size=1, p=(0/100))
+} else{
+  cii_2012 <- rbinom(n=length(year[which(year==2012)]), size=1, p=(pct_cii1_2012/100))
+}
+
+if (is.na(pct_cii1_2013)){
+  cii_2013 <- rbinom(n=length(year[which(year==2013)]), size=1, p=(0/100))
+} else{
+  cii_2013 <- rbinom(n=length(year[which(year==2013)]), size=1, p=(pct_cii1_2013/100))
+}
+
+if (is.na(pct_cii1_2014)){
+  cii_2014 <- rbinom(n=length(year[which(year==2014)]), size=1, p=(0/100))
+} else{
+  cii_2014 <- rbinom(n=length(year[which(year==2014)]), size=1, p=(pct_cii1_2014/100))
+}
+
+if (is.na(pct_cii1_2015)){
+  cii_2015 <- rbinom(n=length(year[which(year==2015)]), size=1, p=(0/100))
+} else{
+  cii_2015 <- rbinom(n=length(year[which(year==2015)]), size=1, p=(pct_cii1_2015/100))
+}
+
+
+cii <- c(cii_2007, cii_2008, cii_2009, cii_2010, cii_2011, cii_2012,
+         cii_2013, cii_2014, cii_2015)
+
+cii <- as.vector(cii)
+
+
+# Functional status (dichotomous)
+fst_2007 <- rbinom(n=length(year[which(year==2007)]), size=1,
+                   p=(pct_fst1_2007/100))
+
+fst_2008 <- rbinom(n=length(year[which(year==2008)]), size=1,
+                   p=(pct_fst1_2008/100))
+
+fst_2009 <- rbinom(n=length(year[which(year==2009)]), size=1, 
+                   p=(pct_fst1_2009/100))
+
+fst_2010 <- rbinom(n=length(year[which(year==2010)]), size=1, 
+                   p=(pct_fst1_2010/100))
+
+fst_2011 <- rbinom(n=length(year[which(year==2011)]), size=1, 
+                   p=(pct_fst1_2011/100))
+
+fst_2012 <- rbinom(n=length(year[which(year==2012)]), size=1, 
+                   p=(pct_fst1_2012/100))
+
+fst_2013 <- rbinom(n=length(year[which(year==2013)]), size=1, 
+                   p=(pct_fst1_2013/100))
+
+fst_2014 <- rbinom(n=length(year[which(year==2014)]), size=1, 
+                  p=(pct_fst1_2014/100))
+
+fst_2015 <- rbinom(n=length(year[which(year==2015)]), size=1, 
+                   p=(pct_fst1_2015/100))
+
+fst <- c(fst_2007, fst_2008, fst_2009, fst_2010, fst_2011, fst_2012,
+         fst_2013, fst_2014, fst_2015)
+
+fst <- as.vector(fst)
+
+
+# Oxygen Requirement
+o2_2007 <- rnorm(n=length(year[which(year==2007)]), 
+                  mean=o2_mean_2007, sd=o2_sd_2007)
+
+o2_2008 <- rnorm(n=length(year[which(year==2008)]), 
+                  mean=o2_mean_2008, sd=o2_sd_2008)
+
+o2_2009 <- rnorm(n=length(year[which(year==2009)]), 
+                  mean=o2_mean_2009, sd=o2_sd_2009)
+
+o2_2010 <- rnorm(n=length(year[which(year==2010)]), 
+                  mean=o2_mean_2010, sd=o2_sd_2010)
+
+o2_2011 <- rnorm(n=length(year[which(year==2011)]), 
+                  mean=o2_mean_2011, sd=o2_sd_2011)
+
+o2_2012 <- rnorm(n=length(year[which(year==2012)]), 
+                  mean=o2_mean_2012, sd=o2_sd_2012)
+
+o2_2013 <- rnorm(n=length(year[which(year==2013)]), 
+                  mean=o2_mean_2013, sd=o2_sd_2013)
+
+o2_2014 <- rnorm(n=length(year[which(year==2014)]), 
+                  mean=o2_mean_2014, sd=o2_sd_2014)
+
+o2_2015 <- rnorm(n=length(year[which(year==2015)]), 
+                  mean=o2_mean_2015, sd=o2_sd_2015)
+
+o2 <- c(o2_2007, o2_2008, o2_2009, o2_2010, o2_2011, 
+        o2_2012, o2_2013, o2_2014, o2_2015)
+
+o2 <- as.vector(o2)
+
+
+
+# Six-minute walk distance
+walk_2007 <- rnorm(n=length(year[which(year==2007)]), 
+                    mean=walk_mean_2007, sd=walk_sd_2007)
+
+walk_2008 <- rnorm(n=length(year[which(year==2008)]), 
+                    mean=walk_mean_2008, sd=walk_sd_2008)
+
+walk_2009 <-rnorm(n=length(year[which(year==2009)]), 
+                    mean=walk_mean_2009, sd=walk_sd_2009)
+
+walk_2010 <- rnorm(n=length(year[which(year==2010)]), 
+                    mean=walk_mean_2010, sd=walk_sd_2010)
+
+walk_2011 <- rnorm(n=length(year[which(year==2011)]), 
+                    mean=walk_mean_2011, sd=walk_sd_2011)
+
+walk_2012 <- rnorm(n=length(year[which(year==2012)]), 
+                    mean=walk_mean_2012, sd=walk_sd_2012)
+
+walk_2013 <- rnorm(n=length(year[which(year==2013)]), 
+                    mean=walk_mean_2013, sd=walk_sd_2013)
+
+walk_2014 <- rnorm(n=length(year[which(year==2014)]), 
+                    mean=walk_mean_2014, sd=walk_sd_2014)
+
+walk_2015 <- rnorm(n=length(year[which(year==2015)]), 
+                    mean=walk_mean_2015, sd=walk_sd_2015)
+
+walk <- c(walk_2007, walk_2008, walk_2009, walk_2010, walk_2011, 
+          walk_2012, walk_2013, walk_2014, walk_2015)
+
+walk <- as.vector(walk)
+
+```
+
+Now, we generate follow-up time information by drawing from an exponential distribution with a rate equal to the reciprocal of the mean follow-up time (in days, as consistent with the UNOS data). 
+
+```{r}
+# Generate survival time (in days) by drawing from an exponential distribution, 
+# with rate = 1/(mean follow-up time)
+ptime_2007 <- rexp(n=length(year[which(year==2007)]), rate=1/mfupt_2007)
+ptime_2008 <- rexp(n=length(year[which(year==2008)]), rate=1/mfupt_2008)
+ptime_2009 <- rexp(n=length(year[which(year==2009)]), rate=1/mfupt_2009)
+ptime_2010 <- rexp(n=length(year[which(year==2010)]), rate=1/mfupt_2010)
+ptime_2011 <- rexp(n=length(year[which(year==2011)]), rate=1/mfupt_2011)
+ptime_2012 <- rexp(n=length(year[which(year==2012)]), rate=1/mfupt_2012)
+ptime_2013 <- rexp(n=length(year[which(year==2013)]), rate=1/mfupt_2013)
+ptime_2014 <- rexp(n=length(year[which(year==2014)]), rate=1/mfupt_2014)
+ptime_2015 <- rexp(n=length(year[which(year==2015)]), rate=1/mfupt_2015)
+
+ptime <- c(ptime_2007, ptime_2008, ptime_2009, ptime_2010, ptime_2011, ptime_2012,
+           ptime_2013, ptime_2014, ptime_2015)
+
+ptime <- as.vector(ptime)
+
+```
+
+
+Finally, we append all of the predictor vectors created above into one simulated data set. Note that values of variables in the simulated data set that are smaller than the minimum values of the corresponding variables in UNOS have been forced to equal the observed minimum values. Maximum values in the simulated data have been truncated at the 99th percentile.
+
+```{r}
+# Append all variable vectors to the year vector
+
+# Initialize the dataframe
+simdat <- as.data.frame(
+  matrix(nrow=num2007+num2008+num2009+num2010+num2011+num2012+num2013+num2014+num2015))
+
+simdat$year <- year
+simdat$diag_group <- diag_group
+
+simdat$age <- age
+
+simdat$ci <- ci
+simdat$vent <- vent
+
+simdat$creat <- creat
+simdat$creatinc <- cii
+
+simdat$fst <- fst
+
+simdat$o2 <- o2
+
+simdat$walk <- walk
+
+simdat$ptime <- ptime
+
+simdat <- simdat[-c(1)]  # Remove the initial blank column
+
+
+# Convert relevant variables to factor variables
+simdat$dx <- factor(diag_group, levels=c("Obstructive dx", "Pulm Htx", "CF", "Pulm fibrosis"))
+simdat$ci <- factor(simdat$ci)
+simdat$vent <- factor(simdat$vent)
+simdat$creatinc <- factor(simdat$creatinc)
+simdat$fst <- factor(simdat$fst)
+
+
+# If negative values are non-sensical, replace with the minimum value in UNOS
+
+# For Age
+for (i in 1:nrow(simdat)){
+  if (simdat$age[i] < 18){  # If age < 18 years old
+    simdat$age[i] <- 18  # Replace with 18
+  } else {
+    simdat$age[i] <- simdat$age[i]  # Otherwise, leave age alone
+  }
+}
+
+# For Creatinine
+for (i in 1:nrow(simdat)){
+  if (simdat$creat[i] < min(UNOSclean4$end_creat, na.rm=TRUE)){  # If creatinine < minimum value in UNOS
+    simdat$creat[i] <- min(UNOSclean4$end_creat, na.rm=TRUE)  # Replace with minimum value in UNOS
+  } else {
+    simdat$creat[i] <- simdat$creat[i]  # Otherwise, leave creatinine alone
+  }
+}
+
+# For Oxygen 
+for (i in 1:nrow(simdat)){
+  if (simdat$o2[i] < min(UNOSclean4$calc_o2, na.rm=TRUE)){  # If oxygen < minimum value in UNOS
+    simdat$o2[i] <- min(UNOSclean4$calc_o2, na.rm=TRUE)  # Replace with minimum value in UNOS
+  } else {
+    simdat$o2[i] <- simdat$o2[i]  # Otherwise, leave oxygen alone
+  }
+}
+
+# For six-minute walk distance 
+for (i in 1:nrow(simdat)){
+  if (simdat$walk[i] < min(UNOSclean4$calc_six_min_walk, na.rm=TRUE)){  # If six minute walk distance < min
+    simdat$walk[i] <- min(UNOSclean4$calc_six_min_walk, na.rm=TRUE)  # Replace with minimum value in UNOS
+  } else {
+    simdat$walk[i] <- simdat$walk[i]  # Otherwise, leave six-minute walk alone
+  }
+}
+
+# For follow-up time 
+for (i in 1:nrow(simdat)){
+  if (simdat$ptime[i] < min(UNOSclean4$ptime, na.rm=TRUE)){  # If follow-up time < minimum in UNOS
+    simdat$ptime[i] <- min(UNOSclean4$ptime, na.rm=TRUE)  # Replace with minimum in UNOS
+  } else {
+    simdat$ptime[i] <- simdat$ptime[i]  # Otherwise, leave follow-up time alone
+  }
+}
+
+
+
+# If age, creatinine, oxygen, six-minute walk, and follow-up time values are greater
+# than the 99th percentile, replace with the 99th percentile value
+
+simdat.ref <- simdat  # Duplicate simdat so that referenc quantiles can be computed
+
+# For Age
+for (i in 1:nrow(simdat)){
+  if (simdat$age[i] > as.numeric(quantile(simdat.ref$age, 0.99))){  # If age > 99%
+    simdat$age[i] <- as.numeric(quantile(simdat.ref$age, 0.99))  # Replace with 99%
+  } else {
+    simdat$age[i] <- simdat$age[i]  # Otherwise, leave age alone
+  }
+}
+
+# For Creatinine
+for (i in 1:nrow(simdat)){
+  if (simdat$creat[i] > as.numeric(quantile(simdat.ref$creat, 0.99))){ #If creat>99%
+    simdat$creat[i] <- as.numeric(quantile(simdat.ref$creat, 0.99)) # Replace 99%
+  } else {
+    simdat$creat[i] <- simdat$creat[i]  # Otherwise, leave creatinine alone
+  }
+}
+
+# For Oxygen 
+for (i in 1:nrow(simdat)){
+  if (simdat$o2[i] > as.numeric(quantile(simdat.ref$o2, 0.99))){  # If oxygen > 99%
+    simdat$o2[i] <- as.numeric(quantile(simdat.ref$o2, 0.99))  # Replace with 99%
+  } else {
+    simdat$o2[i] <- simdat$o2[i]  # Otherwise, leave oxygen alone
+  }
+}
+
+# For six-minute walk distance 
+for (i in 1:nrow(simdat)){
+  if (simdat$walk[i] > as.numeric(quantile(simdat.ref$walk, 0.99))){  #If walk > 99%
+    simdat$walk[i] <- as.numeric(quantile(simdat.ref$walk, 0.99))  # Replace 99%
+  } else {
+    simdat$walk[i] <- simdat$walk[i]  # Otherwise, leave walk alone
+  }
+}
+
+# For follow-up time 
+for (i in 1:nrow(simdat)){
+  if (simdat$ptime[i] > as.numeric(quantile(simdat.ref$ptime, 0.99))){  # ptime>99%
+    simdat$ptime[i] <- as.numeric(quantile(simdat.ref$ptime, 0.99))  # Replace 99%
+  } else {
+    simdat$ptime[i] <- simdat$ptime[i]  # Otherwise, leave follow-up time alone
+  }
+}
+
+```
+
+
+
+## Generating outcomes using a logistic model
+
+In this section, we generate the binary outcome variable (1=dead, 0=alive) by assuming that the data follow a logistic regression model. This model includes interactions between important predictors and year to allow the coefficients to differ across years.
+
+```{r}
+# Multivariable logistic regression model with predictor-by-year interactions
+# ("True" Model)
+
+logitmod_mv <- glm(pstatus ~ age_cent + ci_bin + calc_vent_use_bin +
+                          end_creat + creatinc2_flag + dx + func_stat_trr_bin +
+                          calc_o2 + walk_cent + ytx_cent +
+                          age_cent*ytx_cent +
+                          calc_vent_use_bin*ytx_cent +
+                          dx*ytx_cent, 
+                   data=UNOSclean4, family="binomial")
+
+```
+
+Now, we multiply the simulated predictors by the appropriate coefficient estimates to obtain the "true" log-odds of death at each year.
+
+```{r}
+# First set up indicator variables for each diagnosis group
+simdat$dxObstructive <- rep(0, nrow(simdat))
+simdat$dxPulmHtx <- rep(0, nrow(simdat))
+simdat$dxCF <- rep(0, nrow(simdat))
+simdat$dxPulmFib <- rep(0, nrow(simdat))
+
+for (i in 1:nrow(simdat)){
+  if (simdat$diag_group[i]=="Obstructive dx"){
+      simdat$dxObstructive[i] <- 1
+  } else if (simdat$diag_group[i]=="Pulm Htx"){
+      simdat$dxPulmHtx[i] <- 1
+  } else if (simdat$diag_group[i]=="CF"){
+      simdat$dxCF[i] <- 1
+  } else if (simdat$diag_group[i]=="Pulm fibrosis"){
+      simdat$dxPulmFib[i] <- 1
+  }
+}
+
+# Now compute the "true" log-odds of death at each year
+
+true_logodds <- coef(summary(logitmod_mv))[1] +
+    coef(summary(logitmod_mv))[2]*(simdat$age-45.9972602) +
+    coef(summary(logitmod_mv))[3]*(as.numeric(as.character(simdat$ci))) +
+    coef(summary(logitmod_mv))[4]*(as.numeric(as.character(simdat$vent))) + 
+    coef(summary(logitmod_mv))[5]*(simdat$creat) +
+    coef(summary(logitmod_mv))[6]*(as.numeric(as.character(simdat$creatinc))) +
+    coef(summary(logitmod_mv))[7]*(simdat$dxPulmHtx) +
+    coef(summary(logitmod_mv))[8]*(simdat$dxCF) +
+    coef(summary(logitmod_mv))[9]*(simdat$dxPulmFib) +
+    coef(summary(logitmod_mv))[10]*(as.numeric(as.character(simdat$fst))) +
+    coef(summary(logitmod_mv))[11]*(simdat$o2) +
+    coef(summary(logitmod_mv))[12]*(1200-simdat$walk) +  
+    coef(summary(logitmod_mv))[13]*(simdat$year-2007) +
+    coef(summary(logitmod_mv))[14]*(simdat$age-45.9972602)*(simdat$year-2007)+
+    coef(summary(logitmod_mv))[15]*(as.numeric(as.character(simdat$vent)))*(simdat$year-2007) +
+    coef(summary(logitmod_mv))[16]*(simdat$dxPulmHtx)*(simdat$year-2007) +
+    coef(summary(logitmod_mv))[17]*(simdat$dxCF)*(simdat$year-2007) +
+    coef(summary(logitmod_mv))[18]*(simdat$dxPulmFib)*(simdat$year-2007)
+
+```
+
+Next, convert these log odds into probabilities by computing exp(.)/(1+exp(.)). These probabilities will then be used to predict outcomes for each individual.
+
+```{r}
+# Convert the "true" log odds into probabilties
+true_prob <- exp(true_logodds)/(1+exp(true_logodds))
+
+
+## Note: Alternatively, predictions can be made via the "predict" command, with type="response"
+true_prob2 <- predict(logitmod_mv, simdat, type="response")
+
+
+# Generate outcomes by using the predicted probabilities in a binomial distribution
+simdat$pstatus <- rep(NA, nrow(simdat))  # Initialize outcome status variable
+
+for (i in 1:nrow(simdat)){
+  simdat$pstatus[i] <- rbinom(n=1, size=1, p=true_prob[i])
+}
+
+simdat$pstatus <- as.factor(simdat$pstatus)  # Convert pstatus to a factor
+
+# ROC Curve for "True" Model
+roc(simdat$pstatus, true_prob, ci=TRUE)
+plot.roc(simdat$pstatus, true_prob, ci=TRUE, 
+         legacy.axes=TRUE, # plot 1-specificity on the x-axis
+         xlim=c(1,0),
+         print.auc=1)  # display the AUC value on the plot
+
+
+```
+
+The fact that the area under the ROC curve is greater than 0.5 indicates that the generated outcome variable is indeed related to the simulated predictors, as desired.
+
+
+## Compare the simulated data to the UNOS data
+
+In this section, we compare the simulated data to the UNOS data. 
+
+
+### Comparing Covariate Distributions
+
+First, we display descriptive statistics for key covariates in the UNOS data set, and compare these observed covariates to the simulated ones above. 
+
+```{r}
+# Compare the distribution of covariates in the simulated data vs. the UNOS data
+
+# For Age
+summary(UNOSclean4$age)
+summary(simdat$age)
+
+# For Cardiac Index (dichotomous)
+summary(UNOSclean4$ci_bin)
+summary(simdat$ci)
+
+# For Mechanical Ventilation (dichotomous)
+summary(UNOSclean4$calc_vent_use_bin)
+summary(simdat$vent)
+
+# For Creatinine
+summary(UNOSclean4$end_creat)
+summary(simdat$creat)
+
+# For Creatinine increase >= 150%
+summary(UNOSclean4$creatinc2_flag)
+summary(simdat$creatinc)
+
+# For Functional Status (dichotomous)
+summary(UNOSclean4$func_stat_trr_bin)
+summary(simdat$fst)
+
+# For Oxygen Requirement
+summary(UNOSclean4$calc_o2)
+summary(simdat$o2)
+
+# For Six-minute Walk Distance
+summary(UNOSclean4$calc_six_min_walk)
+summary(simdat$walk)
+
+```
+
+
+### Comparing Outcome Distributions
+
+Now, we compare the proportion of individuals experiencing the outcome in the simulated data to the corresponding proportion in the UNOS data. We also compare the distribution of follow-up time in the two data sets.
+
+```{r}
+# Compare the distribution of the outcome in the simulated data vs. the UNOS data
+
+# For binary one-year post-transplant mortality (separately by year)
+
+# UNOS data
+nrisk_UNOS <- c(num2007-sum(summary(factor(UNOS2007$pstatus)[which(UNOS2007$ptime<=365.25)])),
+                num2008-sum(summary(factor(UNOS2008$pstatus)[which(UNOS2008$ptime<=365.25)])),
+                num2009-sum(summary(factor(UNOS2009$pstatus)[which(UNOS2009$ptime<=365.25)])),
+                num2010-sum(summary(factor(UNOS2010$pstatus)[which(UNOS2010$ptime<=365.25)])),
+                num2011-sum(summary(factor(UNOS2011$pstatus)[which(UNOS2011$ptime<=365.25)])),
+                num2012-sum(summary(factor(UNOS2012$pstatus)[which(UNOS2012$ptime<=365.25)])),
+                num2013-sum(summary(factor(UNOS2013$pstatus)[which(UNOS2013$ptime<=365.25)])),
+                num2014-sum(summary(factor(UNOS2014$pstatus)[which(UNOS2014$ptime<=365.25)])),
+                num2015-sum(summary(factor(UNOS2015$pstatus)[which(UNOS2015$ptime<=365.25)])))
+
+nevent_UNOS <- c(as.numeric(summary(factor(UNOS2007$pstatus)[which(UNOS2007$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2008$pstatus)[which(UNOS2008$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2009$pstatus)[which(UNOS2009$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2010$pstatus)[which(UNOS2010$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2011$pstatus)[which(UNOS2011$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2012$pstatus)[which(UNOS2012$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2013$pstatus)[which(UNOS2013$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2014$pstatus)[which(UNOS2014$ptime<=365.25)])[2]),
+                 as.numeric(summary(factor(UNOS2015$pstatus)[which(UNOS2015$ptime<=365.25)])[2]))
+
+
+ncensor_UNOS <- c(as.numeric(summary(factor(UNOS2007$pstatus)[which(UNOS2007$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2008$pstatus)[which(UNOS2008$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2009$pstatus)[which(UNOS2009$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2010$pstatus)[which(UNOS2010$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2011$pstatus)[which(UNOS2011$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2012$pstatus)[which(UNOS2012$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2013$pstatus)[which(UNOS2013$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2014$pstatus)[which(UNOS2014$ptime<=365.25)])[1]),
+                  as.numeric(summary(factor(UNOS2015$pstatus)[which(UNOS2015$ptime<=365.25)])[1]))
+
+survtab_UNOS <- cbind(years, nrisk_UNOS, nevent_UNOS, ncensor_UNOS)
+names(survtab_UNOS) <- c("Year", "# Risk", "# Deaths", "# Censored")
+print(survtab_UNOS)
+
+
+# Simulated data
+nrisk_sim <- c(summary(factor(simdat$pstatus[which(simdat$year==2007)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2008)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2009)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2010)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2011)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2012)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2013)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2014)]))[1],
+               summary(factor(simdat$pstatus[which(simdat$year==2015)]))[1])
+
+nevent_sim <- c(summary(factor(simdat$pstatus[which(simdat$year==2007)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2008)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2009)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2010)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2011)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2012)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2013)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2014)]))[2],
+                summary(factor(simdat$pstatus[which(simdat$year==2015)]))[2])
+
+survtab_sim <- cbind(years, nrisk_sim, nevent_sim, rep("", times=nrow(years))) 
+names(survtab_sim) <- c("Year", "# Risk", "# Deaths", "# Censored")
+print(survtab_sim)
+
+
+# For follow-up time
+summary(UNOSclean4$ptime)
+summary(simdat$ptime)
+
+```
+
+
+## Findings
+
+The above output suggests that our approach to data generation gives covariate distributions that are fairly consistent with those seen in the UNOS data. In the case of binary/categorical variables, the proportions of individuals in each category are similar to those seen in UNOS as well. Finally, the distribution of the generated outcome variable is consistent with the observed outcome distribution in UNOS. The fact that the area under the ROC curve for the logistic-generated outcome is greater than 0.5 indicates that the simulated outcome is indeed related to the simulated predictors.
