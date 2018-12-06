@@ -39,12 +39,13 @@ for (i in 2001:2017) {
   print(paste("download projects", i))
   unzip(temp, filenamei)
   print(paste("unzip projects", i))
-  projects <- read.table(filenamei, sep = ",", header = TRUE, fill = TRUE, 
+  projects <- read.csv(filenamei, sep = ",", header = TRUE, fill = TRUE, 
                          comment.char = "", colClasses = "character", row.names = NULL)
-  projects <- select(projects, APPLICATION_ID, BUDGET_START, BUDGET_END, 
-                     CORE_PROJECT_NUM, FULL_PROJECT_NUM, FY, NIH_SPENDING_CATS,
-                     PI_IDS, PI_NAMEs, PROJECT_START, PROJECT_END, PROJECT_TITLE,
-                     STUDY_SECTION, STUDY_SECTION_NAME, SUPPORT_YEAR, TOTAL_COST)
+  projects <- select(projects, ACTIVITY, APPLICATION_ID, BUDGET_START, BUDGET_END, 
+                     CORE_PROJECT_NUM, FULL_PROJECT_NUM, FY, ORG_NAME, PI_IDS, 
+                     PROJECT_TITLE, STUDY_SECTION_NAME, SUBPROJECT_ID, 
+                     SUPPORT_YEAR, TOTAL_COST, TOTAL_COST_SUB_PROJECT)
+  projects <- filter(projects, grepl("R|F|K|T|P", ACTIVITY)) # filter on the grants you're interested in
   
   # Pubs 
   temp <- tempfile()
@@ -54,9 +55,10 @@ for (i in 2001:2017) {
   print(paste("download pubs", i))
   unzip(temp, filenamei)
   print(paste("unzip pubs", i))
-  pubs <- read.table(filenamei, sep = ",", header = TRUE, fill = TRUE, 
+  pubs <- read.csv(filenamei, sep = ",", header = TRUE, fill = TRUE, 
                      comment.char = "", colClasses = "character", row.names = NULL)
   pubs$ISSN <- gsub("-", "", pubs$ISSN)
+  pubs <- select(ISSN, JOURNAL_TITLE, PMC_ID, PMID, PUB_DATE, PUB_TITLE, PUB_YEAR)
   
   # Links
   temp <- tempfile()
@@ -66,7 +68,7 @@ for (i in 2001:2017) {
   print(paste("download links", i))
   unzip(temp, filenamei)
   print(paste("unzip links", i))
-  link <- read.table(filenamei, sep = ",", header = TRUE, fill = TRUE, 
+  link <- read.csv(filenamei, sep = ",", header = TRUE, fill = TRUE, 
                      comment.char = "", colClasses = "character", row.names = NULL)
   
   # SCImago
@@ -82,7 +84,7 @@ for (i in 2001:2017) {
   link <- inner_join(pubs, link, by = "PMID")
   link <- inner_join(link, projects, 
                             by = c("PROJECT_NUMBER" = "CORE_PROJECT_NUM"))
-  merged[[i]] <- full_join(link, scimago, by = "ISSN")
+  data <- left_join(link, scimago, by = "ISSN")
 }
 
 # 2. Rowbind each of the 17 merged files in list 'merged' together. 

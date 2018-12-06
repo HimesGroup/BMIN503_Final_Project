@@ -49,3 +49,5 @@ longest <- filter(data, length_NIH_SPENDING_CATS > 100000) # 38 observations
 kinda_long <- filter(data, length_NIH_SPENDING_CATS > 5000) # 9551 observations 
 
 
+# Size issues
+# NOTE: data is 3769710912 bytes ~ 3.8 Gb
