@@ -10,6 +10,7 @@
 # libraries
 library(dplyr)
 library(lubridate)
+library(RcppRoll)
 
 # 1. Check for duplicates
 # NOTE: At last count there are 3126 in terms of FULL_PROJECT_NUM, PI_IDS, PUB_
@@ -68,9 +69,13 @@ sapply(data, function(x) sum(is.na(x)))
   # We want the number of publications for each PI before a particular FULL_PROJECT_NUM
   # was funded. 
   pub_counts <- test %>%
-    group_by(PI_IDS) %>%
-    summarize(pub_counts = n())
+    arrange(PI_IDS, PUB_DATE) %>%
+    group_by(PI_IDS, FULL_PROJECT_NUM) %>%
+    mutate(pub_counts = row_number()) # No, this doesn't work... 
   test <- full_join(test, pub_counts, by ="PI_IDS")  # Counts of publications per PI/Project combo
   
   # No... I think we want the count of ALL publications for a PI for a period defined by projects. 
   groups <- group_by(data, )
+  
+  #Maybe this?
+  test <- test[,.(y =, roll = cumsum(y)), by = g]
