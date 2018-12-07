@@ -9,45 +9,38 @@
 
 # libraries
 library(dplyr)
+library(lubridate)
 
-# Check for duplicates
-data <- select(data, -matches("poss_duplicates"), -duplicates_vector)
-poss_duplicates <- select(data, FULL_PROJECT_NUM, PI_IDS, PUB_TITLE, SUBPROJECT_ID)
-duplicates_vector <- as.data.frame(duplicated(poss_duplicates))
-data <- bind_cols(data, duplicates_vector)
-duplicates <- filter(data, duplicates_vector == TRUE)
+# 1. Check for duplicates
+# NOTE: At last count there are 3126 in terms of FULL_PROJECT_NUM, PI_IDS, PUB_
+# TITLE, and SUBPROJECT_ID
 
-# NOTE: 18958 duplicates on the basis of FULL_PROJECT_NUM, PI_IDS, PUB_TITLE,
-# SUBPROJECT_ID. 
-# NOTE: 3114 of the duplicates have "Special Emphasis Panel" in PI_IDS field. 
+  data <- select(data, -matches("poss_duplicates"), -duplicates_vector)
+  poss_duplicates <- select(data, FULL_PROJECT_NUM, PI_IDS, PUB_TITLE)
+  duplicates_vector <- as.data.frame(duplicated(poss_duplicates))
+  data <- bind_cols(data, duplicates_vector)
+  duplicates <- filter(data, duplicates_vector == TRUE)
+  
+  # Remove duplicates
+  data <- distinct(data, FULL_PROJECT_NUM, PI_IDS, PUB_TITLE, 
+                   .keep_all = TRUE)
 
+# 2. Check for missingness
+# NOTE: Only missingness is for records that didn't have SCImago data (about 1/3)
+data[sapply(data, function(x) as.character(x)=="")] <- NA
+sapply(data, function(x) sum(is.na(x)))
 
-# Delimiting problems 
-lengths <- as.data.frame(sapply(data, function(x) nchar(x)))
-colnames(lengths) <- paste0("length_", colnames(lengths))
+# 3. Fix classes 
+# NOTE: ISSNs have characters, sometimes (ex: 1931857X)
+# Interestingly, sapply used too much memory 
+data$PI_IDS <- gsub(";", "", data$PI_IDS)
+numeric_vars <- c(3, 4, 7, 10, 14, 16, 19, 20, 21, 22, 25, 26)
+for (i in numeric_vars){ 
+  data[,i] <- as.numeric(data[,i])
+}
+sapply(data, function(x) sum(is.na(x)))
 
-# NOTE: Max character lengths by potential problem variables:
-# AFFILIATION = 3500
-# AUTHOR_LIST = 3979
-# PUB_TITLE = 1999
-# NIH_SPENDING_CATS = 139639
-# PI_IDS = 57609
-# PI_NAMEs = 55953
-# PROJECT_START = 66440
-# PROJECT_END = 54902
-# PROJECT_TITLE = 246486
-# STUDY_SECTION = 171615
-# STUDY_SECTION_NAME = 65696
-# SUBPROJECT_ID = 46266
-# SUPPORT_YEAR = 54974
-# TOTAL_COST = 117634
-# TOTAL_COST_SUB_PROJECT = 73011
-
-length_NIH_SPENDING_CATS <- lengths$length_NIH_SPENDING_CATS
-data <- cbind(data, length_NIH_SPENDING_CATS)
-longest <- filter(data, length_NIH_SPENDING_CATS > 100000) # 38 observations
-kinda_long <- filter(data, length_NIH_SPENDING_CATS > 5000) # 9551 observations 
+# 4. Check distributions 
+summary(data)
 
 
-# Size issues
-# NOTE: data is 3769710912 bytes ~ 3.8 Gb

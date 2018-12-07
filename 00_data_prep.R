@@ -43,9 +43,12 @@ for (i in 2001:2017) {
                          comment.char = "", colClasses = "character", row.names = NULL)
   projects <- select(projects, ACTIVITY, APPLICATION_ID, BUDGET_START, BUDGET_END, 
                      CORE_PROJECT_NUM, FULL_PROJECT_NUM, FY, ORG_NAME, PI_IDS, 
-                     PROJECT_TITLE, STUDY_SECTION_NAME, SUBPROJECT_ID, 
-                     SUPPORT_YEAR, TOTAL_COST, TOTAL_COST_SUB_PROJECT)
-  projects <- filter(projects, grepl("R|F|K|T|P", ACTIVITY)) # filter on the grants you're interested in
+                     PROJECT_TITLE, STUDY_SECTION_NAME, SUPPORT_YEAR, TOTAL_COST)
+  projects <- filter(projects, grepl("R|F|K|T|P", ACTIVITY)) # Filter on the grants you're interested in
+  projects$long_PIs <- nchar(projects$PI_IDS) # Exclude projects with more than one PI
+  projects <- filter(projects, long_PIs <10)
+  projects$missing_cost <- nchar(projects$TOTAL_COST)
+  projects <- filter(projects, missing_cost > 0) # Exclude subprojects and projects with missing cost data
   
   # Pubs 
   temp <- tempfile()
@@ -58,7 +61,7 @@ for (i in 2001:2017) {
   pubs <- read.csv(filenamei, sep = ",", header = TRUE, fill = TRUE, 
                      comment.char = "", colClasses = "character", row.names = NULL)
   pubs$ISSN <- gsub("-", "", pubs$ISSN)
-  pubs <- select(ISSN, JOURNAL_TITLE, PMC_ID, PMID, PUB_DATE, PUB_TITLE, PUB_YEAR)
+  pubs <- select(pubs, ISSN, JOURNAL_TITLE, PMC_ID, PMID, PUB_DATE, PUB_TITLE, PUB_YEAR)
   
   # Links
   temp <- tempfile()
@@ -84,7 +87,9 @@ for (i in 2001:2017) {
   link <- inner_join(pubs, link, by = "PMID")
   link <- inner_join(link, projects, 
                             by = c("PROJECT_NUMBER" = "CORE_PROJECT_NUM"))
-  data <- left_join(link, scimago, by = "ISSN")
+  # NOTE - approximately 1/3 of publications do not merge with SCImago data. 
+  # ~660,000 of the NIH Exporter pubs don't have an ISSN associated with them. 
+  merged[[i]] <- left_join(link, scimago, by = "ISSN")
 }
 
 # 2. Rowbind each of the 17 merged files in list 'merged' together. 
