@@ -33,7 +33,7 @@ sapply(data, function(x) sum(is.na(x)))
 
 # 3. Fix classes 
 # NOTE: ISSNs have characters, sometimes (ex: 1931857X)
-# Interestingly, sapply used too much memory 
+# Interestingly, sapply used too much memory. 
 data$PI_IDS <- gsub(";", "", data$PI_IDS)
 numeric_vars <- c(3, 4, 7, 10, 14, 16, 19, 20, 21, 22, 25, 26)
 for (i in numeric_vars){ 
@@ -46,7 +46,7 @@ sapply(data, function(x) sum(is.na(x)))
   # PUB_DATE
   # Some observations only have month + year, and some only year. 
   # Fill in with the 15th day of each and June 15th. 
-  # TODO: imputation for date missingness???
+  # TODO: imputation for date missingness?
   data$PUB_DATE_addn <- ""
   data$PUB_DATE_addn[nchar(data$PUB_DATE) < 9 & nchar(data$PUB_DATE) > 4] <- " 15"
   data$PUB_DATE_addn[nchar(data$PUB_DATE) == 4] <- " Jun 15"
@@ -68,14 +68,27 @@ sapply(data, function(x) sum(is.na(x)))
   # NOTE: each APPLICATION_ID corresponds to a unique FULL_PROJECT_NUM.
   # We want the number of publications for each PI before a particular FULL_PROJECT_NUM
   # was funded. 
-  pub_counts <- test %>%
-    arrange(PI_IDS, PUB_DATE) %>%
-    group_by(PI_IDS, FULL_PROJECT_NUM) %>%
-    mutate(pub_counts = row_number()) # No, this doesn't work... 
-  test <- full_join(test, pub_counts, by ="PI_IDS")  # Counts of publications per PI/Project combo
+  data <- data[!is.na(data$PUB_DATE),]
+  data$pubs <- 1
+  data <- as.data.table(data)
+  data <- data[order(data$PUB_DATE)]
+  data[, total_pubs := cumsum(pubs), by="PI_IDS"]
+  data[, pubs_to_date := min(total_pubs)-1, by = "FULL_PROJECT_NUM"]
   
-  # No... I think we want the count of ALL publications for a PI for a period defined by projects. 
-  groups <- group_by(data, )
+  # Max impact factor of all publications up to each FULL_PROJECT_NUM start
+  data$impact_factor <- replace_na(data$impact_factor, 0)
+  data[, max_impact_factor := cummax(impact_factor), by="PI_IDS"]
+  data[, max_impact_factor := min(max_impact_factor), by="FULL_PROJECT_NUM"]
   
-  #Maybe this?
-  test <- test[,.(y =, roll = cumsum(y)), by = g]
+  # Previous grant count
+  # 6. Collapse down to desired analytic level (one obs per PI_ID-FULL_PROJECT_NUM)
+  data <- distinct(data, PI_IDS, FULL_PROJECT_NUM, .keep_all = TRUE)
+  data$grants <- 1
+  data[, count_grants := cumsum(grants)-1, by = "PI_IDS"]
+  
+  
+# 6. Remove unnecessary variables
+data <- select(data, BUDGET_START, FULL_PROJECT_NUM, ORG_NAME, PI_IDS, STUDY_SECTION_NAME, 
+               TOTAL_COST, pubs_to_date, max_impact_factor, count_grants)
+  
+  
