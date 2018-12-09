@@ -1,0 +1,182 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: Elizabeth Mahanna Gabrielli, MD
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+
+Thanks for taking a look at this! This is only a small exert from my project code. I can't figure out why my RF training set looks falsely close to 1. 
+
+```{r, eval=TRUE}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+IST <- read.csv("IST_corrected.csv", header=TRUE) #Link to websiste with CSV file https://datashare.is.ed.ac.uk/handle/10283/128
+IST_nh <- filter(IST, DPLACE=="D" & DNOSTRK=="N") #Filtering patients who were discharged to place "D," which is a nursing home and filtering out patients who did not have a stroke. 
+
+NH_clean <-IST_nh %>% #Create a new data set with outcome variables and only pertinent data
+  mutate(alive6m = factor(DIED, levels=c(1,0), labels=c("died", "survived"))) %>% #create alive at 6 months variable
+  mutate(FLP = ifelse(FPLACE=="A"|FPLACE=="B"|FPLACE=="C", "improved",ifelse(FPLACE=="D", "remainsNH", NA))) %>% #create outcome of Final Living Place (FLP) with 2 outcomes: remains in NH or improved living situation.
+  mutate(FLP = factor(FLP, levels=c("improved","remainsNH"), labels=c("improved","remainsNH"))) %>%
+  mutate(FFO = ifelse(OCCODE=="3"|OCCODE=="4", "notdependent",ifelse(OCCODE=="2", "dependent", NA))) %>% #create outcome variable Final Functional Outcome (FFO) as either dependent or notdependent
+  mutate(FFO = factor(FFO, levels=c("notdependent", "dependent"), labels=c("notdependent", "dependent"))) %>%
+  mutate(DefFace = ifelse(RDEF1=="Y", "yes", "no.unk")) %>%
+  mutate(DefFace = factor(DefFace, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefArm = ifelse(RDEF2=="Y", "yes", "no.unk")) %>%
+  mutate(DefArm = factor(DefArm, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefLeg = ifelse(RDEF3=="Y", "yes", "no.unk")) %>%
+  mutate(DefLeg = factor(DefLeg, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefDysphagia = ifelse(RDEF4=="Y", "yes", "no.unk")) %>%
+  mutate(DefDysphagia = factor(DefDysphagia, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefHemianopia = ifelse(RDEF5=="Y", "yes", "no.unk")) %>%
+  mutate(DefHemianopia = factor(DefHemianopia, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefVisual = ifelse(RDEF6=="Y", "yes", "no.unk")) %>%
+  mutate(DefVisual = factor(DefVisual, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefPostfossa = ifelse(RDEF7=="Y", "yes", "no.unk")) %>%
+  mutate(DefPostfossa = factor(DefPostfossa, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(DefOther = ifelse(RDEF8=="Y", "yes", "no.unk")) %>%
+  mutate(DefOther = factor(DefOther, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
+  mutate(Cerebralbleed14 = factor(H14, levels=c(1,0), labels=c("yes", "no"))) %>%
+  mutate(Ischemic14 = factor(ISC14, levels=c(1,0), labels=c("yes","no"))) %>%
+  mutate(Stroke14 = factor(STRK14, levels=c(1,0), labels=c("yes", "no"))) %>%
+  mutate(StrokeType = factor(STYPE, levels=c("LACS","PACS","POCS","TACS"), labels=c("Lacunar", "Partial Anterior Circ", "Posterior Circ", "Total Anterior Circ"))) %>%
+  mutate(gender = factor(SEX, levels=c("M", "F"), labels=c("male", "female"))) %>%
+  dplyr::select(-(HOSPNUM:RDELAY), -(RATRIAL:RASP3), -(RDEF1:RDEF8), -(RDATE:DALIVE), -(DPLACE:NCB14), -STYPE) %>% #removing columns not pertinent
+  rename(HospLOS=DALIVED) %>%
+  drop_na(alive6m) #remove subjects that don't have survival outcome
+  #mutate(VeryAdvAge = ifelse(AGE >=80, "yes", "no")) %>%
+  #mutate(VeryAdvAge = factor(VeryAdvAge, levels=c("yes", "no"), labels=c("yes", "no")))
+
+#Make dataset for Alive at 6 months outcome
+NH_alive6m <- NH_clean %>%
+  select(-FLP, -FFO)  #remove other outcome variables
+sum(is.na(NH_alive6m)) #no NA values
+dim(NH_alive6m)
+NH_alive6m %>% count("survived",alive6m)
+
+#Make dataset for Final Living Place at 6 months (remains in NH vs improved level of living)
+NH_FLP <- NH_clean %>%
+  select(-alive6m, -FFO) %>% #remove other outcome variables
+    drop_na(FLP) #remove subjects that don't have a FLP outcome variable
+sum(is.na(NH_FLP)) #No NA values
+NH_FLP %>% count("remainsNH",FLP)
+
+!#Make dataset for Final Functional Outcome at 6 months (dependent vs notdependent)
+NH_FFO <- NH_clean %>% 
+  select(-alive6m, -FLP) %>% #remove other outcome variables
+  drop_na(FFO) #remove subjects without FFO outcome
+sum(is.na(NH_FFO))
+head(NH_FFO)
+NH_FFO %>% count("dependent",FFO)
+```
+
+``` {r eval=FALSE}
+install.packages("mlogit")
+install.packages("pROC")
+install.packages("randomForest")
+```
+
+``` {r eval=TRUE}
+library(randomForest)
+library(mlogit)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(pROC)
+
+#Random forests for outcome of 6 months survival of patients discharged from the hospital to a nursing home.
+Alive6m.rf <- randomForest(alive6m ~ ., data=NH_alive6m, ntree=100, importance=TRUE)
+imp.alive6m <- Alive6m.rf$importance
+head(sort(imp.alive6m[,4], decreasing=TRUE), n=10)
+alive6m.rf.pred <- predict(Alive6m.rf, NH_alive6m, type="prob")
+rf.pred.alive6m <- alive6m.rf.pred[, 2]
+
+#Model evaluation it K-fold Cross validation
+N = nrow(NH_alive6m)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+alive6m.pred_outputs.rf <- vector(mode="numeric", length=N)
+alive6m.obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+    
+for(i in 1:K){
+    train <- filter(NH_alive6m, s != i)
+    test <- filter(NH_alive6m, s == i)
+    alive6m.obs_outputs[1:length(s[s==i]) + offset] <- test$alive6m
+
+    #RF train/test
+    rf <- randomForest(alive6m ~., data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test, type="prob") 
+    alive6m.pred_outputs.rf[1:length(s[s==i]) + offset] <- rf.pred.curr[,2]
+
+    offset <- offset + length(s[s==i])
+}
+
+
+#GLM of alive at 6 months with top variables
+alive6m.top.glm <-glm(alive6m ~ AGE + HospLOS + RSBP + StrokeType + RCONSC + DefDysphagia + gender, data= NH_alive6m, family = binomial(logit))
+summary(alive6m.top.glm) #Age, Stroke type:Total Anterior circulation, hospital LOS, No Dysphagia
+alive6m.top.glm.pred <- predict(alive6m.top.glm, NH_alive6m, type="response")
+
+
+#Random forests for outcome of 6 month survival with top variables.
+alive6m.top.rf <- randomForest(alive6m ~ AGE + HospLOS + RSBP + StrokeType + RCONSC + DefDysphagia + gender, data=NH_alive6m, ntree=100, importance=TRUE)
+alive6m.top.rf
+imp.alive6m.top <- alive6m.top.rf$importance
+head(sort(imp.alive6m.top[,4], decreasing=TRUE), n=10)
+alive6m.top.rf.pred <- predict(alive6m.top.rf, NH_alive6m, type="prob")
+
+#Model evaluation it K-fold Cross validation
+N = nrow(NH_alive6m)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+alive6m.top.pred_outputs.glm <- vector(mode="numeric", length=N)
+alive6m.top.pred_outputs.rf <- vector(mode="numeric", length=N)
+alive6m.top.obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(NH_alive6m, s != i)
+    test <- filter(NH_alive6m, s == i)
+    alive6m.top.obs_outputs[1:length(s[s==i]) + offset] <- test$alive6m
+   #GLM train/test
+    glm <- glm(alive6m ~ AGE + HospLOS + RSBP + StrokeType + RCONSC + DefDysphagia + gender, data=train, family=binomial(logit))
+    glm.pred.curr <- predict(glm, test, type="response")
+    alive6m.top.pred_outputs.glm[1:length(s[s==i]) + offset] <- glm.pred.curr
+    
+    #RF train/test
+    rf <- randomForest(alive6m ~ AGE + HospLOS + RSBP + StrokeType + RCONSC + DefDysphagia + gender, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test, type="prob") 
+    alive6m.top.pred_outputs.rf[1:length(s[s==i]) + offset] <- rf.pred.curr[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#ROC curves of RF with all variables in alive at 6 m outcome
+pROC::plot.roc(NH_alive6m$alive6m, rf.pred.alive6m, ci=TRUE, col="darkgreen", add=FALSE)
+pROC::plot.roc(alive6m.obs_outputs, alive6m.pred_outputs.rf, ci=TRUE, col="red", add=TRUE) 
+legend("bottomright", legend=c("RF Training", "RF Cross-Validation"), col=c("darkgreen", "red"), lwd=2)
+auc(NH_alive6m$alive6m, rf.pred.alive6m) #AUC = 0.991
+auc(alive6m.obs_outputs, alive6m.pred_outputs.rf) #AUC=0.6562
+
+#ROC curves of alive 6 m with top variables
+plot.roc(NH_alive6m$alive6m, alive6m.top.glm.pred, ci+TRUE, main="6 month Survival Using Top-Ranking Variables")
+plot.roc(alive6m.top.obs_outputs, alive6m.top.pred_outputs.glm, ci+TRUE, col="darkblue", add = TRUE)
+plot.roc(NH_alive6m$alive6m, alive6m.top.rf.pred[,2], ci=TRUE, col="darkgreen", add=TRUE)
+plot.roc(alive6m.top.obs_outputs, alive6m.top.pred_outputs.rf, ci=TRUE, col="red", add=TRUE) 
+legend("bottomright", legend=c("GLM Training", "GLM Cross-Validation", "RF Training", "RF Cross-Validation"), col=c("black", "darkblue", "darkgreen", "red"), lwd=2)
+#AUC 
+auc(NH_alive6m$alive6m, alive6m.top.glm.pred) #AUC = 0.7162
+auc(alive6m.top.obs_outputs, alive6m.top.pred_outputs.glm) #AUC=0.6699
+auc(NH_alive6m$alive6m, alive6m.top.rf.pred[,2]) #AUC = 0.998
+auc(alive6m.top.obs_outputs, alive6m.top.pred_outputs.rf) #AUC = 0.6532
+
+```
