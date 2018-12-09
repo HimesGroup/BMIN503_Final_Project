@@ -78,7 +78,6 @@ dim(IST_nh_missingstatus) #1 missing status --> will remove
 sum(is.na(IST_nh)) #There are 5539 missing values. 
 
 NH_clean <-IST_nh %>% #Create a new data set with outcome variables and only pertinent data
-  drop_na(DIED) %>%
   mutate(alive6m = factor(DIED, levels=c(1,0), labels=c("died", "survived"))) %>% #create alive at 6 months variable
   mutate(FLP = ifelse(FPLACE=="A"|FPLACE=="B"|FPLACE=="C", "improved",ifelse(FPLACE=="D", "remainsNH", NA))) %>% #create outcome of Final Living Place (FLP) with 2 outcomes: remains in NH or improved living situation.
   mutate(FLP = factor(FLP, levels=c("improved","remainsNH"), labels=c("improved","remainsNH"))) %>%
@@ -100,27 +99,40 @@ NH_clean <-IST_nh %>% #Create a new data set with outcome variables and only per
   mutate(DefPostfossa = factor(DefPostfossa, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
   mutate(DefOther = ifelse(RDEF8=="Y", "yes", "no.unk")) %>%
   mutate(DefOther = factor(DefOther, levels=c("yes", "no.unk"), labels=c("yes", "no.unk"))) %>%
-  dplyr::select(-(HOSPNUM:RDELAY), -(RATRIAL:RASP3), -(RDEF1:RDEF8), -(RDATE:DALIVE), -(DPLACE:DEAD8), -(HTI14:NCB14)) %>% #removing columns not pertinent
-  rename(HospLOS=DALIVED, Cerebralbleed14=H14, Ischemic14=ISC14, IndetermStroke14=NK14, Stroke14=STRK14)
+  mutate(Cerebralbleed14 = factor(H14, levels=c(1,0), labels=c("yes", "no"))) %>%
+  mutate(Ischemic14 = factor(ISC14, levels=c(1,0), labels=c("yes","no"))) %>%
+  mutate(Stroke14 = factor(STRK14, levels=c(1,0), labels=c("yes", "no"))) %>%
+  mutate(StrokeType = factor(STYPE, levels=c("LACS","PACS","POCS","TACS"), labels=c("Lacunar", "Partial Anterior Circ", "Posterior Circ", "Total Anterior Circ"))) %>%
+  dplyr::select(-(HOSPNUM:RDELAY), -(RATRIAL:RASP3), -(RDEF1:RDEF8), -(RDATE:DALIVE), -(DPLACE:NCB14)) %>% #removing columns not pertinent
+  rename(HospLOS=DALIVED, gender=SEX) %>%
+  drop_na(alive6m) %>% #remove subjects that don't have survival outcome
+  mutate(VeryAdvAge = ifelse(AGE >=85, "yes", "no"))
+
 
 head(NH_clean)
 
+#Make dataset for Alive at 6 months outcome
 NH_alive6m <- NH_clean %>%
   select(-FLP, -FFO)  #remove other outcome variables
 head(NH_alive6m)
 sum(is.na(NH_alive6m)) #no NA values
+dim(NH_alive6m)
 
+#Make dataset for Final Living Place at 6 months (remains in NH vs improved level of living)
 NH_FLP <- NH_clean %>%
   select(-alive6m, -FFO) %>% #remove other outcome variables
-  drop_na(FLP) #remove subjects that don't have a FLP outcome variable
+    drop_na(FLP) #remove subjects that don't have a FLP outcome variable
 sum(is.na(NH_FLP)) #No NA values
 head(NH_FLP)
+dim(NH_FLP)
 
+#Make dataset for Final Functional Outcome at 6 months (dependent vs notdependent)
 NH_FFO <- NH_clean %>% 
   select(-alive6m, -FLP) %>% #remove other outcome variables
-  drop_na(FFO)
+  drop_na(FFO) #remove subjects without FFO outcome
 sum(is.na(NH_FFO))
 head(NH_FFO)
+dim(NH_FFO)
 
 ```
 
@@ -129,6 +141,93 @@ install.packages("mlogit")
 install.packages("pROC")
 install.packages("randomForest")
 ```
+```{r eval = TRUE}
+#Descriptive Statistics
+library(ggplot2)
+mean(NH_clean$AGE, na.rm=TRUE) #Mean age is 78.6
+quantile(NH_clean$AGE, na.rm=TRUE) #0%  25%  50%  75% 100%: 40   74   80   84   98
+#Histogram of Age
+ggplot(data=NH_clean, aes(x=AGE)) +
+  geom_histogram(binwidth = 3)+
+  labs(title = "Histogram of Age in entire cohort")
+
+mean(NH_clean$HospLOS, na.rm=TRUE) #Mean Hospital LOS is 27.6 days
+quantile(NH_clean$HospLOS, na.rm=TRUE) #0%  25%  50%  75% 100%: 0   13   20   33  369
+#Histogram of Hospital LOS
+ggplot(data=NH_clean, aes(x=HospLOS)) +
+  geom_histogram(binwidth = 3)+
+  labs(title = "Histogram of Hospital Length of Stay in entire cohort")
+
+#Box plot of Age vs 6 m survival
+ggplot(data=NH_clean, aes(x=factor(alive6m), y=AGE)) +
+  geom_boxplot() +
+  labs(title="Age vs 6 Month survival") +
+  labs(y="Age (years)", x=("6 month survival"))
+
+#Box plot of Age vs Final Living Place
+ggplot(data=NH_FLP, aes(x=factor(FLP), y=AGE)) +
+  geom_boxplot() +
+  labs(title="Age and Final Living Place") +
+  labs(y="Age (years)", x=("Final Living Place"))
+
+#Box plot of Age vs Final Functional Outcome
+ggplot(data=NH_FFO, aes(x=factor(FFO), y=AGE)) +
+  geom_boxplot() +
+  labs(title="Age vs 6 Month survival") +
+  labs(y="Age (years)", x=("Final Functional Outcome"))
+
+#Box plot of Hosp LOS vs 6 m survival 
+ggplot(data=NH_clean, aes(x=factor(alive6m), y=HospLOS)) +
+  geom_boxplot() +
+  labs(title="Hospital Length of Stay (LOS) vs 6 Month survival") +
+  labs(x=("6 month survival"), y=("Hospital LOS (days)")) +
+  ylim(c(0,100))
+
+#Box plot of Stroke type and survival
+ggplot(data=NH_alive6m, aes(x=StrokeType, fill=alive6m)) +
+  geom_bar(position="fill") +
+  labs(title="Stroke Type vs 6 Month survival")
+
+#Box plot of Stroke type and Final Living Place
+ggplot(data=NH_FLP, aes(x=StrokeType, fill=FLP)) +
+  geom_bar(position="fill")
+
+#Box plot of Stroke Type and Final Functional Outcome
+ggplot(data=NH_FFO, aes(x=StrokeType, fill=FFO)) +
+  geom_bar(position="fill")
+
+#Box plot of gender and survival
+ggplot(data=NH_alive6m, aes(x=gender, fill=alive6m)) +
+  geom_bar(position="fill") +
+  labs(title="Gender and 6 Month survival")
+
+#Box plot of gender and Final Living Place
+ggplot(data=NH_FLP, aes(x=gender, fill=FLP)) +
+  geom_bar(position="fill")
+
+#Box plot of gender and Final Functional Outcome
+ggplot(data=NH_FFO, aes(x=gender, fill=FFO)) +
+  geom_bar(position="fill")
+
+#Box plot of Systolic Blood Pressure at randomization vs 6 m survival
+ggplot(data=NH_clean, aes(x=factor(alive6m), y=RSBP)) +
+  geom_boxplot() +
+  labs(title="Systolic blood pressure vs 6 Month survival") +
+  labs(y="Systolic BP (mmHg)", x=("6 month survival"))
+
+#Box plot of SBP vs Final Living Place
+ggplot(data=NH_FLP, aes(x=factor(FLP), y=RSBP)) +
+  geom_boxplot() +
+  labs(title="Systolic blood pressure and Final Living Place") +
+  labs(y="Systolic BP (mmHg)", x=("Final Living Place"))
+
+#Box plot of SBP vs Final Functional Outcome
+ggplot(data=NH_FFO, aes(x=factor(FFO), y=RSBP)) +
+  geom_boxplot() +
+  labs(title="Systolic blood pressure and Final Funcitonal Outcome") +
+  labs(y="Systolic BP (mmHg)", x=("Final Funcitonal Outcome"))
+```
+
 ``` {r eval=TRUE}
 library(randomForest)
 library(mlogit)
@@ -142,6 +241,7 @@ Alive6m.rf
 imp.alive6m <- Alive6m.rf$importance
 head(sort(imp.alive6m[,4], decreasing=TRUE), n=10)
 alive6m.rf.pred <- predict(Alive6m.rf, NH_alive6m, type="prob")
+rf.pred.alive6m <- alive6m.rf.pred[, 2]
 alive6m.rf.pred
 
 #Model evaluation it K-fold Cross validation
@@ -153,6 +253,7 @@ s = sample(1:K, size=N, replace=T)
 alive6m.pred_outputs.rf <- vector(mode="numeric", length=N)
 alive6m.obs_outputs <- vector(mode="numeric", length=N)
 offset <- 0
+    
 for(i in 1:K){
     train <- filter(NH_alive6m, s != i)
     test <- filter(NH_alive6m, s == i)
@@ -173,6 +274,7 @@ FLP.rf
 imp.FLP <- FLP.rf$importance
 head(sort(imp.FLP[,4], decreasing=TRUE), n=10)
 FLP.rf.pred <- predict(FLP.rf, NH_FLP, type="prob")
+rf.pred.FLP <- FLP.rf.pred[, 2]
 
 #Model evaluation it K-fold Cross validation
 library(dplyr)
@@ -358,13 +460,12 @@ Using Random Forest over all variables for each outcome gave 4 variables, which 
 
 ```{r eval=TRUE}
 library(pROC)
-library(ggplot2)
 
 #ROC curves of RF with all variables in alive at 6 m outcome
-pROC::plot.roc(NH_alive6m$alive6m, alive6m.rf.pred[,2], ci=TRUE, col="darkgreen", add=FALSE)
+pROC::plot.roc(NH_alive6m$alive6m, rf.pred.alive6m, ci=TRUE, col="darkgreen", add=FALSE)
 pROC::plot.roc(alive6m.obs_outputs, alive6m.pred_outputs.rf, ci=TRUE, col="red", add=TRUE) 
 legend("bottomright", legend=c("RF Training", "RF Cross-Validation"), col=c("darkgreen", "red"), lwd=2)
-auc(NH_alive6m$alive6m, Alive6m.rf.pred[,2]) #AUC = 1
+auc(NH_alive6m$alive6m, rf.pred.alive6m) #AUC = 0.991
 auc(alive6m.obs_outputs, alive6m.pred_outputs.rf) #AUC=0.6562
 
 #ROC curves of alive 6 m with top variables
