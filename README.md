@@ -16,9 +16,11 @@ DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
-##Files
+### Files
 final_project_template.Rmd = file that the Rmd files were based on.
+
 final_project_temp_Miller_git_v3.Rmd = Rmd file that uses real individual data that I cannot share to generate results in the form of an html file. 
+
 final_project_temp_Miller_git_v3_fakedata_v1.Rmd = the same as final_project_temp_Miller_git_v3.Rmd but I created fake data to run the analysis with. 
 
 
