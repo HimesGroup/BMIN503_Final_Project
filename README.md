@@ -11,10 +11,12 @@ Files included in this repo include the following:
 MBonk_final_project.Rmd # Final project Rmd file
 
 Meta-analyses sample information .csv files:
+
 Microarray_data_infosheet_R.csv # Pediatric dataset sample information
 Microarray_data_infosheet_R2.csv # Adult dataset sample information; 2 should be removed prior to using this file for adult datasets
 
 R and python files for meta-analysis:
+
 csv2rds.R
 integration_utility.R
 meta_analysis_geneexpr.py
@@ -24,10 +26,12 @@ study.rankprod.combine.R
 MetaAnalysis_GeneExpression_example.pdf - description of the files used in meta-analysis written by Mengyuan Kan
 
 Text file results of meta-analyses:
+
 Sepsis_peds_metaranef.txt - Results of Pediatric dataset meta-analysis
 Sepsis_structure.metaranef.txt - Results of Adult dataset meta-analysis
 
 Functional annotation of common and unique differentially expressed gene lists:
+
 Common_functional.csv
 Peds_unique_functional.csv
 Adult_unique_functional.csv
