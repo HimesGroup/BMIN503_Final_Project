@@ -16,3 +16,22 @@ DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+##Files
+
+
+
+
+### Overview
+ Plasma lipid levels is a highly heritable trait that is associated with coronary artery disease (CAD). Statins make up a class of drugs that can reduce cholesterol levels however it is unclear genes expression levels are most predictive of a strong response. As a preliminary study to determine how well baseline measurements can predict phenotypic information, phenotypic and demographic data will be used to predict whether or not an individual has a weak or strong response to statins.
+
+### Introduction 
+
+  Plasma lipid levels can be used to identify risk of CAD such as heart attack. In order to reduce the likilood of developing a CAD, patients are often prescribed statins, a lipid lowering medication. While statins are effective, there can be significant veriability between how patients respond. While previous studies have foccussed on performing association studies, there has yet to be work that has tested how machine learning can be used to make predictions based on gene expression levels as a means to identifiy individuals who will respond well to statins. Furthermore, it remains unclear what features would be best suited for making predictions.
+
+  The problem being addressed in this work is inheritently multi-disceplenary. The data being used is from the CAP study (Theusch et al., 2016) which is focussed on the pharmacogenomics of statins. Therefore, knowlege of biology and pharmacology are at the basis of the questions being addressed. Furthermore, machine-learning methods are being applied to the data which comes from computer science. In order to apply machine learning in this context, it will be important to first perform exploratory data analysis to have a good idea of what the data looks like. It will also be useful to test multiple parameters to make sure the most robust results are found. And results can be interpreted using AUC and/or ROC curves.
+
+
+### Methods
+
+The data used for this analysis has come from the Cholesterol and Pharmacogenomics (CAP) study. Between 2002 and 2004, 944 African American and European-American men and women were recruited to participate in a research project to study their lipids in response to statins. In addition to demographic information, RNA-seq and limited metabolomic data was also generated pre and post-statin exposure for over 400 individuals. In this study, I am interested in understanding which demographics and lab measures are most predictive for a weak or strong statin response. In other words which features predict if someone has a small or large decrease in LDL. To carry out such an analysis I will first test how well demographic and lab measures perform using linear regression to predict statin response as a binary outcome followed by training models using machine learning methods such as SVM and random forest. The models will be evaluated using 10-fold cross-validation. 
+
