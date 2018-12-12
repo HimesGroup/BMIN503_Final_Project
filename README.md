@@ -2,6 +2,8 @@
 
 This project will be investigating 6 month outcomes in stroke patients who are discharged from the hospital to a nursing home. We will formulate 3 models. One model will address the question: What factors predict if these patients survive to 6 months? The second model will address the question: What factors predict if these patients improve their living situation (either living at home, a relatives or a residential community) or remain in the nursing home? The third model will address the question: What factors predict their level of function? Are they dependent or not-dependent? 
 
+This repository contains 4 files: The IST_corrected.csv file with all the database data, IST_variables.pdf of the data dictionary, the rmd file with the entire project description and code to run the analysis, and the html file with knited rmd file.  
+
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
