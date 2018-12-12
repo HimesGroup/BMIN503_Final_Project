@@ -1,0 +1,1135 @@
+---
+title: "Indicators of Wound Complication Risk in Patients with Thoracic Insufficiency Syndrome"
+author: "Lia McNeely, MA, MSN, CRNP"
+output: 
+  html_document: 
+    toc: true 
+    depth: 3 
+    df_print: kable
+    theme: paper 
+    highlight: tango
+editor_options: 
+  chunk_output_type: console
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+```{r eval=TRUE}
+#load all libraries needed to complete data cleaning and analysis
+library(tidyverse)
+library(GGally)
+library(ggdendro)
+library(randomForest)
+library(glmnet)
+library(pROC)
+library(boot)
+library(childsds)
+library(lubridate)
+library(stringi)
+library(ggplot2)
+library(pROC)
+library(boot)
+library(forcats)
+library(stargazer)
+library(corrplot)
+
+```
+## Overview:
+The Center for Thoracic Insufficiency Syndrome (CTIS) at the Children’s Hospital of Philadelphia (CHOP) treats patients who have early onset scoliosis and associated compromised growth of the thoracic cavity.  An article currently in review for publication, attempted to determine if there are risk factors that are predictive for wound related complications for patients undergoing implantation of rib-based distraction devices.  Many patients with wound complications, however, are patients undergoing the serial expansions of their rib-based distraction devices after the initial implantation.  The purpose of this project is to do an exploratory analysis of data from the Patient Safety Registry of the Center for Thoracic Insufficiency Syndrome and the Children's Hospital of Philadelphia (CHOP) Data Warehouse (CDW), to determine whether or not risk factors can be identified for wound complications in patients with early onset scoliosis undergoing serial rib distraction expansions. If a risk factor can be identified, then we may begin using this in clinical care as part of an informatics project we are working on for the CTIS program.
+
+## Introduction:
+The vertical elastic prosthetic titanium rib (VEPTR) is a rib-based distraction device that was invented by the late Dr. Robert Campbell, in the 1987.  Dr. Campbell came to the Children's Hospital of Philadelphia in 2008 to start a center for patients with Thoracic Insufficiency Syndrome.  He developed an intradisciplinary team of orthopaedic surgeons, pulmonologists, general surgeons, neurosurgeons, radiologists, and researchers to help treat patients with severe Early Onset Scoliosis (EOS).  He theorized that EOS, particularly severe EOS, led to a decrease in the body's ability to develop normal lung capacity and coined the term "Thoracic Insufficiency Syndrome." By providing strutural support that could both maintan and grow the thoracic cavity, and keep progressive scoliosis in check, Dr. Campbell's device has helped thousands of children around the world.  Unfortunately, due to the recurrent nature of the surgery for lengthenings, and the structure of the device in relation to the patients chest wall, patients with VEPTR are at an increased risk of complications including surgical site infections (SSI), skin slough, and hardware failure. In order to track his complication rates, Dr. Campbell started a prospective patient safety registry.  This registry contains at least some data on all of his patient's surgeries, the surgeries of a handful of other surgeons at CHOP, and the many complications that arose between 2008 and 2018.  
+
+For many in orthopaedic surgery, predicting which patients are at risk for complication is increasingly important in an era of medicine that involves shared decision making with patients and families.  This project will attempt to determine whether or not a risk factor can be identified for patients with EOS that might predict whether or not a patient is at risk for a complication during the 90 days post-op from a serial expansion surgery. To begin the project, I reviewed some of the current literature and met with Dr. Patrick Cahill at CHOP. Dr. Cahill took over for Dr. Campbell as the director of the Center for Thoracic Insufficiency Syndrome upon the death of Dr. Campbell in July 2018. Dr. Cahill recommended I focus on complications after expansions since his team had already reviewed and were about to publish on the risk factors for complications after initial implant of the device.  I then met with Dr. Jeffery Pennington and Joy Payton.  Dr. Pennington is the Chief Informatics officer for the Department of Biomedical and Health Informatics at CHOP, and Joy Payton runs the education group within the DBHI that is helping to connect clinicians with their data through the ARCUS program.  I spoke with them regarding missingness of the data and potential complications of combining data sets.  The recommended that I set a cut-off threshold for missing data of at least 50%.  Finally, I met with Dr. John Holmes from the Department of Biomedical Informatics at UPenn.  We discussed the potential statistical analysis of the variables given the heterogenity of the patients within the data set and how to deal with some of the missing data.  Dr. Holmes recommended that I use Random Forest and LASSO to do a feature selection, and then use logistic regression to try and determine my predictive variables if any arose.  
+
+
+## Methods
+The data for this project was retrieved from the CTIS Patient Safety Registry and the CHOP Data Warehouse (CDW). While the CDW contains a tremendous amount of data, the Safety registry contained some variables that were not easily obtained through the CDW. To retrieve the CTIS data, a report was created in REDCap that incorporated 166 variables from the over 700 variables found within the registry.  Using domain knowledge, the variables were narrowed down based on potential clinical relevance.  Patients were immediately excluded if they did not have data for a birthdate, gender, or were not treated surgically by one of the surgeons in the CTIS program at CHOP. The initial CTIS dataset contained 2,626 observations of 166 variables.  The CDW data was retrieved with the help of a data analyst from the Department of Biomedical and Health Informatics at CHOP. SQL coding was used to create the data table from the relational tables in the CDW.  The primary CDW table contained 1,945 observations of 16 variables.  
+
+In order to create a master table that contained all of the data that I wanted for this project, I first imported the CDW tables and then the CTIS tables.  Using the tidyverse, lubridate, and stringi libraries, I adjusted the columns containing dates and times using the "lubridate"" package, and then selected columns I needed from the various tables.  The Data Dictionary for the REDCap database was used to help uncode factor variables with the correct terms and columns were renamed to improve the readibility of the table.  Since the CDW data only went back as far as May 2013, the time when EPIC's Optime tool was implemented, I excluded all patients prior to May 1, 2013, and then joined the CTIS data to the CDW surgery data based on both the patient identification number and the surgery date.  Once the CDW Surgery and CTIS tables were combined, I excluded procedures where there was no data on ASA classification, weight on the day of surgery, or Asssisted Ventilation Rate (AVR).  I also removed variables where there was less than 50% of the data present in the column.  I then filtered the data for only expansion procedures and created new columns to calculate the length of time a patient was in the hospital, the amount of time a patient was in the operating room (OR), and the amount of time between the surgery date and wound complication.  Next, I created the outcome variable based on which patients had a wound concern within 90 days of the procedure.  
+
+To make sure I did not have any variables that were based off data from after the wound concern, I removed all columns pertaining to post-wound findings.  I then also removed columns where I still had more than 50% missing data or columns where the factors had only one remaining level after filtering.  This filtering brought my number of variables down to 57. Finally, I filtered for complete cases.  This resulted in a final data set with 316 patient procedure pairs and 57 columns. 
+
+
+```{r Bringing in Initial Datasets from CDW tables}
+#CDW Surgery Data was read into R
+CDWSurgery <- read.csv("demog_implantsx.csv") %>% 
+    mutate(BIRTH_DATE = dmy(BIRTH_DATE)
+           , SURGERY_DATE = dmy(SURGERY_DATE)
+           , PAT_IN_ROOM_DATETIME_FMT = mdy_hm(PAT_IN_ROOM_DATETIME_FMT)
+           , PAT_OUT_ROOM_DATETIME_FMT = mdy_hm(PAT_OUT_ROOM_DATETIME_FMT)
+           , HOSP_ADMSN_TIME = dmy(HOSP_ADMSN_TIME)
+           , HOSP_DISCH_TIME = dmy(HOSP_DISCH_TIME)) %>% 
+    rename(patid = PAT_MRN_ID) %>% 
+    select(-PAT_NAME)
+
+```
+
+
+```{r Bringing in Data from CTIS Safety Registry Report}
+
+#CTIS data was brought into R
+Ctis_initial <- read.csv("CTISFinalProjectData2018.csv", na.strings = c(""))  
+  
+```
+
+
+
+```{r Assigning Column names in Bulk}
+#Columns from the data dictionary were renamed in Excel and then brought into R rather than trying to rename all of the columns in R.  Then function was written to help with the renaming using the stringi library.
+columnnames <- read_csv("ColumnName.csv")
+
+
+replace_names <- function(x){
+     stringi::stri_replace_all_regex(
+                 x, 
+                 pattern = columnnames$old_field, 
+                 replacement = columnnames$New_field, 
+                 vectorize_all = F
+                 )
+    }
+
+
+```
+
+
+```{r results = "asis"}
+#Use lubridate to change time variables into the correct format and then use the function to rename the variables
+Ctis_clean1 <- Ctis_initial %>% 
+    mutate_at(vars(matches("_dt_|_date_|anti_start|trk_days|char_trach_(cann|decan)|_dob")), mdy) %>%
+    rename_all(funs(replace_names)) 
+
+#Some of the column names came in incorrectly due to poor numbering of the columns in the data dictionary.
+Column_fill <- columnnames %>% 
+    filter(Fill_col == 1)
+
+Ctis_clean <- Ctis_clean1 %>% 
+    mutate(Kyphosis = Cong_Hered_MuscDys0, SMA = Cong_Hered_MuscDys1, Syndromic_scoli = Cong_Hered_MuscDys2, Hypoplastic_thorax =
+               Cong_Hered_MuscDys3, Other_anomaly = Cong_Hered_MuscDys00 ) %>% 
+    group_by(patid) %>% 
+    fill_(Column_fill$New_field) %>% 
+    ungroup()
+```
+###Missing Data
+
+There was a significant amount of data within the CTIS data set.  In order to determine the missingness of the data, I created new data frames that gave me the percentage of data missing in each column of the CTIS data set.
+
+```{r Missing Data Assessment}
+#Code to find the variables that have less than 50% of the data completed
+count_na50 <-
+    tibble(field = names(Ctis_clean),
+           n_na = sapply(Ctis_clean, function(x) sum(is.na(x))),
+           pct_na = n_na/nrow(Ctis_clean)) %>% 
+    filter(pct_na < 0.5)
+
+nrow(count_na50)
+
+count_na40 <-
+    tibble(field = names(Ctis_clean),
+           n_na = sapply(Ctis_clean, function(x) sum(is.na(x))),
+           pct_na = n_na/nrow(Ctis_clean)) %>% 
+    filter(pct_na > 0.4)
+nrow(count_na40)
+
+count_na_over50 <-
+    tibble(field = names(Ctis_clean),
+           n_na = sapply(Ctis_clean, function(x) sum(is.na(x))),
+           pct_na = n_na/nrow(Ctis_clean)) %>% 
+    filter(pct_na > 0.5)
+nrow(count_na_over50)
+
+count_na_over50 %>% 
+    arrange(desc(pct_na))
+
+```
+
+I decided to keep variables that had at least 50% of the data.  
+
+```{r Clean CTIS Data Set}
+#Clean up the CTIS data set   
+Ctis_final <- Ctis_clean %>% 
+    select(count_na50$field, Day_wound_noted, Abx_started, CDC_confirm, Neuromuscular_dx, Primary_procedure_site,-redcap_event_name) %>% 
+    mutate(Surgery_site = factor(Primary_procedure_site, levels = c(0,2,4,6), labels = c("Bilateral", "Left", "Right", "Center"))
+        , Primary_procedure = factor(Primary_procedure, levels = c(0,1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,20,22,26,28,29,30,31,38,39,40,41,98,100), labels =
+        c("VEPTR Implant Virgin Chest"                                                                  
+            ,"MAGEC_Virgin Chest"
+            ,"New_Full_VEPTR_Implant"
+            , "New_Full_MAGEC_VEPTR_Implant"
+            , "VETPR_Exp"
+            , "Clinic_MAGEC_VEPTR_Exp"
+            , "VEPTR_Rev_Rein_Remo"
+            , "MAGEC_VEPTR_Rev_Remo"
+            , "MAGEC_VEPTR_Exp_Surg"
+            , "GR_Placement"
+            , "MAGEC_GR_Placement"
+            , "GR_Expansion"
+            , "Clinic_MAGEC_GR_Expansion"
+            , "GR_Revision"
+            , "MAGEC_GR_Revision"
+            , "I_D"
+            , "Aborted_procedure"
+            , "Delayed_primary_closure"
+            , "Exploration"
+            , "General_surgical_procedure"
+            , "MAGEC_R_Expansion_surgery"
+            , "Other_Orthopaedic_Procedure"
+            , "ENT_procedure"
+            , "Pre_Orthopaedic_Procedure"
+            , "Full_Spine_fusion"
+            , "Plastic_Surgery_Closure"
+            , "Partial_Spine_Fusion"
+            , "Expansion_Thoracoplasty"
+            , "Other_surg"))) %>% 
+    mutate(Spine_class = factor(Spine_class, levels = c(0,1,2,3,4,5,6,8,7), labels =  
+            c("Idiopathic"
+              , "Syndromic"
+              , "Neuromuscular_Low_Tone"
+              , "Neuromuscular_High_Tone"
+              , "Congenital" 
+              , "Kyphosis"
+              , "Lordosis"
+              , "Other_class"
+              , "Unknown_class"))) %>% 
+    mutate(Weight_DOS = as.numeric(Weight_DOS))
+
+
+#We needed to combine some of the factors from Spine_class into one grouping
+levels(Ctis_final$Spine_class) <- c("Idiopathic", "Syndromic", "Neuromuscular", "Neuromuscular", "Congenital","Other", "Other", "Other", "Unknown")
+
+Ctis_final <- Ctis_final %>% 
+    mutate(Spine_class = as.factor(Spine_class))
+
+Distinct_sp_pt <- Ctis_final %>% 
+    group_by(patid) %>% 
+    distinct(Spine_class)
+```
+
+To determine whether or not I wanted to use patients or patient/procedure pairs, I took a closer look at one of the variables we use to categorize our patients, Spinal Class.  Spinal Class is the general term for what type of scoliosis the patients has.  Idiopathic, congenital, syndromic, and neuromuscular scoliosis are the four types of scoliosis we bucket our patients into when discussing different surgical approaches.  The CTIS data set was missing a significant number of Spinal classifications, but when looking at the procedures there was far less missing data.  
+
+```{r Spine Class Visualization}
+
+my_colors <- scale_fill_manual(values = c("gray65", "#005587"))
+
+ggplot(data = Distinct_sp_pt, aes(x = Spine_class)) +
+    geom_bar(fill = "#005587") +
+    theme(axis.text.x = element_text(size = "16", angle = 45),
+          axis.text.y = element_text(size = "16"),
+          axis.title.x = element_text(face = "bold", size = "18"),
+          axis.title.y = element_text(face = "bold", size = "18")) +
+    ggtitle("Spine Classification by Patient") +
+    labs(x = "Spinal Classification", y = "Number of Patients") 
+
+ggplot(data = Ctis_final, aes(x = Spine_class)) +
+    geom_bar(fill = "#005587") +
+    theme(axis.text.x = element_text(size = "16", angle = 45),
+          axis.text.y = element_text(size = "16"),
+          axis.title.x = element_text(face = "bold", size = "18"),
+          axis.title.y = element_text(face = "bold", size = "18")) +
+    ggtitle("Spine Classification by Procedures") +
+    labs(x = "Spinal Classification", y = "Number of Procedures") 
+
+
+```
+
+In order to use spinal classification as a variable, I spread the variable into 6 columns and then removed the column pertaining of spinal class, that contained the 6 factors.  Finally, I joined the data to the CDW dataset.
+```{r Join CDW and CTIS Data Sets}
+
+#We then coded to spread the Spinal Class variable so that we could use it as a potential variable for wound complications
+#Spread the spinal class variable
+spinal_class <-
+    Ctis_final %>% 
+    distinct(patid, Spine_class) %>% 
+    mutate(n = 1) %>% 
+    spread(key = Spine_class, value = n, fill = 0) 
+
+#Combine the above data frame and join them to the large data frame and then remove the the original factor column.
+Ctis_w_Spineclass <- Ctis_final %>% 
+    left_join(spinal_class) %>%
+    select(-Spine_class) %>% 
+    group_by(patid)
+
+#Join the CTIS and CDW data sets
+Final_set <- Ctis_w_Spineclass %>% 
+    left_join(CDWSurgery) %>% 
+    group_by(patid, SURGERY_DATE)
+
+```
+
+###Refining the Cohort
+Next, I continued to refine the patient cohort by filtering out the patients who had expansions prior to 5/7/2013 which is when the EHR system at CHOP went live and began to capture discrete data that was then put into the CDW. I then filtered for only the expansion data and removed patients/procedure pairs that were still missing data that could not be imputed.  We also removed the columns where there was less than 50% of the data completed in the now spread data.  Next, we created some new columns to add the age on the day of surgery, time spent in the OR according to the CDW data, admission length of stay according to the CDW data, and the numnber of days between the surgery and the wound being noted using the CDW and the CTIS data.  Finally, we added the outcome column based on which patients presented with a wound concern after surgery and removed the variables that dealt with variables noted after the wound complication appeared. 
+
+```{r Filter down to Expansion Data} 
+Expansion_Data<- Final_set %>% 
+    group_by(patid) %>% 
+    filter(SURGERY_DATE >= "2013-5-7") %>%
+    filter(PROC_NAME == "VEPTR, EXPANSION") %>%
+    filter(!is.na(Weight_DOS), !is.na(Develop_delayRC), !is.na(surg_bmi_1), !is.na(Gtube), !is.na(Weight_und_5th), !is.na(Idiopathic),
+           !is.na(Syndromic), !is.na(Neuromuscular), !is.na(Congenital), !is.na(Other), !is.na(Unknown)) %>% 
+    select(-surg_timeinor_1, -surg_timeofinc_1, -surg_time_proc_end, -surg_timeout_1, -demog_state, -demog_country, -demog_mort_stat, -Neuromuscular_dx) %>% 
+    arrange(SURGERY_DATE) %>% 
+    mutate(Age_on_DOS = as.numeric(difftime(SURGERY_DATE, BIRTH_DATE, units = "days")/365.25 * 12)
+               , Time_in_OR = as.numeric(difftime(PAT_OUT_ROOM_DATETIME_FMT, PAT_IN_ROOM_DATETIME_FMT, units = "mins"))
+               , Admit_LOS = as.numeric(difftime(HOSP_DISCH_TIME, HOSP_ADMSN_TIME, units = "mins"))
+           , Wound_days_postop = as.numeric(difftime(Day_wound_noted, SURGERY_DATE, units = "days"))) %>% 
+    ungroup()
+
+#We then removed the data from after the wound occurs.  
+Expansion_Data2 <- Expansion_Data %>% 
+    mutate(has_wound = as.integer(!is.na(Wound_days_postop))) %>% 
+    select(-c(Abx_started, CDC_confirm, 
+           PATIENT_STATUS, `<NA>`,
+           Wound_days_postop, WCenter5, WCenter6,
+           matches("W(Left|Right)|_class$")))
+
+#review of data to see where the remainder of the NAs were located.  
+count_na2 <-
+    tibble(field = names(Expansion_Data2),
+           n_na = sapply(Expansion_Data2, function(x) sum(is.na(x))),
+           pct_na = n_na/nrow(Expansion_Data2)) 
+    
+```
+###Feature Selection and Modeling
+
+```{r Creating Data Set prior to feature Selection}
+
+#First, we took the Expansion_data dataset and pulled out the variables we wanted to use for the random forest.  We removed patient ID, and the demographic and surgical variables that were no longer needed for the model. 
+
+wound_df <- Expansion_Data2 %>% 
+    select(-patid, -demog_dob, -Weight_DOS, -adm_admit_date_1, -adm_dc_date_1, -SURGERY_DATE, -Primary_procedure, -Unknown, -Other, -Day_wound_noted, -BIRTH_DATE, -CURR_AGE_YR, -SURG_LINE, -LOG_ID, -OR_PROC_ID, -CPT_CODE, -`70mm`, -PROC_NAME, -Surgery_site, -PAT_IN_ROOM_DATETIME_FMT, -PAT_OUT_ROOM_DATETIME_FMT, -HOSP_ADMSN_TIME, -HOSP_DISCH_TIME) 
+
+#before doing the randomforest we needed to make sure our variables are in factor form.   
+
+wound_df[sapply(wound_df, is.integer)] <- lapply(wound_df[sapply(wound_df, is.integer)], as.factor)
+
+#We then dropped the variables where when changed to a factor there were more than 50 factors.
+wound_2 <- wound_df[, sapply(wound_df, nlevels) < 50]
+#We then reviewed which variables had only one level and we then dropped those variables as well.
+ifelse(n <- sapply(wound_2, function(x) length(levels(x))) == 1, "DROP", "NODROP")
+
+drop_var <- data.frame(var = colnames(wound_2),
+                       status = ifelse(n <- sapply(wound_2, function(x) length(levels(x))) == 1, "DROP", "NODROP"),
+                       stringsAsFactors = FALSE) %>% 
+    filter(status == "NODROP") 
+
+wound_final <- wound_2 %>% 
+    select_at(vars(drop_var$var)) %>% 
+    select(-c(Cong_Scoli, Neuromuscular_scoli, Prog_Inf_Idio_scoli, adm_hosp_los, Kyphosis, surg_age_dos))
+
+wound_final <- wound_final %>% 
+    mutate(Idiopathic = as.factor(Idiopathic),
+           Syndromic = as.factor(Syndromic), 
+           Neuromuscular = as.factor(Neuromuscular), 
+           Congenital  = as.factor(Congenital))
+```
+
+
+```{r Subsetting the data by Spine Class}
+#Subsetting the data by Spine Class
+Idiopathic <- wound_final %>% 
+    filter(Idiopathic == 1) 
+
+nrow(Idiopathic)
+
+Syndromic <- wound_final %>% 
+    filter(Syndromic == 1)
+
+nrow(Syndromic)
+
+Neuromuscular <- wound_final %>% 
+    filter(Neuromuscular == 1)
+
+nrow(Neuromuscular)
+
+Congenital <- wound_final %>% 
+    filter(Congenital == 1)
+
+nrow(Congenital)
+
+Idiopathic_wound <- Idiopathic %>% 
+    filter(has_wound == 1)
+
+nrow(Idiopathic_wound)
+
+Syndromic_wound <- Syndromic %>% 
+    filter(has_wound == 1)
+
+nrow(Syndromic_wound)
+
+
+Congenital_wound <- Congenital %>% 
+    filter(has_wound == 1)
+
+nrow(Congenital_wound)
+
+Neuromuscular_wound <- Neuromuscular %>% 
+    filter(has_wound == 1)
+
+nrow(Neuromuscular_wound)
+```
+
+###Rate of Wound Complications
+Here I created a table to look at the rates of wound complications for procedures separated out by patient spinal classification.
+
+```{r results="asis"}
+Scoliosis_Classifications <- c("Idiopathic", "Syndromic", "Congenital", "Neuromuscular")
+Expansions <- c(23, 140, 200, 161)
+Wounds <- c(2, 38, 52, 46)
+Complication_Rate <- c(round(Wounds/Expansions, 3) * 100)
+
+df_final <- rbind(Scoliosis_Classifications, Expansions, Wounds, Complication_Rate)
+stargazer::stargazer(df_final, type = "html", title = "Rates of Wound Complications", column.separate = )
+```
+
+## Results
+
+###Data Exploration
+Once I had obtained the final data set I wanted to use for the majority of the rest of the project, I did some data exploration with some of the variables that were used to help indicate risk for post-op wound infections in the CTIS database along with some of the demographic variables that could help me get a better view of the patients in the data set.
+```{r More Data Exploration}
+#Wound breakdown in final group
+my_colors <- scale_fill_manual(values = c("gray65", "#005587"))
+
+nrow(wound_final)
+Wound_set <- wound_final %>% 
+    filter(has_wound == 1)
+nrow(Wound_set)
+138/524
+
+#Creating Data set with only complete cases
+wound_final2 <- wound_final %>% 
+    filter(complete.cases(.))
+nrow(wound_final2)
+
+Wound_set2 <- wound_final2 %>% 
+    filter(has_wound == 1)
+nrow(Wound_set2)
+90/316
+
+
+ggplot(data = wound_final2, aes(x = "", fill = has_wound)) + 
+    geom_bar() + 
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("28% of Expansion Procedures Resulted \n in Wound Complications") +
+    labs(y= "Number of Expansions", x = "", fill = "Wound Complictions") +
+    coord_flip()
+    
+#age on DOS for the full group
+ggplot(data = wound_final2, aes(x = Age_on_DOS/12)) + 
+    geom_histogram(binwidth = 1, color = "white", fill = "#005587") + 
+    ggtitle("Patients with Expansion Procedures \n Have a Wide Range of Ages") +
+    labs(y= "Number of Procedures", x = "Age in Years")
+
+#Patients who had a wound in the first 90 days after surgery
+CDC_criteria <- Expansion_Data %>% 
+    filter(Wound_days_postop <= 90)
+ggplot(data = CDC_criteria, aes(x = Wound_days_postop)) + 
+    geom_histogram(binwidth = 5, color = "white", fill = "#005587", position = position_nudge(x = 5)) + 
+    ggtitle("Most Wound Issues Occur \n in the First 30 days Post-op") +
+    labs(y= "Number of Procedures", x = "Days Post-op with First Sign of Wound")
+
+#Patients with wounds by year
+Expansion_Data2 %>% 
+group_by(var = year(ymd(SURGERY_DATE))) %>% 
+summarise(p = mean(has_wound),
+          n = n()) %>% 
+ggplot() + 
+    geom_col(aes(var, p), fill = "#005587") +
+    ggtitle("Wound Complications are Declining") +
+    labs(y= "Rate of Procedures \n Resulting in Wound Complication", x = "Year")
+
+#Expansion data included RACE and GENDER
+ggplot(data = wound_final2, aes(x = RACE, fill = GENDER)) + 
+    geom_bar() +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Race and Gender Do Not Appear \n to Impact Wound Complication Rates") +
+    labs(y= "Number of Procedures", x = "Race")
+
+#MRSA and wound outcome
+ggplot(data = wound_final2, aes(x = MRSA_hx, fill = has_wound)) + 
+    geom_bar(position = "fill") +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Patients with a History of MRSA \n Do Not Appear to be More at Risk") +
+    labs(y= "Rate of Wound Complications", x = "History of MRSA", fill = "Wound Complication")
+
+ggplot(data = wound_final2, aes(x = MRSA_current, fill = has_wound)) + 
+    geom_bar(position = "fill") +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Patients with MRSA on DOS Appear \n have a Slightly Higher Rate of Wound Complications") +
+    labs(y= "Rate of Wound Complications", x = "MRSA", fill = "Wound Complication")
+
+#wound outcome and Gtube 
+ggplot(data = wound_final2, aes(x = has_wound, fill = Gtube)) + 
+    geom_bar() +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("G-Tubes are Common in Both Groups") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+ggplot(data = wound_final2, aes(x = Gtube, fill = has_wound)) + 
+    geom_bar(position = "fill") +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Patients with a G-Tubes Have \n Minimally Higher Rate of Wound Complications") +
+    labs(y= "Number of Procedures", x = "G-Tube", fill = "Wound Complication")
+
+#wound outcome by Gender
+ggplot(data = wound_final2, aes(x = has_wound, fill = GENDER)) + 
+    geom_bar() +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Wound Complications for Patients by Gender") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+#wound outcome by Surgeon
+ggplot(data = wound_final2, aes(x = has_wound)) + 
+    geom_bar(fill = "#005587") +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    facet_grid("PRIMARY_PROV_NAME") +
+    ggtitle("Who the Surgeon is \n May Impact Wound Complication Rates") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+#wound outcome by whether or not the patient's weight was under the 5th percentile for their age based on standard CDC growth charts
+ggplot(data = wound_final2, aes(x = Weight_und_5th, fill = has_wound)) + 
+    geom_bar(position = "fill") +
+    my_colors +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    ggtitle("Weight on DOS Does not appear to Matter") +
+    labs(y= "Number of Procedures", x = "Weight less than 5th Percentile", fill = "Wound Complication")
+
+#wound outcome by length of time in the OR
+ggplot(data = wound_final2, aes(x = has_wound, y = Time_in_OR)) +
+    geom_boxplot() +
+    ggtitle("Time in Operating Room has \n no effect on Wound Complication Rates") +
+    labs(y= "Minutes in OR", x = "Wound Complication")
+
+#wound outcome by Age on the date of the surgery
+ggplot(data = wound_final2, aes(x = has_wound, y = Age_on_DOS)) +
+    geom_boxplot() +
+    ggtitle("Age on DOS has little effect on Wound Complications") +
+    labs(y= "Age in Months", x = "Wound Complication")
+
+```
+
+###Correlation Matrix for Numeric Data
+I ran a small correlation matrix on the numeric variables that remained to see if there were any relationships between the variables.
+
+```{r Correlation Matrix}
+Correlation_data <- wound_final2 %>% 
+    select(Age_on_DOS, Time_in_OR, Admit_LOS, has_wound) %>% 
+    mutate(has_wound = as.numeric(has_wound))
+
+
+cor(Correlation_data, method = "pearson", use = "complete.obs")
+
+library(PerformanceAnalytics)
+chart.Correlation(Correlation_data, historgram = TRUE, pch = 19)
+```
+
+###Random Forest Model and Cross Validation
+In order to help with feature selection, a Random Forest Model was created.  
+```{r Random Forest}
+#Checking to make sure that I have at least 2 levesl for all factor variables
+ifelse(n <- sapply(wound_final2, function(x) length(levels(x))) == 1, "DROP", "NODROP")
+
+#then we can do the randomForest
+Wounds_rf <- randomForest(has_wound ~ ., data = wound_final2, ntree = 200, importance = TRUE)
+Wounds_rf
+
+Wounds_rf$importance
+
+Wounds_rf_pred <- predict(Wounds_rf, wound_final2, type="prob")
+head(Wounds_rf_pred)
+
+pred_wound_rf <- Wounds_rf_pred[, 2]
+
+#10 fold cross validation
+N = nrow(wound_final2)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs_wound <- vector(mode="numeric", length=N)
+obs.outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(wound_final2, s != i)
+    test <- filter(wound_final2, s == i)
+    obs.outputs[1:length(s[s==i]) + offset] <- test$has_wound
+  #randomforest train/test
+    rf <- randomForest(has_wound ~ ., data=train, ntree=200)
+    rf.pred.tt <- predict(rf, newdata = test, type="prob") 
+    pred_outputs_wound[1:length(s[s==i]) + offset] <- rf.pred.tt[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#Review ROC and see that it is slightly better than chance taking all of the data into consideration
+roc(obs.outputs, pred_outputs_wound, ci=TRUE)
+
+
+```
+###Generalized Linear Model and Cross Validation (glm)
+I then ran a glm to also see if I could define some features that might be significant.
+
+```{r Generalized Linear Models}
+#Using for-loop to determine if there are any significant variables that I could pull out for my glm
+p.valuesglm <- vector()
+var <- colnames(wound_final2)[1:57]
+for(i in 1:(ncol(wound_final2)-1)){
+  p.valuesglm[[i]] = summary((glm(wound_final2[[1]] ~ wound_final2[[i+1]], data = wound_final2, family = binomial())))$coefficients[2,4]
+}
+L.regression <- cbind(p.valuesglm)
+df.regress <- 
+    data.frame(name = names(wound_final2)[1:ncol(wound_final2)-1],
+               p_value = L.regression)
+df.regress %>%
+    filter(p.valuesglm < 0.05)
+
+
+#Looking only at glm for the entire data set
+wound_glm <- glm(has_wound ~ ., data = wound_final2,  family = binomial(logit))
+summary(wound_glm)
+
+glm.pred_wound <- predict(wound_glm, wound_final2, type="response")
+
+N = nrow(wound_final2)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.outputs.glm <- vector(mode="numeric", length=N)
+obs.outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(wound_final2, s != i)
+    test <- filter(wound_final2, s == i)
+    obs.outputs[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm <- glm(has_wound ~ ., data = wound_final2, family = binomial(logit))
+    glm.pred.curr <- predict(glm, test, type ="response")
+    pred.outputs.glm[1:length(s[s==i]) + offset] <- glm.pred.curr
+
+    offset <- offset + length(s[s==i])
+}
+roc(obs.outputs, pred.outputs.glm, ci = TRUE)
+
+#Then limited the linear model to the variables that were significant
+
+Feature_glm <- glm(has_wound ~ Gtube + Congenital, data = wound_final2,  family = binomial(logit))
+summary(Feature_glm)
+
+glm.pred_feat <- predict(Feature_glm, wound_final2, type="response")
+
+N = nrow(wound_final2)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.feat.glm <- vector(mode="numeric", length=N)
+obs.feat <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(wound_final2, s != i)
+    test <- filter(wound_final2, s == i)
+    obs.feat[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.feat <- glm(has_wound ~ Gtube + Congenital, data = wound_final2, family = binomial(logit))
+    glm.pred.feat <- predict(glm.feat, test, type ="response")
+    pred.feat.glm[1:length(s[s==i]) + offset] <- glm.pred.feat
+
+    offset <- offset + length(s[s==i])
+}
+roc(obs.feat, pred.feat.glm, ci = TRUE)
+
+plot.roc(wound_final2$has_wound, pred_wound_rf, col="darkgreen")
+plot.roc(obs.outputs, pred.outputs.glm, ci = TRUE, col = "pink", lwd = 3, add = TRUE)
+plot.roc(obs.outputs, pred_outputs_wound, ci = TRUE, col = "purple", lwd = 3, add = TRUE)
+plot.roc(obs.feat, pred.feat.glm, ci = TRUE, col = "blue", lwd = 3, add = TRUE)
+legend("bottomright", legend = c("Random Forest","GLM Cross Validation","Random Forest Cross-Validation", "GLM with 2 Features Cross Validation"), lty = 1, col = c("darkgreen", "pink", "purple", "blue"), lwd = 2)
+
+```
+
+```{r glm Variables vs RF Variables}
+
+#Regression variables vs RF variables
+
+p.valuesglm <- vector()
+var <- colnames(wound_final2)[1:52]
+for(i in 1:(ncol(wound_final2)-1)){
+  p.valuesglm[[i]] = summary((glm(wound_final2[[1]] ~ wound_final2[[i+1]], data=wound_final2, family=binomial())))$coefficients[2,4]
+}
+L.regression <- cbind(p.valuesglm)
+Wound.rf <- randomForest(has_wound ~ ., data = wound_final2, ntree=200, importance=TRUE)
+Wound.gini <- importance(Wound.rf, type = 2)
+df.regressvsgini = data.frame(L.regression, Wound.gini)
+names(df.regressvsgini) = c("Regression.p.value","RF.Gini" )
+df.regressvsgini %>%
+    rownames_to_column(var = "variable.names") %>%
+    filter(Regression.p.value < 0.05)
+```
+
+```{r GLM and RF with decreased number of Variables}
+
+#I created a data frame to use with the models again to see if we could improve them.  I kept the variables that had the highest MeanDecreseGini from the RF or were significant in the GLM.
+
+Feature_set <- wound_final2 %>% 
+    select(Age_on_DOS, Time_in_OR, Admit_LOS, Gtube, Congenital, surg_bmi_1, RACE, has_wound)
+
+Wounds_rf.feat <- randomForest(has_wound ~ ., data = Feature_set, ntree = 200, importance = TRUE)
+Wounds_rf.feat
+
+Wounds_rf$importance
+
+Wounds_rf.feat_pred <- predict(Wounds_rf, wound_final2, type="prob")
+head(Wounds_rf.feat_pred)
+
+pred_wound_rf.feat <- Wounds_rf.feat_pred[, 2]
+
+#10 fold cross validation
+N = nrow(Feature_set)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs_wound.feat <- vector(mode="numeric", length=N)
+obs.outputs.feat <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Feature_set, s != i)
+    test <- filter(Feature_set, s == i)
+    obs.outputs.feat[1:length(s[s==i]) + offset] <- test$has_wound
+  #randomforest train/test
+    rf.feat <- randomForest(has_wound ~ ., data=train, ntree=200)
+    rf.pred.feat <- predict(rf.feat, newdata = test, type="prob") 
+    pred_outputs_wound.feat[1:length(s[s==i]) + offset] <- rf.pred.feat[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#Review ROC and see that it is slightly better than chance taking all of the data into consideration and worse than with all of the data.
+roc(obs.outputs.feat, pred_outputs_wound.feat, ci=TRUE)
+
+#Ran the glm through with the new data as well.
+
+Feature_glm.feat <- glm(has_wound ~ ., data = Feature_set,  family = binomial(logit))
+summary(Feature_glm.feat)
+
+glm.pred_feat.feat <- predict(Feature_glm.feat, Feature_set, type="response")
+
+N = nrow(Feature_set)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.feat.glm.feat <- vector(mode="numeric", length=N)
+obs.feat.feat <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Feature_set, s != i)
+    test <- filter(Feature_set, s == i)
+    obs.feat.feat[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.feat.feat <- glm(has_wound ~ ., data = Feature_set, family = binomial(logit))
+    glm.pred.feat.feat <- predict(glm.feat.feat, test, type ="response")
+    pred.feat.glm.feat[1:length(s[s==i]) + offset] <- glm.pred.feat.feat
+
+    offset <- offset + length(s[s==i])
+}
+
+#This also did not perform as well. 
+roc(obs.feat.feat, pred.feat.glm.feat, ci = TRUE)
+```
+
+#Subsetting the Data
+Since the patient population with TIS is such a heterogenous group, I next attempted to determine if categorzing patients by their Spinal Class would help improve the models.  
+
+```{r Congenital Data}
+#Removed variables that had only 1 level in the dataset or had three or less procedures with another level listed for the variable.
+Congenital_complete <- Congenital %>% 
+    filter(complete.cases(.)) %>% 
+    select(-c(Central_Core_myo, Neuro_kypho_scoli, Rib_to_rib, Rib_to_spine, Rib_to_pelvis, Left_iliac, Right_iliac, Left_upper, Right_upper, Center5, Center6, Other_abx, No_abx_intra, SMA, Syndromic_scoli, Hypoplastic_thorax, Other_anomaly, Idiopathic, Neuromuscular, Syndromic, Congenital, surg_spinal_class_def, MRSA))
+  
+
+ggplot(data = Congenital_complete, aes(x = has_wound)) + 
+    geom_bar() + 
+    ggtitle("Number of Congenital Expansions with Wound Complications") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+
+Congenital_rf <- randomForest(has_wound ~ ., data = Congenital_complete, ntree = 200, importance = TRUE)
+Congenital_rf
+
+Congenital_rf$importance
+
+Congenital_rf_pred <- predict(Congenital_rf, Congenital_complete, type="prob")
+head(Congenital_rf_pred)
+
+pred_Congenital_rf <- Congenital_rf_pred[, 2]
+
+#10 fold cross validation
+N = nrow(Congenital_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs_congenital <- vector(mode="numeric", length=N)
+obs.outputs.congenital <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Congenital_complete, s != i)
+    test <- filter(Congenital_complete, s == i)
+    obs.outputs.congenital[1:length(s[s==i]) + offset] <- test$has_wound
+  #randomforest train/test
+    rf.cong <- randomForest(has_wound ~ ., data=train, ntree=200)
+    rf.pred.cong <- predict(rf.cong, newdata = test, type="prob") 
+    pred_outputs_congenital[1:length(s[s==i]) + offset] <- rf.pred.cong[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#Review RF ROC and see that it is slightly better than chance taking all of the data into consideration
+roc(obs.outputs.congenital, pred_outputs_congenital, ci = TRUE)
+
+#I then ran the GLM with the full data set to determine if there were any changes keeping the spinal classification more uniform.
+
+Congenital.glm <- glm(has_wound ~ ., data = Congenital_complete,  family = binomial(logit))
+summary(Congenital.glm)
+
+glm.pred.congenital <- predict(Congenital.glm, Congenital_complete, type="response")
+
+#I then tried it again with only the variables that were significant from the glm immediately above.
+Congenital.glm.rightabx <- glm(has_wound ~ Right_scapula + Clindamycin, data = Congenital_complete,  family = binomial(logit))
+summary(Congenital.glm.rightabx)
+
+glm.pred.congenital.rightabx <- predict(Congenital.glm.rightabx, Congenital_complete, type="response")
+
+#Cross validation for glm of the full Congenital data set
+N = nrow(Congenital_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.glm.congenital <- vector(mode="numeric", length=N)
+obs.glm.congenital <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Congenital_complete, s != i)
+    test <- filter(Congenital_complete, s == i)
+    obs.glm.congenital[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.congenital <- glm(has_wound ~ ., data = Congenital_complete, family = binomial(logit))
+    glm.pred.cong <- predict(glm.congenital, test, type ="response")
+    pred.glm.congenital[1:length(s[s==i]) + offset] <- glm.pred.cong
+
+    offset <- offset + length(s[s==i])
+}
+
+#This also did not perform as well. 
+roc(obs.glm.congenital, pred.glm.congenital, ci = TRUE)
+
+
+#10 Fold cross validation for Right Scapula and Clindamycin
+N = nrow(Congenital_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.glm.congenital.rightabx <- vector(mode="numeric", length=N)
+obs.glm.congenital.rightabx <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Congenital_complete, s != i)
+    test <- filter(Congenital_complete, s == i)
+    obs.glm.congenital.rightabx[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.congenital.rightabx <- glm(has_wound ~ Right_scapula + Clindamycin, data = Congenital_complete, family = binomial(logit))
+    glm.pred.cong.rightabx <- predict(glm.congenital.rightabx, test, type ="response")
+    pred.glm.congenital.rightabx[1:length(s[s==i]) + offset] <- glm.pred.cong.rightabx
+
+    offset <- offset + length(s[s==i])
+}
+
+#This also did not perform as well. 
+roc(obs.glm.congenital.rightabx, pred.glm.congenital.rightabx, ci = TRUE)
+
+
+#AUC Plots for all Congenital models
+plot.roc(wound_final2$has_wound, pred_wound_rf, col = "darkgreen")
+plot.roc(obs.glm.congenital, pred.glm.congenital, ci = TRUE, col = "lightblue", lwd = 3, add = TRUE)
+plot.roc(obs.glm.congenital.rightabx, pred.glm.congenital.rightabx, ci = TRUE, col = "navy", lwd = 3, add = TRUE)
+plot.roc(obs.outputs.congenital, pred_outputs_congenital, ci = TRUE, col = "red", lwd = 3, add = TRUE)
+plot.roc(obs.outputs, pred_outputs_wound, ci = TRUE, col = "purple", lwd=3, add = TRUE)
+legend("bottomright", legend=c("Random Forest","Congenital GLM CV", "Congenital Partial Set GLM CV", "Congential Full Set RF CV", "Full Set RF Cross-Validation"), col=c("darkgreen", "lightblue", "navy", "red", "purple"), lwd = 2)
+
+           
+
+```
+
+
+
+```{r Neuromuscular Data}
+
+#Creating Data set with only complete cases for Neuromuscular patients and removing columns with only one level.
+Neuromuscular_complete <- Neuromuscular %>% 
+    filter(complete.cases(.)) %>% 
+    select(-c(Central_Core_myo, Neuro_kypho_scoli, Rib_to_rib, Rib_to_spine, Rib_to_pelvis, Left_iliac, Right_iliac, Left_upper, Right_upper, Center5, Center6, Other_abx, No_abx_intra, SMA, Syndromic_scoli, Hypoplastic_thorax, Other_anomaly, Idiopathic, Neuromuscular, Syndromic, Congenital, surg_spinal_class_def, MRSA, Kyphoscoliosis, Rib_agenesis))
+
+ggplot(data = Neuromuscular_complete, aes(x = has_wound)) + 
+    geom_bar() + 
+    ggtitle("Numer of Neuromuscular Expansions with Wound Complications") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+
+#Checking to make sure that I have at least 2 levesl for all factor variables
+ifelse(n <- sapply(Neuromuscular_complete, function(x) length(levels(x))) == 1, "DROP", "NODROP")
+
+Neuromuscular_rf <- randomForest(has_wound ~ ., data = Neuromuscular_complete, ntree = 200, importance = TRUE)
+Neuromuscular_rf
+
+Neuromuscular_rf$importance
+
+Neuromuscular_rf_pred <- predict(Neuromuscular_rf, Neuromuscular_complete, type="prob")
+head(Neuromuscular_rf_pred)
+
+pred_neuromuscular_rf <- Neuromuscular_rf_pred[, 2]
+
+#10 fold cross validation
+N = nrow(Neuromuscular_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs_neuromuscular <- vector(mode="numeric", length=N)
+obs.outputs.neuromuscular <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Neuromuscular_complete, s != i)
+    test <- filter(Neuromuscular_complete, s == i)
+    obs.outputs.neuromuscular[1:length(s[s==i]) + offset] <- test$has_wound
+  #randomforest train/test
+    rf.neuro <- randomForest(has_wound ~ ., data=train, ntree=200)
+    rf.pred.neuro <- predict(rf.neuro, newdata = test, type="prob") 
+    pred_outputs_neuromuscular[1:length(s[s==i]) + offset] <- rf.pred.neuro[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#Review RF ROC and see that it is slightly better than chance taking all of the data into consideration for neuromusclar patients
+roc(obs.outputs.neuromuscular, pred_outputs_neuromuscular, ci=TRUE)
+
+#I then ran the GLM with the full data set to determine if there were any changes keeping the spinal classification more uniform.
+
+Neuromuscular.glm <- glm(has_wound ~ ., data = Neuromuscular_complete,  family = binomial(logit))
+summary(Neuromuscular.glm)
+
+glm.pred.Neuromuscular <- predict(Neuromuscular.glm, Neuromuscular_complete, type="response")
+
+#I then tried it again with only the variables that were significant from the glm immediately above.
+Neuromuscular.glm.orgen <- glm(has_wound ~ Time_in_OR + Age_on_DOS + demog_gender, data = Neuromuscular_complete,  family = binomial(logit))
+summary(Neuromuscular.glm.orgen)
+
+glm.pred.Neuromuscular.orgen <- predict(Neuromuscular.glm.orgen, Neuromuscular_complete, type="response")
+
+#Cross validation for glm of the full Congenital data set
+N = nrow(Neuromuscular_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.glm.Neuromuscular <- vector(mode="numeric", length=N)
+obs.glm.Neuromuscular <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Neuromuscular_complete, s != i)
+    test <- filter(Neuromuscular_complete, s == i)
+    obs.glm.Neuromuscular[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.Neuromuscular <- glm(has_wound ~ ., data = Neuromuscular_complete, family = binomial(logit))
+    glm.pred.Neuromuscular <- predict(glm.Neuromuscular, test, type ="response")
+    pred.glm.Neuromuscular[1:length(s[s==i]) + offset] <- glm.pred.Neuromuscular
+
+    offset <- offset + length(s[s==i])
+}
+
+#This also did not perform as well. 
+roc(obs.glm.Neuromuscular, pred.glm.Neuromuscular, ci = TRUE)
+
+
+#10 Fold cross validation for Right Scapula and Clindamycin
+N = nrow(Neuromuscular_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.glm.Neuromuscular.orgen <- vector(mode="numeric", length=N)
+obs.glm.Neuromuscular.orgen <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Neuromuscular_complete, s != i)
+    test <- filter(Neuromuscular_complete, s == i)
+    obs.glm.Neuromuscular.orgen[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.Neuromuscular.orgen <- glm(has_wound ~ Right_scapula + Clindamycin, data = Congenital_complete, family = binomial(logit))
+    glm.pred.Neuromuscular.orgen <- predict(glm.Neuromuscular.orgen, test, type ="response")
+    pred.glm.Neuromuscular.orgen[1:length(s[s==i]) + offset] <- glm.pred.Neuromuscular.orgen
+
+    offset <- offset + length(s[s==i])
+}
+
+#This also did not perform as well. 
+roc(obs.glm.Neuromuscular.orgen, pred.glm.Neuromuscular.orgen, ci = TRUE)
+
+
+#AUC Plots for all Neuromuscular models
+plot.roc(wound_final2$has_wound, pred_wound_rf, col = "darkgreen")
+plot.roc(obs.glm.Neuromuscular, pred.glm.Neuromuscular, ci = TRUE, col = "lightblue", lwd = 3, add = TRUE)
+plot.roc(obs.glm.Neuromuscular.orgen, pred.glm.Neuromuscular.orgen, ci = TRUE, col = "navy", lwd = 3, add = TRUE)
+plot.roc(obs.outputs.neuromuscular, pred_outputs_neuromuscular, ci = TRUE, col = "red", lwd = 3, add = TRUE)
+plot.roc(obs.outputs, pred_outputs_wound, ci = TRUE, col = "purple", lwd=3, add = TRUE)
+legend("bottomright", legend=c("Random Forest","Neuromuscular GLM CV", "Neuromuscular Partial Set GLM CV", "Neuromuscular Full Set RF CV", "Full Set RF Cross-Validation"), col=c("darkgreen", "lightblue", "navy", "red", "purple"), lwd = 2)
+
+```
+
+
+```{r Syndromic Patients}
+
+#Creating Data set with only complete cases for Syndromic patients
+Syndromic_complete <- Syndromic %>% 
+    filter(complete.cases(.)) %>% 
+    select(-c(Central_Core_myo, Neuro_kypho_scoli, Rib_to_rib, Rib_to_spine, Rib_to_pelvis, Left_iliac, Right_iliac, Left_upper, Right_upper, Center5, Center6, Other_abx, No_abx_intra, SMA, Syndromic_scoli, Hypoplastic_thorax, Other_anomaly, Idiopathic, Neuromuscular, Syndromic, Congenital, surg_spinal_class_def, MRSA, Kyphoscoliosis, Rib_agenesis, Neurogenic_bld))
+
+ggplot(data = Syndromic_complete, aes(x = has_wound)) + 
+    geom_bar() + 
+    ggtitle("Numer of Syndromic Expansions with Wound Complications") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+
+Syndromic_rf <- randomForest(has_wound ~ ., data = Syndromic_complete, ntree = 200, importance = TRUE)
+Syndromic_rf
+
+Syndromic_rf$importance
+
+Syndromic_rf_pred <- predict(Syndromic_rf, Syndromic_complete, type="prob")
+head(Syndromic_rf_pred)
+
+pred_Syndromic_rf <- Syndromic_rf_pred[, 2]
+
+#10 fold cross validation
+N = nrow(Syndromic_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs_syndromic <- vector(mode="numeric", length=N)
+obs.outputs.syndromic <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Syndromic_complete, s != i)
+    test <- filter(Syndromic_complete, s == i)
+    obs.outputs.syndromic[1:length(s[s==i]) + offset] <- test$has_wound
+  #randomforest train/test
+    rf.syn <- randomForest(has_wound ~ ., data=train, ntree=200)
+    rf.pred.syn <- predict(rf.syn, newdata = test, type="prob") 
+    pred_outputs_syndromic[1:length(s[s==i]) + offset] <- rf.pred.syn[,2]
+    
+    offset <- offset + length(s[s==i])
+}
+
+#Review ROC and see that it is slightly better than chance taking all of the data into consideration for neuromusclar patients
+roc(obs.outputs.syndromic, pred_outputs_syndromic, ci=TRUE)
+
+#GLM for the Syndromic data
+
+Syndromic.glm <- glm(has_wound ~ ., data = Syndromic_complete,  family = binomial(logit))
+summary(Syndromic.glm)
+
+glm.pred.Neuromuscular <- predict(Neuromuscular.glm, Neuromuscular_complete, type="response")
+
+#Cross validation for glm of the full Syndromic data set
+N = nrow(Syndromic_complete)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred.glm.Syndromic <- vector(mode="numeric", length=N)
+obs.glm.Syndromic <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(Syndromic_complete, s != i)
+    test <- filter(Syndromic_complete, s == i)
+    obs.glm.Syndromic[1:length(s[s==i]) + offset] <- test$has_wound
+    
+    #GLM train/test
+    glm.Syndromic <- glm(has_wound ~ ., data = Syndromic_complete, family = binomial(logit))
+    glm.pred.Syndromic <- predict(glm.Syndromic, test, type ="response")
+    pred.glm.Syndromic[1:length(s[s==i]) + offset] <- glm.pred.Syndromic
+
+    offset <- offset + length(s[s==i])
+}
+
+ 
+roc(obs.glm.Syndromic, pred.glm.Syndromic, ci = TRUE)
+#The AUC for the syndromic glm was near 0.98, but the GLM itself had no significant variables in this subset of patients and thus I didn't use this to select out features and kept the data set as a whole.  
+
+
+#AUC Plots for all Syndromic models
+plot.roc(wound_final2$has_wound, pred_wound_rf, col = "darkgreen")
+plot.roc(obs.glm.Syndromic, pred.glm.Syndromic, ci = TRUE, col = "lightblue", lwd = 3, add = TRUE)
+plot.roc(obs.outputs.syndromic, pred_outputs_syndromic, ci = TRUE, col = "red", lwd = 3, add = TRUE)
+plot.roc(obs.outputs, pred_outputs_wound, ci = TRUE, col = "purple", lwd=3, add = TRUE)
+legend("topright", legend=c("Random Forest","Syndromic GLM CV", "Syndromic Full Set RF CV", "Full Set RF Cross-Validation"), col=c("darkgreen", "lightblue", "red", "purple"), lwd = 2)
+
+```
+
+
+```{r RF AUC Plot for Comparing Subset Models}
+#Plot of all of the RF models together
+
+plot.roc(wound_final2$has_wound, pred_wound_rf, col = "darkgreen")
+plot.roc(obs.outputs.congenital, pred_outputs_congenital, ci = TRUE, col = "red", lwd = 3, add = TRUE)
+plot.roc(obs.outputs.neuromuscular, pred_outputs_neuromuscular, ci=TRUE, col = "blue", lwd = 3, add = TRUE)
+plot.roc(obs.outputs, pred_outputs_wound, ci = TRUE, col = "purple", lwd = 3, add = TRUE)
+plot.roc(obs.outputs.syndromic, pred_outputs_syndromic, ci=TRUE, col = "orange", lwd = 3, add = TRUE)
+legend("bottomright", legend = c("Random Forest", "Neuromuscular RF Cross Validation", "Congenital RF Cross Validation", "Full Set RF Cross-Validation", "Syndromic RF Cross Validation"), col = c("darkgreen", "red", "blue", "purple", "Orange"), lwd = 2)
+
+```
+
+
+```{r GLM AUC Plot for Comparing Subset Models}
+plot.roc(wound_final2$has_wound, glm.pred_wound, ci = TRUE, col = "red", lwd = 3)
+plot.roc(obs.outputs, pred.outputs.glm, ci = TRUE, col = "pink", lwd = 3, add = TRUE)
+plot.roc(obs.glm.congenital, pred.glm.congenital, ci = TRUE, col = "lightblue", lwd = 3, add = TRUE)
+plot.roc(obs.glm.Neuromuscular, pred.glm.Neuromuscular, ci = TRUE, col = "navy", lwd = 3, add = TRUE)
+plot.roc(obs.glm.Syndromic, pred.glm.Syndromic, ci = TRUE, col = "darkgreen", lwd = 3, add = TRUE)
+legend("bottomright", legend=c("GLM","Full Data GLM CV", "Congenital GLM CV", "Neuromuscular GLM CV", "Syndromic GLM CV"), col=c("red", "pink", "lightblue", "navy", "darkgreen"), lwd = 2)
+
+```
+
+In general, the random forest models did not do as well as the glm models, but that could be related to overfitting of the glm models given the warnings that arose.  
+
+```{r Idiopathic Patients}
+
+#Idiopathic patients had a much lower rate of wounds and there were very few who had them in the Idiopathic dataset and thus I did not try to do any modeling with this cohort.
+
+ggplot(data = Idiopathic, aes(x = has_wound)) + 
+    geom_bar() + 
+    ggtitle("Numer of Idiopathic Expansions with Wound Complications") +
+    labs(y= "Number of Procedures", x = "Wound Complication")
+
+
+```
+
+## Limitations and Conclusions
+This project had several limitations.  First, the significant amount of missing data caused the removal of some variables that could potentially have been predictive for wound complications. Second, since Thoracic Insufficiency syndrome is an umbrella term used for the diagnosis of a condition that is created as the result of early onset scoliosis, the group of patients in this cohort was so heterogenious, that it's possible that the noise in the data created as a result of this could have interferred with the models. Subsetting the data into spinal classifications based on the underlying cause for the scoliosis did seem to reduce some of the noise. The GLM models faired better across the board, but once I subset the data, the GLM model gave an AUC of 0.98 for the Syndromic patients, but the data set included only 74 patient/procedure pairs.
+
+Since BMI was used as one of the columns in the data set, this data is biased towards patients who have a BMI recorded and implies that a height had been taken on or near the time of surgery. Many of our patients are unable to stand and thus have not had a height measurement near the time of the surgery and thus would not have had a BMI.  Thus, patients without a BMI were excluded thus creating a bias towards patients who are more mobile.  
+
+
+
+

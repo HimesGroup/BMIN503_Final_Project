@@ -1,18 +1,11 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project_McNeely
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This is the final project for my Data Science class at the University of Pennsylvania.  The data for this project was not uploaded due to the patient identifiers, but a dummy data set was uploaded so that the professor could run the code.  
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+The data for this project was retrieved from the CTIS Patient Safety Registry and the CHOP Data Warehouse (CDW). While the CDW contains a tremendous amount of data, the Safety registry contained some variables that were not easily obtained through the CDW. To retrieve the CTIS data, a report was created in REDCap that incorporated 166 variables from the over 700 variables found within the registry.  Using domain knowledge, the variables were narrowed down based on potential clinical relevance.  Patients were immediately excluded if they did not have data for a birthdate, gender, or were not treated surgically by one of the surgeons in the CTIS program at CHOP. The initial CTIS dataset contained 2,626 observations of 166 variables.  The CDW data was retrieved with the help of a data analyst from the Department of Biomedical and Health Informatics at CHOP. SQL coding was used to create the data table from the relational tables in the CDW.  The primary CDW table contained 1,945 observations of 16 variables.  
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+In order to create a master table that contained all of the data that I wanted for this project, I first imported the CDW tables and then the CTIS tables.  Using the tidyverse, lubridate, and stringi libraries, I adjusted the columns containing dates and times using the "lubridate"" package, and then selected columns I needed from the various tables.  The Data Dictionary for the REDCap database was used to help uncode factor variables with the correct terms and columns were renamed to improve the readibility of the table.  Since the CDW data only went back as far as May 2013, the time when EPIC's Optime tool was implemented, I excluded all patients prior to May 1, 2013, and then joined the CTIS data to the CDW surgery data based on both the patient identification number and the surgery date.  Once the CDW Surgery and CTIS tables were combined, I excluded procedures where there was no data on ASA classification, weight on the day of surgery, or Asssisted Ventilation Rate (AVR).  I also removed variables where there was less than 50% of the data present in the column.  I then filtered the data for only expansion procedures and created new columns to calculate the length of time a patient was in the hospital, the amount of time a patient was in the operating room (OR), and the amount of time between the surgery date and wound complication.  Next, I created the outcome variable based on which patients had a wound concern within 90 days of the procedure.  
 
-DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+To make sure I did not have any variables that were based off data from after the wound concern, I removed all columns pertaining to post-wound findings.  I then also removed columns where I still had more than 50% missing data or columns where the factors had only one remaining level after filtering.  This filtering brought my number of variables down to 57. Finally, I filtered for complete cases.  This resulted in a final data set with 316 patient procedure pairs and 57 columns. 
 
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+Random Forest and GLM were used as both ways to perform feature selection and to determine if there were any predictive variables in the data sets.  The GLM model appeared to overfit the dataset when running the full data through it, and had increased error when the data set was winnowed down to the variables that were found to have a higher importance by the Random Forest or were signficiant in the GLM.  Finally, the significant amount of missing data and the heterogenity of the patient population likely contributed to a lack of significant findings in this study.  
