@@ -1,0 +1,1743 @@
+---
+title: "Characterization of White Matter and Cerebrospinal Fluid Biomarker Associations in Alzheimer's Disease"
+author: "Nik Padmanabhan"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+# install.packages("tidyverse")
+# install.packages("ggdendro")
+# install.packages("randomForest")
+# install.packages("pROC")
+```  
+***
+### Overview
+
+This project aims to find associations between white matter content and CSF biomarker levels in Alzheimer's patients, using Alzheimer's Disease neuroimaging initiative (ADNI) data. Although Alzheimer's disease primarily affects grey matter, results of this work could improve early characterization of the disease. This project would not have been possible without Choonsik Lee's recommendations for dicom image visualization, Taki Shinohara's help with FSLR, and Konrad Kording's recommendations of machine learning approaches. A link to my GitHub repository is included:
+
+https://github.com/nikpad/BMIN503_Final_Project
+
+### Introduction 
+
+Alzheimer's disease, which is a progressive, chronic, neurodegenerative disease, currently affects almost 6 million Americans. There is currently no cure or method to stop its progression. After diagnosis, the life expectancy of patients generally ranges from 3-10 years. The disease, characterized by extracellular amyloid beta deposits and neurofibrillary tangles, primarily affects grey matter in the brain. However, white matter abnormalities also exist, although these changes take place prior to the neurodegenerative process. Patients with preclinical Alzheimer's disease, before substantial changes of the grey matter have happened, have been shown to have similar levels of white matter abnormalities as patients in later stages. These abnormalities generally include myelin and oligodendrocyte loss. Assiciations between white matter content and cerebrospinal fluid biomarkers, such as amyloid beta and tau proteins, could improve the understanding of the pathogenesis of Alzheimer's disease, which could improve and expedite the development of treatments. 
+
+This analysis was facilitated by the ADNI, in which multiple types of data, including clinical, imaging, and biospecimen data, were collected from both affected and control populations. The imaging data must be treated differently than the other data types, as quantitative values were first extracted for comparison. The R packages oro.dicom and oro.nifti enable analyzing MRI data, for processes such as visualization and segmentation. In this work, segmentation based on overall pixel intensities was used to estimate white matter content. In addition, toolkits in R such as ANTs and FSL enable image preprocessing procedures such as image registration, brain extraction, and inhomogeneity correction. Once numerical values have been extracted from the image data, statistical models can be developed to better understand the characteristics Alzheimer's disease. An end goal of this work would be for supervised machine learning algrithms to be able to predict disease progression of patients in early stages. This work will hopefully impact the understanding of the disease over time, and therefore improve the development of treatments. 
+
+### Methods
+
+Project data included both biomarker and T2 weighted MRI images for 60 patients. Biomarker data included both baseline and 12 month data for amyloid beta, tau, and p-tau. Of the 60 patients, 30 were from a cognitively normal (CN) group, and 30 were from an Alzheimer's Disease (AD) group. For MRI data, individual dicom files were converted to a nifti file for easier manipulation. Afterwards, the images' intensities were transformed to improve visualization. Brain extraction was carried out with FSLR, and image segmentation was carried out based on each image's intensity histogram to estimate white matter content. A representative process is shown in this section, and this process is completed for the rest of the 60 patients in the results section. Hierarchical clustering and random forests were used to compare biomarker, white matter content, and their combination's ability to cluster and predict cognitive state. Additionally, baseline and 12 month data were compared to assess disease progression. 
+
+```{r eval=TRUE}
+library(devtools)
+library(oro.dicom)
+library(oro.nifti)
+#Visualize individual slice
+setwd("C:/Users/Nik/Documents/ADTest/ADNI/011_S_0003/Axial_PD-T2_TSE/2005-09-01_10_46_12.0/S9126")
+slice = readDICOM("ADNI_011_S_0003_MR_Axial_PD-T2_TSE__br_raw_20050901115113886_94_S9126_I7062.dcm")
+
+d=dim(t(slice$img[[1]]))
+image(1:d[1],1:d[2], t(slice$img[[1]]),col=gray(0:64/64))
+```
+```{r eval=TRUE}
+setwd("C:/Users/Nik/Documents/ADTest/ADNI/011_S_0003/Axial_PD-T2_TSE/2005-09-01_10_46_12.0/")
+all_slices = readDICOM("S9126")
+
+dim(all_slices$img[[36]])
+
+#Convert to NIfTI
+nii=dicom2nifti(all_slices)
+d=dim(nii); 
+d
+
+#Visualize single NIfTI image
+class(nii)
+image(1:d[1], 1:d[2], nii[,,36], col=gray(0:64/64), xlab="",ylab="")
+
+#Visualize entire stack
+image(nii)
+```
+
+All dicom images in a stack were converted to a nifti stack, enabling visualization of all stacks simultaneously. It is much simpler to work with nifti images in R. 
+
+```{r}
+slice$img[[1]][101:105,121:125]
+hist(slice$img[[1]][,],breaks=50, xlab="Intensity",prob=T, col=rgb(0,0,1,1/4), main="Distribution of Intensities")
+```
+
+The second peak, centered around 500, corresponds to white matter. 
+
+
+```{r eval=TRUE}
+im_hist<-hist(nii,plot=FALSE)
+par(mar = c(5, 4, 4, 4) + 0.3)
+col1=rgb(0,0,1,1/2)
+plot(im_hist$mids,im_hist$count,log="y",type='h',lwd=10, lend=2,col=col1,xlab="Intensity Values",ylab="Count (Log Scale)" )
+
+
+#Define a different transfer function
+lin.sp<-function(x,knots,slope){
+    knots<-c(min(x),knots,max(x))
+    slopeS<-slope[1]
+ for(j in 2:length(slope)){
+   slopeS<-c(slopeS,slope[j]-sum(slopeS))}
+   rvals<-numeric(length(x))
+ for(i in 2:length(knots)){
+   rvals<-ifelse(x>=knots[i-1], slopeS[i-1]*(x-knots[i-1])+rvals,rvals)}
+ return(rvals)}
+#Define a spline with three knots and four slopes
+knot.vals<-c(.25,.5,.74)
+slp.vals<-c(2,1,.5,.25)
+#knot.vals<-c(0.5)
+#slp.vals<-c(1,1)
+
+
+#Plot the Spline Transfer Function
+par(new = TRUE)
+curve(lin.sp(x,knot.vals,slp.vals),axes=FALSE,xlab="",ylab="",col=2,lwd=3)
+axis(side=4,at = pretty(range(im_hist$mids))/max(nii),labels=pretty(range(im_hist$mids)))
+mtext("Transformed Intensity", side=4, line=2) 
+
+trans<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+image(nii,z=36,plot.type='single', main="Original Image")
+image(trans,z=36,plot.type='single',main="Transformed Image") 
+```
+
+
+```{r eval=TRUE}
+#Original Image Histogram
+s2 <- nii[,,36]
+hist(s2[s2>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+
+#Transformed Image Histogram
+s3 <- trans[,,36]
+hist(s3[s3>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+
+
+#setwd("C:/Users/Nik/Documents/ADTest/ADNI/011_S_0003/Axial_PD-T2_TSE/2005-09-01_10_46_12.0/S9126")
+#fname="Test_nifti_File"
+#writeNIfTI(nim=trans,filename=fname)
+```
+
+
+```{r eval=TRUE}
+image(trans)
+
+#Brain extraction using FSLR from a virtual machine
+#bet_img = fslbet(infile=nii, retimg=TRUE)
+
+#Brain Extracted Image:
+setwd("C:/Users/Nik/Documents/ADTest/ADNI/011_S_0003/Axial_PD-T2_TSE/2005-09-01_10_46_12.0/")
+sstrip = readNIfTI("newimg.nii.gz")
+image(sstrip)
+```
+
+```{r eval=TRUE}
+#Original Image
+is_btw_400_600<- ((nii>400) & (nii<600)) #1 or 0 for each voxel
+nii_mask<-nii
+nii_mask[!is_btw_400_600]=NA
+overlay(nii,nii_mask,z=36,plot.type="single") 
+
+#Transformed Image
+is_btw_700_1150<- ((trans>700) & (trans<1150)) #1 or 0 for each voxel
+trans_mask<-trans
+trans_mask[!is_btw_700_1150]=NA
+overlay(trans,trans_mask,z=36,plot.type="single") 
+
+#Transformed and Brain-extracted Image
+is_btw_700_1150<- ((sstrip>700) & (sstrip<1150)) #1 or 0 for each voxel
+sstrip_mask<-sstrip
+sstrip_mask[!is_btw_700_1150]=NA
+overlay(sstrip,sstrip_mask,z=36,plot.type="single") 
+
+
+#Original Image Stack
+overlay(nii,nii_mask) 
+
+#Transformed Image Stack
+overlay(trans,trans_mask)
+
+#Transormed and Brain-extracted Image Stack
+overlay(sstrip,sstrip_mask)
+
+is_positive<- ((sstrip>0)) #1 or 0 for each voxel
+#Total:
+sum(table(sstrip[is_positive]))
+#White Matter:
+sum(table(sstrip_mask[is_btw_700_1150]))
+#Ratio
+sum(table(sstrip_mask[is_btw_700_1150]))/sum(table(sstrip[is_positive]))
+```
+### Results
+The process for determining the white matter ratio was completed for the other 59 patients, as shown below. The results of the code were saved, obviating the need to rerun the code. 
+
+AD Patients
+```{r eval=TRUE}
+# #3:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/003/Axial_PD-T2_TSE/2005-09-01_10_46_12.0")
+# all_slices = readDICOM("S9126")
+# nii=dicom2nifti(all_slices)
+# trans003<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans003,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans003,filename="trans003")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet003.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_700_1150<- ((sstrip>700) & (sstrip<1150)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_700_1150]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio003 = sum(table(sstrip_mask[is_btw_700_1150]))/sum(table(sstrip[is_positive]))
+# Ratio003
+# 
+# #10:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/010/Axial_PD-T2_TSE/2005-11-07_08_40_20.0")
+# all_slices = readDICOM("S8798")
+# nii=dicom2nifti(all_slices)
+# trans010<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans010,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans010,filename="trans010")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet010.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_700_1150<- ((sstrip>700) & (sstrip<1150)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_700_1150]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio010 = sum(table(sstrip_mask[is_btw_700_1150]))/sum(table(sstrip[is_positive]))
+# Ratio010
+# 
+# #29:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/029/Axial_PD-T2_TSE/2005-10-14_09_00_42.0")
+# all_slices = readDICOM("S9903")
+# nii=dicom2nifti(all_slices)
+# trans029<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans029,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans029,filename="trans029")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet029.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_850<- ((sstrip>600) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio029 = sum(table(sstrip_mask[is_btw_600_850]))/sum(table(sstrip[is_positive]))
+# Ratio029
+# 
+# #76:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/076/Axial_PD-T2_TSE/2005-12-06_11_49_09.0")
+# all_slices = readDICOM("S10467")
+# nii=dicom2nifti(all_slices)
+# trans076<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans076,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans076,filename="trans076")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet076.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_650_850<- ((sstrip>650) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_650_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio076 = sum(table(sstrip_mask[is_btw_650_850]))/sum(table(sstrip[is_positive]))
+# Ratio076
+# 
+# #83:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/083/Axial_PD-T2_TSE/2005-12-14_08_44_38.0")
+# all_slices = readDICOM("S10567")
+# nii=dicom2nifti(all_slices)
+# trans083<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans083,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans083,filename="trans083")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet083.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_800<- ((sstrip>550) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio083 = sum(table(sstrip_mask[is_btw_550_800]))/sum(table(sstrip[is_positive]))
+# Ratio083
+# 
+# #84:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/084/Axial_PD-T2_TSE/2006-01-04_09_05_52.0")
+# all_slices = readDICOM("S10763")
+# nii=dicom2nifti(all_slices)
+# trans084<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans084,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans084,filename="trans084")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet084.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_750<- ((sstrip>550) & (sstrip<750)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_750]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio084 = sum(table(sstrip_mask[is_btw_550_750]))/sum(table(sstrip[is_positive]))
+# Ratio084
+# 
+# #91:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/091/ADNI_______DOUBLE_TSE/2005-12-23_07_21_22.0")
+# all_slices = readDICOM("S10707")
+# nii=dicom2nifti(all_slices)
+# trans091<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans091,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans091,filename="trans091")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet091.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_400<- ((sstrip>300) & (sstrip<400)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_400]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio091 = sum(table(sstrip_mask[is_btw_300_400]))/sum(table(sstrip[is_positive]))
+# Ratio091
+# 
+# #93: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/093/Axial_PD-T2_TSE/2006-01-03_09_09_25.0")
+# all_slices = readDICOM("S10734")
+# nii=dicom2nifti(all_slices)
+# trans093<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans093,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans093,filename="trans093")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet093.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_800<- ((sstrip>550) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio093 = sum(table(sstrip_mask[is_btw_550_800]))/sum(table(sstrip[is_positive]))
+# Ratio093
+# 
+# #94: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/094/ADNI_______DOUBLE_TSE/2005-12-28_16_22_23.0")
+# all_slices = readDICOM("S10711")
+# nii=dicom2nifti(all_slices)
+# trans094<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans094,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans094,filename="trans094")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet094.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_425<- ((sstrip>300) & (sstrip<425)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_425]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio094 = sum(table(sstrip_mask[is_btw_300_425]))/sum(table(sstrip[is_positive]))
+# Ratio094
+# 
+# #129: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/129/Axial_PD-T2_TSE/2006-02-06_12_11_17.0")
+# all_slices = readDICOM("S11486")
+# nii=dicom2nifti(all_slices)
+# trans129<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans129,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans129,filename="trans129")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet129.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_800<- ((sstrip>600) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio129 = sum(table(sstrip_mask[is_btw_600_800]))/sum(table(sstrip[is_positive]))
+# Ratio129
+# 
+# #139: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/139/Axial_PD-T2_TSE/2006-01-24_11_27_40.0")
+# all_slices = readDICOM("S11077")
+# nii=dicom2nifti(all_slices)
+# trans139<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans139,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans139,filename="trans139")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet139.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_775<- ((sstrip>500) & (sstrip<775)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_775]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio139 = sum(table(sstrip_mask[is_btw_500_775]))/sum(table(sstrip[is_positive]))
+# Ratio139
+# 
+# #147: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/147/ADNI_______Double_TSE/2006-01-26_12_08_00.0")
+# all_slices = readDICOM("S11185")
+# nii=dicom2nifti(all_slices)
+# trans147<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans147,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans147,filename="trans147")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet147.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_400<- ((sstrip>300) & (sstrip<400)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_400]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio147 = sum(table(sstrip_mask[is_btw_300_400]))/sum(table(sstrip[is_positive]))
+# Ratio147
+# 
+# #213: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/213/Axial_PD-T2_TSE/2006-03-22_13_45_15.0")
+# all_slices = readDICOM("S12385")
+# nii=dicom2nifti(all_slices)
+# trans213<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans213,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans213,filename="trans213")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet213.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_900<- ((sstrip>600) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio213 = sum(table(sstrip_mask[is_btw_600_900]))/sum(table(sstrip[is_positive]))
+# Ratio213
+# 
+# #221: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/221/Axial_PD_T2_FSE/2006-02-22_10_28_39.0")
+# all_slices = readDICOM("S11955")
+# nii=dicom2nifti(all_slices)
+# trans221<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans221,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans221,filename="trans221")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet221.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_450_800<- ((sstrip>450) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_450_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio221 = sum(table(sstrip_mask[is_btw_450_800]))/sum(table(sstrip[is_positive]))
+# Ratio221
+# 
+# #266 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/266/FSE_PD_T2/2006-03-22_10_40_28.0")
+# all_slices = readDICOM("S12380")
+# nii=dicom2nifti(all_slices)
+# trans266<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans266,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans266,filename="trans266")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet266.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_600<- ((sstrip>300) & (sstrip<600)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_600]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio266 = sum(table(sstrip_mask[is_btw_300_600]))/sum(table(sstrip[is_positive]))
+# Ratio266
+# 
+# #286: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/286/Double_TSE_/2006-03-23_13_31_56.0")
+# all_slices = readDICOM("S12432")
+# nii=dicom2nifti(all_slices)
+# trans286<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans286,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans286,filename="trans286")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet286.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_325_425<- ((sstrip>325) & (sstrip<425)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_325_425]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio286 = sum(table(sstrip_mask[is_btw_325_425]))/sum(table(sstrip[is_positive]))
+# Ratio286
+# 
+# #300: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/300/Axial_PD_T2_FSE/2006-05-09_15_01_31.0")
+# all_slices = readDICOM("S14135")
+# nii=dicom2nifti(all_slices)
+# trans300<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans300,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans300,filename="trans300")
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans286,filename="trans286")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet300.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_450_750<- ((sstrip>450) & (sstrip<750)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_450_750]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio300 = sum(table(sstrip_mask[is_btw_450_750]))/sum(table(sstrip[is_positive]))
+# Ratio300
+# 
+# #310: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/310/FSE_PD_T2/2006-03-24_11_48_44.0")
+# all_slices = readDICOM("S12467")
+# nii=dicom2nifti(all_slices)
+# trans310<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans310,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans310,filename="trans310")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet310.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_450_700<- ((sstrip>450) & (sstrip<700)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_450_700]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio310 = sum(table(sstrip_mask[is_btw_450_700]))/sum(table(sstrip[is_positive]))
+# Ratio310
+# 
+# #316: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/316/Axial_PD_T2_FSE/2006-03-29_15_23_42.0")
+# all_slices = readDICOM("S12586")
+# nii=dicom2nifti(all_slices)
+# trans316<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans316,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans316,filename="trans316")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet316.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_900<- ((sstrip>500) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio316 = sum(table(sstrip_mask[is_btw_500_900]))/sum(table(sstrip[is_positive]))
+# Ratio316
+# 
+# #341: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/341/Axial_PD-T2_TSE/2006-04-06_10_41_52.0")
+# all_slices = readDICOM("S12950")
+# nii=dicom2nifti(all_slices)
+# trans341<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans341,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans341,filename="trans341")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet341.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_900<- ((sstrip>600) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio341 = sum(table(sstrip_mask[is_btw_600_900]))/sum(table(sstrip[is_positive]))
+# Ratio341
+# 
+# #374: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/374/Axial_PD-T2_TSE/2006-04-10_11_43_19.0")
+# all_slices = readDICOM("S13029")
+# nii=dicom2nifti(all_slices)
+# trans374<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans374,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans374,filename="trans374")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet374.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_850<- ((sstrip>600) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio374 = sum(table(sstrip_mask[is_btw_600_850]))/sum(table(sstrip[is_positive]))
+# Ratio374
+# 
+# #400: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/400/Double_TSE/2006-04-17_12_07_36.0")
+# all_slices = readDICOM("S13237")
+# nii=dicom2nifti(all_slices)
+# trans400<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans400,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans400,filename="trans400")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet400.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_225_350<- ((sstrip>225) & (sstrip<350)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_225_350]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio400 = sum(table(sstrip_mask[is_btw_225_350]))/sum(table(sstrip[is_positive]))
+# Ratio400
+# 
+# #426: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/426/Axial_PD_T2_FSE/2006-05-16_16_08_56.0")
+# all_slices = readDICOM("S14579")
+# nii=dicom2nifti(all_slices)
+# trans426<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans426,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans426,filename="trans426")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet426.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_800<- ((sstrip>500) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio426 = sum(table(sstrip_mask[is_btw_500_800]))/sum(table(sstrip[is_positive]))
+# Ratio426
+# 
+# #457: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/457/Axial_PD_T2_FSE/2006-05-03_14_44_29.0")
+# all_slices = readDICOM("S13974")
+# nii=dicom2nifti(all_slices)
+# trans457<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans457,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans457,filename="trans457")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet457.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_900<- ((sstrip>550) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio457 = sum(table(sstrip_mask[is_btw_550_900]))/sum(table(sstrip[is_positive]))
+# Ratio457
+# 
+# #470: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/470/Axial_PD-T2_TSE/2006-05-10_13_56_45.0")
+# all_slices = readDICOM("S14221")
+# nii=dicom2nifti(all_slices)
+# trans470<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans470,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans470,filename="trans470")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet470.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_825<- ((sstrip>600) & (sstrip<825)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_825]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio470 = sum(table(sstrip_mask[is_btw_600_825]))/sum(table(sstrip[is_positive]))
+# Ratio470
+# 
+# #474: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/474/Axial_PD-T2_TSE/2006-05-03_14_45_46.0")
+# all_slices = readDICOM("S13989")
+# nii=dicom2nifti(all_slices)
+# trans474<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans474,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans474,filename="trans474")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet474.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_800<- ((sstrip>600) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio474 = sum(table(sstrip_mask[is_btw_600_800]))/sum(table(sstrip[is_positive]))
+# Ratio474
+# 
+# #543: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/543/Axial_PD-T2_TSE/2006-05-22_09_41_00.0")
+# all_slices = readDICOM("S14848")
+# nii=dicom2nifti(all_slices)
+# trans543<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans543,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans543,filename="trans543")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet543.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_900<- ((sstrip>600) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio543 = sum(table(sstrip_mask[is_btw_600_900]))/sum(table(sstrip[is_positive]))
+# Ratio543
+# 
+# #577: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/577/Axial_PD-T2_TSE/2006-05-26_12_24_57.0")
+# all_slices = readDICOM("S14973")
+# nii=dicom2nifti(all_slices)
+# trans577<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans577,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans577,filename="trans577")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet577.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_900<- ((sstrip>550) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio577 = sum(table(sstrip_mask[is_btw_550_900]))/sum(table(sstrip[is_positive]))
+# Ratio577
+# 
+# #606: 
+# setwd("C:/Users/Nik/Documents/AD/ADNI/606/Axial_PD_T2_FSE_-_48_slices/2006-07-20_11_51_16.0")
+# all_slices = readDICOM("S17189")
+# nii=dicom2nifti(all_slices)
+# trans606<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans606,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans606,filename="trans606")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet606.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_1000<- ((sstrip>600) & (sstrip<1000)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_1000]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio606 = sum(table(sstrip_mask[is_btw_600_1000]))/sum(table(sstrip[is_positive]))
+# Ratio606
+# 
+# #627:
+# setwd("C:/Users/Nik/Documents/AD/ADNI/627/FSE_PD_T2/2006-07-06_13_45_45.0")
+# all_slices = readDICOM("S16311")
+# nii=dicom2nifti(all_slices)
+# trans627<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans627,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/AD/Transformed/")
+# writeNIfTI(nim=trans627,filename="trans627")
+# setwd("C:/Users/Nik/Documents/AD/Brain_Extracted")
+# sstrip = readNIfTI("bet627.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_350_550<- ((sstrip>350) & (sstrip<550)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_350_550]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio627 = sum(table(sstrip_mask[is_btw_350_550]))/sum(table(sstrip[is_positive]))
+# Ratio627
+```
+
+CN Patients
+```{R eval=TRUE}
+# #5:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/005/Axial_PD-T2_TSE/2005-09-02_10_25_42.0")
+# all_slices = readDICOM("S9135")
+# nii=dicom2nifti(all_slices)
+# trans005<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans005,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans005,filename="trans005")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet005.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_750_1450<- ((sstrip>750) & (sstrip<1450)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_750_1450]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio005 = sum(table(sstrip_mask[is_btw_750_1450]))/sum(table(sstrip[is_positive]))
+# Ratio005
+# 
+# #14:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/014/Axial_PD-T2_TSE/2005-09-29_15_51_02.0")
+# all_slices = readDICOM("S9269")
+# nii=dicom2nifti(all_slices)
+# trans014<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans014,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans014,filename="trans014")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet014.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_850<- ((sstrip>600) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio014 = sum(table(sstrip_mask[is_btw_600_850]))/sum(table(sstrip[is_positive]))
+# Ratio014
+# 
+# #16:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/016/Axial_PD-T2_TSE/2005-09-27_11_23_57.0")
+# all_slices = readDICOM("S9252")
+# nii=dicom2nifti(all_slices)
+# trans016<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans016,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans016,filename="trans016")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet016.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_750_1400<- ((sstrip>750) & (sstrip<1400)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_750_1400]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio016 = sum(table(sstrip_mask[is_btw_750_1400]))/sum(table(sstrip[is_positive]))
+# Ratio016
+# 
+# #23:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/023/Axial_PD-T2_TSE/2005-10-31_09_30_38.0")
+# all_slices = readDICOM("S8864")
+# nii=dicom2nifti(all_slices)
+# trans023<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans023,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans023,filename="trans023")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet023.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_700_1450<- ((sstrip>700) & (sstrip<1450)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_700_1450]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio023 = sum(table(sstrip_mask[is_btw_700_1450]))/sum(table(sstrip[is_positive]))
+# Ratio023
+# 
+# #35:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/035/ADNI_STUDY_Double_TSE2s/2005-10-20_11_19_13.0")
+# all_slices = readDICOM("S9958")
+# nii=dicom2nifti(all_slices)
+# trans035<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans035,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans035,filename="trans035")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet035.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_350_450<- ((sstrip>350) & (sstrip<450)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_350_450]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio035 = sum(table(sstrip_mask[is_btw_350_450]))/sum(table(sstrip[is_positive]))
+# Ratio035
+# 
+# #40:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/040/Axial_PD-T2_TSE/2005-10-24_11_58_09.0")
+# all_slices = readDICOM("S8922")
+# nii=dicom2nifti(all_slices)
+# trans040<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans040,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans040,filename="trans040")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet040.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_900<- ((sstrip>500) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio040 = sum(table(sstrip_mask[is_btw_500_900]))/sum(table(sstrip[is_positive]))
+# Ratio040
+# 
+# #47:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/047/ADNI_STUDY_Double_TSE2s/2005-11-17_10_37_45.0")
+# all_slices = readDICOM("S10214")
+# nii=dicom2nifti(all_slices)
+# trans047<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans047,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans047,filename="trans047")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet047.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_270_400<- ((sstrip>270) & (sstrip<400)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_270_400]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio047 = sum(table(sstrip_mask[is_btw_270_400]))/sum(table(sstrip[is_positive]))
+# Ratio047
+# 
+# #56:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/056/Axial_PD-T2_TSE/2005-11-09_09_39_56.0")
+# all_slices = readDICOM("S8722")
+# nii=dicom2nifti(all_slices)
+# trans056<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans056,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans056,filename="trans056")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet056.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_850<- ((sstrip>600) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio056 = sum(table(sstrip_mask[is_btw_600_850]))/sum(table(sstrip[is_positive]))
+# Ratio056
+# 
+# #59:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/059/Axial_PD-T2_TSE/2005-12-12_09_27_10.0")
+# all_slices = readDICOM("S10516")
+# nii=dicom2nifti(all_slices)
+# trans059<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans059,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans059,filename="trans059")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet059.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_1000<- ((sstrip>600) & (sstrip<1000)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_1000]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio059 = sum(table(sstrip_mask[is_btw_600_1000]))/sum(table(sstrip[is_positive]))
+# Ratio059
+# 
+# #61:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/061/Axial_PD-T2_TSE/2005-11-29_09_23_28.0")
+# all_slices = readDICOM("S10310")
+# nii=dicom2nifti(all_slices)
+# trans061<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans061,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans061,filename="trans061")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet061.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_900<- ((sstrip>500) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# 
+# sstrip_mask[!is_btw_500_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio061 = sum(table(sstrip_mask[is_btw_500_900]))/sum(table(sstrip[is_positive]))
+# Ratio061
+# 
+# #66:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/066/Axial_PD-T2_TSE/2005-11-23_11_51_20.0")
+# all_slices = readDICOM("S10269")
+# nii=dicom2nifti(all_slices)
+# trans066<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans066,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans066,filename="trans066")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet066.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_900<- ((sstrip>600) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio066 = sum(table(sstrip_mask[is_btw_600_900]))/sum(table(sstrip[is_positive]))
+# Ratio066
+# 
+# #70:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/070/Axial_PD_T2_FSE/2006-01-18_15_00_00.0")
+# all_slices = readDICOM("S10953")
+# nii=dicom2nifti(all_slices)
+# trans070<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans070,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans070,filename="trans070")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet070.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_1000<- ((sstrip>500) & (sstrip<1000)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_1000]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio070 = sum(table(sstrip_mask[is_btw_500_1000]))/sum(table(sstrip[is_positive]))
+# Ratio070
+# 
+# #86:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/086/Axial_PD_T2_FSE/2006-03-31_11_17_49.0")
+# all_slices = readDICOM("S13189")
+# nii=dicom2nifti(all_slices)
+# trans086<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans086,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans086,filename="trans086")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet086.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_900<- ((sstrip>500) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio086 = sum(table(sstrip_mask[is_btw_500_900]))/sum(table(sstrip[is_positive]))
+# Ratio086
+# 
+# #89:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/089/Axial_PD-T2_TSE/2006-01-26_13_44_58.0")
+# all_slices = readDICOM("S11160")
+# nii=dicom2nifti(all_slices)
+# trans089<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans089,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans089,filename="trans089")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet089.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_850<- ((sstrip>550) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio089 = sum(table(sstrip_mask[is_btw_550_850]))/sum(table(sstrip[is_positive]))
+# Ratio089
+# #96:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/096/Axial_PD-T2_TSE/2006-01-18_12_48_00.0")
+# all_slices = readDICOM("S11004")
+# nii=dicom2nifti(all_slices)
+# trans096<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans096,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans096,filename="trans096")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet096.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_850<- ((sstrip>600) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio096 = sum(table(sstrip_mask[is_btw_600_850]))/sum(table(sstrip[is_positive]))
+# Ratio096
+# 
+# #97:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/097/Axial_PD-T2_TSE/2006-01-12_10_42_03.0")
+# all_slices = readDICOM("S10857")
+# nii=dicom2nifti(all_slices)
+# trans097<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans097,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans097,filename="trans097")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet097.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_800<- ((sstrip>500) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio097 = sum(table(sstrip_mask[is_btw_500_800]))/sum(table(sstrip[is_positive]))
+# Ratio097
+# 
+# #106:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/106/ADNI_______DOUBLE_TSE/2006-01-20_13_20_29.0")
+# all_slices = readDICOM("S11009")
+# nii=dicom2nifti(all_slices)
+# trans106<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans106,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans106,filename="trans106")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet106.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_430<- ((sstrip>300) & (sstrip<430)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_430]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio106 = sum(table(sstrip_mask[is_btw_300_430]))/sum(table(sstrip[is_positive]))
+# Ratio106
+# 
+# #118:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/118/Axial_PD_T2_FSE/2006-02-24_15_17_11.0")
+# all_slices = readDICOM("S11794")
+# nii=dicom2nifti(all_slices)
+# trans118<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans118,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans118,filename="trans118")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet118.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_750_1500<- ((sstrip>750) & (sstrip<1500)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_750_1500]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio118 = sum(table(sstrip_mask[is_btw_750_1500]))/sum(table(sstrip[is_positive]))
+# Ratio118
+# 
+# #123:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/123/Axial_PD_T2_FSE/2006-01-19_08_10_12.0")
+# all_slices = readDICOM("S10961")
+# nii=dicom2nifti(all_slices)
+# trans123<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans123,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans123,filename="trans123")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet123.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_1000<- ((sstrip>500) & (sstrip<1000)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_1000]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio123 = sum(table(sstrip_mask[is_btw_500_1000]))/sum(table(sstrip[is_positive]))
+# Ratio123
+# 
+# #130:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/130/Axial_PD-T2_TSE/2006-01-23_13_56_44.0")
+# all_slices = readDICOM("S11087")
+# nii=dicom2nifti(all_slices)
+# trans130<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans130,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans130,filename="trans130")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet130.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_550_850<- ((sstrip>550) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_550_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio130 = sum(table(sstrip_mask[is_btw_550_850]))/sum(table(sstrip[is_positive]))
+# Ratio130
+# 
+# #159:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/159/Axial_PD_T2_FSE/2006-01-30_14_05_31.0")
+# all_slices = readDICOM("S11315")
+# nii=dicom2nifti(all_slices)
+# trans159<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans159,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans159,filename="trans159")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet159.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_500<- ((sstrip>300) & (sstrip<500)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_500]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio159 = sum(table(sstrip_mask[is_btw_300_500]))/sum(table(sstrip[is_positive]))
+# Ratio159
+# 
+# #173:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/173/Axial_PD-T2_TSE/2006-02-10_15_22_01.0")
+# all_slices = readDICOM("S11592")
+# nii=dicom2nifti(all_slices)
+# trans173<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans173,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans173,filename="trans173")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet173.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_850<- ((sstrip>500) & (sstrip<850)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_850]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio173 = sum(table(sstrip_mask[is_btw_500_850]))/sum(table(sstrip[is_positive]))
+# Ratio173
+# 
+# #177:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/177/Axial_PD-T2_TSE/2006-03-10_14_53_02.0")
+# all_slices = readDICOM("S12186")
+# nii=dicom2nifti(all_slices)
+# trans177<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# image(trans177,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans177,filename="trans177")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet177.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_950<- ((sstrip>600) & (sstrip<950)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_950]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio177 = sum(table(sstrip_mask[is_btw_600_950]))/sum(table(sstrip[is_positive]))
+# Ratio177
+# 
+# #186:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/186/Axial_PD_T2_FSE/2006-02-24_08_15_08.0")
+# all_slices = readDICOM("S11772")
+# nii=dicom2nifti(all_slices)
+# trans186<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans005,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans186,filename="trans186")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet186.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_500_1000<- ((sstrip>500) & (sstrip<1000)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_500_1000]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio186 = sum(table(sstrip_mask[is_btw_500_1000]))/sum(table(sstrip[is_positive]))
+# Ratio186
+# 
+# #210:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/210/ADNI_______Double_TSE/2006-02-16_14_26_00.0")
+# all_slices = readDICOM("S11711")
+# nii=dicom2nifti(all_slices)
+# trans210<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans210,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans210,filename="trans210")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet210.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_300_450<- ((sstrip>300) & (sstrip<450)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_300_450]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio210 = sum(table(sstrip_mask[is_btw_300_450]))/sum(table(sstrip[is_positive]))
+# Ratio210
+# 
+# #223:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/223/Axial_PD_T2_FSE/2006-02-28_09_49_01.0")
+# all_slices = readDICOM("S11980")
+# nii=dicom2nifti(all_slices)
+# trans223<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans223,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans223,filename="trans223")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet223.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_400_800<- ((sstrip>400) & (sstrip<800)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_400_800]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio223 = sum(table(sstrip_mask[is_btw_400_800]))/sum(table(sstrip[is_positive]))
+# Ratio223
+# 
+# #232:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/232/Axial_PD_T2_FSE/2006-03-01_09_04_14.0")
+# all_slices = readDICOM("S11926")
+# nii=dicom2nifti(all_slices)
+# trans232<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans232,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans232,filename="trans232")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet232.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_200_450<- ((sstrip>200) & (sstrip<450)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_200_450]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio232 = sum(table(sstrip_mask[is_btw_200_450]))/sum(table(sstrip[is_positive]))
+# Ratio232
+# 
+# #257:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/257/Axial_PD-T2_TSE/2006-05-19_09_16_58.0")
+# all_slices = readDICOM("S14729")
+# nii=dicom2nifti(all_slices)
+# trans257<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans257,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans257,filename="trans257")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet257.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_600_900<- ((sstrip>600) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_600_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio257 = sum(table(sstrip_mask[is_btw_600_900]))/sum(table(sstrip[is_positive]))
+# Ratio257
+# 
+# #260:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/260/Axial_PD_T2_FSE/2006-03-23_14_17_29.0")
+# all_slices = readDICOM("S12417")
+# nii=dicom2nifti(all_slices)
+# trans260<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans260,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans260,filename="trans260")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet260.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_450_900<- ((sstrip>450) & (sstrip<900)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_450_900]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio260 = sum(table(sstrip_mask[is_btw_450_900]))/sum(table(sstrip[is_positive]))
+# Ratio260
+# 
+# #272:
+# setwd("C:/Users/Nik/Documents/CN/ADNI/272/FSE_PD_T2/2006-03-22_17_18_00.0")
+# all_slices = readDICOM("S12392")
+# nii=dicom2nifti(all_slices)
+# trans272<-lin.sp(nii, knot.vals*max(nii), slp.vals)
+# #image(trans272,z=36,plot.type='single',main="Transformed Image") 
+# setwd("C:/Users/Nik/Documents/CN/Transformed/")
+# writeNIfTI(nim=trans272,filename="trans272")
+# setwd("C:/Users/Nik/Documents/CN/Brain_Extracted")
+# sstrip = readNIfTI("bet272.nii.gz")
+# sstrip_slice <- sstrip[,,36]
+# hist(sstrip_slice[sstrip_slice>0],breaks=100, xlab="Intensities", prob=T, col=rgb(0,0,1,1/4), main="")
+# is_btw_400_750<- ((sstrip>400) & (sstrip<750)) #1 or 0 for each voxel
+# sstrip_mask<-sstrip
+# sstrip_mask[!is_btw_400_750]=NA
+# overlay(sstrip,sstrip_mask,z=36,plot.type="single")
+# Ratio272 = sum(table(sstrip_mask[is_btw_400_750]))/sum(table(sstrip[is_positive]))
+# Ratio272
+```
+
+```{r eval=TRUE}
+# data.AD <- data.frame(
+#    id = c(3,10,29,76,83,84,91,93,94,129,139,147,213,221,266,286,300,310,316,341,374,400,426,457,470,474,543,577,606,627),
+#    gender = c("M","F","M","M","M","F","M","F","F","F","F","F","M","M","M","M","M","M","M","M","F","M","M","F","F","F","F","F","F","F"),
+#    age = c(81.3, 73.9, 64.1, 78.3, 73.2, 75.3, 62.4, 77.2, 70.7, 80.2, 65.9, 59.7, 62.9, 67.4, 85.5, 65.9, 56.4, 82.7, 80.9, 74, 75.9, 69.2, 79.6, 82.7, 86.6, 77.3, 72.2, 72.4, 68.5, 58.4),
+#    cognitive_state = rep("AD",30),
+#    white_matter_ratio = c(Ratio003,Ratio010,Ratio029,Ratio076,Ratio083,Ratio084,Ratio091,Ratio093,Ratio094,Ratio129,Ratio139,Ratio147,Ratio213,Ratio221,Ratio266,Ratio286,Ratio300,Ratio310,Ratio316,Ratio341,Ratio374,Ratio400,Ratio426,Ratio457,Ratio470,Ratio474,Ratio543,Ratio577,Ratio606,Ratio627)
+#    )
+# 
+# data.CN <- data.frame(
+#    id = c(5,14,16,23,35,40,47,56,59,61,66,70,86,89,96,97,106,118,123,130,159,173,177,186,210,223,232,257,260,272),
+#    gender = c("M","F","M","M","M","M","M","F","F","F","M","M","F","M","M","F","F","M","M","M","F","M","F","F","F","F","M","F","F","F"),
+#    age = c(73.7, 78.5, 65.4, 71.7, 76.9, 73.2, 84.7, 69.6, 70.9, 77, 74.5, 74, 80.3, 65.1, 79.6, 72.8, 73.2, 80.4, 73.3, 73.1, 77.9, 73.2, 74.8, 80.4, 72.4, 78, 78, 78.5, 78.6, 70.4),
+#    cognitive_state = rep("CN",30),
+#    white_matter_ratio = c(Ratio005,Ratio014,Ratio016,Ratio023,Ratio035,Ratio040,Ratio047,Ratio056,Ratio059,Ratio061,Ratio066,Ratio070,Ratio086,Ratio089,Ratio096,Ratio097,Ratio106,Ratio118,Ratio123,Ratio130,Ratio159,Ratio173,Ratio177,Ratio186,Ratio210,Ratio223,Ratio232,Ratio257,Ratio260,Ratio272)
+#    )
+# 
+# white_matter_data = rbind(data.AD,data.CN)
+# white_matter_data
+```
+
+Load isolated biomarker data:
+```{r eval=TRUE}
+library(tidyverse)
+library(readxl)
+setwd("C:/Users/Nik/Documents")
+biomarker_data <- read_excel("BMIN503 Biomarker Data.xlsx")
+colnames(biomarker_data)[colnames(biomarker_data)=="RID"] <- "id"
+biomarker_data
+```
+
+Load saved combined data:
+```{r eval=TRUE}
+#getwd()
+#save(data, file="BMIN503_imagedata")
+#dput(data, file="BMIN503_imagedata1")
+#save(biomarker_data, file="BMIN503_biomarkerdata")
+#dput(biomarker_data, file="BMIN503_biomarkerdata1")
+
+#getwd()
+data = dget("BMIN503_imagedata1", keep.source = FALSE)
+data
+```
+
+
+```{r eval=TRUE}
+library(tidyverse)
+library(dplyr)
+
+#Baseline
+data_bl <- data%>%
+  filter(VISCODE=="bl")
+data_bl
+
+#12 month
+data_m12 <- data%>%
+  filter(VISCODE=="m12")
+data_m12
+
+#Difference
+data_diff <-data.frame("id" = data_bl$id, "gender" = data_bl$gender, "age" = data_bl$age, 
+                       "cognitive_state" = data_bl$cognitive_state,
+                       "ABETA" = data_m12$ABETA-data_bl$ABETA,
+                       "TAU" = data_m12$TAU-data_bl$TAU,
+                       "PTAU" = data_m12$PTAU-data_bl$PTAU)
+data_diff
+```
+
+Descriptive Statistics:
+```{r eval=TRUE}
+library(ggplot2)
+ggplot(data=data_bl, aes(x=cognitive_state, y=age)) +
+    geom_boxplot()
+
+AD_patients <- data_bl%>%
+  filter(cognitive_state=="AD")
+mean(AD_patients$age)
+
+CN_patients <- data_bl%>%
+  filter(cognitive_state=="CN")
+mean(CN_patients$age)
+```
+
+While the mean age between AD and CN patients were very similar, the overall distributions were more variable. This is most likely due to a small sample size of 30 patients in each group.  
+
+White Matter Content:
+```{r eval=TRUE}
+ggplot(data=data_bl, aes(x=cognitive_state, y=white_matter_ratio)) +
+    ggtitle("White Matter Content")+
+    geom_boxplot()
+```
+
+While there is a noticable difference between AD and CN groups for the segmented white matter content, there is also a substantial overlap of the data. As a result, white matter content, if it does take place before grey matter degeneration, is not sufficient to fully predict Alzheimer's Disease. 
+
+Total Boxplots:
+```{r eval=TRUE}
+## BL Plots  
+ggplot(data=data_bl, aes(x=cognitive_state, y=ABETA)) +
+    ggtitle("Baseline ABETA")+
+    geom_boxplot()
+
+ggplot(data=data_bl, aes(x=cognitive_state, y=TAU)) +
+    ggtitle("Baseline TAU")+
+    geom_boxplot()
+
+ggplot(data=data_bl, aes(x=cognitive_state, y=PTAU)) +
+    ggtitle("Baseline PTAU")+
+    geom_boxplot()
+
+## 12 month plots
+ggplot(data=data_m12, aes(x=cognitive_state, y=ABETA)) +
+    ggtitle("12 Month ABETA")+
+    geom_boxplot()
+
+ggplot(data=data_m12, aes(x=cognitive_state, y=TAU)) +
+    ggtitle("12 Month TAU")+
+    geom_boxplot()
+
+ggplot(data=data_m12, aes(x=cognitive_state, y=PTAU)) +
+    ggtitle("12 Month PTAU")+
+    geom_boxplot()
+
+## Difference Plots
+ggplot(data=data_diff, aes(x=cognitive_state, y=ABETA)) +
+    ggtitle("ABETA Difference")+
+    geom_boxplot()
+
+ggplot(data=data_diff, aes(x=cognitive_state, y=TAU)) +
+  ggtitle("TAU Difference")+
+    geom_boxplot()
+
+ggplot(data=data_diff, aes(x=cognitive_state, y=PTAU)) +
+  ggtitle("PTAU Difference")+
+    geom_boxplot()
+```
+
+All boxplots for both baseline and 12 month data showed substantial differences between the AD and CN groups. However, the AD and CN groups were very similar for difference data. 
+
+
+Boxplots by gender:
+```{r eval=TRUE}
+## BL Plots  
+ggplot(data=data_bl, aes(x=cognitive_state, y=ABETA, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_bl, aes(x=cognitive_state, y=TAU, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_bl, aes(x=cognitive_state, y=PTAU, fill=gender)) +
+    geom_boxplot()
+
+## 12 month plots
+ggplot(data=data_m12, aes(x=cognitive_state, y=ABETA, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_m12, aes(x=cognitive_state, y=TAU, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_m12, aes(x=cognitive_state, y=PTAU, fill=gender)) +
+    geom_boxplot()
+
+## Difference Plots
+ggplot(data=data_diff, aes(x=cognitive_state, y=ABETA, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_diff, aes(x=cognitive_state, y=TAU, fill=gender)) +
+    geom_boxplot()
+
+ggplot(data=data_diff, aes(x=cognitive_state, y=PTAU, fill=gender)) +
+    geom_boxplot()
+```
+
+Similar trends were shown as compared to the total boxplots. Male and female boxplots were similar for the same group, although some heterogeneity can be due to a small sample size. 
+
+
+BL Logistic Regression Bivariate Analysis:
+```{r eval=TRUE}
+#Logistic regression, due to predicting a binary outcome from a set of continuous predictor variables
+n.var <- 4
+pvals <- as.list(rep(NA, n.var))
+names(pvals) <- c("white_matter_ratio","ABETA","TAU","PTAU")
+for (i in 1:n.var){
+    glm.out <- glm(data_bl$cognitive_state ~ data_bl[[i+5]], family=binomial("logit"))
+    curr.p <- coef(summary(glm.out))[,4][2]
+    pvals[i] <- curr.p
+}
+pvals
+```
+
+All variables are associated with cognitive state at a significance level of 0.05
+
+M12 Logistic Regression Bivariate Analysis:
+```{r eval=TRUE}
+n.var <- 4
+pvals <- as.list(rep(NA, n.var))
+names(pvals) <- c("white_matter_ratio","ABETA","TAU","PTAU")
+for (i in 1:n.var){
+    glm.out <- glm(data_m12$cognitive_state ~ data_m12[[i+5]], family=binomial("logit"))
+    curr.p <- coef(summary(glm.out))[,4][2]
+    pvals[i] <- curr.p
+}
+pvals
+```
+
+All variables are associated with cognitive state at a significance level of 0.05
+
+Difference Logistic Regression Bivariate Analysis:
+```{r eval=TRUE}
+n.var <- 3
+pvals <- as.list(rep(NA, n.var))
+names(pvals) <- c("ABETA","TAU","PTAU")
+for (i in 1:n.var){
+    glm.out <- glm(data_diff$cognitive_state ~ data_diff[[i+4]], family=binomial("logit"))
+    curr.p <- coef(summary(glm.out))[,4][2]
+    pvals[i] <- curr.p
+}
+pvals
+```
+
+None of the variables are associated with cognitive state at a significance level of 0.05
+
+All biomarkers Baseline:
+```{r eval=TRUE}
+library(ggdendro)
+dataset.hclust1 <- hclust(dist(data_bl[,7:9]), method="ward.D2") 
+dataset.dend1 <- dendro_data(as.dendrogram(dataset.hclust1))
+labels <- label(dataset.dend1)
+labels$cognitive_state <- data_bl$cognitive_state[as.numeric(levels(labels$label))]
+
+ggplot(segment(dataset.dend1)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    ggtitle("All Biomarkers")+
+    geom_label(data=labels, aes(label="", x=x, y=0, color=cognitive_state, fill=cognitive_state), stat="identity",
+      nudge_y=-5,nudge_x=0,parse = FALSE,label.padding = unit(0.15, "lines"),
+      label.r = unit(0.15, "lines"), label.size = 0.15, na.rm = FALSE,show.legend = NA)
+
+hclust.pred <- cutree(dataset.hclust1, 2)
+table(data_bl$cognitive_state, hclust.pred)
+```
+
+14 patients out of a total of 60 were clustered incorrectly.
+
+All biomarkers with white matter content Baseline:
+```{r eval=TRUE}
+library(ggdendro)
+dataset.hclust1 <- hclust(dist(data_bl[,6:9]), method="ward.D2") 
+dataset.dend1 <- dendro_data(as.dendrogram(dataset.hclust1))
+labels <- label(dataset.dend1)
+labels$cognitive_state <- data_bl$cognitive_state[as.numeric(levels(labels$label))]
+
+ggplot(segment(dataset.dend1)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    ggtitle("All Biomarkers + White Matter")+
+    geom_label(data=labels, aes(label="", x=x, y=0, color=cognitive_state, fill=cognitive_state), stat="identity",
+      nudge_y=-5,nudge_x=0,parse = FALSE,label.padding = unit(0.15, "lines"),
+      label.r = unit(0.15, "lines"), label.size = 0.15, na.rm = FALSE,show.legend = NA)
+
+hclust.pred <- cutree(dataset.hclust1, 2)
+table(data_bl$cognitive_state, hclust.pred)
+```
+
+14 patients out of a total of 60 were clustered incorrectly. Therefore, including white matter to biomarker data did not improve or worsen clustering.  
+
+White matter content Baseline:
+```{r eval=TRUE}
+library(ggdendro)
+dataset.hclust1 <- hclust(dist(data_bl[,6]), method="complete") 
+dataset.dend1 <- dendro_data(as.dendrogram(dataset.hclust1))
+labels <- label(dataset.dend1)
+labels$cognitive_state <- data_bl$cognitive_state[as.numeric(levels(labels$label))]
+
+ggplot(segment(dataset.dend1)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    ggtitle("White Matter")+
+    geom_label(data=labels, aes(label="", x=x, y=0, color=cognitive_state, fill=cognitive_state), stat="identity",
+      nudge_y=-0.009,nudge_x=0,parse = FALSE,label.padding = unit(0.15, "lines"),
+      label.r = unit(0.15, "lines"), label.size = 0.15, na.rm = FALSE,show.legend = NA)
+
+hclust.pred <- cutree(dataset.hclust1, 2)
+table(data_bl$cognitive_state, hclust.pred)
+```
+
+22 patients out of a total of 60 were clustered incorrectly. Just clustering with white matter content was worse than using either biomarkers or biomarkers and white matter content. 
+
+All biomarkers M12:
+```{r eval=TRUE}
+library(ggdendro)
+dataset.hclust1 <- hclust(dist(data_m12[,7:9]), method="ward.D2") 
+dataset.dend1 <- dendro_data(as.dendrogram(dataset.hclust1))
+labels <- label(dataset.dend1)
+labels$cognitive_state <- data_m12$cognitive_state[as.numeric(levels(labels$label))]
+
+ggplot(segment(dataset.dend1)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    ggtitle("All Biomarkers")+
+    geom_label(data=labels, aes(label="", x=x, y=0, color=cognitive_state, fill=cognitive_state), stat="identity",
+      nudge_y=-5,nudge_x=0,parse = FALSE,label.padding = unit(0.15, "lines"),
+      label.r = unit(0.15, "lines"), label.size = 0.15, na.rm = FALSE,show.legend = NA)
+
+hclust.pred <- cutree(dataset.hclust1, 2)
+table(data_bl$cognitive_state, hclust.pred)
+```
+
+11 patients out of a total of 60 were clustered incorrectly. This shows an improvement of 3 patients for the 12 month data as compared to the baseline data. 
+
+All biomarkers with white matter content M12:
+```{r eval=TRUE}
+library(ggdendro)
+dataset.hclust1 <- hclust(dist(data_m12[,6:9]), method="ward.D2") 
+dataset.dend1 <- dendro_data(as.dendrogram(dataset.hclust1))
+labels <- label(dataset.dend1)
+labels$cognitive_state <- data_m12$cognitive_state[as.numeric(levels(labels$label))]
+
+ggplot(segment(dataset.dend1)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    ggtitle("All Biomarkers + White Matter")+
+    geom_label(data=labels, aes(label="", x=x, y=0, color=cognitive_state, fill=cognitive_state), stat="identity",
+      nudge_y=-5,nudge_x=0,parse = FALSE,label.padding = unit(0.15, "lines"),
+      label.r = unit(0.15, "lines"), label.size = 0.15, na.rm = FALSE,show.legend = NA)
+
+hclust.pred <- cutree(dataset.hclust1, 2)
+table(data_bl$cognitive_state, hclust.pred)
+```
+
+11 patients out of a total of 60 were clustered incorrectly. Similar to the baseline data, including white matter content to biomarker data did not improve or worsen clustering.  
+
+Baseline Random Forest:
+```{r eval=TRUE}
+library(randomForest)
+rf <- randomForest(cognitive_state ~ white_matter_ratio + ABETA + TAU + PTAU, data=data_bl, ntree=100, importance=TRUE)
+rf
+imp <- rf$importance
+#MeanDecreaseGini
+head(sort(imp[,4], decreasing=TRUE), n=20)
+
+rf.pred <- predict(rf, data_bl, type="prob")
+
+N = nrow(data_bl)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(data_bl, s != i)
+    test <- filter(data_bl, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$cognitive_state
+
+    #RF train/test
+    rf <- randomForest(cognitive_state~white_matter_ratio + ABETA + TAU + PTAU, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test, type="prob") 
+    pred_outputs.rf[1:length(s[s==i]) + offset] <- rf.pred.curr[,2]
+
+    offset <- offset + length(s[s==i])
+}
+
+#ROC curves - one plot of the four tests
+library(pROC)
+plot.roc(data_bl$cognitive_state, rf.pred[, 2], ci=TRUE, col="darkgreen")
+plot.roc(obs_outputs, pred_outputs.rf, ci=TRUE, col="red", add=TRUE) 
+legend("bottomright", legend=c("RF Training", "RF Cross-Validation"), col=c("darkgreen", "red"), lwd=2)
+
+auc(data_bl$cognitive_state, rf.pred[, 2])
+auc(obs_outputs, pred_outputs.rf)
+```
+
+According to the gini importance scores, ABETA is the most important biomarker predictor. 
+
+M12 Random Forest:
+```{r eval=TRUE}
+rf <- randomForest(cognitive_state ~ white_matter_ratio + ABETA + TAU + PTAU, data=data_m12, ntree=100, importance=TRUE)
+rf
+imp <- rf$importance
+#MeanDecreaseGini
+head(sort(imp[,4], decreasing=TRUE), n=20)
+
+rf.pred <- predict(rf, data_m12, type="prob")
+
+N = nrow(data_m12)
+K = 10
+set.seed(1234)
+s = sample(1:K, size=N, replace=T)
+pred_outputs.rf <- vector(mode="numeric", length=N)
+obs_outputs <- vector(mode="numeric", length=N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(data_m12, s != i)
+    test <- filter(data_m12, s == i)
+    obs_outputs[1:length(s[s==i]) + offset] <- test$cognitive_state
+
+    #RF train/test
+    rf <- randomForest(cognitive_state~white_matter_ratio + ABETA + TAU + PTAU, data=train, ntree=100)
+    rf.pred.curr <- predict(rf, newdata=test, type="prob") 
+    pred_outputs.rf[1:length(s[s==i]) + offset] <- rf.pred.curr[,2]
+
+    offset <- offset + length(s[s==i])
+}
+
+#ROC curves - one plot of the four tests
+library(pROC)
+plot.roc(data_m12$cognitive_state, rf.pred[, 2], ci=TRUE, col="darkgreen")
+plot.roc(obs_outputs, pred_outputs.rf, ci=TRUE, col="red", add=TRUE) 
+legend("bottomright", legend=c("RF Training", "RF Cross-Validation"), col=c("darkgreen", "red"), lwd=2)
+
+auc(data_bl$cognitive_state, rf.pred[, 2])
+auc(obs_outputs, pred_outputs.rf)
+```
+
+As shown by the AUC values, the RF cross-validation improved from BL to m12. This shows that there was some degree of disease progression, further differentiating AD and CN patients. 
+
+### Conclusions
+Overall, white matter content ratio calculation was successful after transformation, brain extraction, and segmentation. However, the process required estimation, and is not perfectly reproducible. Even though transforming the data helped to isolate the white matter peak in the intensity histogram, the start and end intensities were chosen based on imperfect estimation. This segmentation process could be compared with segmentation using advanced normalization tools (ANTs), to assess its accuracy. White matter content displayed a significant difference between AD and CN groups after logistic regression bivariate analysis, although there was substantial overlap in the groups. This will make it difficult to predict potential future grey matter degredation using only white matter content. In terms of biomarker data, both baseline and 12 month data showed amyloid beta, tau, and p-tau biomarkers were associated with cognitive state at a significance level of 0.05. However, the difference between 12 month and baseline data was not significant. This engendered the question of whether there was any disease progression at all between baseline and 12 month timepoints. Using hierarchical clustering and random forests, both clustering and cross-validation prediction improved from baseline to 12 month timepoints, showing that there was some degree of disease progression. In addition, hierarchical clustering was used to assess white matter content. Biomarker data performed much better than white matter content in clustering, although white matter addition to biomarker data did not improve or reduce clustering accuracy for both baseline and 12 month data. A better form of characterization could be White matter integrity visualization using diffusion tensor imaging. This could determine how white matter is initially affected, as opposed to how much is affected. 
+
+
+
+
