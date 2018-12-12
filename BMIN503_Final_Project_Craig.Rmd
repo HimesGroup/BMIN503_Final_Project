@@ -1,8 +1,12 @@
 ---
-title: "BMIN503_Migraine_Pain_Craig"
+title: 'BMIN503 Final Project: Disparities in managing migraine pain in the pediatric
+  ER '
 author: "Sansanee Craig"
-date: "November 9, 2018"
-output: html_document
+date: "December 11, 2018"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -17,184 +21,412 @@ library(Hmisc)
 library(naniar)
 #install.packages("tableone") #categorical variables package
 library(tableone)
-#install.packages("lubridate") #date time package
-library(lubridate)
+#install.packages("psych") # describe by function
+library(psych)
+#install.packages("gmodels") # contingency tables
+library(gmodels) 
 ```
 ## Overview
-Racial disparities in pain management have been documented in the adult and pediatric population. Most studies have focused on pathologies with definitive diagnostic testing, such as appendicitis, long-bone fractures, and sickle cell disease. Few studies have assessed variability of pain management in pediatric migraine. The purpose of this project is to utilize secondary analysis of EHR data to determine if race/ethnicity-based differences exist in the management of pediatric migraine pain in the emergency room at the Children’s Hospital of Philadelphia (CHOP). 
+Racial disparities in pain management have been documented in the adult and pediatric population. Most studies have focused on pathologies with definitive diagnostic testing, such as appendicitis, long-bone fractures, and sickle cell disease. Few studies have assessed variability of pain management in pediatric migraine. The purpose of this project is to utilize secondary analysis of EHR data to determine if race/ethnicity-based differences exist in the management of pediatric migraine pain in the emergency room at the Children's Hospital of Philadelphia (CHOP). 
 
 ## Introduction
-Pain management cross-sects most fields of medical practice. In the case of migraine pain, a patient’s care team may comprise a primary care physician and a neurologist, with ER and hospitalist providers added during refractory migraine episodes. Alleviating pain efficiently, safely, and equally for all patients is the ultimate goal during an emergency room visit. In the few pediatric studies to date, however, some sociodemographic disparities have been shown to exist in pediatric headache care across the United States.  
-In beginning to study this issue, thoughtful data queries in conjunction with data analysts is vital as the choices behind codifying race and ethnicity alone could significantly alter study results. Workflow analysis during direct observations in the ER provides insight into missing field factors, such as non-mandatory data entry in assigning a pain scale/score or completing demographic fields. Nurses’ feedback sheds light on why pain reassessment alerts were being ignored or pain scales not being assigned during registration. Discussions with ER physicians and the ER director provides background information on previous disparities study results and QI projects, identifying most relevant outcome to study, and factors in choosing which statistical result to report. Meeting with a pediatric neurologist, the director of the headache clinic, results in an additional view of focusing QI efforts on giving primary care providers better tools to care for migraine pain in order to decrease unnecessary neurology referrals or ER visits. 
+Pain management cross-sects most fields of medical practice. In the case of migraine pain, a patien's care team may comprise a primary care physician and a neurologist, with ER and hospitalist providers added during refractory migraine episodes. Alleviating pain efficiently, safely, and equally for all patients is the ultimate goal during an emergency room visit. In the few pediatric studies to date, however, some sociodemographic disparities have been shown to exist in pediatric headache care across the United States.  
+In beginning to study this issue, thoughtful data queries in conjunction with data analysts is vital as the choices behind codifying race and ethnicity alone could significantly alter study results. Workflow analysis during direct observations in the ER provides insight into missing field factors, such as non-mandatory data entry in assigning a pain scale/score or completing demographic fields. Nurses' feedback sheds light on why pain reassessment alerts were being ignored or pain scales not being assigned during registration. Discussions with ER physicians and the ER director provides background information on previous disparities study results and QI projects, identifying most relevant outcome to study, and factors in choosing which statistical result to report. Meeting with a pediatric neurologist, the director of the headache clinic, results in an additional view of focusing QI efforts on giving primary care providers better tools to care for migraine pain in order to decrease unnecessary neurology referrals or ER visits. 
 In short, data scientists and quality improvement (QI) teams can contribute to understanding the best methods to study where these disparities lie and how to rapidly conduct improvement projects to decrease known disparities. Clinical informaticists help to facilitate change management by navigating the socio-technical factors in hospital and clinic organizations. Thus, this is a multidisciplinary project with stakeholders spanning the field biomedical and health informatics.
 
-##Methods and Results
+##Methods
 
-#Load data set, assign NA's
+The data used in this project were imported as a CSV file from Qlikview, a software that displays results from SQL queries written by CHOP data analysts. This SQL query specifically pulls data from the CHOP EMR (Epic) on patients ages 5 -18 who were diagnosed with migraine as specificed by two ICD-10 codes. Results exported as .xlsx file were de-identified before saving as a .csv file for import to R. All data available in Qlikview were imported without filtering. The first observation was noted to be missing MRN and 20 other variables, so was assumed error and deleted before import. 
+
+###Data loading and cleaning
+
+####Load data set, assign NA's, transform variable classes
 ```{r, eval=TRUE}
 data_all<- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_11_28_2018.csv", header=TRUE)
-str(data_all) # 3642 observations of 33 variables
+str(data_all) # 3709 observations of 33 variables
 summary(data_all) #First glance, it seems there are no missing variables. 
-pct_miss_var(data_all) #No missing data values
-table_miss_var <- miss_var_table(data_all) #all variables complete 
-sum(is.na(data_all)) #0 NAs
+pct_miss_var(data_all) #No missing data values , using NaNiar package
+table_miss_var <- miss_var_table(data_all) # create table of all missing data in all variables
+print(table_miss_var)  #Zero data missing in all 33 variables that comprise 100% of the data set
+sum(is.na(data_all)) #Similarly, there are zero NAs
+```
 
-Hmisc::describe(data_all) #But wait. Individual counts show values with blanks and dashes
-data_all_na <- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_11_28_2018.csv", header=T, na.strings=c(""," ","NA", "-")) #assign NAs to blanks, spaces, and dashes
+```{r,eval=TRUE}
+#However, realized that spaces and dashes were not being coded as NA so assigned NAs to blanks, spaces, and dashes
+data_all_na <- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/data_all_11_28_2018.csv", header=T, na.strings=c(""," ","NA", "-"))
 summary(data_all_na) #Now, NA's appear in the summary tables
-```
 
-## Data Description
-
-#Date time parsing
-```{r}
-head(data_all_na)
-data_all_na$arr_date <- as.Date(data_all_na$ED.Arrive, format= "%m/%d/%Y")
-summary(data_all_na$arr_date)
-hist(data_all_na$arr_date)
-
-#***trying to split time out into separate column
-#data_all_na$arr_time <- format(as.POSIXct(data_all_na$ED.Arrive) ,format = "%H:%M:%S") 
-#data_all_na$arr_time <- strptime(data_all_na$ED.Arrive, "%H:%M:%S")
-#data_all_na$arr_time <- format(data_all_na$ED.Arrive,"%H:%M:%S")
+# Change team assessment from integer to factor with assigned labels based on chart and Qlikview review for clearer summary statistics
+data_all_na <- mutate(data_all_na, Team.Assessment. = factor(Team.Assessment. , levels=c(0,1), labels = c("No", "Yes")))
 
 ```
 
-#Table 1. Categorical variables
-```{r}
-#Insert table of race, sex, total patients
-# N unique patients
-#describe(X6f3fee63188d4821a7f220d87676b0c5): Distinct MRN's 2626
+My hypothesis is that race and ethnicity , particularly NH black race, is significantly correlated to longer time from arrival to receiving first line medication. 
+Secondary variables include disposition (admitted vs discharge), whether a team assessment occurred, and whether the pathway was utilized. 
 
-#X6f3fee63188d4821a7f220d87676b0c5 %>%
-#  group_by(MRN) %>%
-#  count %>%
-#  return
+Acuity could be considered a subjective assessment that might be influenced by implicit bias. The one pediatric headache study which was in the outpt clinic, did show that AA children received the diagnosis of headache less frequently than white children. 
 
-#dup_pt <- X6f3fee63188d4821a7f220d87676b0c5 %>% Make a column of just duplicated mrn's, find the range and average counts for each pt who was seen more than once
-  
-```
+However, because acuity is an objective starting point for the orders and evaluations to be done, I added it to the predictor variables in my linear regression. Iie How does the primary outcome change given the same acuity level across different demographic groups?)
 
-#Individual groups
-```{r}
-#Insert histogram of variables grouped by race/ethnicity
-```
+Other variables were not included in this project to date. 
 
-##Missing data analysis
-``` {r, eval=true }
-describe(data_all_na)#Frequency counts of missing values in easier to scan format
-
-pct_miss(data_all_na) # %15 total missing data
-table_all_missing_var <-miss_var_summary(data_all_na) # table of all missing variables with n and pct, in order
-table_all_missing_case <-miss_case_table(data_all_na) #table of all missing values by case. Max values missing: 23.5% of cases had 4 values missing. #Max case with values missing: 1 case had 21 values missing
-miss_case_sum <- miss_case_summary(data_all_na) #individual cases listed by total missing values
-top_6_miss_case <-head(miss_case_sum) #top 6 cases with missing values
-```
-
-#Visualizing missing data
-```{r}
-vis_miss(data_all_na) #Highest concentration of missing NA's are in second med metrics and HCG, because not everyone gets a second med or HCG test. 
-gg_miss_upset(data_all_na) #Different visualization of same data
-```
-
-#Make dataframe of select variables for statistical analysis
-```{r}
+```{r,eval=TRUE}
+#Create data frame of select variables of interest
 data_select <- data_all_na %>%
-  select(Pathway,Sex, Race.Ethnicity, Payer.Type, Primary.Language, Acuity,Arrive.to.1st.Med.Given, Dispo, Team.Assessment. )
-
-summary(data_select)
-miss_var_summary(data_select) #12.1 % missing values in first med given. Race and ethnicity has one case that has a missing value. Payer type missing 3.1%
+  select(Pathway,Sex, Race.Ethnicity, Payer.Type, Primary.Language, Acuity,Arrive.to.1st.Med.Given, Dispo, Team.Assessment.)
 ```
 
-#Does the missing data in arrive to first line med given correlate with acuity?
+###Data Quality: General inspection of mins/max
+Arrive to room should never have a negative number while MD eval to first med order could have a negative number (provider hears of pt being referred from clinic or looks at pt’s chart and see’s is a chronic pt, already puts in orders they know pt will need)
+If I was using these metrics I would have to further look into these and potentially eliminate or manually recalculate the negative observations, as it is I just used arrive to first med Given which does not on first inspection have this obvious error. 
+
+```{r,eval=TRUE}
+describe(data_all_na) #summary of data set
+```
+
+
+However note that max times seem excessively long: 13 hours from arrival to first med given?? Using chart review, observation 3224 is the most extreme outlier, verified in chart review that this is not erroneous data. Pt truly did wait 14 hours to receive IV medications because not clear cut migraine diagnosis, although she did get a bolus earlier ~ 5 hours after arrival. So I left the outliers in. 
+
+```{r,eval=TRUE}
+#Identify outliers (had to re-download data set as I had deleted identifiers already)
+data_all_na_12_11 <- read.csv("https://raw.githubusercontent.com/scraig10/BMIN503_Final_Project/master/12_11_18.csv", header=T, na.strings=c(""," ","NA", "-"))
+data_all_na_12_11 <- mutate(data_all_na_12_11, Team.Assessment. = factor(Team.Assessment. , levels=c(0,1), labels = c("No", "Yes")))
+
+max_arr <- data_all_na_12_11[which.max(data_all_na_12_11$Arrive.to.1st.Med.Given),]
+print(max_arr) #find the observation which has the max value for the select variable
+
+```
+
+### Data Quality: Evaluate missingess
+The data set contains 15% missing fields. The top three variables with missing data are all related to a second line medication being given. This is because not everyone receives a second line medication, so those cells will be empty. At one end of the spectrum, 23.3% (865) of cases had 4 values missing whereas at the other end, 9.4% (349) of cases had 0 values missing. A total of 7 cases had the max count of 17 values missing. Data visualizations suggest a gradiant of missing data amongst demographic groups. The groups with the highest pct of theses missing variables is NH Black (87.52%), Hispanic (84.47%), Other (79.56%), then NH White (73.20).
+
+```{r,eval=TRUE}
+pct_miss(data_all_na) # %15 total missing data
+table_all_missing_var <-miss_var_summary(data_all_na) # table of all missing variables with n and pct, in descending order
+print(table_all_missing_var)
+table_all_missing_case <-miss_case_table(data_all_na) #table of all missing values by case.
+print(table_all_missing_case)
+miss_case_sum <- miss_case_summary(data_all_na) #individual cases listed by total missing values
+print(miss_case_sum)
+top_6_miss_case <-head(miss_case_sum) # Shows the case number for the 7 cases with the maximum missing values
+
+table_miss_var_na <- miss_var_table(data_all_na) # create table of all missing data in all variables
+print(table_miss_var_na)  # 14/33 (42%) variables have no missing data.
+sum(is.na(data_all_na)) #total of 18,529 cells are missing data
+
+vis_miss(data_all_na) #Highest concentration of missing NA's are in second med metrics and HCG, because not everyone gets a second med or HCG test. 
+data_all_na %>%
+  group_by(Race.Ethnicity) %>%
+  miss_var_summary()
+
+gg_miss_upset(data_all_na) #Different visualization models of same data here,
+gg_miss_fct(x = data_all_na, fct = Race.Ethnicity) #here, (differential gradiant possible amongst demographic groups)
+gg_miss_var(data_all_na,facet = Race.Ethnicity) # and here. 
+```
+
+Of the select variables I am interested in, the total percentage of missing data is 1.70%. The variable with the greatest precentage of missing data is "Arrival to first medication given" (12.16%), followed by "Payer Type" (3%), then Team Assessment (0.1%). When grouped by demographic status, the greatest percent of missing arrival to first med given is in the "Other" group(16.02%), followed by NH Black (14.40%), Hispanic (12.12%), then NH white (9.83%). Data visualization supports this, with a gradiant of missing values.
+
+```{r,eval=TRUE}
+pct_miss_select <- pct_miss(data_select)
+print(pct_miss_select)
+miss_var_summ_select <- miss_var_summary(data_select) #Pcts of missing data in select variables
+print(miss_var_summ_select)
+
+data_select %>%
+  group_by(Race.Ethnicity) %>%
+  miss_var_summary() #summarizing missing data in select variables across demographic groups
+
+gg_miss_fct(x = data_select, fct = Race.Ethnicity) #visualizing pct of missing data in select variables across demographic groups
+
+```
+
+### Data Quality evaluation: Internal validity 
+
+HCG Results: Although not all females will receive a HCG result (ie have not reached puberty), categorical and date time results should be equal. As it is, 2,045 observations had an HCG done but only 1836 have HCG date time stamps of resulted lab test. So ~10% are missing date time results. This would have to be further explored to see if this is due data transfer corruption, human factor error of manual data entry, or flowsheet misdocumentation error. If the data set included DOB, I could also compare expected number of HCG results vs actual. 
+
 ```{r}
+hcg_cat <- summary(data_all_na$HCG) 
+print(hcg_cat) #Categorical HCG resuts: No 1556, Yes 2045
+
+hcg_dt <- summary(data_all_na$HCG.Result) # HCG results with date time stamps
+sum(is.na(data_all_na$HCG.Result)) # 1873 NA's in HCG results
+sum(!is.na(data_all_na$HCG.Result)) # 1836 have HCG results
+
+tot_sex <- summary(data_all_na$Sex)
+print(tot_sex) # 2615 females , 1094 males
+```
+
+I also looked at the relationship between in missing data between arrival to first line med given and acuity level. Critical acuity level does not have as much missing Arrival to First med data, suggesting that those patients are the ones who all get a first line medication.
+
+```{r,eval=TRUE}
+
 ggplot(data_select,
        aes(x = data_select$Arrive.to.1st.Med.Given,
            y = data_select$Acuity)) +
- geom_miss_point()
+ geom_miss_point() # visualizing missing data relationship between arrival to first line med given and acuity level
+
 ```
 
-#What is distribution of missing data across all variables by race/ethnicity?
+### Descriptive Statistics
+Table 1. Categorical variables
+
+In patients between the ages of 5-18, who are ordered the migraine pain order set: most are female and English speaking.  Amongst the demographic groups, NHB and NHW are almost equal, with minority being Hispanic or other. Slightly more patients have private insurance compared to medical assistance. 3% of insurance data is not captured. Otherwise all the other fields have no missing data for these variables in this data set. 
+
+Only NA ‘s are in payer type. Of note, all these fields are non-mandatory in the EHR, but hardly any data is missing (only the payer type). Will come back to this in the conclusions, in discussing designing work flows . Not everything needs a hard stop to get 100% data entry. 
+
 ```{r}
-# these give total n's of missing data
-gg_miss_var(data_select,
-            facet = Race.Ethnicity)
+library(tableone) #Use tableone package to output table one counts and pcts of select data
+tab_one <- CreateTableOne(data = data_select[c(2:5)], includeNA = TRUE)
+print(tab_one, showAllLevels = TRUE)
 
-gg_miss_var(data_all_na,
-            facet = Race.Ethnicity)
+tab_two <-CreateTableOne(data = data_select[c(-2,-3,-4,-5)])
+print(tab_two, showAllLevels = TRUE)
 
-# these give pct's
-data_select %>%
+```
+
+Primary outcome
+Arrival to first medication given variables across demographic groups
+The median is relatively the same across all groups.Longest mean arrival-med time is : Hispanic then white, then black, then other. There are many outliers, that I left in as previously discussed. Median time is 143 minutes, with Hispanic group slightly longer. 
+
+```{r, eval = TRUE, warning = FALSE}
+time_vars <- data_all_na %>%
+  select(Race.Ethnicity, Arrive.to.1st.Med.Given, ED.LOS..min.,Arrive.to.Room, Room.to.MD.Eval, MD.Eval.to.First.Med.Order, X1st.Med.Ordered.to.Started, X1st.Med.Started.to.Given, X1st.Med.Reassessment) #select time variables related to first medication
+
+time_vars_arr <- time_vars[c(1)] #race and ethnicity stats for arrival to first med only variable
+
+describeBy(time_vars, time_vars$Race.Ethnicity) #summary of functions by demographic groups -> Group 1: Hisp, 2: NH Black, 3: NH White, 4: Other
+
+describeBy(time_vars_arr, time_vars_arr$Race.Ethnicity)
+
+#Create dataframes for each group
+hisp <- subset(time_vars, time_vars$Race.Ethnicity == "HISPANIC OR LATINO")
+nhw <- subset(time_vars, time_vars$Race.Ethnicity == "NON-HISPANIC WHITE")
+nhb <- subset(time_vars, time_vars$Race.Ethnicity == "NON-HISPANIC BLACK")
+other <- subset(time_vars, time_vars$Race.Ethnicity == "OTHER")
+
+# Arrival to first medication descriptive statistics with histograms in separate demographic groups
+
+all_hist <- ggplot(data_all_na, aes(Arrive.to.1st.Med.Given))+
+  geom_histogram(binwidth = 10) +
+  ggtitle("Time to first med given: All groups")+
+  xlab("Arrival to first med given")+
+  ylab("Frequency")
+des_all <- describe.by(data_all_na)
+
+hisp_hist <- ggplot(hisp, aes(Arrive.to.1st.Med.Given))+
+  geom_histogram(binwidth = 10) +
+  ggtitle("Time to first med given: Hispanic or Latino")+
+  xlab("Arrival to first med given")+
+  ylab("Frequency")
+des_his <- describe.by(hisp)  
+
+nhw_hist <- ggplot(nhw, aes(Arrive.to.1st.Med.Given))+
+  geom_histogram(binwidth = 10) +
+  ggtitle("Time to first med given: Non-Hispanic White")+
+  xlab("Arrival to first med given")+
+  ylab("Frequency")
+
+des_nhw <- describe.by(nhw)
+
+nhb_hist <- ggplot(nhb, aes(Arrive.to.1st.Med.Given))+
+  geom_histogram(binwidth = 10) +
+  ggtitle("Time to first med given: Non-Hispanic Black")+
+  xlab("Arrival to first med given")+
+  ylab("Frequency")
+des_nhb <- describe.by(nhb)
+
+des_oth <- describe.by(other)
+oth_hist <- ggplot(other, aes(Arrive.to.1st.Med.Given))+
+  geom_histogram(binwidth = 10) +
+  ggtitle("Time to first med given: Other")+
+  xlab("Arrival to first med given")+
+  ylab("Frequency")
+```
+
+```{r,eval=TRUE}
+#Arrival to first med given in minutes, grouped by race/eth
+arr_group_by_all <- data_all_na %>%
   group_by(Race.Ethnicity) %>%
-  miss_var_summary()
-gg_miss_fct(x = data_select, fct = Race.Ethnicity)
-gg_miss_fct(x = data_all_na, fct = Race.Ethnicity)
-
-```
-
-#Make a data set of select variables without NAs
-```{r}
-data_select_clean <- data_select[complete.cases(data_select[ , ]),]
-summary(data_select_clean)
-describe(data_select_clean)
-
-data_select_clean%>%
-  mutate(Team.Assessment.=factor(Team.Assessment., levels=c(0, 1), labels=c("no", "yes")))
-
-str(data_select_clean)
-```
-
-### Statistical Analyses
-
-#Linear regression models: data set of select variables without NAs
-```{r}
-ggplot(data_select_clean, aes(x=Race.Ethnicity, y= Arrive.to.1st.Med.Given))+
-  geom_boxplot(color="black", fill="lightblue")
-
-data_fit <- lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity, data=data_select_clean)
-summary(data_fit) #So the odds when the demographic is "0", is 258 minutes?
-coef(data_fit) #Coefficients of X
-confint(data_fit) #Confidence intervals
-
-summary.lm(lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity + Acuity, data=data_select_clean))
-
-```
-
-#Logistic regression models: data set of select variables without NAs
-```{r}
-ggplot(data=data_select_clean, aes(x=Race.Ethnicity, y=Arrive.to.1st.Med.Given)) +
-    geom_boxplot(color="black", fill="darkblue")
-
-summary((glm(Race.Ethnicity~Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial())))
-
-
-first_med_fit <- glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given + Acuity + Payer.Type + Pathway + Team.Assessment. + Dispo , data=data_select_clean, family=binomial())
-summary(first_med_fit)
-exp(coef(first_med_fit)) #Odds ratios.
-confint(first_med_fit) #Confidence intervals for fit
-exp(cbind(OR=coef(first_med_fit), CI=confint(first_med_fit))) #OR and 95%CI
-
-chisq.test(table(data_select_clean$Arrive.to.1st.Med.Given, data_select_clean$Race.Ethnicity)) 
-summary((glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial())))
-exp(coef(glm(Race.Ethnicity ~ Arrive.to.1st.Med.Given, data=data_select_clean, family=binomial()))) #Odds ratios
-```
-
-### Data Visualizations
-```{r}
-# Histograms of arrival to first med in demographic groups
-data_select_clean %>%
-  group_by(Race.Ethnicity) %>%
-  mutate(Arrive.to.1st.Med.Given = as.numeric(Arrive.to.1st.Med.Given)) %>%
+  summarise(mean_arr = mean(Arrive.to.1st.Med.Given, na.rm = TRUE),
+            sd_arr = sd(Arrive.to.1st.Med.Given, na.rm = TRUE),
+            med_arr = median(Arrive.to.1st.Med.Given, na.rm = TRUE ),
+            min_arr = min(Arrive.to.1st.Med.Given, na.rm = TRUE ),
+            max_arr = max(Arrive.to.1st.Med.Given, na.rm = TRUE )) %>%
+  arrange(desc(mean_arr), desc(med_arr), desc(min_arr), desc(max_arr)) %>%
   return
-
-ggplot(data_select_clean, aes(x = Race.Ethnicity, y = Arrive.to.1st.Med.Given)) +
-  geom_bar()
-
-data_select_clean %>%
-  mutate(Race.Ethnicity = as.numeric(Race.Ethnicity))%>%
+print.data.frame(arr_group_by_all)
+ 
+#Arrival to first med given in minutes, grouped by lang
+arr_group_by_all_lang <- data_all_na %>%
+  group_by(Primary.Language) %>%
+  summarise(mean_arr = mean(Arrive.to.1st.Med.Given, na.rm = TRUE),
+            sd_arr = sd(Arrive.to.1st.Med.Given, na.rm = TRUE),
+            med_arr = median(Arrive.to.1st.Med.Given, na.rm = TRUE ),
+            min_arr = min(Arrive.to.1st.Med.Given, na.rm = TRUE ),
+            max_arr = max(Arrive.to.1st.Med.Given, na.rm = TRUE )) %>%
+  arrange(desc(mean_arr), desc(med_arr), desc(min_arr), desc(max_arr)) %>%
   return
+```
 
-hist(data_select_clean$Race.Ethnicity, col = "green")
+Secondary outcomes
+Contingency (two-way) tables: Group table one variables by race and eth
+```{r, eval=TRUE}
+race_eth_all <- data_all_na$Race.Ethnicity
+payer_type <- data_all_na$Payer.Type
+sex_all <- data_all_na$Sex
+pth_all <- data_all_na$Pathway
+lng_all <- data_all_na$Primary.Language
+acu_all <- data_all_na$Acuity
+dis_all <- data_all_na$Dispo
+team_all <- data_all_na$Team.Assessment.
+arr_all <- data_all_na$Arrive.to.1st.Med.Given
+```
+
+Pathway:
+21% NH Black not placed on pathway vs 15% NH White (6% difference) vs 17% Hispanic
+Those on the pathway are 48% NH black, 40% white, 7% Hispanic. 
+
+```{r,eval=TRUE}
+pth_by_tab <- table(race_eth_all,pth_all)
+prop.table(pth_by_tab,2) %>%
+  round (digits =2)
+prop.table(pth_by_tab,1)  %>%
+  round (digits =2)
+```
+
+Acuity: 71% of children given acuity score 1 are NH white vs 14% are NH black
+70% of NH black children given acuity score 3 vs 79% of NH white children.  
+```{r,eval=TRUE}
+acu_by_tab <- addmargins(table(race_eth_all, acu_all))
+print(acu_by_tab)
+acu_by_tab_p <-table(race_eth_all, acu_all)
+prop.table(acu_by_tab_p,2) %>%
+  round (digits =2)
+prop.table(acu_by_tab_p,1)%>%
+  round (digits =2)
 
 ```
 
+Disposition:
+90% of black children are discharged vs 79% of white children and 85% of Hispanic children. White children are twice as likely to be admitted as black children.62% of admitted children are white  vs 26% black vs 7% Hispanic. This makes sense if the acuity of white children is generally higher because of referral from osh but don’t have that data. This data leaves out transported patients. 
+
+```{r,eval=TRUE}
+dis_by_tab <- addmargins(table(race_eth_all, dis_all))
+print(dis_by_tab)
+prop.table(dis_by_tab,2) %>%
+  round (digits =2)
+prop.table(dis_by_tab,1)%>%
+  round (digits =2)
+```
+
+Team assessment: 
+```{r, eval=TRUE}
+team_by_tab <- table(race_eth_all, team_all)
+print(team_by_tab)
+prop.table(team_by_tab,2) %>%
+  round (digits =2)
+prop.table(team_by_tab,1)%>%
+  round (digits =2)
+```
+
+Another way to do contingency tables with chi sq: 
+```{r,eval=TRUE}
+#Dispo by row
+tab_x_dispo_r <- CrossTable(data_all_na$Race.Ethnicity, data_all_na$Dispo,
+           digits = 2,
+           prop.r = TRUE,
+           prop.c = FALSE,
+           prop.t = FALSE,
+           prop.chisq = FALSE,
+           chisq = TRUE,
+           fisher = FALSE,
+           mcnemar = FALSE
+           )
+
+#Dispo by col
+tab_x_dispo_c <- CrossTable(data_all_na$Race.Ethnicity, data_all_na$Dispo,
+           digits = 2,
+           prop.r = FALSE,
+           prop.c = TRUE,
+           prop.t = FALSE,
+           prop.chisq = FALSE,
+           chisq = TRUE,
+           fisher = FALSE,
+           mcnemar = FALSE
+           )
+#acuity, row and column outputs combined
+tab_x_acu <- CrossTable(data_all_na$Race.Ethnicity, data_all_na$Acuity,
+           digits = 2,
+           prop.r = TRUE,
+           prop.c = TRUE,
+           prop.t = FALSE,
+           prop.chisq = FALSE,
+           chisq = TRUE,
+           fisher = FALSE,
+           mcnemar = FALSE
+           )
+#Team assessment
+tab_x_ta <- CrossTable(data_all_na$Race.Ethnicity, data_all_na$Team.Assessment.,
+           digits = 2,
+           prop.r = TRUE,
+           prop.c = TRUE,
+           prop.t = FALSE,
+           prop.chisq = FALSE,
+           chisq = TRUE,
+           fisher = FALSE,
+           mcnemar = FALSE
+           )
+
+#Pathway
+tab_x_pth <- CrossTable(data_all_na$Race.Ethnicity, data_all_na$Pathway,
+           digits = 2,
+           prop.r = TRUE,
+           prop.c = TRUE,
+           prop.t = FALSE,
+           prop.chisq = FALSE,
+           chisq = TRUE,
+           fisher = FALSE,
+           mcnemar = FALSE
+           )
+```
+
+####Results
+LM I 
+For arrival to med time with race as the only preditor: Mean arrival-med time is longest for Hispanic population and that is significant. Black pts have 177 mins -17 mins mean time also significant. There is a trend towards shorter time to first med in other groups, but this is not significant. 
+
+```{r}
+#Resetting levels of race/eth variable for trialing different intercept references in the lm functions to see if changed significance level or not
+levels(data_all_na$Race.Ethnicity)[levels(data_all_na$Race.Ethnicity)=="HISPANIC OR LATINO"] <- "1"
+levels(data_all_na$Race.Ethnicity)[levels(data_all_na$Race.Ethnicity)=="NON-HISPANIC BLACK"] <- "2"
+levels(data_all_na$Race.Ethnicity)[levels(data_all_na$Race.Ethnicity)=="OTHER"] <- "3"
+levels(data_all_na$Race.Ethnicity)[levels(data_all_na$Race.Ethnicity)=="NON-HISPANIC WHITE"] <- "4"
+
+levels(data_all_na$Race.Ethnicity) # find the names of the levels
+
+lm_race_arr <- lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity, data=data_all_na)
+summary(lm_race_arr)
+an_race_arr <- anova(lm_race_arr)
+
+coef(lm_race_arr) #Coefficients of X
+confint(lm_race_arr) #Confidence intervals
+```
+
+LM II
+Adding language as predictor variable does not eliminate the significance of the differences between Hispanic and nonhispanic black and nonhispanic white groups.
+
+```{r,eval=TRUE}
+lm_lang_race <- lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity + Primary.Language, data=data_all_na)
+summary(lm_lang_race)
+```
+
+LM III
+Including acuity as predictor vairable does not seem to change results for race - NonHispanic black and Non Hispanic white patients still have significantly less arrive-med time compared to Hispanic/Latino patients. Though it is interesting to note there is significantly less arrive-med time for less urgent cases.
+
+```{r, eval=TRUE}
+lm_lang_acu_race <- lm(Arrive.to.1st.Med.Given ~ Race.Ethnicity + Primary.Language + Acuity, data=data_all_na)
+summary(lm_lang_acu_race)
+```
+####Conclusions
+Extra care needed when interpreting data retrieved from time stamps in EHR queries. 
+Differences in migraine pain management do exist. 
+Missing data patterns can inform discovery process in clinical decision support to reduce variation in management. 
