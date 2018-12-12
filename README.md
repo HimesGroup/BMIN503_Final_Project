@@ -1,18 +1,36 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+title: "Differential Gene Expression in Adult Versus Pediatric Septic Shock"
+author: "Michael Bonk"
+contact: "michael.bonk@uphs.upenn.edu""
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This project is a retrospective secondary analysis of prospective cohort studies examining whole blood differential gene expression of septic shock patients within 24 hours of diagnosis compared to healthy controls. The objective is to perform a meta-analysis of publically available gene expression datasets in both pediatric and adult patient cohorts in order to identify which transcripts are differentially expressed both in common and unique to each population. Functional gene annotation enrichment analysis will then be performed utilizing the Database for Annotation, Visualization, and Integrated Discovery (DAVID) in order to identify which biologic and cellular processes are differentially regulated both in common and unique to each patient group. These results will help to characterize the transcriptomic response to septic shock in each patient population. 
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+Files included in this repo include the following:
 
-DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+MBonk_final_project.Rmd # Final project Rmd file
+
+Meta-analyses sample information .csv files:
+Microarray_data_infosheet_R.csv # Pediatric dataset sample information
+Microarray_data_infosheet_R2.csv # Adult dataset sample information; 2 should be removed prior to using this file for adult datasets
+
+R and python files for meta-analysis:
+csv2rds.R
+integration_utility.R
+meta_analysis_geneexpr.py
+meta_analysis_geneexpr.R
+meta_analysis_RankProd.R
+study.rankprod.combine.R
+MetaAnalysis_GeneExpression_example.pdf - description of the files used in meta-analysis written by Mengyuan Kan
+
+Text file results of meta-analyses:
+Sepsis_peds_metaranef.txt - Results of Pediatric dataset meta-analysis
+Sepsis_structure.metaranef.txt - Results of Adult dataset meta-analysis
+
+Functional annotation of common and unique differentially expressed gene lists:
+Common_functional.csv
+Peds_unique_functional.csv
+Adult_unique_functional.csv
 
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
 
