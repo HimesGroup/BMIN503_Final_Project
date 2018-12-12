@@ -9,6 +9,7 @@
 
 # libraries
 library(dplyr)
+library(tidyr)
 library(lubridate)
 library(data.table)
 library(RcppRoll)
@@ -112,13 +113,13 @@ sapply(data, function(x) sum(is.na(x)))
   data[, count_grants := cumsum(grants)-1, by = "PI_IDS"]
   
   # Log-transformed outcome variable TOTAL_COST
-  data <- mutate(data, TOTAL_COST_log = log10(TOTAL_COST))
+  data <- mutate(data, TOTAL_COST_log = log(TOTAL_COST))
   
   
 # 7. Remove unnecessary variables, objects
 data <- select(data, BUDGET_START, FULL_PROJECT_NUM, ORG_NAME, PI_IDS, 
-               STUDY_SECTION_NAME, TOTAL_COST, pubs_to_date, max_impact_factor, 
-               count_grants)
+               STUDY_SECTION_NAME, TOTAL_COST, pubs_to_date, 
+               max_impact_factor, count_grants, TOTAL_COST_log)
 rm(projects)
 rm(link)
 rm(pubs)
@@ -126,4 +127,8 @@ rm(scimago)
 rm(duplicates)
 rm(duplicates_vector)
 rm(poss_duplicates)
-  
+rm(temp)
+rm(urli)
+rm(filename)
+rm(filenamei)
+rm(i)
