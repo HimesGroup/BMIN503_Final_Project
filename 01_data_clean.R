@@ -10,13 +10,13 @@
 # libraries
 library(dplyr)
 library(lubridate)
+library(data.table)
 library(RcppRoll)
 
 # 1. Check for duplicates
 # NOTE: At last count there are 3126 in terms of FULL_PROJECT_NUM, PI_IDS, PUB_
 # TITLE, and SUBPROJECT_ID
 
-  data <- select(data, -matches("poss_duplicates"), -duplicates_vector)
   poss_duplicates <- select(data, FULL_PROJECT_NUM, PI_IDS, PUB_TITLE)
   duplicates_vector <- as.data.frame(duplicated(poss_duplicates))
   data <- bind_cols(data, duplicates_vector)
@@ -25,23 +25,42 @@ library(RcppRoll)
   # Remove duplicates
   data <- distinct(data, FULL_PROJECT_NUM, PI_IDS, PUB_TITLE, 
                    .keep_all = TRUE)
+  
+  
+# 2. Relabel variables 
+# TODO: undoubtedly there is redundancy in the ORG_NAME variable. Ex: 'Albert 
+# Einstein College of Medicine' and 'Albert Einstein College of Medicine, INC'
+# However, a quick glance shows it is not egregious and largely 
+# will be skipped for now. 
 
-# 2. Check for missingness
+  # STUDY_SECTION_NAME  
+  data$STUDY_SECTION_NAME <- gsub(" $", "", data$STUDY_SECTION_NAME)
+  
+  # PI_IDS
+  data$PI_IDS <- gsub(";", "", data$PI_IDS) # some only contain ';'
+  data$PI_IDS <- gsub(" ", "", data$PI_IDS) # some have random spaces
+  
+
+# 3. Check for missingness
 # NOTE: Only missingness is for records that didn't have SCImago data (about 1/3)
 data[sapply(data, function(x) as.character(x)=="")] <- NA
 sapply(data, function(x) sum(is.na(x)))
 
-# 3. Fix classes 
+  # Drop observations that have missing PI_IDS (n = 11)
+  data <- filter(data, !is.na(PI_IDS))
+
+
+# 4. Fix classes 
 # NOTE: ISSNs have characters, sometimes (ex: 1931857X)
 # Interestingly, sapply used too much memory. 
-data$PI_IDS <- gsub(";", "", data$PI_IDS)
 numeric_vars <- c(3, 4, 7, 10, 14, 16, 19, 20, 21, 22, 25, 26)
 for (i in numeric_vars){ 
   data[,i] <- as.numeric(data[,i])
 }
 sapply(data, function(x) sum(is.na(x)))
 
-# 4. Date variables processing  
+
+# 5. Date variables processing  
 
   # PUB_DATE
   # Some observations only have month + year, and some only year. 
@@ -61,13 +80,19 @@ sapply(data, function(x) sum(is.na(x)))
   # BUDGET_START and BUDGET_END
   data$BUDGET_START <- mdy(data$BUDGET_START)
   data$BUDGET_END <- mdy(data$BUDGET_END)
+  
+    # Drop publications attributed to grants that started before 2001-01-01
+    data <- filter(data, BUDGET_START > "2001-01-01")
+    
+    # Drop publications attributed to grants that will start after 2017-12-31
+    data <- filter(data, BUDGET_START < "2017-12-31")
 
-# 5. Constructing new variables 
+# 6. Constructing new variables 
   
   # Publication counts 
   # NOTE: each APPLICATION_ID corresponds to a unique FULL_PROJECT_NUM.
-  # We want the number of publications for each PI before a particular FULL_PROJECT_NUM
-  # was funded. 
+  # We want the number of publications for each PI before a particular
+  # FULL_PROJECT_NUM was funded. 
   data <- data[!is.na(data$PUB_DATE),]
   data$pubs <- 1
   data <- as.data.table(data)
@@ -81,14 +106,24 @@ sapply(data, function(x) sum(is.na(x)))
   data[, max_impact_factor := min(max_impact_factor), by="FULL_PROJECT_NUM"]
   
   # Previous grant count
-  # 6. Collapse down to desired analytic level (one obs per PI_ID-FULL_PROJECT_NUM)
+  # Collapse down to desired analytic level (one obs per PI_ID-FULL_PROJECT_NUM)
   data <- distinct(data, PI_IDS, FULL_PROJECT_NUM, .keep_all = TRUE)
   data$grants <- 1
   data[, count_grants := cumsum(grants)-1, by = "PI_IDS"]
   
+  # Log-transformed outcome variable TOTAL_COST
+  data <- mutate(data, TOTAL_COST_log = log10(TOTAL_COST))
   
-# 6. Remove unnecessary variables
-data <- select(data, BUDGET_START, FULL_PROJECT_NUM, ORG_NAME, PI_IDS, STUDY_SECTION_NAME, 
-               TOTAL_COST, pubs_to_date, max_impact_factor, count_grants)
   
+# 7. Remove unnecessary variables, objects
+data <- select(data, BUDGET_START, FULL_PROJECT_NUM, ORG_NAME, PI_IDS, 
+               STUDY_SECTION_NAME, TOTAL_COST, pubs_to_date, max_impact_factor, 
+               count_grants)
+rm(projects)
+rm(link)
+rm(pubs)
+rm(scimago)
+rm(duplicates)
+rm(duplicates_vector)
+rm(poss_duplicates)
   
