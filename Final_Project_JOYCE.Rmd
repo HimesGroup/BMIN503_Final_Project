@@ -1,0 +1,431 @@
+---
+title: "BMIN 503 Final Project"
+author: "Caroline Joyce"
+date: "12/12/2018"
+output: html_document
+---
+
+#Overview
+Average MMR vaccination coverage rates in kindergartners was visualized in the years before and after passage of California Senate Bill 277.
+
+#Introduction
+The goal of my final project is to visually show the change in childhood vaccine medical exemption rates in California after legislation eliminating personal belief exemptions was enacted. The elimination of personal belief exemptions aimed to cut down on the number of unvaccinated children within schools, however, recent data is showing that these numbers may have solely transferred to medical exemptions. California is unique in making publically available all school-level kindergarten vaccination rates. This project will visually show the impact this law had upon medical exemption rates.
+In response to a number of infectious disease outbreaks, California has enacted two major vaccination policy changes in the last five years. First, in 2012, AB 2109 told schools that receive federal funding (both public and private) that they could not unconditionally admit children who were unvaccinated or did not have vaccine exemptions. Subsequently, in (2015) SB 277 was passed, eliminating personal belief exemptions (PBEs) for children entering schools. Due to this change, parents hoping to exempt their child from the standard vaccination schedule needed a signed note from a physician in order for their child to be enrolled in school. While the goal of this law was to cut down on the number of children that were un- and under-vaccinated, recent work has shown that their exemptions may have just been switched from PBEs to medical exemptions. Rates of coverage of the measles, mumps, and rubella (MMR) vaccine are particularly interesting to be studied, as there have been a number of measles outbreaks in California in the last ten years. This is not surprising, as the World Health Organization (WHO) shows that for herd immunity to be reached and the disease unable to spread, over 93% of the population must be vaccinated. In theory, the passage of SB 277 should have raised MMR vaccination rates to closer to the herd immunity rate. The goal of this project is to show any changes in MMR vaccination rates that came after this law was enacted in order to inform future policy decisions.
+This problem is interdisciplinary as it hits upon the intersection of legal policy and infectious disease. Additionally, it is uniquely ready to be studied as California is one of the few states that makes school-level vaccination rates public. I met with John Holmes to discuss publicly available state databases to compare the California data to, and he recommended that I look at nationally collected data, as finding state level data is quite rare. I met with Alison Buttenheim, and we spoke about how seeing the change in vaccination rates is important. The law was passed with the hope that childhood vaccination rates overall would increase, but it is entirely possible that this has not happened to the extent needed for herd immunization. I also met with Sherrie to discuss the best way to map these data. 
+
+
+#Methods
+Kindergarten vaccination rates for every public and private school in California was downloaded for the years of 2012-2013 and 2016-2017. MMR rates were averaged by county and by public vs. private school. T-tests were executed to examine any difference in vaccination coverage between 2012-2013 and 2016-2017. Maps were created to visualize the average coverage by county by year. Median income was downloaded from the California Tax Review board, this was also collapsed by county and mapped. Linear regression was used to examine whether income predicted county-level change in vaccination rates. 
+
+```{r}
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(choroplethr)
+library(choroplethrMaps)
+library(sf)
+library(tidycensus)
+library(leaflet)
+library(ape)
+library(spdep)
+library(RColorBrewer)
+setwd("~/Documents/BMIN 503")
+
+twelve <- read.csv("2012-13CAKindergartenData.csv")
+sixteen <- read.csv("2016-17KindergartenData.csv")
+
+
+#Variables in the 2012 database were renamed 
+
+#rename variables
+twelve <- dplyr::rename(twelve, School.Code = X2012.2013.IMMUNIZATION.STATUS.OF.KINDERGARTEN.STUDENTS..CALIFORNIA, county = X, Public.Private = X.1, district = X.2, city = X.3, school.name = X.4, enrollment = X.5, UTDnum = X.6, UTDpercent = X.7, conditionalnum = X.8, conditionalperc = X.9, PMEnum = X.10, PMEperc = X.11, PBEnum = X.12, PBEperc = X.13, DTPnum = X.14, DTPperc = X.15, Polionum = X.16, Polioperc = X.17, MMRnum = X.18, MMRperc = X.19, HEPBnum = X.20, HEPBperc = X.21, VARInum = X.22, VARIperc = X.23)
+
+#empty rows were dropped
+twelve <- twelve[-c(1, 2, 3, 4), ]
+
+
+#approppriate columns were made numeric
+twelve[7:26] <- lapply(twelve[7:26], function(x) as.numeric(as.character(x)))
+
+str(twelve)
+
+#Variables of interest were averaged and grouped by county
+twelve.group <- twelve %>% group_by(county) %>%  summarise_at(vars(enrollment:VARIperc), mean, na.rm = TRUE)
+
+str(twelve.group)
+
+hist(twelve.group$MMRperc)
+mean(twelve.group$MMRperc, na.rm = TRUE)
+sd(twelve.group$MMRperc, na.rm = TRUE)
+
+
+```
+
+
+
+Average kindergarten MMR vaccination coverage for all counties is below the WHO recommended herd immmunity level of 93%
+
+
+School type was then broken up by public and private to observe whether there was a significant difference in vaccination coverage between public and private schools
+
+A note, previous research and investigations have shown that charter schools are one of the driving forces behind low vaccination rates. Charter schools do not receive a seperate classification under the California Department of Education. Instead, they are classified as public schools in this database as that is what CDE considers them. It was therefore not possible to examine charter schools seperately.
+
+```{r}
+#group by county and public/private
+twelve.group2 <- twelve %>% group_by(county, Public.Private) %>%  summarise_at(vars(enrollment:VARIperc), mean, na.rm = TRUE)
+
+twelve.private <- twelve.group2 %>% filter(Public.Private == "PRIVATE")
+twelve.public <- twelve.group2 %>% filter(Public.Private == "PUBLIC")
+
+str(twelve.private)
+str(twelve.public)
+
+hist(twelve.private$MMRperc)
+mean(twelve.private$MMRperc, na.rm = TRUE)
+sd(twelve.private$MMRperc, na.rm = TRUE)
+
+hist(twelve.public$MMRperc)
+mean(twelve.public$MMRperc, na.rm = TRUE)
+sd(twelve.public$MMRperc, na.rm = TRUE)
+   
+```
+There did not seem to be a huge difference between public and private kindergarten MMR coverage. Boxplots and t-tests were used to test this assumption.
+
+```{r}
+boxplot(twelve.private$MMRperc, twelve.public$MMRperc, names = c("Private", "Public"), 
+        col = c("red", "blue"))
+
+
+t.test(twelve.private$MMRperc, twelve.public$MMRperc, paired = FALSE, alternative = "two.sided")
+```
+
+Average kindergarten vaccination rates were significantly different between public and private schools. Private Schools had lower MMR coverage overall, along with a wider distribution as compared to public schools.
+
+To examine this more thoroughly, maps were made to look at MMR coverage county by county
+
+```{r}
+#drop NaN row
+twelve.group <- twelve.group[-c(1), ]
+
+#read in fips codes
+fips <- read.csv("fips.csv")
+fips$fips.code <- paste0("0", fips$fips.code)
+
+#Add in fips codes
+twelve.group$fips <- fips$fips.code
+
+mean(twelve.group$MMRperc, na.rm = TRUE)
+sd(twelve.group$MMRperc, na.rm = TRUE)
+
+df_county_MMR <- data.frame(region=twelve.group$fips, value=twelve.group$MMRperc)
+
+
+df_county_MMR$region <- as.numeric(as.character(df_county_MMR$region))
+
+county_choropleth(df_county_MMR, state_zoom="california", title="2012-2013 County Kindergarten MMR Vaccination Rates", legend="Average % of Kindergartners with MMR Vaccine")
+```
+
+Counties in the middle and north of the state had MMR coverage significantly below the herd immunity recommended level of 93%.
+
+ 
+2016 Data was then examined to look at vaccination coverage post SB 277
+```{r}
+#drop unnecessary rows
+sixteen <- sixteen[-c(1,2,3,4), ]
+
+
+#rename variables in sixteen database
+sixteen <- dplyr::rename(sixteen, School.Code = X2016.2017.IMMUNIZATION.STATUS.OF.KINDERGARTEN.STUDENTS..CALIFORNIA, county = X, Public.Private = X.1, district = X.2, city = X.3, school.name = X.4, enrollment = X.5, UTDnum = X.6, UTDpercent = X.7, conditionalnum = X.8, conditionalperc = X.9, PMEnum = X.10, PMEperc = X.11, PBEnum = X.12, PBEperc = X.13, Othersnum = X.14, Othersperc = X.15, Overduenum = X.16, Overdueperc = X.17, DTPnum = X.18, DTPperc = X.19, Polionum = X.20, Polioperc = X.21, MMRnum = X.22, MMRperc = X.23, HEBPnum = X.24, HEBPperc = X.25, Varnum = X.26, Varperc = X.27)
+
+#non-numeric symbols were removed
+sixteen$MMRperc <- gsub("%","",sixteen$MMRperc)
+sixteen$MMRperc <- gsub("≥","",sixteen$MMRperc)
+
+#make numeric
+sixteen$MMRperc <- as.numeric(as.character(sixteen$MMRperc))
+
+str(sixteen)
+
+#group by county
+sixteen.group <- sixteen %>% group_by(county) %>%  summarise_at(vars(MMRperc), mean, na.rm = TRUE)
+
+str(sixteen.group)
+
+#drop empty row
+sixteen.group <- sixteen.group[-c(1), ]
+
+hist(sixteen.group$MMRperc)
+mean(sixteen.group$MMRperc, na.rm = TRUE)
+sd(sixteen.group$MMRperc, na.rm = TRUE)
+```
+Average kindergarten MMR coverage increased to 94.417% across California. 
+
+Data was then segmented by public vs. private schools to examine whether there was still a significant difference between them post-legislation change
+
+```{r}
+#group by county and public/private
+
+sixteen.group2 <- sixteen %>% group_by(county, Public.Private) %>%  summarise_at(vars(MMRperc), mean, na.rm = TRUE)
+
+sixteen.private <- sixteen.group2 %>% filter(Public.Private == "PRIVATE")
+sixteen.public <- sixteen.group2 %>% filter(Public.Private == "PUBLIC")
+
+
+str(sixteen.private)
+str(sixteen.public)
+
+hist(sixteen.private$MMRperc)
+mean(sixteen.private$MMRperc, na.rm = TRUE)
+sd(sixteen.private$MMRperc, na.rm = TRUE)
+
+hist(sixteen.public$MMRperc)
+mean(sixteen.public$MMRperc, na.rm = TRUE)
+sd(sixteen.public$MMRperc, na.rm = TRUE)
+```
+Average Kindergarten MMR coverage no longer seemed to be significantly different between public and private schools. Boxplots and t-tests were executed to test this assumption.
+```{r}
+boxplot(sixteen.private$MMRperc, sixteen.public$MMRperc, names = c("Private", "Public"), 
+        col = c("red", "blue"))
+
+
+t.test(sixteen.private$MMRperc, sixteen.public$MMRperc, paired = FALSE, alternative = "two.sided")
+```
+
+Post SB 277 there public and private schools still had significantly different kindergarten vaccination coverage at the .05 level, but no longer at the .01 level. 
+
+2016-2017 data was mapped to view on a county-by-county level the kindergarten MMR coverage
+
+
+```{r}
+#drop unnecessary rows
+
+#Add in fips codes
+#read in fips codes
+sixteen.fips <- read.csv("sixteen.fips.csv")
+sixteen.fips$fips.code <- paste0("0", sixteen.fips$fips.code)
+
+sixteen.group$fips <- sixteen.fips$fips.code
+
+
+
+df_16county_MMR <- data.frame(region=sixteen.group$fips, value=sixteen.group$MMRperc)
+
+
+df_16county_MMR$region <- as.numeric(as.character(df_16county_MMR$region))
+
+county_choropleth(df_16county_MMR, state_zoom="california", title="2016-2017 County Kindergarten MMR Vaccination Rates", legend="Average % of Kindergartners with MMR Vaccine") + scale_fill_brewer(palette=1)
+
+mean(sixteen.group$MMRperc, na.rm = TRUE)
+sd(sixteen.group$MMRperc, na.rm = TRUE)
+```
+
+Coverage of kindergarten MMR vaccination rates seemed to be much closer to herd immunity level across the state. The northern counties that had had extremely low MMR coverage were now much closer to herd immunity level.
+
+Ultimately, the best measure of effect of SB277 is the change in rates by each county. The ultimate goal of the law was to increase vaccination rates, therefore the difference between 2016-2017 and 2012-2013 was calculated
+
+```{r}
+#12 drop rows without 16 data (Alpine, Sierra, and Mariposa did not report in 2016-2017)
+twelve.match <- twelve.group[-c(2, 46), ]
+
+
+#make change variable
+sixteen.group$change <- sixteen.group$MMRperc - twelve.match$MMRperc
+
+mean(sixteen.group$change, na.rm = TRUE)
+sd(sixteen.group$change, na.rm = TRUE)
+hist(sixteen.group$change)
+```
+
+
+Average change presents as a normal distribution, with some counties reporting positive change and some negative. However, average change among all counties was ~5% -- which is excellent for vaccine coverage.
+
+
+
+Maps were created to visualize this
+```{r}
+change_county_MMR <- data.frame(region=sixteen.group$fips, value=sixteen.group$change)
+change_county_MMR$region <- as.numeric(as.character(change_county_MMR$region))
+
+county_choropleth(change_county_MMR, state_zoom="california", title="Change in MMR Coverage 1213 - 1617", legend="Average % Change of Kindergartners with MMR Vaccine") + scale_fill_brewer(palette=3)
+
+counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds")))
+
+counties.CA <- filter(counties, STATE == "6")
+counties.CA
+
+counties.CA$COUNTY <- as.character(counties.CA$COUNTY)
+counties.CA$fips.code <- paste(counties.CA$STATE, counties.CA$COUNTY, sep = "")
+head(counties$fips.code)
+
+counties.CA$fips.code <- as.integer(counties.CA$fips.code)
+
+```
+
+The biggest change in MMR coverage was in the norther counties, which is where some of the lowest rates of coverage had been before. However, some of the southern counties saw a net negative change in MMR coverage.
+
+
+A new dataframe was created to examine this further. T-tests were executed to examine whether 2012-2013 average MMR coverage was significantly lower than 2016-2017 MMR coverage. Boxplots were created to visualize the distribution of MMR coverage across the state of California.
+
+```{r}
+
+total <- data.frame(twelve.match$county, twelve.match$MMRperc, sixteen.group$MMRperc, sixteen.group$change, sixteen.group$fips)
+
+total <- dplyr::rename(total, fips.code = "sixteen.group.fips", change = "sixteen.group.change", MMR16 = "sixteen.group.MMRperc", MMR12 = "twelve.match.MMRperc", county = "twelve.match.county")
+
+str(total)
+
+total$fips.code <- as.numeric(as.character(total$fips.code))
+counties.total <- inner_join(counties.CA, total, by = "fips.code")
+
+str(counties.total)
+
+t.test(counties.total$MMR12, counties.total$MMR16, paired = TRUE, alternative = "two.sided")
+
+mean(counties.total$MMR12, na.rm = TRUE)
+sd(counties.total$MMR12, na.rm = TRUE)
+mean(counties.total$MMR16, na.rm = TRUE)
+sd(counties.total$MMR12, na.rm = TRUE)
+
+ggplot(data = counties.total, aes(x = county, y = MMR12)) + geom_boxplot() + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+boxplot(counties.total$MMR12, counties.total$MMR16, data = counties.total, names = c("MMR12", "MMR16"), 
+        col = c("red", "blue"))
+
+```
+
+A paired samples t-test showed 2016-2017 kindergarten MMR coverage was significantly higher than that from 2012-2013. Additionally, boxplots showed that the distribution of coverage narrowed, with the IQR of coverage all above the WHO's herd immunity level.
+
+
+Additional maps were made to visualize this.
+
+```{r}
+change_min <- min(counties.total$change, na.rm = TRUE)
+change_max <- max(counties.total$change, na.rm = TRUE)
+
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+# Map change in rate
+ggplot() +
+  geom_sf(data = counties.total, aes(fill = change), lwd = 0) +
+  my_theme()+
+  scale_fill_gradientn(name = "Change in Kindergarten MMR Vaccination Rate (%)", colours = myPalette(100),
+                       limit = range(change_min, change_max)) 
+
+
+
+pal_fun <- colorBin(palette = brewer.pal(9, "RdBu")[c(1:5, 7)], 
+                    bins = c(-3, -1, 1, 5, 9, 13, 17), reverse = TRUE,
+                    NULL)
+
+
+# Pop-up message
+pu_message <- paste0(counties.total$county,  
+                     "<br>Change in K MMR rate (2012-2016): ",       
+                     round(counties.total$change, 1), "%")
+
+# Basic leaflet map
+leaflet(counties.total) %>%
+  addPolygons(fillColor = ~pal_fun(change),   
+              popup = pu_message) %>%                
+  addTiles()                                         
+
+# Adding more customization 
+leaflet(counties.total) %>%
+  addPolygons(stroke = FALSE,                        
+              fillColor = ~pal_fun(change),
+              fillOpacity = 0.5, smoothFactor = 0.5, 
+              popup = pu_message) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~change,                 
+            title = 'Change in Kinder MMR Coverage (2012-2016)',                  
+            opacity = 1) %>%                        
+  addScaleBar()
+
+```
+
+
+Finally, county-level median income was brought in and mapped to examine the spread throughout the state of California.
+
+```{r}
+
+income <- read.csv("2015Income.csv")
+income$Median.Income <- gsub(",","",income$Median.Income)
+income$Median.Income <- gsub("\\$","",income$Median.Income)
+
+income$Median.Income <- as.numeric(as.character(income$Median.Income))
+
+str(income)
+
+income <- dplyr::rename(income, county = "County")
+
+income.fips <- inner_join(fips, income, by = "county")
+
+str(income.fips)
+
+income_county <- data.frame(region=income.fips$fips.code, value=income.fips$Median.Income)
+
+income_county$region <- as.numeric(as.character(income_county$region))
+
+str(income_county)
+
+county_choropleth(income_county, state_zoom="california", title="Medican Income", legend="Income by County") + scale_fill_brewer(palette=2)
+
+
+```
+
+Average income was significantly higher in Northern counties around the bay area, which had also had significantly lower MMR coverage. 
+
+Linear Regression was executed to examine whether counties with higher average income also had less change between 12-13 and 16-17 schools years
+
+```{r}
+#12 drop rows without 16 data
+income.match <- income[-c(27, 13), ]
+
+income.fips$fips.code <- as.numeric(as.character(income.fips$fips.code))
+
+str(income.fips)
+
+MMR.income <- inner_join(income.fips, counties.total, by = "fips.code")
+
+str(MMR.income)
+
+ggplot(data=MMR.income, aes(Median.Income, MMR16)) + 
+    geom_point()
+
+scatter.smooth(x=MMR.income$Median.Income, y=MMR.income$MMR16, main="2016 MMR Rates ~ Income")
+
+regress <- lm(MMR16 ~ Median.Income, data = MMR.income)
+summary(regress)
+```
+
+Income did not significantly predict change in kindergarten MMR coverage. While the scatterplot showed a slight negative linear trend, this did not end up being a significant relationship.
+
+
+#Conclusion
+Passage of SB 277 significantly raised county-level kindergarten MMR vaccination coverage. County level MMR rates were closer to herd immunity post SB 277, indicating that overall the legislation was successful. Additionally, the difference between public and private MMR rates was still significantly different at alpha = 0.05, it was no longer significant at alpha = 0.01, indicating that this difference may also be narrowing. Change in MMR vaccination overall was positive. While some counties had a decrase in kindergarten MMR coverage, the counties that had the lowest coverage in 2012-2013 all had a net positive gain in coverage in 2016-2017.
+
+There are limitations to this research. Firstly, all data is self-reported by the school to the State of California. School funding depends on the number of children in school that day, disentivizing the school from excluding children based on their vaccination status. Therefore, it is possible schools are thereby disentivized from reporting their true vaccination rate so they do not have to exclude children. Additionally, public schools in California are cutting services and positions to save money. Therefore, the job of verifying vaccination records often falls to school secretaries, health clerks, or over-worked school nurses. There are many ways in which error could be introduced in this process. 
+
+Because this study was looking at averages across the county, Moran's i measures of spatial autocorrelation was not an appropriate statistical test to use. California has especially large counties, and using a latitude and longitude measurement of the county would not appropriately convey the spatial relationship to the next county. Future research should examine the individual school level MMR coverage, and spatial autocorrelation would be an appropriate test to use there.
+
+Finally, results of this study are limited to the state of California. Comparable, population-based, datasets are not publically available for other states. While the CDC does collect an estimate of vaccination coverage across all states, they use a random-sampling study framework that participants must elect to join. In contrast, the California dataset is as close to possible of an estimate of every single enrolled kindergartner in the state of California. Kindergarten is not a required grade, but the dataframe does represent every single public and private school kindergarten within the state. Further research can compare these numbers to CDC National Immunization Survey data to see if they are similar.
+
+These analyses serve as evidence of the efficacy of SB 277. Other states can use SB 277 legislation as a model when looking to raise their kindergaten MMR vaccination rates.
+
+
+
+```
