@@ -1,0 +1,570 @@
+---
+title: "Untangling the Effects of Meal Location, Meal Source and Day Type on a Meal's Sodium Content"
+author: "Michal Schapira"
+output:
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+***
+
+### Overview
+
+This project aims to determine the causal effect of eating a meal away from home vs at home on the sodium content of that meal, as well as to untangle the interaction effects of whether or not the food is premade and whether the meal is taking place on a weekend or weekday. The data used is the dietary component of NHANES 2015-2016.
+
+Faculty members consulted:
+
+Dr. Konrad Kording (Bioengineering) -- his causality course taught me the Differences-in-Differences method.
+
+Dr. Marilyn Schapira (Internal Medicine) -- explained biases that impact survey-based research and how they apply to the dietary portion of NHANES specifically. Suggested a sensitivity analysis to determine how sensitive the results are to the accuracy of the source data.
+
+### Introduction
+
+High sodium intake has been shown to have a causal relationship with high blood pressure, which in turn is a risk factor in a number of the leading causes of death worldwide, including cardiovascular disease and stroke. Therefore, it is of utmost importance to public health to determine the causal factors behind dietary sodium intake. Many campaigns have focused on the role of restaurant meals and have pushed for the inclusion of sodium content information on menus. However, perhaps it is not the source of the meal (binarized here into premade meals, such as meals obtained from restaurants and the frozen-meals sections of supermarkets, and non-premade meals) but the _location_ of the meal which has a causal effect on the amount of sodium eaten. That is to say, perhaps consumers choose more sodium-heavy meals when they are away from home than when they are at home because of psychological factors relating to being at home and the sobering influence of the family, not because restaurant meals contain more sodium than they think. Or perhaps consumers choose more sodium-heavy meals on the weekends because of social norms around freedom from work relating to freedom from one's diet. Both of these effects (meal location and day type) can be confounding variables when conclusions are drawn merely from the amount of sodium consumed in restaurants vs the amount consumed at home, because a meal eaten at a restaurant is by definition not eaten at home and it is more likely to be consumed on a weekend. This study seeks to untangle the effects of these confounding variables using a Differences-in-Differences model.
+
+### Methods: Data Collection
+
+Since the early 1960’s, the National Center for Health Statistics (a division of the Centers for Disease Control and Prevention) has conducted the National Health and Nutrition Examination Survey (NHANES), providing linked but de-identified demographic, laboratory, and interview-based dietary and health-related data for over 5,000 Americans in a weighted population-based sample each year. This analysis utilized the dietary data from NHANES 2015-2016, for a total of approximately 10,000 civilian, non-institutionalized subjects. 
+
+The dietary recall interviews were conducted in NHANES mobile examination centers, with the aid of booklets and actual measuring tools. Interviewers asked subjects systematically, with multiple passes, about the food they had consumed during the previous 24 hours, where they had obtained it, where they had consumed it, and how much they had consumed. For example, if a subject reported that he or she had consumed a bowl of cereal, the subject would be asked to look at a picture of different bowls in a booklet that was marked with horizontal lines along the outer surface of the bowl and asked which bowl approximately matched the size of the bowl they used and to which of the lines they had filled it. This survey was repeated 3-10 days later with each subject on a different day of the week, via phone (the measuring tools were mailed to the subjects). The NHANES staff then assigned a code to each food (8,690 codes to cover the 121,000 foods reported in the study) and computed nutritional information for each food according to its code using USDA's Food and Nutrient Database for Dietary Studies 2015-2016. 
+
+```{r eval=TRUE}
+library(SASxport)
+library(dplyr)
+library(ggplot2)
+individual_foods_day1 <- read.xport('DR1IFF_I.xpt')
+individual_foods_day2 <- read.xport('DR2IFF_I.xpt')
+```
+Five variables from this dataset were utilized for each food: _meal type_ (breakfast, lunch, dinner or supper), _meal source_ (grocery store, fast-food restaurant, restaurant with a waiter/waitress, or convenience store), _day of week_, _meal location_ (at home or away from home), and _food code_.
+
+A summary view of the dataset is shown here:
+```{r eval=TRUE}
+str(data.frame(individual_foods_day1))
+```
+
+### Methods: Data Analysis
+
+For the purposes of this study, a “premade food” is defined as a food that met either of the following criteria:
+
+1)	Its meal source variable indicated that it was obtained from a convenience store, fast-food restaurant, or restaurant with a waiter/waitress 
+2)	The code variable description contained the words “from frozen,” “prepackaged mix,” “ready-to-heat,” or “luncheon meat.” Frozen vegetables and dessert items, however, despite containing the words “from frozen” in their descriptions, were not counted as premade because they were considered to be side dishes rather than primary meal components (see below). Foods that were considered premade under this criterion included frozen pizza, frozen waffles, macaroni and cheese from prepared mixes and ready-to-heat pasta dishes.
+
+For all experiments, comparisons were only made across meals eaten by the same individual which had the same meal type variable – in other words, a dinner eaten by Person A on Day 1 of the study was only considered if data was available for the dinner eaten by Person A on Day 2. Thus, sodium content was aggregated by meal and therefore a “premade” status had to be assigned to the whole meal. Any meal with at least one premade ingredient was considered to be entirely premade, which is why care was taken to only include main-dish-style foods in the above list of items that could be considered premade even if they were obtained from a grocery store. 
+
+```{r eval=TRUE}
+premade_supermarket_foods <- c(58106200,58106205,58106300,58106305,58106512,58106514,58106516,58106602,58106604,58106606,58106700,58106702,58106705, # frozen pizza
+71401020, 71401032, # frozen French fries
+24198736, 24198746, # frozen chicken nuggets and tenders
+51121035, # frozen garlic bread
+55200020,55200030,55200040,55200050,55200060,55200070,55200080,55200090, # frozen waffles
+55100010,55100015,55100020,55100025,55100030,55100035,55100040, # frozen pancakes
+55300020, 55300030,55300040, 55301031, # frozen French toast
+58145112, 58145113,58145119, 58145136, # packaged mac n cheese
+58131323, # canned ravioli
+58146223,58146303,58146323, 58146333,58146343,58146353,58146363, 58146373,58146383,58146393,
+58146403,58146413,58146423, 58146433,58146443,58146453,58146603, 58146683, # ready pasta
+71305070,71403050, # instant potatoes
+71405040,71405050, # instant hash browns
+71501007,71501061,71501071,71501075, # instant mashed potatoes
+25230210,25230220,25230320,25230340,25230420,25230530,25230540,25230550,25230560,25230610,
+25230780,25230785,5230800,25231110,25231120) # deli meat
+```
+To enable these comparisons, dplyr was used to filter and group the data:
+
+```{r eval=TRUE}
+day1_meals <- individual_foods_day1 %>%
+  select(id = SEQN, sodium_content = DR1ISODI, meal = DR1.030Z, day_of_week = DR1DAY, location = DR1.040Z, source = DR1FS, code = DR1IFDCD) %>%
+    filter(source %in% c(1,2,3,27)) %>% # grocery store, fast food, restaurant or convenience store
+      filter(meal %in% c(1,2,3,4)) %>% # breakfast, lunch, dinner, or supper
+          filter(location == 1 | location == 2) %>%
+            mutate(day_type = factor(day_of_week == 1 | day_of_week == 7,labels=c("weekday","weekend"))) %>%
+              mutate(premade = factor(source != 1 | code %in% premade_supermarket_foods, labels=c("not premade","premade"))) %>% 
+                  mutate(location_type = factor(location, labels = c("home","away"))) %>%
+                  group_by(id,meal) %>%
+                    mutate(sodium_day1 = sum(sodium_content))
+
+day2_meals <- individual_foods_day2 %>%
+  select(id = SEQN, sodium_content = DR2ISODI, meal = DR2.030Z, day_of_week = DR2DAY, location = DR2.040Z, source = DR2FS, code = DR2IFDCD) %>%
+    filter(source %in% c(1,2,3,27)) %>% # grocery store, fast food, restaurant or convenience store
+      filter(meal %in% c(1,2,3,4)) %>% # breakfast, lunch, dinner, or supper
+          filter(location == 1 | location == 2) %>%
+            mutate(day_type = factor(day_of_week == 1 | day_of_week == 7,labels=c("weekday","weekend"))) %>%
+              mutate(premade = factor(source != 1 | code %in% premade_supermarket_foods, labels=c("not premade","premade"))) %>% # 
+                mutate(location_type = factor(location, labels = c("home","away"))) %>%
+                group_by(id,meal) %>%
+                  mutate(sodium_day2 = sum(sodium_content)) 
+
+head(day1_meals)
+
+person_and_meals_day1 <- day1_meals %>%
+  select(id, sodium_day1, location_type, day_type, premade, meal) %>%
+    distinct(.keep_all=TRUE) %>%
+      group_by(id) %>%
+        arrange(desc(premade),.by_group=TRUE) %>% # a meal with a premade ingredient is considered premade
+          distinct(meal,.keep_all = TRUE)
+
+person_and_meals_day2 <- day2_meals %>%
+  select(id, sodium_day2, location_type, day_type, premade, meal) %>%
+    distinct(.keep_all=TRUE) %>%
+      group_by(id) %>%
+        arrange(desc(premade),.by_group=TRUE) %>% # a meal with a premade ingredient is considered premade
+          distinct(meal,.keep_all = TRUE)
+
+person_and_meals <- inner_join(person_and_meals_day1,person_and_meals_day2,by=c("id","meal"))
+head(person_and_meals)
+```
+
+The statistical methodology used was a modified differences-in-differences (DiD) technique; whereas a traditional DiD has two classes, untreated and treated, ours has 4: (1) first-day meal eaten at home and second-day meal eaten away from home (H1A2), (2) first-day meal eaten away from home and second-day meal eaten at home, (A1H2) (3) both meals eaten at home (H1H2), and (4) both meals eaten away from home (A1A2). Thus, the DiD was performed as follows for each dataset (subscripts indicate the first-day meal or the second-day meal for a particular class)
+
+Consider “home” as the untreated state and “away” as the treated state. Take _H1H2~2~ - H1H2~1~_ as the “untreated” difference and _H1A2~2~ - H1A2~1~_ as the “treated” difference and calculate 
+_(H1A2~2~ - H1A2~1~) - (H1H2~2~ - H1H2~1~)_
+
+This serves to separate the variation (i.e. change in sodium content) that is a result of having the second-day meal away from home from the variation that would have occurred even if one had eaten the second-day meal at home – the “background noise.” We term this the “regular DiD.”
+
+Consider “away” as the untreated state and “home” as the treated state. Take _A1A2~1~ - A1A2~2~_ as the “untreated” difference and _A1H2~1~ - A1H2~2~_ as the “treated” difference and calculate _(A1H2~1~ - A1H2~2~) - (A1A2~1~ - A1A2~2~)_
+
+This serves to separate the variation that is a result of having the second-day meal at home from the variation that would have occurred even if one had eaten the second-day meal away from home – the “background noise.” We term this the “reverse DiD.”
+
+For consistency, in both cases the sodium content of the “home” meal is subtracted from the sodium content of the “away” meal when the meals were eaten in different locations, and the subtraction order of the same-location meals follow their cases. This will be illustrated below, in the Results section.
+
+### Results
+
+```{r eval=TRUE}
+away1_away2 <- person_and_meals %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away')
+
+home1_home2 <- person_and_meals %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home')
+
+away1_home2 <- person_and_meals %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home')
+
+home1_away2 <- person_and_meals %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away')
+
+time <- rep(c(1,2),3)
+
+treatment <- c(rep("H1H2 (untreated)",2),rep("H1A2 (treated)",2),rep("H1A2, if untreated",2))
+
+regular_did <- data.frame(time=time, sodium=c(mean(home1_home2$sodium_day1), mean(home1_home2$sodium_day2),mean(home1_away2$sodium_day1), mean(home1_away2$sodium_day2), mean(home1_away2$sodium_day1), mean(home1_home2$sodium_day2) + mean(home1_away2$sodium_day1) - mean(home1_home2$sodium_day1)),treatment=treatment)
+
+ggplot(data=regular_did, mapping=aes(x=time,y=sodium,group=treatment,colour=treatment)) +
+  geom_point() + 
+    geom_quantile()
+```
+Figure 1. "Regular" DiD, with home being the untreated state and away being the treated state.
+
+```{r eval=TRUE}
+
+time <- rep(c(2,1),3)
+
+treatment <- c(rep("A1A2 (untreated)",2),rep("A1H2 (treated)",2),rep("A1H2, if untreated",2))
+reverse_did <- data.frame(time=time, sodium=c(mean(away1_away2$sodium_day2), mean(away1_away2$sodium_day1),mean(away1_home2$sodium_day2), mean(away1_home2$sodium_day1), mean(away1_home2$sodium_day2), mean(away1_away2$sodium_day1) + mean(away1_home2$sodium_day2) - mean(away1_away2$sodium_day2)),treatment=treatment)
+
+ggplot(data=reverse_did, mapping=aes(x=time,y=sodium,group=treatment,colour=treatment)) +
+  geom_point() + 
+    geom_quantile()
+
+```
+Figure 2. "Reverse" DiD, with away being the untreated state and home being the treated state.
+
+In the rest of the experiments, comparisons will be restricted to only premade or only nonpremade food, only weekends or weekdays, or a combination of these restrictions. This is done to mimic a multivariable regression, a manual version as it were, to explore the effects of these variables as well as the interactions between them. The results of Welch's two-sample t-tests for all comparisons are shown below.
+
+```{r eval=TRUE}
+
+# All meals (this code looks similar to that used to create the plots, but accomplishes a different purpose)
+
+away1_away2 <- person_and_meals %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+home1_home2 <- person_and_meals %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+away1_home2 <- person_and_meals %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+home1_away2 <- person_and_meals %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+  ungroup() %>%
+    mutate(sodium = sodium_day2 - sodium_day1) %>%
+      select(sodium)
+
+all_no_treatment <- rbind(home1_home2[1:length(home1_away2$sodium),], away1_away2)
+
+all_treatment <- rbind(home1_away2,away1_home2[1:length(away1_away2$sodium),])
+
+all_effect <- t.test(all_treatment$sodium,all_no_treatment$sodium)$estimate[1] - t.test(all_treatment$sodium,all_no_treatment$sodium)$estimate[2]
+
+all_pvalue <- t.test(all_treatment$sodium,all_no_treatment$sodium)$p.value
+
+# Only meals eaten on weekdays
+
+person_and_meals_weekday <- person_and_meals %>%
+  filter(day_type.x == 'weekday') %>%
+    filter(day_type.y == 'weekday')
+
+weekday_away1_away2 <- person_and_meals_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+weekday_home1_home2 <- person_and_meals_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+weekday_away1_home2 <- person_and_meals_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+weekday_home1_away2 <- person_and_meals_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+weekday_no_treatment <- rbind(weekday_home1_home2[1:length(weekday_home1_away2$sodium),], weekday_away1_away2[1:length(weekday_away1_home2$sodium),])
+
+weekday_treatment <- rbind(weekday_home1_away2,weekday_away1_home2)
+
+weekday_effect <- t.test(weekday_treatment$sodium,weekday_no_treatment$sodium)$estimate[1] - t.test(weekday_treatment$sodium,weekday_no_treatment$sodium)$estimate[2]
+
+weekday_pvalue <- t.test(weekday_treatment$sodium,weekday_no_treatment$sodium)$p.value
+
+# Only meals eaten on weekends
+
+person_and_meals_weekend <- person_and_meals %>%
+  filter(day_type.x == 'weekend') %>%
+    filter(day_type.y == 'weekend')
+
+weekend_away1_away2 <- person_and_meals_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+weekend_home1_home2 <- person_and_meals_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+weekend_away1_home2 <- person_and_meals_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+weekend_home1_away2 <- person_and_meals_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+weekend_no_treatment <- rbind(weekend_home1_home2[1:length(weekend_home1_away2$sodium),], weekend_away1_away2)
+
+weekend_treatment <- rbind(weekend_home1_away2,weekend_away1_home2[1:length(weekend_away1_away2$sodium),])
+
+weekend_effect <- t.test(weekend_treatment$sodium,weekend_no_treatment$sodium)$estimate[1] - t.test(weekend_treatment$sodium,weekend_no_treatment$sodium)$estimate[2]
+
+weekend_pvalue <- t.test(weekend_treatment$sodium,weekend_no_treatment$sodium)$p.value
+
+# Only premade meals
+
+person_and_meals_premade <- person_and_meals %>%
+  filter(premade.x == 'premade') %>%
+    filter(premade.y == 'premade')
+
+premade_away1_away2 <- person_and_meals_premade %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_home1_home2 <- person_and_meals_premade %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+premade_away1_home2 <- person_and_meals_premade %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_home1_away2 <- person_and_meals_premade %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+premade_no_treatment <- rbind(premade_home1_home2[1:length(premade_home1_away2$sodium),], premade_away1_away2[1:length(premade_away1_home2$sodium),])
+
+premade_treatment <- rbind(premade_home1_away2,premade_away1_home2)
+
+premade_effect <- t.test(premade_treatment$sodium,premade_no_treatment$sodium)$estimate[1] - t.test(premade_treatment$sodium,premade_no_treatment$sodium)$estimate[2]
+
+premade_pvalue <- t.test(premade_treatment$sodium,premade_no_treatment$sodium)$p.value
+
+# Only non-premade meals
+
+person_and_meals_notpremade <- person_and_meals %>%
+  filter(premade.x == 'not premade') %>%
+  filter(premade.y == 'not premade')
+
+notpremade_away1_away2 <- person_and_meals_notpremade %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_home1_home2 <- person_and_meals_notpremade %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+notpremade_away1_home2 <- person_and_meals_notpremade %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_home1_away2 <- person_and_meals_notpremade %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+notpremade_no_treatment <- rbind(notpremade_home1_home2[1:length(notpremade_home1_away2$sodium),], notpremade_away1_away2)
+
+notpremade_treatment <- rbind(notpremade_home1_away2,notpremade_away1_home2[1:length(notpremade_away1_away2$sodium),])
+
+notpremade_effect <- t.test(notpremade_treatment$sodium,notpremade_no_treatment$sodium)$estimate[1] - t.test(notpremade_treatment$sodium,notpremade_no_treatment$sodium)$estimate[2]
+
+notpremade_pvalue <- t.test(notpremade_treatment$sodium,notpremade_no_treatment$sodium)$p.value
+
+# Only meals premade on a weekday
+
+person_and_meals_premade_weekday <- person_and_meals_weekday %>%
+  filter(premade.x == 'premade') %>%
+    filter(premade.y == 'premade')
+
+premade_weekday_away1_away2 <- person_and_meals_premade_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_weekday_home1_home2 <- person_and_meals_premade_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+premade_weekday_away1_home2 <- person_and_meals_premade_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_weekday_home1_away2 <- person_and_meals_premade_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+    ungroup() %>%
+      mutate(sodium = sodium_day2 - sodium_day1) %>%
+        select(sodium)
+
+premade_weekday_no_treatment <- rbind(premade_weekday_home1_home2[1:length(premade_weekday_home1_away2$sodium),], premade_weekday_away1_away2[1:length(premade_weekday_away1_home2$sodium),])
+
+premade_weekday_treatment <- rbind(premade_weekday_home1_away2,premade_weekday_away1_home2)
+
+premade_weekday_effect <- t.test(premade_weekday_treatment$sodium,premade_weekday_no_treatment$sodium)$estimate[1] - t.test(premade_weekday_treatment$sodium,premade_weekday_no_treatment$sodium)$estimate[2]
+
+premade_weekday_pvalue <- t.test(premade_weekday_treatment$sodium, premade_weekday_no_treatment$sodium)$p.value
+
+# Only non-premade meals eaten on weekdays
+
+person_and_meals_notpremade_weekday <- person_and_meals_weekday %>%
+  filter(premade.x == 'not premade') %>%
+    filter(premade.y == 'not premade')
+
+notpremade_weekday_away1_away2 <- person_and_meals_notpremade_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_weekday_home1_home2 <- person_and_meals_notpremade_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+notpremade_weekday_away1_home2 <- person_and_meals_notpremade_weekday %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_weekday_home1_away2 <- person_and_meals_notpremade_weekday %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+  select(sodium)
+
+notpremade_weekday_no_treatment <- rbind(notpremade_weekday_home1_home2[1:length(notpremade_weekday_home1_away2$sodium),], notpremade_weekday_away1_away2[1:length(notpremade_weekday_away1_home2$sodium),])
+
+notpremade_weekday_treatment <- rbind(notpremade_weekday_home1_away2,notpremade_weekday_away1_home2)
+
+notpremade_weekday_effect <- t.test(notpremade_weekday_treatment$sodium,notpremade_weekday_no_treatment$sodium)$estimate[1] - t.test(notpremade_weekday_treatment$sodium,notpremade_weekday_no_treatment$sodium)$estimate[2]
+
+notpremade_weekday_pvalue <- t.test(notpremade_weekday_treatment$sodium, notpremade_weekday_no_treatment$sodium)$p.value
+
+
+# Only premade meals eaten on weekends
+
+person_and_meals_premade_weekend <- person_and_meals_weekend %>%
+  filter(premade.x == 'premade') %>%
+    filter(premade.y == 'premade')
+
+premade_weekend_away1_away2 <- person_and_meals_premade_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_weekend_home1_home2 <- person_and_meals_premade_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+premade_weekend_away1_home2 <- person_and_meals_premade_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+premade_weekend_home1_away2 <- person_and_meals_premade_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+premade_weekend_no_treatment <- rbind(premade_weekend_home1_home2[1:length(premade_weekend_home1_away2$sodium),], premade_weekend_away1_away2)
+
+premade_weekend_treatment <- rbind(premade_weekend_home1_away2,premade_weekend_away1_home2[1:length(premade_weekend_away1_away2$sodium),])
+
+premade_weekend_effect <- t.test(premade_weekend_treatment$sodium,premade_weekend_no_treatment$sodium)$estimate[1] - t.test(premade_weekend_treatment$sodium,premade_weekend_no_treatment$sodium)$estimate[2]
+
+premade_weekend_pvalue <- t.test(premade_weekend_treatment$sodium, premade_weekend_no_treatment$sodium)$p.value
+
+# Only non-premade meals eaten on weekends
+
+person_and_meals_notpremade_weekend <- person_and_meals_weekend %>%
+  filter(premade.x == 'not premade') %>%
+    filter(premade.y == 'not premade')
+
+notpremade_weekend_away1_away2 <- person_and_meals_notpremade_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_weekend_home1_home2 <- person_and_meals_notpremade_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+notpremade_weekend_away1_home2 <- person_and_meals_notpremade_weekend %>%
+  filter(location_type.x == 'away') %>%
+    filter(location_type.y == 'home') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day1 - sodium_day2) %>%
+          select(sodium)
+
+notpremade_weekend_home1_away2 <- person_and_meals_notpremade_weekend %>%
+  filter(location_type.x == 'home') %>%
+    filter(location_type.y == 'away') %>%
+      ungroup() %>%
+        mutate(sodium = sodium_day2 - sodium_day1) %>%
+          select(sodium)
+
+notpremade_weekend_no_treatment <- rbind(notpremade_weekend_home1_home2[1:length(notpremade_weekend_home1_away2$sodium),], notpremade_weekend_away1_away2)
+
+notpremade_weekend_treatment <- rbind(notpremade_weekend_home1_away2, notpremade_weekday_away1_home2[1:length(notpremade_weekend_away1_away2$sodium),])
+
+notpremade_weekend_effect <- t.test(notpremade_weekend_treatment$sodium, notpremade_weekend_no_treatment$sodium)$estimate[1] - t.test(notpremade_weekend_treatment$sodium, notpremade_weekend_no_treatment$sodium)$estimate[2]
+
+notpremade_weekend_pvalue <- t.test(notpremade_weekend_treatment$sodium, notpremade_weekend_no_treatment$sodium)$p.value
+
+# T-test results organized in a dataframe
+
+ttest.df <- data.frame("day_type" = c("either", "weekday", "weekend", "either", "either", "weekday", "weekday", "weekend", "weekend"), "premade_status" = c("either", "either", "either", "premade", "not premade", "premade", "not premade", "premade", "not premade"), "effect" = c(all_effect, weekday_effect, weekend_effect, premade_effect, notpremade_effect, premade_weekday_effect, notpremade_weekday_effect, premade_weekend_effect, notpremade_weekend_effect), "p-value" = c(all_pvalue, weekday_pvalue, weekend_pvalue, premade_pvalue, notpremade_pvalue, premade_weekday_pvalue, notpremade_weekday_pvalue, premade_weekend_pvalue, notpremade_weekend_pvalue))
+
+print(ttest.df)
+```
+Figure 3. Sodium in the meal eaten away from home minus sodium in the meal eaten at home, under various conditions.
+
+### Discussion
+
+Overall, sodium is higher in meals eaten away from home on weekdays, but probably lower on the weekends. When premade status is accounted for, the results are unfortunately inconclusive. However, non-premade foods on the weekends probably (p < 0.1) have more sodium when they are eaten at home. Perhaps public health campaigns should target long Sunday brunches as well as quick fast-food weekday dinners.
+
+### Next steps
+
+This study could be extended in various directions. Firstly, greater sample sizes (and therefore more definite effect sizes) could be obtained by using NHANES data from years other than 2015-2016. Secondly, other nutrients could be studied such as calories and sugar as part of an investigation into ways to combat obesity. Thirdly, further interaction effects could be isolated such as BMI, income, education level, and potassium intake (for example, if the high sodium gains from eating out occurred only in individuals with high dietary potassium, this effect would not need to be addressed as much because potassium can counteract the effect of sodium on the body). This demographic information as well as information about these other nutrients is already included in the publicly available portions of the NHANES dataset. Lastly, sensitivity analyses could be conducted in order to determine how sensitive the results to the accuracy of the self-reported food intakes, because of several biases that could have impacted this data such as forgetfulness of the participants as well as shame from eating more food or less healthy food than is perceived as normal.
