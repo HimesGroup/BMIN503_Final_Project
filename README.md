@@ -12,7 +12,10 @@ Follow the instructions [here][forking] if you are unsure what the above steps m
 
 DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
-Currently has intro and methods/results in separate files.
+CJoyce UPDATES 12/12/18
+
+Final project examines spread of MMR kindergarten vaccination coverage by county, both before and after passage of state senate bill 277. Included in repo are a) vaccination coverage numbers and percents for every school in California for 2012-2013 and 2016-2017; b) fips codes for counties included in 2012; c) fips codes for counties included in 2016-2017; median income per county for 2015.
+
 
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
