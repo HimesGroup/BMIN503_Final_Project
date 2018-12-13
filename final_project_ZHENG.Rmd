@@ -1,6 +1,6 @@
 ---
 title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+author: "Zihe Zheng"
 output: 
   html_document:
     toc: false 
@@ -11,8 +11,6 @@ output:
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
-***
-Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but leave the headers.
 
 ### Overview
 ##### Discovery of CKD patient subtypes with differential risk profiles is essential for improving health promotion strategies and precision medicine approaches in the prevention and treatment of kidney function decline and prediction of clinical outcomes.  Using baseline data from the Chronic Renal Insufficiency Cohort (CRIC) Study, including demographic, clinical history, kidney function, anthropometric/ nutritional, functional scores, vascular, medication usage, together with novel biochemical markers, we aim to create CKD subtypes with unsupervised cluster analysis algorithms.
@@ -26,5 +24,549 @@ Use this template to complete your project throughout the course. Your Final Pro
 ### Methods
 ##### This study used the existing data from the Chronic Renal Insufficiency Cohort (CRIC) Study, an NIDDK-funded, multi-center, longitudinal cohort of well-characterized 5,499 men and women with CKD in the U.S. By design, participants were in the age range of 21-74 years, with eGFR of 20-70 ml/min/1.73m2 at study entry. CRIC study recruited participants in two phases from seven clinical centers from 2003 to 2008 (Phase I, N=3,939), and from 2013 to 2015 (Phase III, N=1,560). Subjects in this study are from CRIC Phase I cohort.
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##### Set working directory, load the data
+
+```{r}
+setwd("C:/Users/zihez/Box Sync/DissertationResearch/CRIC metabolomics")
+mydata <- read.csv("./Data/R/obesity_subgroup_1800_wmissing_slim.csv")
+```
+
+##### Correct the variable types
+
+```{r}
+mydata[mydata==""]<-NA
+mydata$acearb<-factor(mydata$acearb)
+mydata$antidiabetes<-factor(mydata$antidiabetes)
+mydata$any_hvy<-factor(mydata$any_hvy)
+mydata$betablk<-factor(mydata$betablk)
+mydata$cablk<-factor(mydata$cablk)
+mydata$diuretic<-factor(mydata$diuretic)
+```
+
+##### Make table 1 (with missing data)
+
+```{r}
+library(tableone)
+mydatatable1<-mydata
+mydatatable1$group<-"WithMissing"
+table1var <- c("acearb", "age_integer", "alcoh_use", "antidiabetes", "any_hvy", "anycvd", "betablk",
+               "cablk", "co2", "c_peptide", "cal_prot", "diastolic", "diuretic", "egfr_cric",
+               "fgf23_calibrated", "food_energ", "hdl", "glucose", "height", "hemoglobin_a1c", "homa_ir",
+               "hs_crp", "ldl", "nt_probnp",  "race_cat_1", "sa_allc_cric_renal1",
+               "sa_allc_cric_time_renal1", "sa_allc_esrd", "sa_allc_time_esrd","sa_cvdcomp3b", 
+               "sa_death", "serum_urea_nitrogen", "female", "smokenow", "systolic", "time_cvdcomp3b",
+               "time_death", "tnf_alpha", "tnths", "total_pth_calibrated", "troponini", "urine_albumin",
+               "weight", "bmi", "waist")
+
+vartoFactor <- c("female","race_cat_1","smokenow", "alcoh_use", "anycvd",
+                "diuretic","acearb","betablk", "cablk", "antidiabetes", "any_hvy", "sa_allc_cric_renal1",
+                "sa_allc_esrd", "sa_cvdcomp3b", "sa_death")
+mydatatable1[vartoFactor]<-lapply(mydatatable1[vartoFactor], factor)
+
+nonnormalVar<-c("hemoglobin_a1c", "serum_urea_nitrogen", "c_peptide", "fgf23_calibrated","food_energ",
+                "glucose", "hs_crp", "nt_probnp",  "tnf_alpha", "tnths", "total_pth_calibrated", 
+                "troponini", "urine_albumin")
+tableOne.miss <- CreateTableOne(vars=table1var,  data=mydatatable1)
+print(tableOne.miss, nonnormal=nonnormalVar, contDigits = 2, catDigits = 2, pDigits = 4, missing=TRUE)
+
+```
+
+##### Make table 1 (complete case)
+```{r}
+mydatatable1.comp<-na.omit(data.frame(mydata))
+mydatatable1.comp$group<-"Complete"
+tableOne.comp <- CreateTableOne(vars=table1var,  data=mydatatable1.comp)
+print(tableOne.comp, nonnormal=nonnormalVar, contDigits = 2, catDigits = 2, pDigits = 4)
+```
+
+##### Test for missing data mechanism 
+###### Comparing individuals with and without missing data, we found that missing data is dependent on covariates of race, survival time of CKD progression, ESRD, CVD and death, serum urea nitrogen, female gender, systolic blood pressue, TNF-alpha, troponin I, and urine albumin. The missing data mechanism is likely to be missing at random. Using complete case analysis will generate biased results. Thus, it is important to impute the missing data. 
+
+```{r}
+comb.mydata<-rbind(mydatatable1, mydatatable1.comp)
+comb.mydata$group<-as.factor(comb.mydata$group)
+tableOne.md <- CreateTableOne(vars=table1var, strata="group", data=comb.mydata)
+print(tableOne.md, nonnormal=nonnormalVar, contDigits = 2, catDigits = 2, pDigits = 4)
+```
+
+
+##### Missing Data imputation
+
+```{r}
+library("Hmisc")
+impute_arg <- aregImpute(~ pid+weight+height+waist+egfr_cric+urine_albumin+systolic+diastolic+
+                           glucose+hemoglobin_a1c+homa_ir+food_energ+cal_prot+bmi+
+                           antidiabetes+acearb+cablk+betablk+diuretic+
+                           age_integer+female+race_cat_1+anycvd+smokenow+alcoh_use+any_hvy+
+                           tnths+troponini+total_pth_calibrated+fgf23_calibrated+nt_probnp+co2+
+                           serum_urea_nitrogen+hs_crp+c_peptide+ldl+hdl+tnf_alpha +
+                           sa_allc_cric_renal1+sa_allc_cric_time_renal1+sa_allc_esrd+
+                           sa_allc_time_esrd+sa_cvdcomp3b+time_cvdcomp3b+sa_death+time_death
+                           , data = mydata, n.impute = 5, nk=4)
+```
+
+##### Select one imputed dataset 
+
+```{r}
+fill_data <- function(impute = impute_arg, data = mydata, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = data, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+}
+fulldata <- as.data.frame(fill_data(im = 3))
+write.csv(fulldata, file = "C:/Users/zihez/Documents/Research/local_save/obesity_subgroup_1800_impute_slim.csv")
+
+save(fulldata, file="C:/Users/zihez/Documents/Research/local_save/obesity_subgroup_1800_impute_slim.RData") 
+```
+
+```{r}
+
+MYdata<-read.csv("C:/Users/zihez/Documents/Research/local_save/obesity_subgroup_1800_impute_slim.csv")
+MYdata<-MYdata[-1]
+my.data<-na.omit(data.frame(MYdata))
+my.data$group<-"impute"
+```
+
+##### Compare the imputed dataset with the original dataset
+###### The imputed data set is not different from the original data set on any of the covariates.
+
+```{r}
+comb.mydata2<-rbind(mydatatable1, my.data)
+comb.mydata2$group<-as.factor(comb.mydata2$group)
+tableOne.imp <- CreateTableOne(vars=table1var, strata="group", data=comb.mydata2)
+print(tableOne.imp, nonnormal=nonnormalVar, contDigits = 2, catDigits = 2, pDigits = 4)
+```
+
+```{r}
+# load packages
+library(survival)
+library(survminer)
+library(ggplot2)
+library(lattice)
+library(Formula)
+library(stringi)
+library(Hmisc)
+library(rms)
+library(yaml)
+library(plyr)
+library(dplyr)
+library(ConsensusClusterPlus)
+
+library(easyGgplot2)
+library(gplots)
+library(gtools)
+library(gridExtra)
+
+library(RColorBrewer)
+library(pheatmap)
+```
+
+##### Rename variables and log transform skewed variables
+
+```{r}
+
+names(my.data)[names(my.data) == 'sa_allc_cric_renal1'] <- 'renal1'
+names(my.data)[names(my.data) == 'sa_allc_cric_time_renal1'] <- 'time_renal1'
+names(my.data)[names(my.data) == 'sa_allc_esrd'] <- 'esrd'
+names(my.data)[names(my.data) == 'sa_allc_time_esrd'] <- 'time_esrd'
+names(my.data)[names(my.data) == 'sa_cvdcomp3b'] <- 'cvd'
+names(my.data)[names(my.data) == 'time_cvdcomp3b'] <- 'time_cvd'
+names(my.data)[names(my.data) == 'sa_death'] <- 'death'
+names(my.data)[names(my.data) == 'serum_urea_nitrogen'] <- 'SUN'
+
+my.data$troponini[my.data$troponini==0]<-min(my.data$troponini[my.data$troponini!=0])/1000
+
+my.data$log_tnths <- log(my.data$tnths)
+my.data$log_troponini <- log(my.data$troponini)
+my.data$log_pth <-log(my.data$total_pth_calibrated)
+my.data$log_fgf23 <- log(my.data$fgf23_calibrated)
+my.data$log_ntprobnp <-log(my.data$nt_probnp)
+my.data$log_crp <- log(my.data$hs_crp)
+my.data$log_cp <-log(my.data$c_peptide)
+my.data$log_tnfa <-log(my.data$tnf_alpha)
+```
+
+##### Check the survival event rate in the study population
+
+```{r}
+km1 <- npsurv(Surv(my.data$time_renal1,my.data$renal1=="Yes") ~ 1, data = my.data)
+survplot(km1,conf.int=0.95,conf="diffbands",ylab="Cummulative Probability of Renal1")
+km2 <- npsurv(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ 1, data = my.data)
+survplot(km2,conf.int=0.95,conf="diffbands",ylab="Cummulative Probability of ESRD")
+km3<- npsurv(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ 1, data = my.data)
+survplot(km3,conf.int=0.95,conf="diffbands",ylab="Cummulative Probability of CVD")
+km4<- npsurv(Surv(my.data$time_death, my.data$death=="Yes") ~ 1, data = my.data)
+survplot(km4,conf.int=0.95,conf="diffbands",ylab="Cummulative Probability of Death")
+```
+
+##### Transform all variables to numeric, scale the dataset
+
+```{r}
+X <-  my.data[,c(2:11, 15:19)]
+X[11:15] <-sapply(X[11:15], as.numeric)
+
+X$antidiabetes<- X$antidiabetes-1
+X$acearb<- X$acearb-1
+X$betablk<-X$betablk-1
+X$cablk <- X$cablk-1
+X$diuretic<-X$diuretic -1
+
+X.scaled <- scale(X)
+```
+
+
 ### Results
 
+```{r}
+# Consensus clustering
+title <- paste0("C:/Users/zihez/Box Sync/DissertationResearch/DissertationAnalysis/Aim1/Output/CC/CC_plot_all")
+rcc = ConsensusClusterPlus(t(X.scaled),maxK=8,reps=100,pItem=0.8,pFeature=1,title=title, distance="pearson",clusterAlg="hc",seed = 2659,plot=NULL)
+icl = calcICL(rcc,title=title,plot=NULL)
+```
+
+```{r}
+Kvec = 2:8
+PAC1 = rep(NA,length(Kvec)) 
+PAC2 = rep(NA,length(Kvec)) 
+names(PAC1) = paste("K=",Kvec,sep="") # from 2 to maxK
+names(PAC2) = paste("K=",Kvec,sep="") # from 2 to maxK
+
+for(i in Kvec){
+  M = rcc[[i]]$consensusMatrix
+  Fn = ecdf(M[lower.tri(M)])
+  PAC1[i-1] = Fn(1) - Fn(0)
+  PAC2[i-1] = Fn(0.9) - Fn(0.1)
+}#end for i
+
+plot(Kvec,PAC1,type='l',ylim=c(0,1),xlab="Number of Clusters",ylab="PAC")
+lines(Kvec,PAC2,col=2)
+```
+
+```{r}
+setwd("C:/Users/zihez/Box Sync/DissertationResearch/CRIC metabolomics")
+save(rcc, file="./Data/R/list_rcc.RData")
+save(icl, file="./Data/R/list_icl.RData")
+```
+
+##### Examine the association between cluster membership and the outcomes of CKD progression, ESRD, CVD, and death for different scenario of K (K=2, ...,8).
+
+```{r}
+# Number of clusters-Three
+my.data$cluster3 <- rcc[[3]][["consensusClass"]]
+table(my.data$cluster3)
+
+km31 <- npsurv(Surv(my.data$time_renal1,my.data$renal1=="Yes") ~ cluster3, data = my.data)
+survplot(km31,conf="none",ylab="Cummulative Probability of Renal1")
+km32 <- npsurv(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ cluster3, data = my.data)
+survplot(km32,conf="none",ylab="Cummulative Probability of ESRD")
+km33 <- npsurv(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ cluster3, data = my.data)
+survplot(km33,conf="none",ylab="Cummulative Probability of CVD")
+km34 <- npsurv(Surv(my.data$time_death, my.data$death=="Yes") ~ cluster3, data = my.data)
+survplot(km34,conf="none",ylab="Cummulative Probability of Deaty")
+```
+
+
+```{r}
+# Number of clusters-Four
+my.data$cluster4 <- rcc[[4]][["consensusClass"]]
+table(my.data$cluster4)
+
+km41 <- npsurv(Surv(my.data$time_renal1,my.data$renal1=="Yes") ~ cluster4, data = my.data)
+survplot(km41,conf="none",ylab="Cummulative Probability of Renal1")
+km42 <- npsurv(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ cluster4, data = my.data)
+survplot(km42,conf="none",ylab="Cummulative Probability of ESRD")
+km43 <- npsurv(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ cluster4, data = my.data)
+survplot(km43,conf="none",ylab="Cummulative Probability of CVD")
+km44 <- npsurv(Surv(my.data$time_death, my.data$death=="Yes") ~ cluster4, data = my.data)
+survplot(km44,conf="none",ylab="Cummulative Probability of Deaty")
+```
+
+```{r}
+# Number of clusters-Five
+my.data$cluster5 <- rcc[[5]][["consensusClass"]]
+table(my.data$cluster5)
+
+km51 <- npsurv(Surv(my.data$time_renal1,my.data$renal1=="Yes") ~ cluster5, data = my.data)
+survplot(km51,conf="none",ylab="Cummulative Probability of Renal1")
+km52 <- npsurv(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ cluster5, data = my.data)
+survplot(km52,conf="none",ylab="Cummulative Probability of ESRD")
+km53 <- npsurv(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ cluster5, data = my.data)
+survplot(km53,conf="none",ylab="Cummulative Probability of CVD")
+km54 <- npsurv(Surv(my.data$time_death, my.data$death=="Yes") ~ cluster5, data = my.data)
+survplot(km54,conf="none",ylab="Cummulative Probability of Deaty")
+```
+
+```{r}
+# Number of clusters-Six
+my.data$cluster6 <- rcc[[6]][["consensusClass"]]
+table(my.data$cluster6)
+
+km61 <- npsurv(Surv(my.data$time_renal1,my.data$renal1=="Yes") ~ cluster6, data = my.data)
+survplot(km61,conf="none",ylab="Cummulative Probability of Renal1")
+km62 <- npsurv(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ cluster6, data = my.data)
+survplot(km62,conf="none",ylab="Cummulative Probability of ESRD")
+km63 <- npsurv(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ cluster6, data = my.data)
+survplot(km63,conf="none",ylab="Cummulative Probability of CVD")
+km64 <- npsurv(Surv(my.data$time_death, my.data$death=="Yes") ~ cluster6, data = my.data)
+survplot(km64,conf="none",ylab="Cummulative Probability of Deaty")
+```
+
+##### Examine the loading of each parameter on different clusters for different scenario of K (K=2, ...,8), using heatmap.
+
+```{r}
+# Cluster number =3
+tmpdat <- as.data.frame(X.scaled)
+covlist <-names(X)
+tmpdat$cluster <- rcc[[3]][["consensusClass"]]
+mean.km <- aggregate(tmpdat,by=list(tmpdat$cluster),FUN=mean)
+mean.km.long <- reshape(mean.km, 
+                        varying = covlist, 
+                        v.names = "value",
+                        timevar = "var",
+                        times = covlist,
+                        new.row.names = 1:1000,
+                        direction = "long")
+
+mean.km.long$logvalue <- log(mean.km.long$value+1)
+mean.km.long$var <- factor(mean.km.long$var,levels = covlist)
+mean.km.long$cluster <- factor(mean.km.long$cluster,levels = c(1,2,3))
+
+## heatmap
+mean.km.wide <- reshape(mean.km.long[,c("cluster","var","value")],idvar="var",timevar="cluster",direction="wide")
+mean.km.matrix <- as.matrix(mean.km.wide[,2:4])
+row.names(mean.km.matrix) <- mean.km.wide$var
+colnames(mean.km.matrix) <- c("Cluster 1", "Cluster 2", "Cluster 3")
+heatmap(mean.km.matrix,Colv = NA)
+heatmap.2(mean.km.matrix,col=brewer.pal(11,"RdBu"),scale="row", trace="none", Colv=NA,
+          key.title="", keysize=2, margins=c(7,7), 
+          lhei=c(0.5, 1), cexCol = 1.5, cexRow = 0.9, srtCol = 45)
+```
+
+```{r}
+tmpdat <- as.data.frame(X.scaled)
+covlist <-names(X)
+tmpdat$cluster <- rcc[[4]][["consensusClass"]]
+mean.km <- aggregate(tmpdat,by=list(tmpdat$cluster),FUN=mean)
+mean.km.long <- reshape(mean.km, 
+                        varying = covlist, 
+                        v.names = "value",
+                        timevar = "var",
+                        times = covlist,
+                        new.row.names = 1:1000,
+                        direction = "long")
+
+mean.km.long$logvalue <- log(mean.km.long$value+1)
+mean.km.long$var <- factor(mean.km.long$var,levels = covlist)
+mean.km.long$cluster <- factor(mean.km.long$cluster,levels = c(1,2,3,4))
+
+## heatmap
+mean.km.wide <- reshape(mean.km.long[,c("cluster","var","value")],idvar="var",timevar="cluster",direction="wide")
+mean.km.matrix <- as.matrix(mean.km.wide[,2:5])
+row.names(mean.km.matrix) <- mean.km.wide$var
+colnames(mean.km.matrix) <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4")
+heatmap(mean.km.matrix,Colv = NA)
+heatmap.2(mean.km.matrix,col=brewer.pal(11,"RdBu"),scale="row", trace="none", Colv=NA,
+          key.title="", keysize=2, margins=c(7,7), 
+          lhei=c(0.5, 1), cexCol = 1.5, cexRow = 0.9, srtCol = 45)
+```
+
+
+```{r}
+tmpdat <- as.data.frame(X.scaled)
+covlist <-names(X)
+tmpdat$cluster <- rcc[[5]][["consensusClass"]]
+mean.km <- aggregate(tmpdat,by=list(tmpdat$cluster),FUN=mean)
+mean.km.long <- reshape(mean.km, 
+                        varying = covlist, 
+                        v.names = "value",
+                        timevar = "var",
+                        times = covlist,
+                        new.row.names = 1:1000,
+                        direction = "long")
+
+mean.km.long$logvalue <- log(mean.km.long$value+1)
+mean.km.long$var <- factor(mean.km.long$var,levels = covlist)
+mean.km.long$cluster <- factor(mean.km.long$cluster,levels = c(1,2,3,4,5))
+
+## heatmap
+mean.km.wide <- reshape(mean.km.long[,c("cluster","var","value")],idvar="var",timevar="cluster",direction="wide")
+mean.km.matrix <- as.matrix(mean.km.wide[,2:6])
+row.names(mean.km.matrix) <- mean.km.wide$var
+colnames(mean.km.matrix) <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5")
+heatmap(mean.km.matrix,Colv = NA)
+heatmap.2(mean.km.matrix,col=brewer.pal(11,"RdBu"),scale="row", trace="none", Colv=NA,
+          key.title="", keysize=2, margins=c(7,7), 
+          lhei=c(0.5, 1), cexCol = 1.5, cexRow = 0.9, srtCol = 45)
+```
+
+```{r}
+tmpdat <- as.data.frame(X.scaled)
+covlist <-names(X)
+tmpdat$cluster <- rcc[[6]][["consensusClass"]]
+mean.km <- aggregate(tmpdat,by=list(tmpdat$cluster),FUN=mean)
+mean.km.long <- reshape(mean.km, 
+                        varying = covlist, 
+                        v.names = "value",
+                        timevar = "var",
+                        times = covlist,
+                        new.row.names = 1:1000,
+                        direction = "long")
+
+mean.km.long$logvalue <- log(mean.km.long$value+1)
+mean.km.long$var <- factor(mean.km.long$var,levels = covlist)
+mean.km.long$cluster <- factor(mean.km.long$cluster,levels = c(1,2,3,4,5,6))
+
+## heatmap
+mean.km.wide <- reshape(mean.km.long[,c("cluster","var","value")],idvar="var",timevar="cluster",direction="wide")
+mean.km.matrix <- as.matrix(mean.km.wide[,2:7])
+row.names(mean.km.matrix) <- mean.km.wide$var
+colnames(mean.km.matrix) <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5", "Cluster 6")
+heatmap(mean.km.matrix,Colv = NA)
+heatmap.2(mean.km.matrix,col=brewer.pal(11,"RdBu"),scale="row", trace="none", Colv=NA,
+          key.title="", keysize=2, margins=c(7,7), 
+          lhei=c(0.5, 1), cexCol = 1.5, cexRow = 0.9, srtCol = 45)
+```
+
+##### Based on the clustering results above, cluster number, K=3 is likely to be the optimal number of clusters. We will procede with adjusted analysis with cluster number equals to three. According to the heatmap, people in cluster 1 (N=597) are those with low systolic blood pressure, low urine albumine, average renal function, average weight, low medication use except for the 100% usage of ACE/ARBs, and taller in height. Poeple in cluster 2 (N=564) are those with high systolic and diastolic blood pressure, high urine albumin, relatively high renal function, low weight, low waist circumference, shorter in height, and low medication use, especially ACE/ARBs. People in cluster 3 (N=639) are those with low kidney function, high diastolic blood pressure, average systolic blood pressure, average urine albumin, average height, greater weight, greater waist circumference, high glucose, and high usage of medications. The population characteristics across the three clusters are shown below:
+
+```{r}
+table1var <- c("acearb", "age_integer", "alcoh_use", "antidiabetes", "any_hvy", "anycvd", "betablk",
+               "cablk", "co2", "c_peptide", "cal_prot", "diastolic", "diuretic", "egfr_cric",
+               "fgf23_calibrated", "food_energ", "hdl", "glucose", "height", "hemoglobin_a1c", "homa_ir",
+               "hs_crp", "ldl", "nt_probnp",  "race_cat_1", "renal1","esrd", "cvd", 
+               "death", "SUN", "female", "smokenow", "systolic","tnf_alpha", "tnths",
+               "total_pth_calibrated", "troponini", "urine_albumin",
+               "weight", "bmi", "waist")
+
+nonnormalVar<-c("hemoglobin_a1c", "SUN", "c_peptide", "fgf23_calibrated","food_energ",
+                "glucose","hs_crp", "nt_probnp",  "tnf_alpha", "tnths", "total_pth_calibrated", 
+                "troponini", "urine_albumin")
+tableOne.cluster3 <- CreateTableOne(vars=table1var, strata="cluster3", data=my.data)
+print(tableOne.cluster3, nonnormal=nonnormalVar, contDigits = 2, catDigits = 2, pDigits = 4)
+```
+
+##### Visual display of the covariates by group-continuous variables
+
+```{r}
+bxplot<- function(y, x) {
+  df<-na.omit(my.data[,c(x,y)])
+  ggplot(df, aes_string(y=y, x=x)) +
+           geom_boxplot() +
+           xlab(names(df)[1]) 
+}
+cont.var <- c("age_integer", "co2", "c_peptide", "cal_prot", "diastolic", "egfr_cric", "fgf23_calibrated",
+              "food_energ", "hdl", "glucose", "height", "hemoglobin_a1c", "homa_ir", "hs_crp", "ldl",
+              "nt_probnp", "SUN", "systolic", "tnf_alpha", "tnths", "total_pth_calibrated", "troponini",
+              "urine_albumin", "weight" )
+my.bxplot <-lapply(cont.var, x="cluster3", bxplot)
+grid.arrange(my.bxplot[[1]],
+              my.bxplot[[2]],
+              my.bxplot[[3]],
+              my.bxplot[[4]],
+              my.bxplot[[5]],
+              my.bxplot[[6]],
+              my.bxplot[[7]],
+              my.bxplot[[8]],
+              my.bxplot[[9]],
+              my.bxplot[[10]],
+              my.bxplot[[11]],
+              my.bxplot[[12]],
+              my.bxplot[[13]],
+              my.bxplot[[14]],
+              my.bxplot[[15]],
+              my.bxplot[[16]],
+              my.bxplot[[17]], 
+              my.bxplot[[18]],
+              my.bxplot[[19]],
+              my.bxplot[[20]],
+              my.bxplot[[21]],
+              my.bxplot[[22]],
+              my.bxplot[[23]],
+              my.bxplot[[24]],
+             nrow=4, ncol=6, top="Box plots")
+
+```
+
+##### Visual display of the covariates by group-binary/categorical variables
+
+```{r}
+barplot<- function(x,y) {
+  df<-my.data
+  ggplot(df, aes_string(x)) +
+           geom_bar(aes_string(fill=y), width=0.5) 
+}
+cat.var <- c("acearb", "alcoh_use", "antidiabetes", "any_hvy", "anycvd", "betablk", "cablk",
+              "diuretic", "race_cat_1", "smokenow", "female" )
+
+my.barplot <-lapply(cat.var, y="cluster3",barplot)
+grid.arrange(my.barplot[[1]],
+              my.barplot[[2]],
+              my.barplot[[3]],
+              my.barplot[[4]],
+              my.barplot[[5]],
+              my.barplot[[6]],
+              my.barplot[[7]],
+              my.barplot[[8]],
+              my.barplot[[9]],
+              my.barplot[[10]],
+              my.barplot[[11]],
+             nrow=4, ncol=3, top="Bar plots")
+
+```
+
+
+##### According to the adjusted cox model, the identified obesity-related subgroup is associated with the outcome of CKD progression, ESRD, CVD, and death, independently from trational risk factos of age, race, gender, physical activity, smoking, and alcohol use. With further adjustment on novel risk factors of serum CO2, c-peptide, high sensitive CRP, FGF23, nt-proBNP, PTH, TNF-alpha, high sensitive troponin I, high sensitive troponin T, calories from protein intake, total calories, the cluster membership is independently associated with the outcome of CKD progression and death, but not ESRD or CVD. 
+
+```{r}
+my.data$cluster3 <-as.factor(my.data$cluster3)
+my.cox1<-coxph(Surv(my.data$time_renal1, my.data$renal1=="Yes") ~ cluster3 + age_integer + alcoh_use +
+                + race_cat_1 + any_hvy + anycvd + female + smokenow , data = my.data)
+my.cox1
+
+my.cox2 <- coxph(Surv(my.data$time_renal1, my.data$renal1=="Yes")~ cluster3 +age_integer + alcoh_use + 
+                   race_cat_1 + any_hvy + anycvd + female +smokenow + co2 + log_cp + log_crp + log_fgf23 +
+                   log_ntprobnp +log_pth + log_tnfa +log_troponini + log_tnths + cal_prot + food_energ + 
+                   hdl + ldl + SUN, data=my.data )
+my.cox2
+
+my.cox3<-coxph(Surv(my.data$time_esrd, my.data$esrd=="Yes") ~ cluster3 + age_integer + alcoh_use +
+                + race_cat_1 + any_hvy + anycvd + female + smokenow , data = my.data)
+my.cox3
+
+my.cox4 <- coxph(Surv(my.data$time_esrd, my.data$esrd=="Yes")~ cluster3 +age_integer + alcoh_use + 
+                   race_cat_1 + any_hvy + anycvd + female +smokenow + co2 + log_cp + log_crp + log_fgf23 +
+                   log_ntprobnp +log_pth + log_tnfa +log_troponini + log_tnths + cal_prot + food_energ + 
+                   hdl + ldl + SUN, data=my.data )
+my.cox4
+
+my.cox5<-coxph(Surv(my.data$time_cvd, my.data$cvd=="Yes") ~ cluster3 + age_integer + alcoh_use +
+                + race_cat_1 + any_hvy + anycvd + female + smokenow , data = my.data)
+my.cox5
+
+my.cox6 <- coxph(Surv(my.data$time_cvd, my.data$cvd=="Yes")~ cluster3 +age_integer + alcoh_use + 
+                   race_cat_1 + any_hvy + anycvd + female +smokenow + co2 + log_cp + log_crp + log_fgf23 +
+                   log_ntprobnp +log_pth + log_tnfa +log_troponini + log_tnths + cal_prot + food_energ + 
+                   hdl + ldl + SUN, data=my.data )
+my.cox6
+
+my.cox7<-coxph(Surv(my.data$time_death, my.data$death=="Yes") ~ cluster3 + age_integer + alcoh_use +
+                + race_cat_1 + any_hvy + anycvd + female + smokenow , data = my.data)
+my.cox7
+
+my.cox8 <- coxph(Surv(my.data$time_death, my.data$death=="Yes")~ cluster3 +age_integer + alcoh_use + 
+                   race_cat_1 + any_hvy + anycvd + female +smokenow + co2 + log_cp + log_crp + log_fgf23 +
+                   log_ntprobnp +log_pth + log_tnfa +log_troponini + log_tnths + cal_prot + food_energ + 
+                   hdl + ldl + SUN, data=my.data )
+my.cox8
+
+
+```
+
+### Conclusion
+##### Consensus clustering analysis revealed three obesity-related CKD subgroups with different baseline feature profiles, resulting in distinct prognostic stratification in the risk of CKD progression, ESRD, CVD, and death. The identified cluster membership is independently associated with the outcomes after adjusting traditional and novel kidney risk factors. 
