@@ -1,18 +1,10 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This project seeks to explore the question: how are citation metrics of a researcher associated with the funding they receive from the NIH? My hypothesis is that publication counts and impact factor of journals in which PIs publish is positively associated with receiving additional grant funding. This is in spite of the fact that researchers largely agree that these metrics are poor measures of the quality of scientific inquiry.  
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+00_data_prep.R contains code that imports and merges data from the NIH ExPORTER API as well as SCImago data from the sjrdata package. 
+01_data_clean.R contains code that removes duplicates, recodes variables, processes dates, addressing missingness, and constructs predictors of interest for the final model. 
+02_descriptives.R contains code that compiles univariate and bivariate descriptive statistics and plots. 
+03_analysis.R contains fixed and mixed effects regression models that test my hypothesis. 
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/12/18 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+This is a work in progress, and appreciate any comments or thoughts. Enjoy!

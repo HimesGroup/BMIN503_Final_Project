@@ -49,6 +49,8 @@ sapply(data, function(x) sum(is.na(x)))
 
   # Drop observations that have missing PI_IDS (n = 11)
   data <- filter(data, !is.na(PI_IDS))
+  
+  # There are ~500 observations that have 
 
 
 # 4. Fix classes 
@@ -113,6 +115,8 @@ sapply(data, function(x) sum(is.na(x)))
   data[, count_grants := cumsum(grants)-1, by = "PI_IDS"]
   
   # Log-transformed outcome variable TOTAL_COST
+  # TODO: ~500 observations have TOTAL_COST = 1, need to find documentation
+  data <- filter(data, TOTAL_COST > 1)
   data <- mutate(data, TOTAL_COST_log = log(TOTAL_COST))
   
   
