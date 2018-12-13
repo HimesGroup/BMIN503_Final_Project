@@ -21,7 +21,7 @@ final_project_template.Rmd = file that the Rmd files were based on.
 
 final_project_temp_Miller_git_v3.Rmd = Rmd file that uses real individual data that I cannot share to generate results in the form of an html file. 
 
-final_project_temp_Miller_git_v3_fakedata_v1.Rmd = the same as final_project_temp_Miller_git_v3.Rmd but I created fake data to run the analysis with. 
+final_project_temp_Miller_git_v3_fakedata_v1.Rmd = the same as final_project_temp_Miller_git_v3.Rmd but I created simulated (fake) data to run the analysis with to show the code actually works. 
 
 
 
