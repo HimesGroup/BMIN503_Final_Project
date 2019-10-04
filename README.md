@@ -16,3 +16,7 @@ DUE DATE FOR FINAL VERSION: 12/13/19 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+
+Author: Chris Snider
+Class: BMIN503
+Date: 2019-10-04
