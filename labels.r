@@ -1,18 +1,11 @@
 #label all columns
+labelling <- function(data){
 label(data$redcap_id)="REDCap ID"
 label(data$redcap_event_name)="Event Name"
 label(data$start_here_timestamp)="Survey Timestamp"
-label(data$eng)="Click here if the patient would prefer the questions in English"
-label(data$esp)="Haz un click aquí si el paciente prefiere Español"
-label(data$eng2)="Click here if the parent would prefer the questions in English"
-label(data$esp2)="Haz un click aquí si el padre prefiere Español"
 label(data$start_here_complete)="Complete?"
 label(data$borinquen_info_release_timestamp)="Survey Timestamp"
 label(data$today_date)="Todays Date:La Fecha de Hoy"
-label(data$not_part_ethnicity)="What is your ethnic group or race?"
-label(data$not_part_asthma)="Does your child have asthma?"
-label(data$not_part_obese)="Is your child overweight/obese?"
-label(data$not_part_gender)="Is your child a girl or a boy?"
 label(data$participating)="Are you interested in participating in this study?"
 label(data$first_date)="This consent is granted for:  A  Continuing disclosure  (expires 12 month form the date I sign this form) or upon termination of treatment, whichever occurs first.  Todays Date:"
 label(data$borinquen_info_release_complete)="Complete?"
@@ -470,3 +463,5 @@ label(data$tablet_group)="Were you randomized to the tablet group?"
 label(data$equipment_signout_complete)="Complete?"
 label(data$gift_receipt_timestamp)="Survey Timestamp"
 label(data$gift_receipt_complete)="Complete?"
+return(data)
+}
