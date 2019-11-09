@@ -1,4 +1,4 @@
-levels(data$redcap_event_name)=c("Initial Visit","F/U Visit 1","F/U Visit 2","F/U Visit 3","F/U Visit 4","Final Visit")
+levels(data$redcap_event_name.factor)=c("visit1","visit2","visit3","visit4","visit5","visit6")
 levels(data$eng)=c("")
 levels(data$esp)=c("")
 levels(data$eng2)=c("")

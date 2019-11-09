@@ -1,12 +1,12 @@
 #selects columns for demographics
 demographics <- function(info) {
-  info <- select(info, 1, 
+  info <- info[c(1:2, 
                  which(colnames(info)=="Patient's Language"):which(colnames(info)=="Parent's Language"),
                  which(colnames(info)=="Ethnicity"):which(colnames(info)=="Obese?"),
                  which(colnames(info)=="Ethnicity"):which(colnames(info)=="Gender"),
                  which(colnames(info)=="parent_or_guardian___1"):which(colnames(info)=="parent_or_guardian___2"),
                  which(colnames(info)=="dem_gender"):which(colnames(info)=="dem_grade"),
-                 which(colnames(info)=="dem_parent_sex"):which(colnames(info)=="demographics_parent_complete"))
+                 which(colnames(info)=="dem_parent_sex"):which(colnames(info)=="demographics_parent_complete"))]
   return(info)
 }
 
@@ -26,9 +26,9 @@ cleaner <- function(string1, string2, info){
 }
 
 pedsql <- function(info) {
-  info <- select(info, 1, 
+  info <- info[c(1:2, 
                  which(colnames(info)=="pedsql_patient_timestamp"):which(colnames(info)=="pedsql_patient_complete"),
-                 which(colnames(info)=="pedsql_parent_timestamp"):which(colnames(info)=="pedsql_parent_complete"))
+                 which(colnames(info)=="pedsql_parent_timestamp"):which(colnames(info)=="pedsql_parent_complete"))]
   return(info)
 }
 
