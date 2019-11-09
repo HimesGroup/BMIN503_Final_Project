@@ -38,6 +38,7 @@ plotperc = function(info, col){
     ggplot(aes(x=Var1, y=Freq, group=Var2)) +
     geom_line(aes(linetype=Var2, color=Var2)) +
     geom_point(aes(shape=Var2)) +
+    facet_grid(Var2 ~ .) +
     labs(x = "Visit", y = "Percentage per Visit", title = label(info[which(colnames(info)==col)]))
 }
 
