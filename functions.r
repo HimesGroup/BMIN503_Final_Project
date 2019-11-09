@@ -1,8 +1,4 @@
-#selects columns for demographics
-demographics <- function(info) {
-  info <- select(info, 1, 4:5, 9:12, 17:19, 21, 41:47, 227:258)
-  return(info)
-}
+
 
 #selects columns about tech
 pttech <- function(info) {
