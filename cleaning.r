@@ -1,37 +1,3 @@
-#selects columns for demographics
-demographics <- function(info) {
-  info <- info[c(1:2, 
-                 which(colnames(info)=="Patient's Language"):which(colnames(info)=="Parent's Language"),
-                 which(colnames(info)=="Ethnicity"):which(colnames(info)=="Obese?"),
-                 which(colnames(info)=="Ethnicity"):which(colnames(info)=="Gender"),
-                 which(colnames(info)=="parent_or_guardian___1"):which(colnames(info)=="parent_or_guardian___2"),
-                 which(colnames(info)=="dem_gender"):which(colnames(info)=="dem_grade"),
-                 which(colnames(info)=="dem_parent_sex"):which(colnames(info)=="demographics_parent_complete"))]
-  return(info)
-}
-
-#this takes as arguments name of first and last column to combine, then loops through, seeing which columns are empty, and collecting them all in first column, then deleting it.
-cleaner <- function(string1, string2, info){
-  cols <- which(colnames(info)==string1):which(colnames(info)==string2) #get col numbers for first and last string
-  info[cols] <- sapply(info[cols], as.character)
-  for(j in 1:nrow(info)){
-    for(i in cols){
-      info[cols[1]][[1]][j] <- paste(if_else(is.na(info[cols[1]][[1]][j]), "", info[cols[1]][[1]][j]),
-                                     if_else(is.na(info[i][[1]][j]), "", info[i][[1]][j]), sep="") #combine the current first column with any others that aren't null
-    }
-  }
-  info[cols[1]][[1]] <- na_if(info[cols[1]][[1]], "") #replace all "" with NA
-  info[cols[-1]] <- NULL
-  return(info)
-}
-
-pedsql <- function(info) {
-  info <- info[c(1:2, 
-                 which(colnames(info)=="pedsql_patient_timestamp"):which(colnames(info)=="pedsql_patient_complete"),
-                 which(colnames(info)=="pedsql_parent_timestamp"):which(colnames(info)=="pedsql_parent_complete"))]
-  return(info)
-}
-
 #identify which columns were changed into factors and defined to be read more easily, if they were changed, choose that column to include, otherwise keep the original (which are mainly things like dates)
 temp <- c()
 for(i in 1:472){
@@ -88,3 +54,19 @@ data <- labelling(data)
 #combining columns together
 data <- cleaner("tech_kid_brand___1", "tech_kid_brand___7", data)
 data <- cleaner("tech_kid_os___1", "tech_kid_os___6", data)
+
+#make dataframe for anyone completing at least 1 fu
+participants <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_event_name=="visit1")])
+
+#make dataframe from above of just the first visit (to evaluate demographics)
+participantsFirst <- subset(participants, participants$redcap_event_name=="visit1")
+participantsFirst <- demographics(participantsFirst)
+
+#make dataframe for those that completed a final visit
+complete <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_event_name=="visit6")])
+
+#make dataframe from above of just the first visit (to evaluate demographics)
+completeFirst <- subset(complete, complete$redcap_event_name=="visit1")
+demoFirst <- demographics(completeFirst)
+demoFirst <- droplevels(demoFirst)
+completeFirst <- droplevels(completeFirst)
