@@ -15,29 +15,17 @@ for(i in 1:472){
 data <- data[c(temp)]
 names(data) <- gsub(".factor", "", names(data), fixed = TRUE)
 
-#collect the 4 columns on language preference into 2
-data <- add_column(data, "Patient's Language" = NA, .before = "eng")
-data$`Patient's Language` <- case_when(
-  data$eng == 1 ~ "English",
-  data$esp == 1 ~ "Spanish",
-  TRUE ~ NA_character_
-)
-data <- add_column(data, "Parent's Language" = NA, .before = "eng")
-data$`Parent's Language` <- case_when(
-  data$eng2 == 1 ~ "English",
-  data$esp2 == 1 ~ "Spanish",
-  TRUE ~ NA_character_
-)
-data[6:9] <- NULL
+#cleanup languages
+data <- languages(data)
+data.original <- languages(data.original)
 
-#make some better column names
-colnames(data)[colnames(data)=="not_part_ethnicity"] <- "Ethnicity"
-colnames(data)[colnames(data)=="not_part_asthma"] <- "Asthma?"
-colnames(data)[colnames(data)=="not_part_gender"] <- "Gender"
-colnames(data)[colnames(data)=="not_part_obese"] <- "Obese?"
+#better column names
+data <- dem_names(data)
+data.original <- dem_names(data.original)
 
 #remove test patient
 data <- subset(data, redcap_id != 'ce0b1de0534e326798805670fd231294')
+data.original <- subset(data.original, redcap_id != 'ce0b1de0534e326798805670fd231294')
 
 #summarize grade levels
 data$dem_grade <- as.character(data$dem_grade)
@@ -47,9 +35,11 @@ data$dem_grade[(data$dem_grade == "9" | data$dem_grade == "10" | data$dem_grade 
 
 #remove unused levels
 data <- droplevels(data)
+data.original <- droplevels(data.original)
 
 #name columns
 data <- labelling(data)
+data.original <- labelling(data.original)
 
 #combining columns together
 data <- cleaner("tech_kid_brand___1", "tech_kid_brand___7", data)
@@ -64,9 +54,12 @@ participantsFirst <- demographics(participantsFirst)
 
 #make dataframe for those that completed a final visit
 complete <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_event_name=="visit6")])
+complete.original <- subset(data.original, data.original$redcap_id %in% data.original$redcap_id[which(data.original$redcap_event_name=="final_visit_arm_1")])
 
 #make dataframe from above of just the first visit (to evaluate demographics)
 completeFirst <- subset(complete, complete$redcap_event_name=="visit1")
+completeFirst <- droplevels(completeFirst)
 demoFirst <- demographics(completeFirst)
 demoFirst <- droplevels(demoFirst)
-completeFirst <- droplevels(completeFirst)
+completeLast <- subset(complete, complete$redcap_event_name=="visit6")
+completeLast <- droplevels(completeLast)

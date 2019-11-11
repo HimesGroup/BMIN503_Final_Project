@@ -25,6 +25,7 @@ cleaner <- function(string1, string2, info){
   return(info)
 }
 
+#selects just the questions for pedsql
 pedsql <- function(info) {
   info <- info[c(1:2, 
                  which(colnames(info)=="pedsql_patient_timestamp"):which(colnames(info)=="pedsql_patient_complete"),
@@ -32,6 +33,34 @@ pedsql <- function(info) {
   return(info)
 }
 
+#collect the 4 columns on language preference into 2
+languages <-function(info){
+  info <- add_column(info, "Patient's Language" = NA, .before = "eng")
+  info$`Patient's Language` <- case_when(
+    info$eng == 1 ~ "English",
+    info$esp == 1 ~ "Spanish",
+    TRUE ~ NA_character_
+  )
+  info <- add_column(info, "Parent's Language" = NA, .before = "eng")
+  info$`Parent's Language` <- case_when(
+    info$eng2 == 1 ~ "English",
+    info$esp2 == 1 ~ "Spanish",
+    TRUE ~ NA_character_
+  )
+  info[6:9] <- NULL
+  return(info)
+}
+
+#creating some better names for the demographic variables
+dem_names <- function(info){
+  colnames(info)[colnames(info)=="not_part_ethnicity"] <- "Ethnicity"
+  colnames(info)[colnames(info)=="not_part_asthma"] <- "Asthma?"
+  colnames(info)[colnames(info)=="not_part_gender"] <- "Gender"
+  colnames(info)[colnames(info)=="not_part_obese"] <- "Obese?"
+  return(info)
+}
+
+#plots percentages of change
 plotperc = function(info, col){
   prop.table(table(info$redcap_event_name, info[,which(colnames(info)==col)]), margin = 1) %>%
     as.data.frame() %>%
@@ -42,6 +71,7 @@ plotperc = function(info, col){
     labs(x = "Visit", y = "Percentage per Visit", title = label(info[which(colnames(info)==col)]))
 }
 
+#plots actual counts of change
 plotct = function(info, col){
   table(info$redcap_event_name, info[,which(colnames(info)==col)]) %>%
     as.data.frame() %>%
