@@ -1,12 +1,6 @@
 #selects columns for demographics
 demographics <- function(info) {
-  info <- info[c(1:2, 
-                 which(colnames(info)=="Patient's Language"):which(colnames(info)=="Parent's Language"),
-                 which(colnames(info)=="Ethnicity"):which(colnames(info)=="Obese?"),
-                 which(colnames(info)=="Ethnicity"):which(colnames(info)=="Gender"),
-                 which(colnames(info)=="parent_or_guardian___1"):which(colnames(info)=="parent_or_guardian___2"),
-                 which(colnames(info)=="dem_gender"):which(colnames(info)=="dem_grade"),
-                 which(colnames(info)=="dem_parent_sex"):which(colnames(info)=="demographics_parent_complete"))]
+  info <- select(info, 1:2, `Patient's Language`:`Parent's Language`, Ethnicity:Gender, parent_or_guardian___1:parent_or_guardian___2, dem_gender:dem_grade, dem_parent_sex:demographics_parent_complete)
   return(info)
 }
 
@@ -53,10 +47,10 @@ languages <-function(info){
 
 #creating some better names for the demographic variables
 dem_names <- function(info){
-  colnames(info)[colnames(info)=="not_part_ethnicity"] <- "Ethnicity"
-  colnames(info)[colnames(info)=="not_part_asthma"] <- "Asthma?"
-  colnames(info)[colnames(info)=="not_part_gender"] <- "Gender"
-  colnames(info)[colnames(info)=="not_part_obese"] <- "Obese?"
+  colnames(info)[colnames(info)=="not_part_ethnicity.f"] <- "Ethnicity"
+  colnames(info)[colnames(info)=="not_part_asthma.f"] <- "Asthma?"
+  colnames(info)[colnames(info)=="not_part_gender.f"] <- "Gender"
+  colnames(info)[colnames(info)=="not_part_obese.f"] <- "Obese?"
   return(info)
 }
 
