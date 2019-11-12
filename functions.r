@@ -66,6 +66,20 @@ plotperc = function(info, col, sig){
     if(col %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }
 
+#applies ttest to column that ends in .x and .y (usually after merging two datasets)
+ttest <- function(info, col){
+  t.test(info[[col]], info[[gsub(".x", ".y", col)]], paired=TRUE, alternative = "two.sided")
+}
+
+#trying to make easier fxn to apply ttest, applies tteest to all columns between col1 and col2 inclusive
+applying <- function(col1, col2, info){
+  info <- as.data.frame(lapply(select(info, col1:col2, gsub(".x", ".y", col1):gsub(".x", ".y", col2)), as.numeric))
+  info <- t(sapply(colnames(select(info, col1:col2)), ttest, info=info)) %>%
+    as.data.frame() %>%
+    .[.$p.value <= 0.05,] %>%
+    add_column(., "Name" = gsub(".x", ".f", row.names(.)), .before = "statistic")
+}
+
 #plots actual counts of change
 plotct = function(info, col){
   table(info$redcap_event_name, info[,which(colnames(info)==col)]) %>%

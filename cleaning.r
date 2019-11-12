@@ -36,3 +36,6 @@ complete <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_ev
 completeFirst <- droplevels(subset(complete, complete$redcap_event_name.f=="visit1"))
 demoFirst <- droplevels(demographics(completeFirst))
 completeLast <- droplevels(subset(complete, complete$redcap_event_name.f=="visit6"))
+
+#merging the first and last dataset to make one that can be more easily compared (variables end in .x and .y)
+combined <- merge(completeFirst, completeLast, by="redcap_id")
