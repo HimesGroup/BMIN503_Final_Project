@@ -89,3 +89,13 @@ plotct = function(info, col){
     geom_point(aes(shape=Var2)) +
     labs(x = "Visit", y = "Total Count", title = label(info[which(colnames(info)==col)]))
 }
+
+#boxplot for significant changes from first and last visits
+boxy <- function(info, name){
+  ggplot(info, aes_string(x = "redcap_event_name.f", y = gsub(".f", "", name))) +
+    geom_boxplot() +
+    scale_y_continuous(breaks=c(0:(length(levels(info[[name]]))-1)), labels=levels(info[[name]])) +
+    xlab("First Versus Last Visit") +
+    labs(title=str_wrap(label(info[[name]]), width=60)) +
+    ylab(NULL)
+}
