@@ -55,14 +55,15 @@ dem_names <- function(info){
 }
 
 #plots percentages of change
-plotperc = function(info, col){
+plotperc = function(info, col, sig){
   prop.table(table(info$redcap_event_name, info[,which(colnames(info)==col)]), margin = 1) %>%
     as.data.frame() %>%
     ggplot(aes(x=Var1, y=Freq, group=Var2)) +
     geom_line(aes(linetype=Var2, color=Var2)) +
     geom_point(aes(shape=Var2)) +
     facet_grid(Var2 ~ .) +
-    labs(x = "Visit", y = "Percentage per Visit", title = label(info[which(colnames(info)==col)]))
+    labs(x = "Visit", y = "Percentage per Visit", title = label(info[which(colnames(info)==col)])) +
+    if(col %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }
 
 #plots actual counts of change
