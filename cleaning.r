@@ -7,6 +7,10 @@ data <- dem_names(data)
 #remove test patient
 data <- subset(data, redcap_id != 'ce0b1de0534e326798805670fd231294')
 
+#call function to recode data
+data <- recoding(data, "pedsqlkids_01", "pedsqlkids_23", "'0'='100'; '1'='75'; '2'='50'; '3'='25'; '4'='0'")
+temp <- recoding(data, "pedsqlparent_01", "pedsqlparent_23", "'0'='100'; '1'='75'; '2'='50'; '3'='25'; '4'='0'")
+
 #summarize grade levels
 data$dem_grade.f <- as.character(data$dem_grade.f)
 data$dem_grade[(data$dem_grade == "Pre-K" | data$dem_grade.f == "Kindergarten" | data$dem_grade.f == "1" | data$dem_grade.f == "2" | data$dem_grade.f == "3" | data$dem_grade.f == "4" | data$dem_grade.f == "5")] <- "<= 5th Grade"

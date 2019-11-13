@@ -99,3 +99,9 @@ boxy <- function(info, name){
     labs(title=str_wrap(label(info[[name]]), width=60)) +
     ylab(NULL)
 }
+
+#recodes sections of dataframe, pass full dataframe, 1st/last column (inclusive) to recode, plus string for recoding
+recoding <- function(info, col1, col2, code){
+  info[,colnames(select(info, col1:col2))] <- apply(info[,colnames(select(info, col1:col2))], 2, function(x) {x <- recode(x, code); x})
+  info
+}
