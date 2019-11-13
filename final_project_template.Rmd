@@ -23,8 +23,6 @@ library(data.table)
 #library(labelled)
 #library(sjmisc)
 library(stringr)
-library(ggdendro)
-library(randomForest)
 library(car)
 options(knitr.table.format = "html")
 ```  
@@ -51,19 +49,12 @@ In the first paragraph, describe the data used and general methodological approa
 #Get the data
 
 #Read Data
-data=read.csv('ChronicConditionSpec_DATA_2019-10-02_1538.csv')
-data$pedsqlparent_01[!(as.character(data$pedsqlparent_01) %in% c("0","1","2","3","4"))]
-                     
+#data=read.csv('ChronicConditionSpec_DATA_2019-10-02_1538.csv')
+data=read.csv('verizonborinquen.csv')
 
-, ., NA)
-
-as.character(data$pedsqlparent_01)
-
-
-%in% c(0,1,2,3,4)
-
-data$pedsqlparent_01 <- if(data$pedsqlparent_01 %in% c(0,1,2,3,4), NA)
-  
+#not sure why this one variable is coded differently, but this fixes it
+data <- data %>% mutate(pedsqlparent_01 = factor(pedsqlparent_01, levels = c("", 0, 1, 2, 3, 4), labels = c(NA, 0, 1, 2, 3, 4)))
+data$pedsqlparent_01 <- as.numeric(as.character(data$pedsqlparent_01))
 
 #Allow some functions
 source('functions.r')
@@ -94,11 +85,33 @@ thirdtable <- table1(~ tech_kid_brand___1.f + tech_kid_os___1.f + tech_kid_devic
 ```
 
 ```{r}
-#get list of significant results for pedsql
-sig <- applying("pedsqlkids_01.x", "pedsqlkids_23.x", combined)
+info <- as.data.frame(lapply(select(combined, "pedsqlkids_01.x":"pedsqlkids_23.x", gsub(".x", ".y", "pedsqlkids_01.x"):gsub(".x", ".y", "pedsqlkids_23.x")), as.numeric))
+meanie <- c()
+for(i in 1:length(info)){   meanie <- c(meanie, (mean(info[,i], na.rm=TRUE))) }
+meanie <- as.data.frame(meanie)
+meanie$names <- labels(info)[[2]]
+meanies <- c()
+for(i in 1:23) { meanies <- c(meanies, meanie[,1][i+23] - meanie[,1][i]) }
+info <- as.numeric(info)
 
+sapply(colnames(select(info, "pedsqlkids_01.x":"pedsqlkids_23.x")), mean, info=info)
+
+temp <- c()
+for(i in 1:23) {   temp <- c(temp, t.test(info[,i], info[,(i+23)])$p.value)  }
+temp
+  
+info$pedsqlkids_01.x
+combined$pedsqlkids_01.x
+  info <- t(sapply(colnames(select(info, "pedsqlkids_01.x":"pedsqlkids_23.x")), ttest, info=info)) %>%
+    as.data.frame() %>%
+    .[.$p.value <= 0.05,] %>%
+    add_column(., "Name" = gsub(".x", ".f", row.names(.)), .before = "statistic")
+
+#get list of significant results for pedsql
+sig <- applying("qlPtTotal.x", "qlPtSchool.x", combined)
+  
 #plot all results for pedsql, highlight those that are significant
-pqlpatientplot <- lapply(colnames(select(complete, "pedsqlkids_01.f":"pedsqlkids_23.f")), plotperc, info = complete, sig = sig)
+pqlpatientplot <- lapply(colnames(select(complete, "qlPtTotal", "qlPtSchool")), plotperc, info = complete, sig = sig)
 
 #plot list of significant results for pedsql by parent
 sig <- applying("pedsqlparent_01.x", "pedsqlparent_23.x", combined)
@@ -113,13 +126,6 @@ actNutKids <- lapply(actNutriKids$Name, boxy, info=firstLast)
 #get significant results for first and last visit for activity and nutrition surveys from parents
 actNutriParents <- applying("act_nutri_parent01.x", "act_nutri_parent31.x", combined)
 actNutparents <- lapply(actNutriParents$Name, boxy, info=firstLast)
-
-clust <- hclust(dist(select(firstLast, "dem_gender.f", "pedsqlparent_01":"pedsqlparent_23")), method = "complete")
-c <- dendro_data(as.dendrogram(clust))
-labels <- label(c)
-ggplot(segment(c), size=10) +
-  geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
-  geom_text(data = labels, aes(label = label, x = x, y = 0, color = "dem_gender.f"), size = 5)
 ```
 
 ### Results

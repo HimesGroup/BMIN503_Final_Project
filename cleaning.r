@@ -28,6 +28,26 @@ data <- labelling(data, ".f")
 data <- cleaner("tech_kid_brand___1.f", "tech_kid_brand___7.f", data)
 data <- cleaner("tech_kid_os___1.f", "tech_kid_os___6.f", data)
 
+#create subgroups for pedsql
+data <- add_column(data, "qlPtTotal" = NA, .before = "pedsqlkids_01")
+data <- add_column(data, "qlPtPhys" = NA, .before = "pedsqlkids_01")
+data <- add_column(data, "qlPtEmotion" = NA, .before = "pedsqlkids_01")
+data <- add_column(data, "qlPtSocial" = NA, .before = "pedsqlkids_01")
+data <- add_column(data, "qlPtSchool" = NA, .before = "pedsqlkids_01")
+
+data <- add_column(data, "qlParTotal" = NA, .before = "pedsqlparent_01")
+data <- add_column(data, "qlParPhys" = NA, .before = "pedsqlparent_01")
+data <- add_column(data, "qlParEmotion" = NA, .before = "pedsqlparent_01")
+data <- add_column(data, "qlParSocial" = NA, .before = "pedsqlparent_01")
+data <- add_column(data, "qlParSchool" = NA, .before = "pedsqlparent_01")
+
+
+data$qlPtTotal <- rowMeans(data[grep("^pedsqlkids_01$", colnames(data)):grep("^pedsqlkids_23$", colnames(data))])
+data$qlPtPhys <- rowMeans(data[grep("^pedsqlkids_01$", colnames(data)):grep("^pedsqlkids_08$", colnames(data))])
+data$qlPtEmotion <- rowMeans(data[grep("^pedsqlkids_09$", colnames(data)):grep("^pedsqlkids_13$", colnames(data))])
+data$qlPtSocial <- rowMeans(data[grep("^pedsqlkids_14$", colnames(data)):grep("^pedsqlkids_18$", colnames(data))])
+data$qlPtSchool <- rowMeans(data[grep("^pedsqlkids_19$", colnames(data)):grep("^pedsqlkids_23$", colnames(data))])
+
 #make dataframe for anyone completing at least 1 fu & demographics
 #participants <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_event_name.f=="visit1")])
 #participantsFirst <- subset(participants, participants$redcap_event_name.f=="visit1")
