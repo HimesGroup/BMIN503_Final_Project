@@ -4,9 +4,6 @@ data <- languages(data)
 #better column names
 data <- dem_names(data)
 
-#remove test patient
-data <- subset(data, redcap_id != 'ce0b1de0534e326798805670fd231294')
-
 #call function to recode data
 data <- recoding(data, "pedsqlkids_01", "pedsqlkids_23", "'0'='100'; '1'='75'; '2'='50'; '3'='25'; '4'='0'")
 data <- recoding(data, "pedsqlparent_01", "pedsqlparent_23", "'0'='100'; '1'='75'; '2'='50'; '3'='25'; '4'='0'")
@@ -40,17 +37,3 @@ data$qlParPhys <- rowmeaning(data,"pedsqlparent_01","pedsqlparent_08")
 data$qlParEmotion <- rowmeaning(data, "pedsqlparent_09", "pedsqlparent_13")
 data$qlParSocial <- rowmeaning(data, "pedsqlparent_14", "pedsqlparent_18")
 data$qlParSchool <- rowmeaning(data, "pedsqlparent_19", "pedsqlparent_23")
-
-#make dataframe for those that completed a final visit
-complete <- subset(data, data$redcap_id %in% data$redcap_id[which(data$redcap_event_name=="visit6")])
-
-#make dataframe from above of just the first visit (to evaluate demographics)
-completeFirst <- droplevels(subset(complete, complete$redcap_event_name=="visit1"))
-completeLast <- droplevels(subset(complete, complete$redcap_event_name=="visit6"))
-
-#merging the first and last dataset to make one that can be more easily compared (variables end in .x and .y)
-combined <- merge(completeFirst, completeLast, by="redcap_id")
-
-#Table with similar data as above, but formatted differently
-firstLast <- complete[complete$redcap_event_name %in% c('visit1', 'visit6'),]
-firstLast <- droplevels(firstLast)

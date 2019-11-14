@@ -1,14 +1,10 @@
 #Setting Factors(will create new variable for factors)
 data$redcap_event_name = factor(data$redcap_event_name,levels=c("initial_visit_arm_1","fu_visit_1_arm_1","fu_visit_2_arm_1","fu_visit_3_arm_1","fu_visit_4_arm_1","final_visit_arm_1"), labels = c("visit1","visit2","visit3","visit4","visit5","visit6"))
-data$eng = factor(data$eng,levels=c("1")) 
-data$esp = factor(data$esp,levels=c("1")) 
-data$eng2 = factor(data$eng2,levels=c("1")) 
-data$esp2 = factor(data$esp2,levels=c("1")) 
 data$start_here_complete = factor(data$start_here_complete,levels=c("0","1","2"), labels = c("Incomplete","Unverified","Complete"))
-data$not_part_ethnicity = factor(data$not_part_ethnicity,levels=c("1","2","3","4","5","6"), labels = c("Black, Non-Hispanic","White, Non-Hispanic","Asian or Pacific Islander","Native American or Alaskan Native","Hispanic","Otro"))
-data$not_part_asthma = factor(data$not_part_asthma,levels=c("1","0"), labels = c("Yes","No"))
-data$not_part_obese = factor(data$not_part_obese,levels=c("1","0"), labels = c("Yes","No"))
-data$not_part_gender = factor(data$not_part_gender,levels=c("1","2"), labels = c("Girl","Boy"))
+data$Ethnicity = factor(data$Ethnicity,levels=c("1","2","3","4","5","6"), labels = c("Black, Non-Hispanic","White, Non-Hispanic","Asian or Pacific Islander","Native American or Alaskan Native","Hispanic","Otro"))
+data$`Asthma?` = factor(data$`Asthma?`,levels=c("1","0"), labels = c("Yes","No"))
+data$`Obese?` = factor(data$`Obese?`,levels=c("1","0"), labels = c("Yes","No"))
+data$Gender = factor(data$Gender,levels=c("1","2"), labels = c("Girl","Boy"))
 data$participating = factor(data$participating,levels=c("1","0"), labels = c("Yes","No"))
 data$borinquen_info_release_complete = factor(data$borinquen_info_release_complete,levels=c("0","1","2"), labels = c("Incomplete","Unverified","Complete"))
 data$parent_or_guardian___1 = factor(data$parent_or_guardian___1,levels=c("0","1"), labels = c("Unchecked","Checked"))
@@ -38,19 +34,19 @@ data$dem_language_pref = factor(data$dem_language_pref,levels=c("1","2","3","4")
 data$dem_grade = factor(data$dem_grade,levels=c("00","0","1","2","3","4","5","6","7","8","9","10","11","12","13"), labels = c("Pre-K","Kindergarten","1","2","3","4","5","6","7","8","9","10","11","12","Other/Otro"))
 data$demographics_patient_complete = factor(data$demographics_patient_complete,levels=c("0","1","2"), labels = c("Incomplete","Unverified","Complete"))
 data$tech_kid_smart_device = factor(data$tech_kid_smart_device,levels=c("1","2","3","4"), labels = c("smart phone","tablet","both a smart phone and a tablet","neither"))
-data$tech_kid_brand___1 = factor(data$tech_kid_brand___1,levels=c("0","1"), labels = c(NA,"iPhone or iPad"))
-data$tech_kid_brand___2 = factor(data$tech_kid_brand___2,levels=c("0","1"), labels = c(NA,"Samsung"))
-data$tech_kid_brand___3 = factor(data$tech_kid_brand___3,levels=c("0","1"), labels = c(NA,"LG"))
-data$tech_kid_brand___4 = factor(data$tech_kid_brand___4,levels=c("0","1"), labels = c(NA,"HTC"))
-data$tech_kid_brand___5 = factor(data$tech_kid_brand___5,levels=c("0","1"), labels = c(NA,"Motorola"))
-data$tech_kid_brand___6 = factor(data$tech_kid_brand___6,levels=c("0","1"), labels = c(NA,"Other"))
-data$tech_kid_brand___7 = factor(data$tech_kid_brand___7,levels=c("0","1"), labels = c(NA,"Don't Know"))
-data$tech_kid_os___1 = factor(data$tech_kid_os___1,levels=c("0","1"), labels = c(NA,"iPhone or iPad"))
-data$tech_kid_os___2 = factor(data$tech_kid_os___2,levels=c("0","1"), labels = c(NA,"Android/Google"))
-data$tech_kid_os___3 = factor(data$tech_kid_os___3,levels=c("0","1"), labels = c(NA,"Windows"))
-data$tech_kid_os___4 = factor(data$tech_kid_os___4,levels=c("0","1"), labels = c(NA,"Blackberry"))
-data$tech_kid_os___5 = factor(data$tech_kid_os___5,levels=c("0","1"), labels = c(NA,"Other"))
-data$tech_kid_os___6 = factor(data$tech_kid_os___6,levels=c("0","1"), labels = c(NA,"Unsure"))
+#data$tech_kid_brand___1 = factor(data$tech_kid_brand___1,levels=c("0","1"), labels = c(NA,"iPhone or iPad"))
+#data$tech_kid_brand___2 = factor(data$tech_kid_brand___2,levels=c("0","1"), labels = c(NA,"Samsung"))
+#data$tech_kid_brand___3 = factor(data$tech_kid_brand___3,levels=c("0","1"), labels = c(NA,"LG"))
+#data$tech_kid_brand___4 = factor(data$tech_kid_brand___4,levels=c("0","1"), labels = c(NA,"HTC"))
+#data$tech_kid_brand___5 = factor(data$tech_kid_brand___5,levels=c("0","1"), labels = c(NA,"Motorola"))
+#data$tech_kid_brand___6 = factor(data$tech_kid_brand___6,levels=c("0","1"), labels = c(NA,"Other"))
+#data$tech_kid_brand___7 = factor(data$tech_kid_brand___7,levels=c("0","1"), labels = c(NA,"Don't Know"))
+#data$tech_kid_os___1 = factor(data$tech_kid_os___1,levels=c("0","1"), labels = c(NA,"iPhone or iPad"))
+#data$tech_kid_os___2 = factor(data$tech_kid_os___2,levels=c("0","1"), labels = c(NA,"Android/Google"))
+#data$tech_kid_os___3 = factor(data$tech_kid_os___3,levels=c("0","1"), labels = c(NA,"Windows"))
+#data$tech_kid_os___4 = factor(data$tech_kid_os___4,levels=c("0","1"), labels = c(NA,"Blackberry"))
+#data$tech_kid_os___5 = factor(data$tech_kid_os___5,levels=c("0","1"), labels = c(NA,"Other"))
+#data$tech_kid_os___6 = factor(data$tech_kid_os___6,levels=c("0","1"), labels = c(NA,"Unsure"))
 data$tech_kid_phone_service = factor(data$tech_kid_phone_service,levels=c("1","0","2"), labels = c("Yes","No"," Unsure or Not Applicable"))
 data$tech_kid_disconnect = factor(data$tech_kid_disconnect,levels=c("1","2","3"), labels = c("1-2 times/year","3-4 times/year","More than 5 times/year"))
 data$tech_kid_apps = factor(data$tech_kid_apps,levels=c("1","0"), labels = c("Yes","No"))
@@ -243,19 +239,19 @@ data$dem_kid_famhx___8 = factor(data$dem_kid_famhx___8,levels=c("0","1"), labels
 data$dem_kid_famhx___9 = factor(data$dem_kid_famhx___9,levels=c("0","1"), labels = c("Unchecked","Checked"))
 data$demographics_parent_complete = factor(data$demographics_parent_complete,levels=c("0","1","2"), labels = c("Incomplete","Unverified","Complete"))
 data$tech_parent_device = factor(data$tech_parent_device,levels=c("1","2","3","4"), labels = c("smart phone","tablet","both a smart phone and a tablet","neither"))
-data$tech_parent_brand___1 = factor(data$tech_parent_brand___1,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___2 = factor(data$tech_parent_brand___2,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___3 = factor(data$tech_parent_brand___3,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___4 = factor(data$tech_parent_brand___4,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___5 = factor(data$tech_parent_brand___5,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___6 = factor(data$tech_parent_brand___6,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_brand___7 = factor(data$tech_parent_brand___7,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___1 = factor(data$tech_parent_os___1,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___2 = factor(data$tech_parent_os___2,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___3 = factor(data$tech_parent_os___3,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___4 = factor(data$tech_parent_os___4,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___6 = factor(data$tech_parent_os___6,levels=c("0","1"), labels = c("Unchecked","Checked"))
-data$tech_parent_os___7 = factor(data$tech_parent_os___7,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___1 = factor(data$tech_parent_brand___1,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___2 = factor(data$tech_parent_brand___2,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___3 = factor(data$tech_parent_brand___3,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___4 = factor(data$tech_parent_brand___4,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___5 = factor(data$tech_parent_brand___5,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___6 = factor(data$tech_parent_brand___6,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_brand___7 = factor(data$tech_parent_brand___7,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___1 = factor(data$tech_parent_os___1,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___2 = factor(data$tech_parent_os___2,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___3 = factor(data$tech_parent_os___3,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___4 = factor(data$tech_parent_os___4,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___6 = factor(data$tech_parent_os___6,levels=c("0","1"), labels = c("Unchecked","Checked"))
+#data$tech_parent_os___7 = factor(data$tech_parent_os___7,levels=c("0","1"), labels = c("Unchecked","Checked"))
 data$tech_parent_phone_service = factor(data$tech_parent_phone_service,levels=c("1","0","2"), labels = c("Yes","No"," Unsure or Not Applicable"))
 data$tech_parent_disconnect = factor(data$tech_parent_disconnect,levels=c("1","2","3"), labels = c("1-2 times/year","3-4 times/year","More than 5 times/year"))
 data$tech_parent_apps = factor(data$tech_parent_apps,levels=c("1","0"), labels = c("Yes","No"))
@@ -631,19 +627,19 @@ label(data$dem_grade)="What grade are you in this year?"
 label(data$demographics_patient_complete)="Complete?"
 #label(data$tech_patient_timestamp)="Survey Timestamp"
 label(data$tech_kid_smart_device)="Do you have a smart phone or tablet? (e.g. iPhone/iPad, Samsung Galaxy, etc)?"
-label(data$tech_kid_brand___1)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=iPhone or iPad)"
-label(data$tech_kid_brand___2)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=Samsung)"
-label(data$tech_kid_brand___3)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=LG)"
-label(data$tech_kid_brand___4)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=HTC)"
-label(data$tech_kid_brand___5)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=Motorola)"
-label(data$tech_kid_brand___6)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=OtherOtro)"
-label(data$tech_kid_brand___7)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=UnsureNo estoy serguro)"
-label(data$tech_kid_os___1)="What type of smart phone or tablet do you have? (Select all that apply)(choice=iPhone or iPadiPhone o iPad)"
-label(data$tech_kid_os___2)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Android/Google)"
-label(data$tech_kid_os___3)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Windows)"
-label(data$tech_kid_os___4)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Blackberry)"
-label(data$tech_kid_os___5)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=OtherOtro)"
-label(data$tech_kid_os___6)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Unsure)"
+#label(data$tech_kid_brand___1)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=iPhone or iPad)"
+#label(data$tech_kid_brand___2)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=Samsung)"
+#label(data$tech_kid_brand___3)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=LG)"
+#label(data$tech_kid_brand___4)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=HTC)"
+#label(data$tech_kid_brand___5)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=Motorola)"
+#label(data$tech_kid_brand___6)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=OtherOtro)"
+#label(data$tech_kid_brand___7)="What brand of smart phone or tablet do you have? (Select all that apply)(choice=UnsureNo estoy serguro)"
+#label(data$tech_kid_os___1)="What type of smart phone or tablet do you have? (Select all that apply)(choice=iPhone or iPadiPhone o iPad)"
+#label(data$tech_kid_os___2)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Android/Google)"
+#label(data$tech_kid_os___3)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Windows)"
+#label(data$tech_kid_os___4)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Blackberry)"
+#label(data$tech_kid_os___5)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=OtherOtro)"
+#label(data$tech_kid_os___6)="What type of smart phone or tablet do you have? (Select all that apply)  (choice=Unsure)"
 label(data$tech_kid_phone_service)="Does your smart phone ever get disconnected (turned off) because the monthly bill has not been paid?)"
 label(data$tech_kid_disconnect)="How many times per year does your smart phone get disconnected (turned off) because the monthly bill has not been paid?)"
 label(data$tech_kid_apps)="Do you use any applications (app) or websites on your smart phone or tablet to help you with your health (e.g., exercise, eating)?)"
