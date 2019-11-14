@@ -78,6 +78,9 @@ boxy <- function(info, name, sig){
     if(paste(name, ".f", sep="") %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }
 
+
+#####older functions I'm not using anymore#####
+
 #plots percentages of change
 plotchange = function(info, col, sig){
   prop.table(table(info$redcap_event_name, info[,which(colnames(info)==col)]), margin = 1) %>%
