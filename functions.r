@@ -73,7 +73,7 @@ applying <- function(col1, col2, info){
 
 #boxplot for significant changes from first and last visits
 boxy <- function(info, name, sig){
-  ggplot(complete, aes_string(x = "redcap_event_name", y=name)) + 
+  ggplot(info, aes_string(x = "redcap_event_name", y=name)) + 
     geom_boxplot() +
     if(paste(name, ".f", sep="") %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }

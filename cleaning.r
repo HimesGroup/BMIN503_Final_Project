@@ -53,3 +53,4 @@ combined <- merge(completeFirst, completeLast, by="redcap_id")
 
 #Table with similar data as above, but formatted differently
 firstLast <- complete[complete$redcap_event_name %in% c('visit1', 'visit6'),]
+firstLast <- droplevels(firstLast)
