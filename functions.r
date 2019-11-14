@@ -25,6 +25,12 @@ dem_names <- function(info){
   info
 }
 
+#recodes sections of dataframe, pass full dataframe, 1st/last column (inclusive) to recode, plus string for recoding
+recoding <- function(info, col1, col2, code){
+  info[,colnames(select(info, col1:col2))] <- apply(info[,colnames(select(info, col1:col2))], 2, function(x) {x <- recode(x, code); x})
+  info
+}
+
 #this takes as arguments name of first and last column to combine, then loops through, seeing which columns are empty, and collecting them all in first column, then deleting it.
 cleaner <- function(string1, string2, info){
   cols <- which(colnames(info)==string1):which(colnames(info)==string2) #get col numbers for first and last string
@@ -75,10 +81,16 @@ applying <- function(col1, col2, info){
 boxy <- function(info, name, sig){
   ggplot(info, aes_string(x = "redcap_event_name", y=name)) + 
     geom_boxplot() +
-    labs(x = "Visit", title = label(complete[grep(name, colnames(complete))])) +
+    labs(x = "Visit", title = str_wrap(label(complete[grep(name, colnames(complete))])), width=60) +
     if(paste(name, ".f", sep="") %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }
 
+liner <- function(info, ids){
+  for()
+  ggplot(data=weights, aes(x=date, y=weight, group=redcap_id)) +
+    geom_line()+
+    geom_point()
+}
 
 
 #####older functions I'm not using anymore#####
@@ -105,8 +117,3 @@ plotct = function(info, col){
     labs(x = "Visit", y = "Total Count", title = label(info[which(colnames(info)==col)]))
 }
   
-#recodes sections of dataframe, pass full dataframe, 1st/last column (inclusive) to recode, plus string for recoding
-recoding <- function(info, col1, col2, code){
-  info[,colnames(select(info, col1:col2))] <- apply(info[,colnames(select(info, col1:col2))], 2, function(x) {x <- recode(x, code); x})
-  info
-}
