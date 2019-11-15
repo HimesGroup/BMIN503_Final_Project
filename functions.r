@@ -86,7 +86,6 @@ boxy <- function(info, name, sig){
 }
 
 liner <- function(info, ids){
-  for()
   ggplot(data=weights, aes(x=date, y=weight, group=redcap_id)) +
     geom_line()+
     geom_point()
