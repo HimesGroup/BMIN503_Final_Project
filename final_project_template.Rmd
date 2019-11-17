@@ -26,14 +26,19 @@ A food secure environment provides both physical and financial access to nutriti
 ### Methods
 In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+#### Downloading data and necessary packages
 The main data set used for this project was obtained from the USDA's publicly available data on the [Food Environment Atlas](https://www.ers.usda.gov/data-products/food-environment-atlas/data-access-and-documentation-downloads/). The downloaded Excel file contained several sheets pertinent to this project and have been loaded into R as a list of dataframes called "mysheets". These dataframes contain county-specific information on access and proximity to food retail providers (grocery stores, convenience stores, farmers' markets, etc), food assistance usage, food insecurity rates, diabetes and obesity rates, and socioeconomic indicators including race, age, income, etc. 
 
 To create maps, the counties polygon dataset used in Assignment 5 will be used.
 
 All necessary packages will be installed and loaded first.
 ```{r, eval=FALSE}
-#Load all necessary packages/libraries
+#Installations
 install.packages("readxl")
+```
+
+```{r, eval=FALSE}
+#Load libraries
 library(readxl)
 library(dplyr)
 library(tidyverse)
@@ -64,6 +69,9 @@ Load in the counties polygon dataset.
 ```{r, eval=FALSE}
 counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds")))
 ```
+
+#### Cleaning data
+
 The next step is to clean the data using the dplyr and tidyverse packages. Each dataframe will be updated to only include variables that will be analyzed in this project. 
 ```{r, eval=TRUE}
 Access <- mysheets$ACCESS %>%
@@ -185,6 +193,8 @@ CHILDPOVRATE15,
 PERCHLDPOV10)
 ```
 
+#### Indicator: Low Access to Stores
+
 Create a map of percent population with low access to stores in 2015. 
 ```{r, eval=TRUE}
 #Create new dataframe with variables of interest
@@ -245,6 +255,7 @@ ggplot() +
   scale_fill_gradientn(name = "Percent Population", colours = myPalette(100), limit=range(0, 100))
 ```
 
+##### Low Access and Age: Philadephia, PA versus Baltimore, MD
 Is there an association between age and access to stores? Comparison between Philadelphia, PA and Baltimore, MD
 ```{r, eval=TRUE}
 #Create dataframe of interested variables
@@ -262,12 +273,108 @@ AAPB <- data.frame(county = rep(c("Baltimore", "Philadelphia"), each=3),
 
 #Create a bar graph to visualize
 ggplot(data = AAPB, aes(x=Age, y=Percent, fill = county)) + #Load data, specify variables
-    geom_bar(stat="identity", position = "dodge") #Add a visual layer that is a barplot
+    geom_bar(stat="identity", position = "dodge") + #Add a visual layer that is a barplot
+  scale_x_discrete(limits=c("Overall", "Child", "Senior")) + #To manually adjust the order of the bars on the graph
+  labs(title="Relationship Between Age and Access to Stores in Philadelphia and Baltimore 2015") + labs(x="Age Group", y="Percent (%) Population with Low Access to Stores")
 ```
-Need to add titles and test association.
+To test association: chi-squared test?
 
-Want to do comparison of Philly w other PA counties next.
+##### Low Access: PA counties
+Consider changing to interactive map
+```{r, eval=TRUE}
+#Create dataframe of interested variables
+Access_PA2015 <- Access %>%
+  select(FIPS, State, County, PCT_LACCESS_POP15) %>%
+  filter(State=="PA")
+Access_PA2015$GEO_ID <- paste0("0500000US", Access_PA2015$FIPS)
+Access_PA2015map <- inner_join(counties, Access_PA2015, by="GEO_ID")
 
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+ggplot() +
+  geom_sf(data = Access_PA2015map) + 
+  geom_sf(data = Access_PA2015map, aes(fill = PCT_LACCESS_POP15), lwd = 0) +
+  my_theme() +
+  ggtitle("County-Level Percent Population with Low Access to Stores in Pennsylvania in 2015") +
+  scale_fill_gradientn(name = "Percent Population", colours = myPalette(100), limit=range(0, 100))
+```
+I'm surpised to see that relative to other counties in PA, Philadelphia rate is pretty low. In fact the immediate counties surrounding Philly have higher rates.
+
+##### Low Access and Race: Philadephia, PA versus Baltimore, MD
+Is there an association between age and access to stores? Comparison between Philadelphia, PA and Baltimore, MD
+```{r, eval=TRUE}
+#Create dataframe of interested variables
+Access_race_PHLBAL <- Access %>%
+  select(FIPS, County, PCT_LACCESS_POP15, PCT_LACCESS_WHITE15,
+PCT_LACCESS_BLACK15,
+PCT_LACCESS_HISP15,
+PCT_LACCESS_NHASIAN15,
+PCT_LACCESS_NHNA15,
+PCT_LACCESS_NHPI15,
+PCT_LACCESS_MULTIR15) %>%
+  filter(FIPS %in% c("42101", "24005")) %>%
+  rename(Overall = PCT_LACCESS_POP15, White = PCT_LACCESS_WHITE15, Black = PCT_LACCESS_BLACK15, Hispanic = PCT_LACCESS_HISP15,
+Asian = PCT_LACCESS_NHASIAN15,
+American_Indian_Alaskan = PCT_LACCESS_NHNA15,
+Hawaiian_Pacific_Islander = PCT_LACCESS_NHPI15,
+Multiracial = PCT_LACCESS_MULTIR15) %>%
+  select(-FIPS)
+
+ARPB <- data.frame(county = rep(c("Baltimore", "Philadelphia"), 8),
+                   Race = rep(c("Overall", "White", "Black", "Hispanic", "Asian", "American_Indian_Alaskan", "Hawaiian_Pacific_Islander", "Multiracial"), each=2),
+                   Percent = c(Access_race_PHLBAL$Overall, Access_race_PHLBAL$White, Access_race_PHLBAL$Black, Access_race_PHLBAL$Hispanic, Access_race_PHLBAL$Asian, Access_race_PHLBAL$American_Indian_Alaskan, Access_race_PHLBAL$Hawaiian_Pacific_Islander, Access_race_PHLBAL$Multiracial))
+
+#Create a bar graph to visualize
+ggplot(data = ARPB, aes(x=Race, y=Percent, fill = county)) + #Load data, specify variables
+    geom_bar(stat="identity", position = "dodge") + #Add a visual layer that is a barplot
+  scale_x_discrete(limits=c("Overall", "White", "Black", "Hispanic", "Asian", "American_Indian_Alaskan", "Hawaiian_Pacific_Islander", "Multiracial")) + #To manually adjust the order of the bars on the graph
+  labs(title="Relationship Between Race and Access to Stores in Philadelphia and Baltimore 2015") + labs(x="Race", y="Percent (%) Population with Low Access to Stores")
+```
+Would've expeted the rate to be higher in minority populatiosn like Blacks and Hispanics. Not white. 
+
+#### Food Retail Environment
+
+##### SNAP and WIC authorized stores
+```{r, eval=TRUE}
+#Create new dataframe with variables of interest
+LAI2015 <- Access %>%
+  select(FIPS, PCT_LACCESS_LOWI15)
+LAI2015$GEO_ID <- paste0("0500000US", LAI2015$FIPS)
+LAI2015map <- inner_join(counties, LAI2015, by="GEO_ID")
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+ggplot() +
+  geom_sf(data = LAI2015map) + 
+  geom_sf(data = LAI2015map, aes(fill = PCT_LACCESS_LOWI15), lwd = 0) +
+  my_theme() +
+  ggtitle("County-Level Percent Population with Low Income and Low Access to Stores in the US in 2015") +
+  scale_fill_gradientn(name = "Percent Population", colours = myPalette(100), limit=range(0, 100))
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
