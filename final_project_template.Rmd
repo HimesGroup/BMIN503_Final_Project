@@ -16,7 +16,7 @@ options(width = 400)
 ### Overview
 Food insecurity, or a "lack of consistent access to enough food for an active, healthy life", is a major public health issue in the United States, where approximately 11% of households experienced food insecurity in 2018 (1). The United States Department of Agriculture (USDA) publishes a Food Environment Atlas, which contains data on over 275 variables with respect to food insecurity, including access to food retail, use of government food assistance programs, health and socioeconomic indicators, etc. These data are collected from various sources, span several years and geographic levels, and have been made publicly available. The goal of this project is to assess how the food retail environment varies across time and space, and to test for associations between access to food and the development of adverse health outcomes. In addition, the effect of other variables such as socioeconomic indicators and the use of government assistance programs such as SNAP will be incorporated into the analyses. Geospatial differences will be analyzed, with a specific focus on Philadelphia in comparision to 1) other counties in Pennslyvania, and 2) other large cities in the United States. 
 
-[Github Repository](insert url for final github repo)
+[Github Repository](https://github.com/naseernawar/BMIN503_Final_Project)
 
 ### Introduction
 In the United States, approximately 11% of households were food insecure in 2018 (1). In Philadelphia, this rate is nearly double the national average at 18.3%, and more than one out of every five Philadelphian struggles with basic food access (2). Food insecurity contributes to the development of chronic diseases such as heart disease and diabetes, both of which are two of the United State’s top ten leading causes of death (3). Additionally, food insecurity affects children’s cognitive development, and their ability to excel in school (4). Thus, food insecurity has long-lasting impacts on the productivity of a population, and understanding the regional factors that contribute to food insecurity and adverse health outcomes is vital for creating effective local and national interventions. 
@@ -28,6 +28,8 @@ In the first paragraph, describe the data used and general methodological approa
 
 The main data set used for this project was obtained from the USDA's publicly available data on the [Food Environment Atlas](https://www.ers.usda.gov/data-products/food-environment-atlas/data-access-and-documentation-downloads/). The downloaded Excel file contained several sheets pertinent to this project and have been loaded into R as a list of dataframes called "mysheets". These dataframes contain county-specific information on access and proximity to food retail providers (grocery stores, convenience stores, farmers' markets, etc), food assistance usage, food insecurity rates, diabetes and obesity rates, and socioeconomic indicators including race, age, income, etc. 
 
+To create maps, the counties polygon dataset used in Assignment 5 will be used.
+
 All necessary packages will be installed and loaded first.
 ```{r, eval=FALSE}
 #Load all necessary packages/libraries
@@ -35,9 +37,12 @@ install.packages("readxl")
 library(readxl)
 library(dplyr)
 library(tidyverse)
+library(ggplot2)
+library(RColorBrewer)
+library(leaflet)
 ```
 
-The data downloaded has been saved into the working directory and is loaded into R. Note that names of some of the sheets were slightly modified in Excel to exclude spaces and make them R-compatible
+The data downloaded has been saved into the working directory and is loaded into R. Note that names of some of the sheets were slightly modified in Excel to exclude spaces and make them R-compatible.
 ```{r, eval=FALSE}
 #Load in data
 #The following function allows one to read in multiple sheets from one Excel file into a list, with each sheet representing a separate dataframe within the list.
@@ -55,10 +60,224 @@ mysheets <- read_excel_allsheets("USDAFoodEnvironmentAtlasMarch2018.xls")
 head(mysheets$ACCESS) #to check that data has been loaded properly
 ```
 
+Load in the counties polygon dataset.
+```{r, eval=FALSE}
+counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds")))
+```
 The next step is to clean the data using the dplyr and tidyverse packages. Each dataframe will be updated to only include variables that will be analyzed in this project. 
 ```{r, eval=TRUE}
+Access <- mysheets$ACCESS %>%
+  select("FIPS",	"State",	"County", "PCH_LACCESS_POP_10_15",
+"PCT_LACCESS_POP10",
+"PCT_LACCESS_POP15", "PCH_LACCESS_LOWI_10_15",
+"PCT_LACCESS_LOWI10",
+"PCT_LACCESS_LOWI15", "PCH_LACCESS_HHNV_10_15",
+"PCT_LACCESS_HHNV10",
+"PCT_LACCESS_HHNV15", "PCT_LACCESS_SNAP15",
+"PCT_LACCESS_CHILD10",
+"PCT_LACCESS_CHILD15", 
+PCH_LACCESS_SENIORS_10_15,
+PCT_LACCESS_SENIORS10,
+PCT_LACCESS_SENIORS15,
+"PCT_LACCESS_WHITE15",
+"PCT_LACCESS_BLACK15",
+"PCT_LACCESS_HISP15",
+"PCT_LACCESS_NHASIAN15",
+"PCT_LACCESS_NHNA15",
+"PCT_LACCESS_NHPI15",
+"PCT_LACCESS_MULTIR15")
+  
+Stores <- mysheets$STORES %>% #Turns out I don't need to add "" for the column names!
+  select(FIPS,	State,	County, GROCPTH09,
+GROCPTH14,
+PCH_GROCPTH_09_14,
+SUPERCPTH09,
+SUPERCPTH14,
+PCH_SUPERCPTH_09_14,
+CONVSPTH09,
+CONVSPTH14,
+PCH_CONVSPTH_09_14,
+SPECSPTH09,
+SPECSPTH14,
+PCH_SPECSPTH_09_14,
+SNAPSPTH12,
+SNAPSPTH16,
+PCH_SNAPSPTH_12_16,
+WICSPTH08,
+WICSPTH12,
+PCH_WICSPTH_08_12)
 
+Restaurants <- mysheets$RESTAURANTS %>% 
+  select(FIPS,	State,	County,
+  FFRPTH09,
+FFRPTH14,
+PCH_FFRPTH_09_14,
+FSRPTH09,
+FSRPTH14,
+PCH_FSRPTH_09_14)
+
+Assistance <- mysheets$ASSISTANCE %>% 
+  select(FIPS,	State,	County,
+  REDEMP_SNAPS12,
+REDEMP_SNAPS16,
+PCH_REDEMP_SNAPS_12_16,
+PCT_SNAP12,
+PCT_SNAP16,
+PCH_SNAP_12_16,
+SNAP_PART_RATE08,
+SNAP_PART_RATE13,
+PCT_NSLP09,
+PCT_NSLP15,
+PCH_NSLP_09_15,
+PCT_FREE_LUNCH09,
+PCT_FREE_LUNCH14,
+PCT_REDUCED_LUNCH09,
+PCT_REDUCED_LUNCH14,
+PCT_SBP09,
+PCT_SBP15,
+PCH_SBP_09_15,
+PCT_SFSP09,
+PCT_SFSP15,
+PCH_SFSP_09_15,
+REDEMP_WICS08,
+REDEMP_WICS12,
+PCH_REDEMP_WICS_08_12,
+PCT_WIC09,
+PCT_WIC15,
+PCH_WIC_09_15,
+PCT_CACFP09,
+PCT_CACFP15,
+PCH_CACFP_09_15)
+
+Insecurity <- mysheets$INSECURITY
+
+Local <- mysheets$LOCAL %>% 
+  select(FIPS,	State,	County,
+  FMRKTPTH09,
+FMRKTPTH16,
+PCH_FMRKTPTH_09_16,
+PCT_FMRKT_SNAP16,
+PCT_FMRKT_WIC16,
+PCT_FMRKT_WICCASH16,
+PCT_FMRKT_SFMNP16)
+
+Health <- mysheets$HEALTH %>% 
+  select(FIPS,	State,	County,
+  PCT_DIABETES_ADULTS08,
+PCT_DIABETES_ADULTS13,
+PCT_OBESE_ADULTS08,
+PCT_OBESE_ADULTS13)
+
+SE <- mysheets$SOCIOECONOMIC %>% 
+  select(FIPS,	State,	County,
+  PCT_NHWHITE10,
+PCT_NHBLACK10,
+PCT_HISP10,
+PCT_NHASIAN10,
+PCT_NHNA10,
+PCT_NHPI10,
+PCT_65OLDER10,
+PCT_18YOUNGER10,
+MEDHHINC15,
+POVRATE15,
+PERPOV10,
+CHILDPOVRATE15,
+PERCHLDPOV10)
 ```
+
+Create a map of percent population with low access to stores in 2015. 
+```{r, eval=TRUE}
+#Create new dataframe with variables of interest
+LA2015 <- Access %>%
+  select(FIPS, PCT_LACCESS_POP15)
+LA2015$GEO_ID <- paste0("0500000US", LA2015$FIPS)
+LA2015map <- inner_join(counties, LA2015, by="GEO_ID")
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+ggplot() +
+  geom_sf(data = LA2015map) + 
+  geom_sf(data = LA2015map, aes(fill = PCT_LACCESS_POP15), lwd = 0) +
+  my_theme() +
+  ggtitle("County-Level Percent Population with Low Access to Stores in the US in 2015") +
+  scale_fill_gradientn(name = "Percent Population", colours = myPalette(100), limit=range(0, 100))
+```
+
+Create a map of percent population with low access to stores that also had low income in 2015.
+```{r, eval=TRUE}
+#Create new dataframe with variables of interest
+LAI2015 <- Access %>%
+  select(FIPS, PCT_LACCESS_LOWI15)
+LAI2015$GEO_ID <- paste0("0500000US", LAI2015$FIPS)
+LAI2015map <- inner_join(counties, LAI2015, by="GEO_ID")
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+ggplot() +
+  geom_sf(data = LAI2015map) + 
+  geom_sf(data = LAI2015map, aes(fill = PCT_LACCESS_LOWI15), lwd = 0) +
+  my_theme() +
+  ggtitle("County-Level Percent Population with Low Income and Low Access to Stores in the US in 2015") +
+  scale_fill_gradientn(name = "Percent Population", colours = myPalette(100), limit=range(0, 100))
+```
+
+Is there an association between age and access to stores? Comparison between Philadelphia, PA and Baltimore, MD
+```{r, eval=TRUE}
+#Create dataframe of interested variables
+Access_age_PHLBAL <- Access %>%
+  select(FIPS, County, PCT_LACCESS_POP15,
+PCT_LACCESS_CHILD15,
+PCT_LACCESS_SENIORS15) %>%
+  filter(FIPS %in% c("42101", "24005")) %>%
+  rename(Overall = PCT_LACCESS_POP15, Children = PCT_LACCESS_CHILD15, Seniors = PCT_LACCESS_SENIORS15) %>%
+  select(-FIPS)
+
+AAPB <- data.frame(county = rep(c("Baltimore", "Philadelphia"), each=3),
+                   Age = rep(c("Overall", "Child", "Senior"), 2),
+                   Percent = c(17.5, 3.98, 2.52, 1.21, 0.158, 0.221))
+
+#Create a bar graph to visualize
+ggplot(data = AAPB, aes(x=Age, y=Percent, fill = county)) + #Load data, specify variables
+    geom_bar(stat="identity", position = "dodge") #Add a visual layer that is a barplot
+```
+#Transposing the dataframe to make the bar graphing easier
+Access_age_PHLBAL_t <- data.frame(t(Access_age_PHLBAL))
+Access_age_PHLBAL_t %>%
+  rename(Baltimore = X1, Philadelphia = X2)
+
+AAAt <- Access_age_PHLBAL_t[-c(1),] 
+
+PCT_LACCESS_POP15
+PCT_LACCESS_CHILD15
+PCT_LACCESS_SENIORS15
+
+# Use a fixed color scale to more easily compare percents between maps 
+prev_min <- min(c(counties2$age.adjusted.percent.2004, counties2$age.adjusted.percent.2014), na.rm = TRUE)
+prev_max <- max(c(counties2$age.adjusted.percent.2004, counties2$age.adjusted.percent.2014), na.rm = TRUE)
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
