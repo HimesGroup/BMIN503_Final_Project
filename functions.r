@@ -103,28 +103,27 @@ lining <- function(info) {
 }
 
 #plots all of the weights, pre and post beginning of study, along with linear regression lines for that part
-plotting <- function(info, pre, post) {
-  for(ins in levels(info$redcap_id)) {
-    if(length(which(prestudy$redcap_id==ins)) > 1) {
+plotting <- function(ins, pre, post) {
+    if(length(which(pre$redcap_id==ins)) > 1) {
       precoeff <- lm(weight ~ days, data=subset(pre, redcap_id==ins))$coefficients
       precolor <- "blue4"
     } else {
       precoeff <- c(0,0)
       precolor <-FALSE
     }
-    if(length(which(poststudy$redcap_id==ins)) >  1) {
+    if(length(which(post$redcap_id==ins)) >  1) {
       postcoeff <- lm(weight ~ days, data=subset(post, redcap_id==ins))$coefficients
       postcolor <- "firebrick1"
     } else {
       postcoeff <- c(0,0)
       postcolor <- FALSE
     }
-    print(ggplot() +
-            geom_point(data = subset(pre, redcap_id==ins), aes(x=days, y=weight), color="firebrick1") +
-            geom_point(data = subset(post, redcap_id==ins), aes(x=days, y=weight), color="blue4") +
-            geom_segment(aes(x = 0, y =precoeff[1], xend=608, yend=(precoeff[1]+608*precoeff[2]), color = precolor), data=pre) +
-            geom_segment(aes(x = 608, y =(postcoeff[1]+postcoeff[2]*608), xend=1000, yend=(postcoeff[1]+1000*postcoeff[2]), color = postcolor), data=post) +
-            theme(legend.position="none")
-    )
-  }
+    ggplot() +
+      #geom_point(data = subset(pre, redcap_id==ins), aes(x=days, y=weight), color="firebrick1") +
+      #geom_point(data = subset(post, redcap_id==ins), aes(x=days, y=weight), color="blue4") +
+      geom_segment(aes(x = 0, y =precoeff[1], xend=608, yend=(precoeff[1]+608*precoeff[2]), color = precolor, alpha=1), data=pre) +
+      geom_segment(aes(x = 608, y =(postcoeff[1]+postcoeff[2]*608), xend=1000, yend=(postcoeff[1]+1000*postcoeff[2]), color = postcolor), data=post) +
+      theme(legend.position="none") +
+      theme(axis.title.x=element_blank()) +
+      theme(axis.title.y=element_blank())
 }
