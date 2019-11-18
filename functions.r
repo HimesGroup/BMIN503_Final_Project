@@ -93,6 +93,8 @@ liner <- function(info, ids){
 
 #this just groups the data into sets pre and post start of the study, then gets coefficients for linear regression
 lining <- function(info) {
+  measures <- as.data.frame(levels(info$redcap_id))
+  colnames(measures) <- "redcap_id"
   for(ins in levels(info$redcap_id)) {
     measures$slope[which(measures$redcap_id==ins)] <- lm(weight ~ days, data=subset(info, redcap_id==ins))$coefficients[2]
     measures$intercept[which(measures$redcap_id==ins)] <- lm(weight ~ days, data=subset(info, redcap_id==ins))$coefficients[1]
