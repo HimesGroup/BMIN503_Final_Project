@@ -91,28 +91,38 @@ liner <- function(info, ids){
     geom_point()
 }
 
-
-#####older functions I'm not using anymore#####
-
-#plots percentages of change
-plotchange = function(info, col, sig){
-  prop.table(table(info$redcap_event_name, info[,which(colnames(info)==col)]), margin = 1) %>%
-    as.data.frame() %>%
-    ggplot(aes(x=Var1, y=Freq, group=Var2)) +
-    geom_line(aes(linetype=Var2, color=Var2)) +
-    geom_point(aes(shape=Var2)) +
-    facet_grid(Var2 ~ .) +
-    labs(x = "Visit", y = "Percentage per Visit", title = label(info[which(colnames(info)==col)])) +
-    if(col %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
+#this just groups the data into sets pre and post start of the study, then gets coefficients for linear regression
+lining <- function(info) {
+  for(ins in levels(info$redcap_id)) {
+    measures$slope[which(measures$redcap_id==ins)] <- lm(weight ~ days, data=subset(info, redcap_id==ins))$coefficients[2]
+    measures$intercept[which(measures$redcap_id==ins)] <- lm(weight ~ days, data=subset(info, redcap_id==ins))$coefficients[1]
+  }
+  return(measures)
 }
 
-#plots actual counts of change
-plotct = function(info, col){
-  table(info$redcap_event_name, info[,which(colnames(info)==col)]) %>%
-    as.data.frame() %>%
-    ggplot(aes(x=Var1, y=Freq, group=Var2)) +
-    geom_line(aes(linetype=Var2, color=Var2)) +
-    geom_point(aes(shape=Var2)) +
-    labs(x = "Visit", y = "Total Count", title = label(info[which(colnames(info)==col)]))
+#plots all of the weights, pre and post beginning of study, along with linear regression lines for that part
+plotting <- function(info, pre, post) {
+  for(ins in levels(info$redcap_id)) {
+    if(length(which(prestudy$redcap_id==ins)) > 1) {
+      precoeff <- lm(weight ~ days, data=subset(pre, redcap_id==ins))$coefficients
+      precolor <- "blue4"
+    } else {
+      precoeff <- c(0,0)
+      precolor <-FALSE
+    }
+    if(length(which(poststudy$redcap_id==ins)) >  1) {
+      postcoeff <- lm(weight ~ days, data=subset(post, redcap_id==ins))$coefficients
+      postcolor <- "firebrick1"
+    } else {
+      postcoeff <- c(0,0)
+      postcolor <- FALSE
+    }
+    print(ggplot() +
+            geom_point(data = subset(pre, redcap_id==ins), aes(x=days, y=weight), color="firebrick1") +
+            geom_point(data = subset(post, redcap_id==ins), aes(x=days, y=weight), color="blue4") +
+            geom_segment(aes(x = 0, y =precoeff[1], xend=608, yend=(precoeff[1]+608*precoeff[2]), color = precolor), data=pre) +
+            geom_segment(aes(x = 608, y =(postcoeff[1]+postcoeff[2]*608), xend=1000, yend=(postcoeff[1]+1000*postcoeff[2]), color = postcolor), data=post) +
+            theme(legend.position="none")
+    )
+  }
 }
-  
