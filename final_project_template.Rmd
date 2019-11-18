@@ -1,6 +1,6 @@
 ---
-title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+title: "Interferon-driven immunotherapy resistance and response signatures in human hepatocellular carcinoma"
+author: "Caitlin Foley"
 output: 
   html_document:
     toc: false 
@@ -15,18 +15,131 @@ options(width = 400)
 Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but keep the headers.
 
 ### Overview
-In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+Anti-PD1 therapy has revolutionized cancer treatment however, in hepatocellular carcinoma (HCC) only 20% of respond to treatment.  The mechanisms underlying HCC resistance to anti-PD1 are presently unknown.  This work analyzes HCC RNA sequencing data from the Cancer Genome Atlas (TCGA) to assess whether signatures predictive of anti-PD1 therapy resistance in other tumor types are also present in HCC.
+
+Include a link to your final project GitHub repository.
 
 
 ### Introduction 
-In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
+Hepatocellular carcinoma (HCC) is a primary malignancy of liver hepatocytes and the third leading cause of cancer mortality world wide.  In recent years, new systemic therapies have been approved for the treatment of advanced HCC, including immune checkpoint blockade (ICB) targeting programmed cell death protein 1 (PD1).  Unfortunately, only a minority of HCC patients (20%) respond to anti-PD1 therapy and there is little understanding of how anti-PD1 resistance occurs.  Our laboratory has previosly shown in melanoma, breast, and lung cancers that a gene expression signature composed of a subset of interferon (IFN) target genes, termed ISG.RS, predicts acquired resistance to ICB.  Re-analyzing the RNA sequencing data from the TCGA HCC project will offer insights as to whether HCC ICB resistance is mediated by this ISG.RS signature.
 
-In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+Despite precision medicine advances in other tumor types, molecular phenotyping has been limited in HCC as this cancer is typically diagnosed based on radiographic criteria and not biopsied.  However, in 2017, TCGA released molecular profiling including RNA sequencing on 196 HCCs.  This profiling has confirmed the involvement of previously known pathways in HCC pathogenesis, including TP53, beta-catenin, and TERT, however predictive molecular phenotypes of treatment response remain elusive.  Re-analysis of these data crosses multiple disciplines, utilizing gene expression signatures initially described in human data sets and then confirmed mechanistically in mouse models, leveraging RNA sequencing analysis pipelines developed by data scientists, and correlating these findings to clinical care of HCC.  A significant challenge in this analysis is the heterogenity of HCC tumors in the data set in terms of etiology of HCC (hepatitis B, hepatitis C, alcoholic cirrhosis, etc) and tumor grade.  Additionally, these specimens were obtained from surgical resections and may not be representative of tumors which would be exposed to anti-PD1 therapy. However, HCC molecular phenotyping is presently accelerating with a Chinese cohort released in October so additional data sets can be added to this analysis to improve power. 
+
 
 
 ### Methods
 In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+```{r}
+library(tidyverse)
+library(biomaRt) #enables retrieval from biomart
+library(rjson) #reads JSON file (TCGA metadata)
+library(pheatmap) #generates clustered heatmaps
+library(TCGAutils) #From bioconductor to convert UUIDs
+library(RColorBrewer)
+```
+
+Manipulating HCC sequencing counts data frame to include patient UUID
+```{r}
+setwd("~/repo/BMIN503_Final_Project")
+
+#load table of RNA counts from TCGA HCC data set that Jingya Qiu combined into one matrix and normalized by DESeq2.  Check.names=F necessary so R does not add z to unsupported file names
+HCCseq <- read.table("TCGA_LIHC_RNAseq_normalized_counts_DESeq2_vst.txt", check.names = FALSE)
+
+
+#to merge with meta data, need to convert col names (derived from file names) to UUID using manifest that downloaded original data as a key
+manifest <- read.table("gdc_manifest_LIHC.txt", sep="\t", check.names = FALSE, header=T, stringsAsFactors=F)
+df_fileUUIDtoCaseUUID <- UUIDtoUUID(manifest$id) #TCGAutils file-->case UUID
+
+rna.dat_fileUUID <- manifest$id[match(colnames(HCCseq), sapply(strsplit(manifest$filename, split="\\."), function(x) x[[1]]))] #truncates filename to remove extensions, translate HCCseq colnames (filenames) to file UUID from manifest
+rna.dat_caseUUID <- df_fileUUIDtoCaseUUID$cases.case_id[match(rna.dat_fileUUID, df_fileUUIDtoCaseUUID$file_id)] #translate HCCseq file UUID to case UUID
+colnames(HCCseq) <- rna.dat_caseUUID
+
+#Add HGNC column to Ensembl ID
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+ensembl_gene_id <- c(rownames(HCCseq))
+bm <- getBM(attributes=c("ensembl_gene_id","hgnc_symbol"), values=rownames(HCCseq), mart=ensembl) #generate data frame of ensembl ID and HGNC
+HCCseq <- mutate(HCCseq, ensembl_gene_id = rownames(HCCseq)) #makes ensembl ID a column instead of row names
+HCCs <- cbind(ensembl_gene_id, HCCseq)
+HCCseq_hgnc <- inner_join(bm, HCCseq, by = "ensembl_gene_id") #add HGNC symbol, removes any genes without HGNC
+
+#having difficulty converting hgnc to row names due to duplicates
+hgnc_occur <- data.frame(table(HCCseq_hgnc$hgnc_symbol))
+hgnc_occur[hgnc_occur$Freq > 1,] #six HGNC names map to 2 ensembl id
+#ensmbl_occur <- data.frame(table(HCCseq_hgnc$ensembl_gene_id))
+#ensmbl_occur[ensmbl_occur$Freq>1,] #three ensembl have 2 rows
+
+#remove duplicated hgnc rows so I can use them for row names
+HCCseq_hgnc <- HCCseq_hgnc[!duplicated(HCCseq_hgnc$hgnc_symbol),]
+hgnc_occur2 <- data.frame(table(HCCseq_hgnc$hgnc_symbol))
+hgnc_occur2[hgnc_occur2$Freq > 1,] #Fixed
+rownames(HCCseq_hgnc) <- HCCseq_hgnc[,2]
+HCCseq_hgnc <- HCCseq_hgnc[,-1] #remove ensmbl column, will keep hgnc to make it easier to filter by gene set
+HCCseq_hgnc <- cbind(rownames(HCCseq_hgnc), HCCseq_hgnc)
+colnames(HCCseq_hgnc)[1] <- "hgnc_symbol"
+```
+
+
+Examine gene sets of interferon target genes that predict resistance to cancer treatment (ISG.RS) or response (IFNG.GS)
+```{r}
+#load ISG.RS and IFNG.GS gene lists
+ISG.RS <- read.delim("ISG.RS.txt", sep="", header=F, stringsAsFactors=F)
+ISG.RS <- ISG.RS$V1
+IFNG.GS <- read.delim("IFNG.GS.txt", sep="", header=F, stringsAsFactors = F)
+IFNG.GS <- IFNG.GS$V1
+
+#Filter data set down to 37 genes in resistance signature
+HCCseq_ISG.RS <- HCCseq_hgnc[as.numeric(na.omit(match(ISG.RS, HCCseq_hgnc$hgnc_symbol))), 1:(ncol(HCCseq_hgnc)-1)]
+#Remove hgnc column.
+HCCseq_ISG.RS <- HCCseq_ISG.RS[,-1]
+
+
+#Filter data set down to 176 genes in IFNG responsive signature
+HCCseq_IFNG.GS <- HCCseq_hgnc[as.numeric(na.omit(match(IFNG.GS, HCCseq_hgnc$hgnc_symbol))), 1:(ncol(HCCseq_hgnc)-1)]
+#Remove ensmbl and hgnc columns. make rownames hgnc symbol.
+HCCseq_IFNG.GS <- HCCseq_IFNG.GS[,-1]
+```
+
+Check with SNP in type III interferon (IL28) which generates either IFNL4 or psuedogene has variable expression and might predict IL28 SNP status
+
+```{r}
+lambda <- filter(HCCseq_hgnc, HCCseq_hgnc$hgnc_symbol == "IFNL4")
+quantile(lambda)
+```
 
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+```{r}
+ ## 'Overwrite' default draw_colnames with your own version 
+assignInNamespace(x="draw_colnames", value="draw_colnames_45",
+ns=asNamespace("pheatmap"))
+
+p_theme <- theme_classic(base_size = 12) +
+	theme(axis.ticks = element_line(color = "black"),
+		axis.text = element_text(color = "black", size = 12),
+		axis.title.x=element_blank(),
+		legend.position="none")
+
+color_palette <- rev(brewer.pal(11, "RdBu"))
+
+#Graph IFN signatures
+draw_colnames_45 <- function (coln, gaps, ...) {
+    coord = pheatmap:::find_coordinates(length(coln), gaps)
+    x = coord$coord - 0.5 * coord$size
+    res = textGrob(coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"), vjust = 0.5, hjust = 1, rot = 45, gp = gpar(...))
+    return(res)}
+
+
+p <- pheatmap(t(scale(t(HCCseq_IFNG.GS))), color=color_palette, border_color=NA, fontsize_row=3, show_colnames=F, cluster_cols=T, cluster_rows=T)
+
+pr <- pheatmap(t(scale(t(HCCseq_ISG.RS))), color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T)
+#a few random genes in random samples are skewing the color scale and not centering on 0, rescale data to bring white to zero
+ISG_meta <- as.numeric(colMeans(t(scale(t(HCCseq_ISG.RS)))))
+quantile(ISG_meta)
+mat_scaled <- t(scale(t(HCCseq_ISG.RS)))
+mat_scaled[which(mat_scaled>5)] <- 5 #cap any scale values >5 at 5
+heatmap(mat_scaled, color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T)
+
+```
+
