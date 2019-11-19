@@ -36,9 +36,17 @@ library(knitr) # for table formatting
 theme_set(theme_bw())
 ```
 
+# TO-DO
 
 1. confirm no PHI displayed in report (i.e. str())
+1. comment on LR and ML models
+1. do we need to create dummy volumes
+1. create fake data to allow report to run
 1. confirm works with test data - comment out PHI data pulls
+1. show run chart after intervention ?
+  1. balancing measures
+    1. change in antibiotic use (non-amox)
+    1. change in smart-set use (? shift-away)
 
 #### Abbreviations Used
 Abbreviation | 
@@ -1057,6 +1065,10 @@ roc(coh.mod_var$dur_compl ~ predict(f.full, type='response'), plot=T, print.auc=
 
 #### Training and Test Samples
 ```{r}
+library(caret)
+library(randomForest)
+library(doParallel)
+
 
 top.meds <- meds.coh %>%
   group_by(abx_name) %>%
@@ -1073,12 +1085,26 @@ abx.coh <- meds.coh %>%
          ) 
 
 
-# library(caret)
+
+dummies <- dummyVars(abx_name ~ ., data=abx.coh)
+# head(predict(dummies, abx.coh), 10)
+
+dummies <- as_tibble(predict(dummies, abx.coh))
+
+abx.coh <- cbind(abx_name = abx.coh$abx_name, dummies)
 
 set.seed(54321)
 idxtrain <- caret::createDataPartition(y = abx.coh$abx_name, p = 0.7, list =F)
 train <- abx.coh[idxtrain,]
 testing <- abx.coh[-idxtrain,]
+
+pp <- preProcess(train %>% select(age_yr, arr_yr), c('scale','center','nzv')) # scale and center continuous variables
+
+transformed <- predict(pp, newdata = train)
+
+pp.test <- preProcess(testing %>% select(age_yr, arr_yr), c('scale','center','nzv')) # scale and center continuous variables
+
+trans.test <- predict(pp.test, newdata = testing)
 ```
 
 Create Balanced Sample with respect to antibiotic name
@@ -1090,11 +1116,16 @@ Create Balanced Sample with respect to antibiotic name
 
 ```{r}
 
-# Load necessary packages for classification.
-library(randomForest)
-library(doParallel)
-library(caret)
+# mlr <- nnet::multinom(abx_name ~ ., data = train)
+# summary(mlr)
+# 
+# mlr.pred <- predict(mlr, newdata = testing)
+# 
+# confusionMatrix(mlr.pred, testing$abx_name)
+
+
 ```
+
 
 ```{r}
 # Initiate multicore processing to decrease time required to fit models - particularly RF
@@ -1106,17 +1137,9 @@ registerDoParallel(cl)
 Preprocess numeric data and establish training method.
 ```{r cache=F}
 
-pp <- preProcess(train, c('scale','center','nzv')) # scale and center continuous variables
-
-transformed <- predict(pp, newdata = train)
-
-pp.test <- preProcess(testing, c('scale','center','nzv')) # scale and center continuous variables
-
-trans.test <- predict(pp.test, newdata = testing)
-
 tr_control <- trainControl(## 10-fold CV
                            method = "repeatedcv",
-                           number = 5,
+                           number = 10,
                            repeats = 3,
                            verboseIter = T,
                            sampling = 'down') # upsampling would be preferable so as not to drop data. it did not result in significantly better results, so for performance (time spent fitting models) reasons, will use down sampling
@@ -1199,13 +1222,17 @@ confusionMatrix(predict(nb.abx, trans.test), testing$abx_name)
 
 set.seed(1234)
 
+tunegrid <- expand.grid(.mtry = (1:10)) 
+
 system.time(
 rf.abx <- train(
             abx_name ~ ., 
             data = transformed, 
             method = "rf",
             trControl = tr_control,
-            ntree = 300
+            ntree = 500,
+            metric = 'Accuracy',
+            tuneGrid = tunegrid
             )
 )
 
@@ -1221,7 +1248,7 @@ Release multicore cluster.
 ```{r}
 
 stopCluster(cl)
-
+rm(cl)
 
 ```
 
