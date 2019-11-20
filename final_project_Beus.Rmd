@@ -39,14 +39,9 @@ theme_set(theme_bw())
 # TO-DO
 
 1. confirm no PHI displayed in report (i.e. str())
-1. comment on LR and ML models
-1. do we need to create dummy volumes
 1. create fake data to allow report to run
 1. confirm works with test data - comment out PHI data pulls
-1. show run chart after intervention ?
-  1. balancing measures
-    1. change in antibiotic use (non-amox)
-    1. change in smart-set use (? shift-away)
+
 
 #### Abbreviations Used
 Abbreviation | 
@@ -91,7 +86,6 @@ Our ASP pharmacist (TM) has been crucial to help define which clinical actions a
 
 
 ### Methods
-**In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.**
 
 The data is derived from an institutional data warehouse. JB wrote SQL queries to extract the data from the data warehouse. We included data for patients seen in the ED between July 1, 2011 and June 30, 2018. Patients were included if:
 
@@ -386,14 +380,14 @@ tmp <- meds.cln.op %>%
     rx_days = ifelse(is.na(rx_days),fill_est_days,rx_days)
   )
 
-set.seed(12345) # for sample to display below
+set.seed(123) # for sample to display below
 
 tmp %>%
   group_by(abx_name) %>%
   mutate(abx_wt = 1/n()) %>%
   ungroup() %>%
   sample_n(size = 10, weight = abx_wt) %>%
-  select(abx_name, SIG, rx_days) %>%
+  select(Antibiotic = abx_name, Rx_Sig = SIG, Duration = rx_days) %>%
   kable()
 
 # when we look at examples where no duration was extracted, there are only cases where there is not enough information available to infer it (~ 8 cases)
@@ -1009,15 +1003,13 @@ coh.sub %>%
 
 With all variables included in the model, several features remained significant. As might be expected from univariable analyses above, these included:
 
-* Year of Visit
-* Patient Age
-* Provider Type
-* Whether the order set was used
-
-Smaller effects were observed for:
-
-* Time of day (particularly late morning)
-* Day of the week
+* Year of Visit - more adherence with later (more recent years)
+* Patient Age - better adherence for older patients
+* Provider Type - relative to attending physicians, residents and fellows were more likely to prescribe adherent durations, while advanced-practice providers were less likely to prescribe adherent durations
+* Whether the order set was used - use of the Order Set was associated with worse adherence to the Order Set (possibly because of the default, longer duration)
+* Time of day - late morning prescriptions were more likely to be adherent
+* Day of the week - prescriptions on Friday and Saturday were more likely to be adherent (the reason for this is unclear)
+* Prescriptions for Amoxicillin/Clav (Augmentin) were less likely to be adherent to the guideline
 
 ```{r}
 
@@ -1057,25 +1049,27 @@ roc(coh.mod_var$dur_compl ~ predict(f.full, type='response'), plot=T, print.auc=
 
 ```
 
-# Discussion of Logistic Model Results
-
-**further discuss results above**
-
 ### Prediction Model for Antibiotic Choice
+
+Although not a primary outcome, we were interested in whether the chosen covariates could be used to predict which antibiotic would be prescribed. We used several machine learning models to explore this - penalized multinomial regression, naive Bayes, and random forest.
 
 #### Training and Test Samples
 ```{r}
 library(caret)
 library(randomForest)
 library(doParallel)
+library(pROC) #used for multiclass roc
+library(DMwR) # used for SMOTE resampling
 
 
+# choose most common antibiotics
 top.meds <- meds.coh %>%
   group_by(abx_name) %>%
   summarise(n = n()) %>%
-  filter(n > 100) %>%
+  filter(n > 250) %>%
   pull(abx_name)
 
+# select covariates of interest
 abx.coh <- meds.coh %>%
   filter(abx_name %in% top.meds) %>%
   select(abx_name , race_f, age_yr, sex_f, MED_COMPLEX_IND, arr_yr, ss_used_med, prov_rx) %>%
@@ -1085,7 +1079,7 @@ abx.coh <- meds.coh %>%
          ) 
 
 
-
+# create dummy variables for multi-level factors
 dummies <- dummyVars(abx_name ~ ., data=abx.coh)
 # head(predict(dummies, abx.coh), 10)
 
@@ -1093,37 +1087,19 @@ dummies <- as_tibble(predict(dummies, abx.coh))
 
 abx.coh <- cbind(abx_name = abx.coh$abx_name, dummies)
 
+# use caret package to split data into test and training sets (70%/30%)
 set.seed(54321)
-idxtrain <- caret::createDataPartition(y = abx.coh$abx_name, p = 0.7, list =F)
+idxtrain <- createDataPartition(y = abx.coh$abx_name, p = 0.7, list =F)
 train <- abx.coh[idxtrain,]
 testing <- abx.coh[-idxtrain,]
 
-pp <- preProcess(train %>% select(age_yr, arr_yr), c('scale','center','nzv')) # scale and center continuous variables
+# scale and center continuous variables
+pp <- preProcess(train %>% select(age_yr, arr_yr), c('scale','center','nzv')) 
 
 transformed <- predict(pp, newdata = train)
 
-pp.test <- preProcess(testing %>% select(age_yr, arr_yr), c('scale','center','nzv')) # scale and center continuous variables
-
-trans.test <- predict(pp.test, newdata = testing)
-```
-
-Create Balanced Sample with respect to antibiotic name
-```{r}
-
-# abx.bal <- caret::upSample(train, train$abx_name, yname='abx_name') # create balanced classes with respect to antibiotics
-
-```
-
-```{r}
-
-# mlr <- nnet::multinom(abx_name ~ ., data = train)
-# summary(mlr)
-# 
-# mlr.pred <- predict(mlr, newdata = testing)
-# 
-# confusionMatrix(mlr.pred, testing$abx_name)
-
-
+# scale and center continuous variables
+trans.test <- predict(pp, newdata = testing)
 ```
 
 
@@ -1134,45 +1110,34 @@ registerDoParallel(cl)
 
 ```
 
-Preprocess numeric data and establish training method.
+Here we define parameters that control model training and resampling. There is significant class imbalance in the outcome variable (antibiotic) as amoxicillin is by far the most commonly prescribed. To deal with this, we will use resampling methods so that the models don't just predict the over-represented class (amoxicillin).
+
 ```{r cache=F}
+
+# https://topepo.github.io/caret/subsampling-for-class-imbalances.html#subsampling-during-resampling
+smote.cust <- list(name = "SMOTE with more upsampling",
+                func = function (x, y) {
+                  library(DMwR)
+                  dat <- if (is.data.frame(x)) x else as.data.frame(x)
+                  dat$.y <- y
+                  dat <- SMOTE(.y ~ ., data = dat, perc.over = 500, perc.under = 100)
+                  list(x = dat[, !grepl(".y", colnames(dat), fixed = TRUE)],
+                       y = dat$.y)
+                  },
+                first = TRUE)
 
 tr_control <- trainControl(## 10-fold CV
                            method = "repeatedcv",
                            number = 10,
                            repeats = 3,
                            verboseIter = T,
-                           sampling = 'down') # upsampling would be preferable so as not to drop data. it did not result in significantly better results, so for performance (time spent fitting models) reasons, will use down sampling
-
-```
-
-#### knn
-
-```{r cache=T}
-
-set.seed(1234)
-
-system.time(
-knn.abx <- train(
-            abx_name ~ ., 
-            data = transformed, 
-            method = "knn",
-            trControl = tr_control,
-            tuneLength = 10
-            )
-)
-
-knn.abx
-
-# confusionMatrix(predict(knn.abx), train$abx_name)
-confusionMatrix(predict(knn.abx, newdata = trans.test), testing$abx_name)
-
+                           sampling = smote.cust) 
 
 ```
 
 #### Penalized Multinomial Regression
 
-```{r}
+```{r cache=F}
 
 set.seed(1234)
 
@@ -1182,21 +1147,25 @@ pmr.abx <- train(
             data = transformed, 
             method = "multinom",
             trControl = tr_control,
-            tuneLength = 10
+            tuneLength = 10,
+            metric = 'Kappa'
             )
 )
 
-pmr.abx
 
-# confusionMatrix(predict(pmr.abx), train$abx_name)
-confusionMatrix(predict(pmr.abx, trans.test), testing$abx_name)
-
+(pmr.test <- confusionMatrix(predict(pmr.abx, trans.test), testing$abx_name))
 
 ```
 
 
 #### Naive Bayes
 ```{r cache=F}
+
+tunegrid <- expand.grid(
+  usekernel = c(TRUE, FALSE),
+  laplace = 0:3,
+  adjust = c(0,0.5,1,2,3)
+)
 
 set.seed(1234)
 
@@ -1206,11 +1175,13 @@ nb.abx <- train(
             data = transformed, 
             method = "naive_bayes",
             trControl = tr_control,
+            metric = 'Kappa',
+            tuneGrid = tunegrid
             )
 )
 
 # confusionMatrix(predict(nb.abx), train$abx_name)
-confusionMatrix(predict(nb.abx, trans.test), testing$abx_name)
+(nb.test <- confusionMatrix(predict(nb.abx, trans.test), testing$abx_name))
 
 ```
 
@@ -1218,7 +1189,7 @@ confusionMatrix(predict(nb.abx, trans.test), testing$abx_name)
 #### Random Forest
 **This could take a while to run!**
 
-```{r cache=T}
+```{r cache=F}
 
 set.seed(1234)
 
@@ -1231,7 +1202,7 @@ rf.abx <- train(
             method = "rf",
             trControl = tr_control,
             ntree = 500,
-            metric = 'Accuracy',
+            metric = 'Kappa',
             tuneGrid = tunegrid
             )
 )
@@ -1239,13 +1210,33 @@ rf.abx <- train(
 varImp(rf.abx)
 
 # confusionMatrix(predict(rf.abx), train$abx_name)
-confusionMatrix(predict(rf.abx, trans.test), testing$abx_name)
+(rf.test <- confusionMatrix(predict(rf.abx, trans.test), testing$abx_name))
 
 ```
 
-
-Release multicore cluster.
 ```{r}
+
+# Compare accuracy and Kappa for training data
+resamps <- resamples(list(PMR = pmr.abx,
+                          NB = nb.abx,
+                          RF = rf.abx))
+
+summary(resamps)
+
+# Accuracy and Kappa for Test data
+
+rbind_list(c(
+pmr = pmr.test$overall[c('Accuracy','Kappa')],
+nb = nb.test$overall[c('Accuracy','Kappa')],
+rf = rf.test$overall[c('Accuracy','Kappa')]
+)
+)
+
+```
+
+```{r}
+
+# Release multicore cluster.
 
 stopCluster(cl)
 rm(cl)
@@ -1253,9 +1244,8 @@ rm(cl)
 ```
 
 #### Discussion of Classification Models
-Accuracy higher for naive bayes, although this results in significantly lower detection rates for non-amoxicillin medications.
+Initially, models were trained on unbalanced training data. Accuracies of 80%+ were obtained, but essentially the models always predicted the majority class (amoxicillin). To address this, we took two appraoches: 1) we used sampling methods (SMOTE) to improve class balance and 2) hyper-parameter selection was based on kappa rather than accuracy. SMOTE resulted in better results than pure downsampling. Upsampling was too inefficient to tune hyper-parameters and did not result in significant-enough improvements to justify the addditional time spent training models. Overall, despite attempts at optimization, model performance remained relatively poor for antibiotic class-prediction. If this were critical to predict, we could consider evaluating additional features. It would potentially be nearly as useful to predict patients which were prescribed any antibiotic other than amoxicillin (resulting in a binary classification). In this case, we might be better able to address the problem with class-imbalance.
+
 
 ### Conclusions
-
-**Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.**
-
+While not shown here, we used the baseline evaluation to support a decision to provide age-based CDS for antibiotics in the Order Set for ear complaints from the ED. In just a few weeks, we have observed an increase in adherence to the guidelines for patients >= 2 years to 70-80%. Ongoing analyses will determine whether this change has had any unintended consequences such as driving providers away from using the Order Set or to using broader spectrum (non-amoxicillin) antibiotics.
