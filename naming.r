@@ -31,7 +31,6 @@ data$dem_gender = factor(data$dem_gender,levels=c("1","2"), labels = c("Female",
 data$dem_ethnicity = factor(data$dem_ethnicity,levels=c("1","2","3","4","5","6"), labels = c("Black, Non-Hispanic","White, Non-Hispanic","Asian or Pacific Islander","Native American or Alaskan Native","Hispanic","Other"))
 data$dem_language_home = factor(data$dem_language_home,levels=c("1","2","3","4"), labels = c("English","Creole","Spanish","Other"))
 data$dem_language_pref = factor(data$dem_language_pref,levels=c("1","2","3","4"), labels = c("English","Creole","Spanish","Other"))
-data$dem_grade = factor(data$dem_grade,levels=c("00","0","1","2","3","4","5","6","7","8","9","10","11","12","13"), labels = c("Pre-K","Kindergarten","1","2","3","4","5","6","7","8","9","10","11","12","Other/Otro"))
 data$demographics_patient_complete = factor(data$demographics_patient_complete,levels=c("0","1","2"), labels = c("Incomplete","Unverified","Complete"))
 data$tech_kid_smart_device = factor(data$tech_kid_smart_device,levels=c("1","2","3","4"), labels = c("smart phone","tablet","both a smart phone and a tablet","neither"))
 #data$tech_kid_brand___1 = factor(data$tech_kid_brand___1,levels=c("0","1"), labels = c(NA,"iPhone or iPad"))
