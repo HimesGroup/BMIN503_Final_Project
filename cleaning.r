@@ -37,6 +37,7 @@ data <- cleaner("tech_kid_os___1", "tech_kid_os___6", data)
 
 #create subgroups for pedsql
 data <- survey_columns(info = data, list = c("qlPtTotal", "qlPtPhys",  "qlPtEmotion", "qlPtSocial", "qlPtSchool", "qlParTotal", "qlParPhys", "qlParEmotion", "qlParSocial", "qlParSchool"))
+label(data$asthma15)="If a child dies from an asthma attack, this usually means that there was no time to start any treatment."
 
 #calculate summary calculation for pedsql filled out by the patients
 data$qlPtTotal <- rowmeaning(data, "pedsqlkids_01", "pedsqlkids_23")

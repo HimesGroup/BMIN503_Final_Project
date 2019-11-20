@@ -81,7 +81,7 @@ applying <- function(col1, col2, info){
 boxy <- function(info, name, sig){
   ggplot(info, aes_string(x = "redcap_event_name", y=name)) + 
     geom_boxplot() +
-    labs(x = "Visit", title = str_wrap(label(complete[grep(name, colnames(complete))])), width=60) +
+    labs(x = "", y="", title = str_wrap(label(complete[grep(name, colnames(complete))])), width=60) +
     if(paste(name, ".f", sep="") %in% sig$Name) { theme(plot.background = element_rect(colour = "yellow", fill=NA, size=5)) }
 }
 
@@ -106,23 +106,21 @@ lining <- function(info) {
 plotting <- function(ins, pre, post) {
     if(length(which(pre$redcap_id==ins)) > 1) {
       precoeff <- lm(weight ~ days, data=subset(pre, redcap_id==ins))$coefficients
-      precolor <- "blue4"
+      precoeffs <- c(0, precoeff[1], 608, precoeff[1]+608*precoeff[2])
     } else {
-      precoeff <- c(0,0)
-      precolor <-FALSE
+      precoeffs <- c(0,0,0,0)
     }
     if(length(which(post$redcap_id==ins)) >  1) {
       postcoeff <- lm(weight ~ days, data=subset(post, redcap_id==ins))$coefficients
-      postcolor <- "firebrick1"
+      postcoeffs <- c(608, postcoeff[1]+postcoeff[2]*608, 1000, postcoeff[1]+1000*postcoeff[2])
     } else {
-      postcoeff <- c(0,0)
-      postcolor <- FALSE
+      postcoeffs <- c(0,0,0,0)
     }
     ggplot() +
       #geom_point(data = subset(pre, redcap_id==ins), aes(x=days, y=weight), color="firebrick1") +
       #geom_point(data = subset(post, redcap_id==ins), aes(x=days, y=weight), color="blue4") +
-      geom_segment(aes(x = 0, y =precoeff[1], xend=608, yend=(precoeff[1]+608*precoeff[2]), color = precolor, alpha=1), data=pre) +
-      geom_segment(aes(x = 608, y =(postcoeff[1]+postcoeff[2]*608), xend=1000, yend=(postcoeff[1]+1000*postcoeff[2]), color = postcolor), data=post) +
+      geom_segment(aes(x = precoeffs[1], y =precoeffs[2], xend=precoeffs[3], yend=precoeffs[4], color = "blue4"), data=pre) +
+      geom_segment(aes(x = postcoeffs[1], y =postcoeffs[2], xend=postcoeffs[3], yend=postcoeffs[4], color = "firebrick1"), data=post) +
       theme(legend.position="none") +
       theme(axis.title.x=element_blank()) +
       theme(axis.title.y=element_blank())
