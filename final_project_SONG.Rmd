@@ -1,0 +1,612 @@
+---
+title: 'US Adults Common Diseases, Related Facors, and Prediction'
+author: 'Nianfu Song <br> for The Final Project of Data Science for Biomedical Informatics (BMIN503/EPID600)'
+output: 
+  html_document:
+  toc: true
+toc_float: 
+  collapsed: false
+smooth_scroll: true
+depth: 4 
+theme: paper 
+highlight: tango
+---
+```{r global options, include=FALSE}
+
+library(ggmap)
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```  
+
+```{r set-options, echo=FALSE, cache=FALSE, message = FALSE}
+options(width = 80)
+```    
+
+
+#Data Exploration
+
+Data are from [NHIS 2018](https://www.cdc.gov/nchs/nhis/data-questionnaires-documentation.htm). 
+National Center for Health Statistics. Survey Description, National Health Interview Survey, 2018.
+Hyattsville, Maryland. 2019. Accessed on November 11, 2019. 
+
+Find data dimension, IDs, and relations between data tables; Data are merged into one for analysis
+
+```{r }
+
+hshld <- read.csv("/home/Nianfu/BMIN503/data/househldcsv/househld.csv")
+names(hshld)
+dim(hshld) ## 46500x17
+fmly <- read.csv("/home/Nianfu/BMIN503/data/familyxxcsv/familyxx.csv")
+names(fmly) 
+dim(fmly) ## 30307x127 
+prsn <- read.csv("/home/Nianfu/BMIN503/data/personsxcsv/personsx.csv")
+names(prsn)  
+dim(prsn) ## 72831x602 
+adlt <- read.csv("/home/Nianfu/BMIN503/data/samadultcsv/samadult.csv")
+names(adlt)
+dim(adlt) ## 25417x742
+chldrn <- read.csv("/home/Nianfu/BMIN503/data/samchildcsv/samchild.csv")
+names(chldrn)
+dim(chldrn) ## 8269x158
+
+# data table number of rows and columns
+
+NHIStables <- data.frame(c("Household", "Family", "Persons","Adults","Children"),
+                        rbind(dim(hshld),dim(fmly),dim(prsn),dim(adlt),dim(chldrn))) 
+names(NHIStables) <- c("dataName","rows", "columns")
+NHIStables
+
+#common columns compared with family table
+com.hs_fm <- na.omit(match(names(hshld), names(fmly))) #4:6
+names(fmly[,com.hs_fm])
+com.ps_fm <- na.omit(match(names(prsn), names(fmly)))  #3:6
+names(fmly[,com.ps_fm])
+com.ad_fm <- na.omit(match(names(adlt), names(fmly)) ) #3:6
+names(fmly[,com.ad_fm])
+com.ch_fm <- na.omit(match(names(chldrn), names(fmly)))  #3:6
+names(chldrn[,com.ch_fm])
+
+#children and adults
+com.ch_ad <- na.omit( match(names(chldrn), names(adlt)))
+length(com.ch_ad) # 158 columns are all in adult
+com.ad_ch <- na.omit( match(names(adlt), names(chldrn)))
+length(com.ad_ch) # 158 columns are all in adult
+
+#person and adults
+com.pr_ad <- na.omit( match(names(prsn), names(adlt)))
+length(com.pr_ad) # 158 columns are all in adult
+sort(names(adlt[,com.pr_ad]))
+com.ad_pr <- na.omit( match(names(adlt), names(prsn)))
+length(com.ad_pr) # 158 columns are all in adult
+sort(names(prsn[,com.ad_pr]))
+
+## common names
+head(hshld[, names(fmly[,c(4:6)])])
+head(prsn[, names(fmly[,c(3:6)])])
+head(adlt[, names(fmly[,c(3:6)])])
+head(chldrn[, names(fmly[,c(3:6)])])
+
+
+##uniqueness of ids
+library(tidyverse)
+library(datasets)
+
+dim(distinct(adlt[,c( "FMX", "HHX" )])) # unique ID, FPX is a number of head of Household
+dim(adlt)
+
+dim(distinct(prsn[,c("FMX","HHX", "FPX")])) # unique ID
+dim(prsn)
+
+dim(distinct(fmly[,c("FMX","HHX")])) # unique ID
+dim(fmly)
+
+##join to construction data of unique variables. persons<adults<household<family
+xx <- left_join(prsn, adlt, by=names(adlt[,com.pr_ad])[-11]) %>% 
+  left_join(hshld, by ="HHX") %>% 
+   left_join(fmly, by =c("HHX","FMX") ) 
+head(xx[,1:30])
+names(xx)
+#View(xx)
+
+```
+* The data tables have shared ids: 
+
+>FMX:   Family number\
+>HHX:   Household number\
+>FPX:   Person number\
+>RECTYPE: Table id\
+
+>SEX:   gender\
+>MRACRPI2: Race coded to single/multiple race group\
+>HISPAN_I:  Race/ethnicity recode\  >>have more categories than HISCODI3\
+>HISCODI3\
+>1 Hispanic;
+>2 Non-Hispanic White;
+>3 Non-Hispanic Black;
+>4 Non-Hispanic Asian;
+>5 Non-Hispanic All other race groups.
+
+# Variable Selection and Data Transforming
+
+* There are fewer adults and children in the sample than the number of families and houshold in the data.
+# potential response variables should be our interested diseases such as cancer
+* after reading all the several hundreds of pages of documents, only 1 column of data for family size in the family data table will useful for this study. None are from household table.
+* Personsx table includes data of all interviewed persons of families. diseases are included for relatives information of adults in the adults table. 
+
+```{r}
+#family table
+fm <- fmly %>% 
+  select(HHX, FMX, FM_SIZE)
+
+#person table
+ps <- ps0 <- prsn %>% 
+  select(HHX, FMX, FPX, REGION, REGIONBR,
+         HISCODI3, FSPOUS2,FMOTHER1,FFATHER1,MOM_ED,DAD_ED, 
+         
+         LADURA1,  LADURA2,  LADURA3, LADURA4, LADURA7,LADURA8, LADURA9,LADURA10,
+         LADURA11,  LADURA12,  LADURA18, LADURA21, LADURA28,  LADURA29,LDURA14A, 
+         
+         LADURB1,LADURB2,LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9,LADURB10,
+         LADURB11, LADURB12, LADURB18, LADURB21, LADURB28, LADURB29, LDURB14A,
+
+         PHSTAT, WRKLYR1, WRKFTALL)
+names(ps0)[12:26]
+names(ps0)[27:41]
+
+#replace missing in some variables with 0 
+ps[,c(12:41)] <- replace(ps0[,c(12:41)],is.na(ps0[,c(12:41)]),-1)   ##missing cells are 0
+
+# 97,98,99, 7,8,9 cases for some variables
+ps[,c(12:26)] <- replace(ps[,c(12:26)],(ps[,c(12:26)] %in% c(96,97,98,99)),NA)   ##group into 99
+ps[,c(27:41)] <- replace(ps[,c(27:41)],(ps[,c(27:41)] %in% c(7,8,9)),NA)   ##group into 99
+head(ps)
+table(ps[,27], exclude = NULL)
+#adult table
+ad <- ad0 <- adlt %>% 
+  select(HHX, FMX, FPX, SEX, AGE_P, MRACRPI2, R_MARITL,PAR_STAT, INDSTRN1, WRKCATA,
+         
+         ALDURA1,  ALDURA2,  ALDURA3, ALDURA4, ALDURA7,ALDURA8, ALDURA9,ALDURA10,
+         ALDURA11,  ALDURA12,  ALDURA18,  ALDURA21, ALDURA28,  ALDURA29,ADURA14A, 
+         
+         ALDURB1,ALDURB2,ALDURB3, ALDURB4, ALDURB7,   ALDURB8,  ALDURB9,  ALDURB10,
+         ALDURB11,ALDURB12,ALDURB18,ALDURB21, ALDURB28, ALDURB29, ADURB14A, LIVEV,
+         
+         SMKEV, SMKREG, SMKNOW, SMKSTAT2, VIGFREQW,MODFREQW, STRFREQW, ALCSTAT,AHEIGHT, AWEIGHTP, BMI,
+         ASISLEEP,AASSTILL )
+
+names(ad0)[11:25]
+names(ad0)[26:41]
+
+#replace 7,8,9,97, 98, 99 for refuse, uncertain, and unknown, 
+ad[,c(11:41)] <- replace(ad0[,c(11:41)],is.na(ad0[,c(11:41)]),-1)   ##missing cells are 0
+#ad[,c(11:25)] <- replace(ad0[,c(11:25)],(ad0[,c(11:25)] %in% c(96,97,98,99)),NA)   ####group into 99
+#ad[,c(26:41)] <- replace(ad0[,c(26:41)],(ad0[,c(26:41)] %in% c(7,8,9)),NA)   ####group into 99 including liver disease
+
+ad[,c("SMKEV")] <- replace(ad[,c("SMKEV")],(ad[,c("SMKEV")] %in% c(7,8,9)), NA)   #### above 99.5
+ad[,c("SMKREG")] <- replace(ad[,c("SMKREG")],(ad[,c("SMKREG")] %in% c(96,97,98,99)), NA)   #### above 99.5
+ad[,c("SMKNOW")] <- replace(ad[,c("SMKSTAT2")],(ad[,c("SMKSTAT2")] %in% c(7,8,9)), NA)   #### above 99.5
+ad[,c("SMKSTAT2")] <- replace(ad[,c("SMKSTAT2")],(ad[,c("SMKSTAT2")] %in% c(9)), NA)   #### above 99.5
+ad[,c("ALCSTAT")] <- replace(ad[,c("ALCSTAT")],(ad[,c("ALCSTAT")] %in% c(9, 10)),NA)   ####Alchole remove unknown frequency (very few)
+ad[,c("ASISLEEP")] <- replace(ad[,c("ASISLEEP")],(ad[,c("ASISLEEP")] %in% c(97,98,99)),NA)   ####sleep hours
+
+ad[,c("VIGFREQW")] <- replace(ad[,c("VIGFREQW")],(ad[,c("VIGFREQW")] %in% c(0)),1)   #### vigorous excercise times 0=<1, 
+ad[,c("VIGFREQW")] <- replace(ad[,c("VIGFREQW")],(ad[,c("VIGFREQW")] %in% c(95,96)),0)   #### vigorous excercise 0 times
+ad[,c("VIGFREQW")] <- replace(ad[,c("VIGFREQW")],(ad[,c("VIGFREQW")] %in% c(97,98,99)),NA)   #### 
+
+ad[,c("MODFREQW")] <- replace(ad[,c("MODFREQW")],(ad[,c("MODFREQW")] %in% c(0)),1)   #### moderate excercise times 0=<1, 
+ad[,c("MODFREQW")] <- replace(ad[,c("MODFREQW")],(ad[,c("MODFREQW")] %in% c(95,96)),0)   #### moderate excercise 0 times
+ad[,c("MODFREQW")] <- replace(ad[,c("MODFREQW")],(ad[,c("MODFREQW")] %in% c(97,98,99)),NA)   #### no moderate exc
+
+ad[,c("STRFREQW")] <- replace(ad[,c("STRFREQW")],(ad[,c("STRFREQW")] %in% c(0)),1)   #### strength excercise times 0=<1, 
+ad[,c("STRFREQW")] <- replace(ad[,c("STRFREQW")],(ad[,c("STRFREQW")] %in% c(95,96)),0)   #### strength excercise 0 times
+ad[,c("STRFREQW")] <- replace(ad[,c("STRFREQW")],(ad[,c("STRFREQW")] %in% c(97,98,99)),NA)   #### no strength exc
+
+ad[,c("AWEIGHTP")] <- replace(ad[,c("AWEIGHTP")],(ad[,c("AWEIGHTP")] %in% c(996,997,998,999)),NA)   ####weight lbs.
+ad[,c("AHEIGHT")] <- replace(ad[,c("AHEIGHT")],(ad[,c("AHEIGHT")] %in% c(96,97,98,99)),NA)   ####height inch
+
+ad[,c("BMI")] <- replace(ad[,c("BMI")],(ad[,c("BMI")] %in% c(9999)),NA)   ####sleep hours
+ad[,c("BMI")] <- replace(ad[,c("BMI")],(ad[,c("BMI")] %in% c(9995)),99.5)   #### above 99.5
+
+ad[,c("PAR_STAT")] <- replace(ad[,c("PAR_STAT")],(ad[,c("PAR_STAT")] %in% c(9)),NA)   ####parents status
+ad[,c("R_MARITL")] <- replace(ad[,c("R_MARITL")],(ad[,c("R_MARITL")] %in% c(9)),NA)   ####Marriage status
+ad[,c("LIVEV")] <- replace(ad[,c("LIVEV")],(ad[,c("LIVEV")] %in% c(7,8,9)),NA)   ####liver condition
+#sum(ad[,c("ALDURB12")] %in% c(7,8,9))
+#add a flag for adult data rows, when merged, it is still be different from other data sources
+ad$adult <- 1
+
+ps[,c("FSPOUS2")] <- replace(ps[,c("FSPOUS2")],(ps[,c("FSPOUS2")] %in% c(98)),NA)   ####weight lbs.
+
+head(ad$adult)
+table(ad$R_MARITL)
+# data are mostly integers now
+
+# list of variables and number of na
+mis.fm <- sapply(fm, function(x) sum(is.na(x)))
+#write.csv(mis.fm,file = "/home/Nianfu/BMIN503_Final_Project/data/mis.fm.csv")
+mis.ps <-sapply(ps, function(x) sum(is.na(x)))
+#write.csv(mis.ps,file = "/home/Nianfu/BMIN503_Final_Project/data/mis.ps.csv")
+mis.ad <- sapply(ad, function(x) sum(is.na(x)))
+#write.csv(mis.ad,file = "/home/Nianfu/BMIN503_Final_Project/data/mis.ad.csv")
+
+# MERGE and convert data into analyzable types; Health Status are response variables.
+hlth <- left_join(ps, ad, by=c('HHX', 'FMX', 'FPX')) %>% 
+  left_join(fm, by =c("HHX","FMX") ) %>% 
+  mutate(sex=factor(SEX, levels=c(1,2), labels=c("male", "female")), 
+         age_smk=factor(cut(SMKREG, breaks = c(0,18,100), labels=c("6-18", ">19"), useNA='ifany' )),
+         alc=factor(cut(ALCSTAT,breaks = c(0,1,5, 7,8), labels=c("Abstainer", "Former", "Light", "Heavier"))),
+           #"Abstainer", "Former infrequent", "Former regular", "Former, unknown frequency", "Current infrequent", "Current light", "Current moderate","Current heavier", "Current drinker, frequency/level unknown"
+#         smk=factor(SMKSTAT2, levels=c(1,2,3,4,5), labels=c("Daily", "Some", "Former", "Never", "smk/unknown") ), 
+         smk=factor(SMKSTAT2, levels=c(1,2,3,4), labels=c("Daily", "Some", "Former", "Never") ), 
+
+         #vigex=factor(cut(VIGFREQW, breaks = c(-0.1,0,1,28), useNA='ifany' )),
+         #modex=factor(cut(MODFREQW, breaks = c(-0.1,0,1,28), useNA='ifany' )),
+         #strex=factor(cut(STRFREQW, breaks = c(-0.1,0,1,28), useNA='ifany' )), # 0, 
+         activ=factor(ifelse(VIGFREQW >2, 1, ifelse(STRFREQW>2, 2, ifelse(MODFREQW>2, 3, ifelse(VIGFREQW==0 & STRFREQW==0 & MODFREQW==0, 5, 4)))),levels=c(1,2,3,4,5), labels = c("Vigorous","Strength","Moderate", "Some", "None")),
+         sleep=factor(cut(ASISLEEP, breaks = c(-1,0,4,5,6,7,24), useNA='ifany' ), labels = c("<=4 hrs","5 hrs","6 hrs","7 hrs", ">7 hrs")),
+         fm_size=factor(cut(FM_SIZE, breaks = c(0,1,2,4, 20), useNA='ifany' ), labels = c("1 person","2 persons","3-4 persons", ">5 persons")),
+         
+         age=as.numeric(AGE_P),
+         #weight=as.numeric(AWEIGHTP),
+         #height=as.numeric(AHEIGHT),
+         BMI=as.numeric(BMI),
+         race= factor(HISCODI3,levels=c(1:5), labels = c("Hispanic", "White","Black", "Asian","Other")),
+         marriage = factor(cut(R_MARITL, breaks = c(0,2,6, 7,8), useNA='ifany' ), labels = c("married","D/S/W", "Never", "Partner")),
+         par_stat = factor(cut(PAR_STAT, breaks = c(0,2,3), useNA='ifany'), labels= c("Children","No children")),
+         
+         dis1=factor(cut(ALDURB1, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No vision disease", "Vision disease")),
+         dis2=factor(cut(ALDURB2, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No hearing disease", "Hearing disease")),
+         dis3=factor(cut(ALDURB3, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No arthritis disease", "Arthritis diseased isease")),
+         dis4=factor(cut(ALDURB4, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No back or neck disease", "Back or neck ")),
+         dis7=factor(cut(ALDURB7, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No heart disease", "Heart disease")),
+         
+         dis8=factor(cut(ALDURB8, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No stroke disease", "Stroke  disease")),
+         dis9=factor(cut(ALDURB9, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No hypertension disease", "Hypertension disease")),
+         dis10=factor(cut(ALDURB10, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No diabetes disease", "Diabetes disease")),
+         dis11=factor(cut(ALDURB11, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No lung or breathing disease", "Lung or breathing disease")),
+         dis12=factor(cut(ALDURB12, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No cancer disease", "Cancer disease")),
+         
+         dis18=factor(cut(ALDURB18, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No weight problem", "Weight problem")),
+         dis21=factor(cut(ALDURB21, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No circulation disease", "Circulation disease")),
+         dis28=factor(cut(ALDURB28, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No benign tumor disease", "Benign tumor disease")),
+         dis29=factor(cut(ALDURB29, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No alcohol/drug problem", "Alcohol/drug problem")),
+         dis14=factor(cut(ADURB14A, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("No mental retardation", "Mental retardation")),
+         dis99=fct_rev(factor(cut(LIVEV, breaks =c(0,1,2), useNA='ifany' ), labels=c("Chronic liver disease", "No chronic liver disease"))),  # Chronical liver, original 1=yes 2=no, reversed 1=no, 2=yes to be consistent with others
+          ) %>% 
+  filter(adult==1)
+# combine some categories, several others were correct in the above code.
+hlth$smk[hlth$smk=="smk/unknown"]= NA
+##names
+names(hlth)
+# Check number of rows
+nrow(hlth)
+nrow(ad)
+#liver
+table(hlth$dis99, exclude = NULL)
+table(ad$LIVEV, exclude = NULL)
+table(hlth$LIVEV, exclude = NULL)
+
+
+#check number of no activity
+table(hlth$activ, exclude = NULL)
+hlth %>% filter(VIGFREQW==0 & STRFREQW==0 & MODFREQW==0) %>% summarise(n=n())
+
+#check transormed data with original data
+sum(ad0$ALDURB1 %in% c(6,7,8,9))
+table(hlth$dis1, exclude = NULL)
+
+```
+
+# Descriptions. 
+
+Because of potential nonlinear relation, some numerical variables  such as age, first smoking age, hours of sleep are transformed into categorical ones. Three columns of data for vigorous, strength, and moderate physical activities are categorized into a combined categorical variable to measure different types of activity. 
+
+```{r, message=FALSE, fig.width=12}
+library(ggplot2)
+library(tidyverse)
+library(GGally)
+library(cowplot)
+#personal demographics and behaviors
+
+XX <- hlth %>% 
+  select(HHX, FMX, FPX, age, sex, race,  smk, age_smk, alc, sleep, activ,
+          fm_size, marriage, par_stat, BMI,)
+head(XX)
+summary(XX)
+#ggpairs(XX)
+
+##plots
+#age distribution
+hist(XX$age, xlab = "Age", ylab ="Number of people interviewed", main = "Age Distribution of Interviewed Adults")
+p1 <- ggplot(data = XX, aes(x=age )) + 
+  geom_histogram(bins = 8, color="black", fill = "purple") +
+  labs(y="People", x="Age")  +
+  theme_bw()
+p2 <- ggplot(data = XX, aes(x=sex )) + 
+  geom_bar(color="black", fill = "pink", width=0.7) +
+  labs(y="People", x="Sex")  +
+  theme_bw()
+p3 <- ggplot(data = XX, aes(x=smk )) + 
+  geom_bar(color="black", fill = "green", width=0.7) +
+  labs(y="People", x="Smoking")  +
+  theme_bw()
+p4 <- ggplot(data = XX, aes(x=age_smk )) + 
+  geom_bar(color="black", fill = "grey", width=0.7) +
+  labs(y="People", x="Age first smoked regularly") + 
+  theme_bw()
+p5 <- ggplot(data = XX, aes(x=alc )) + 
+  geom_bar(color="black", fill = "Red", width=0.7) +
+  labs(y="People", x="Alchole drinking")  +
+  theme_bw()
+p6 <- ggplot(data = XX, aes(x=sleep )) + 
+  geom_bar(color="black", fill = "brown", width=0.7) +
+  labs(y="People", x="Hours of spleep")  +
+  theme_bw()
+p7 <- ggplot(data = XX, aes(x=activ)) + 
+  geom_bar(color="black", fill = "purple", width=0.7) +
+  labs(y="People", x="Physical activity")  +
+  theme_bw()
+p8 <- ggplot(data = XX, aes(x=BMI )) + 
+  geom_histogram(bins = 8, color="blue", fill = "red") +
+  labs(y="People", x="BMI")  +
+  theme_bw()
+p9 <- ggplot(data = XX, aes(x=fm_size )) + 
+  geom_bar(color="black", fill = "Brown", width=0.7) +
+  labs(y="People", x="Family size")  +
+  theme_bw()
+p10 <- ggplot(data = XX, aes(x=race)) + 
+  geom_bar(color="black", fill = "lightblue", width=0.7) +
+  labs(y="People", x="Race") + 
+  theme_bw()
+p11 <- ggplot(data = XX, aes(x=marriage)) + 
+  geom_bar(color="black", fill = "pink", width=0.7) +
+  labs(y="People", x="Marriage")  +
+  theme_bw()
+p12 <- ggplot(data = XX, aes(x=par_stat)) + 
+  geom_bar(color="black", fill = "blue", width=0.7) +
+  labs(y="People", x="Marriage")  +
+  theme_bw()
+  
+plot_grid(p1,p2,p3,p4,p5,p6,labels = "AUTO")
+plot_grid(p7,p8,p9,p10,p11,p12,labels = c("G","H","I","J","K","L","M"))
+
+```
+
+## Response Variables
+```{r, fig.width=10}
+
+YY <- hlth %>% 
+  select(dis1, dis2, dis3, dis4, dis7, 
+         dis8,dis9, dis10, dis11, dis12,
+         dis18, dis28,dis21, dis29, dis14, dis99)
+#total number diseases by type
+dis <- data.frame(sapply(YY, function(x) sum(as.numeric(x)==2, na.rm = TRUE)))
+table(YY$dis99)
+dis$name <-  c("vision", "hearing", "arthritis","back or neck", "heart",
+                "strock","hypertension","diabetes", "lung", "cancer",
+                "weight", "circulation", "benign tumor", "alcohol/drug", "mental", "liver")
+names(dis)[1] <- c("number.disease")
+
+## try some contract
+ggplot(data = hlth[!is.na(hlth$smk), ], aes(x = smk, fill = factor(dis11))) + 
+  geom_bar(position = "dodge", color="blue") +
+  theme_bw()+
+  labs(x="Smoking", y="People")+
+  theme(legend.title=element_blank())
+
+# check ratio: smoke
+par(mfrow=c(2,3))
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])
+barplot(r, xlab = "Smoke", ylab="lung or breathing", col=c("red","purple","brown","green"))
+
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk,dis12)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Smoke", ylab="Cancer %", col=c("red","purple","brown","green"))
+
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk,dis99)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Smoke", ylab="Liver %", col=c("red","purple","brown","green"))
+
+# alcohole
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])
+barplot(r, xlab = "Alcohol", ylab="lung or breathing", col=c("green", "red","purple","brown"))
+
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis12)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Alcohol", ylab="Cancer %", col=c("green", "red","purple","brown"))
+
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis99)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Alcohol", ylab="Liver %", col=c("green", "red","purple","brown"))
+
+```
+## gen from parents
+* Parents diseaeses are linked to adults.
+```{r}
+## liver condition is not in the persons data
+mom <- ps %>% 
+  select(HHX, FMX, FPX,
+         LADURB1,LADURB2,LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9,LADURB10,
+         LADURB11, LADURB12, LADURB18, LADURB21, LADURB28, LADURB29, LDURB14A) %>% 
+  mutate(FMOTHER1c=FPX,
+         mdis1=factor(cut(LADURB1, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO vision disease", "Vision disease")),
+         mdis2=factor(cut(LADURB2, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO hearing disease", "Hearing disease")),
+         mdis3=factor(cut(LADURB3, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO arthritis disease", "Arthritis diseased isease")),
+         mdis4=factor(cut(LADURB4, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO back or neck disease", "Back or neck ")),
+         mdis7=factor(cut(LADURB7, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO heart disease", "Heart disease")),
+         
+         mdis8=factor(cut(LADURB8, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO stroke disease", "Stroke  disease")),
+         mdis9=factor(cut(LADURB9, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO hypertension disease", "Hypertension disease")),
+         mdis10=factor(cut(LADURB10, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO diabetes disease", "Diabetes disease")),
+         mdis11=factor(cut(LADURB11, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO lung or breathing disease", "Lung or breathing disease")),
+         mdis12=factor(cut(LADURB12, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO cancer disease", "Cancer disease")),
+         
+         mdis21=factor(cut(LADURB21, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO circulation disease", "Circulation disease")),
+         mdis28=factor(cut(LADURB28, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO benign tumor disease", "Benign tumor disease")),
+         mdis29=factor(cut(LADURB29, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO alcohol/drug problem", "Alcohol/drug problem")),
+         mdis14=factor(cut(LDURB14A, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO mental retardation", "Mental retardation"))
+          ) 
+#Change name only, examctly the same as mom
+dad <- ps %>% 
+  select(HHX, FMX, FPX,
+         LADURB1,LADURB2,LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9,LADURB10,
+         LADURB11, LADURB12, LADURB18, LADURB21, LADURB28, LADURB29, LDURB14A) %>% 
+  mutate(FFATHER1c=FPX,
+         ddis1=factor(cut(LADURB1, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO vision disease", "Vision disease")),
+         ddis2=factor(cut(LADURB2, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO hearing disease", "Hearing disease")),
+         ddis3=factor(cut(LADURB3, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO arthritis disease", "Arthritis diseased isease")),
+         ddis4=factor(cut(LADURB4, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO back or neck disease", "Back or neck ")),
+         ddis7=factor(cut(LADURB7, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO heart disease", "Heart disease")),
+        
+         ddis8=factor(cut(LADURB8, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO stroke disease", "Stroke  disease")),
+         ddis9=factor(cut(LADURB9, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO hypertension disease", "Hypertension disease")),
+         ddis10=factor(cut(LADURB10, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO diabetes disease", "Diabetes disease")),
+         ddis11=factor(cut(LADURB11, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO lung or breathing disease", "Lung or breathing disease")),
+         ddis12=factor(cut(LADURB12, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO cancer disease", "Cancer disease")),
+         
+         ddis21=factor(cut(LADURB21, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO circulation disease", "Circulation disease")),
+         ddis28=factor(cut(LADURB28, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO benign tumor disease", "Benign tumor disease")),
+         ddis29=factor(cut(LADURB29, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO alcohol/drug problem", "Alcohol/drug problem")),
+         ddis14=factor(cut(LDURB14A, breaks =c(-1.1,-0.1,4), useNA='ifany' ), labels = c("NO mental retardation", "Mental retardation"))
+          )
+# merge to hlth
+hlth_par <- hlth %>% 
+  mutate(FFATHER1c=FFATHER1, FMOTHER1c=FMOTHER1) %>% 
+  left_join(mom, by = c("HHX","FMX", "FMOTHER1c")) %>% 
+  left_join(dad, by = c("HHX","FMX", "FFATHER1c"))
+  
+table(hlth_par$dis11)
+table(hlth_par$dis11, hlth_par$mdis11)
+table(hlth_par$dis1, hlth_par$mdis1)
+## try some relation between adult and mom
+ggplot(data = hlth_par[!is.na(hlth_par$mdis11),], aes(x = dis11, fill = mdis11)) + 
+  geom_bar(position = "dodge", color="blue", na.rm = TRUE) +
+  theme_bw()+
+  labs(x="Mom lung problem", y="People")+
+  theme(legend.title=element_blank())
+
+# rate aldults and their parents
+fig.dim=c(10,7)
+fig.width=9
+par(mfrow=c(2,3))
+tmt <- with(hlth_par[!is.na(hlth_par$mdis11), ], table(mdis11,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Mom lung or breath problem", ylab="lung or breath problem %",  col=c("green","red"))
+#dady
+tmt <- with(hlth_par[!is.na(hlth_par$ddis11), ], table(ddis11,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Dad lung or breath problem", ylab="lung or breath problem %",  col=c("green","blue"))
+
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$mdis7), ], table(mdis7,dis7)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = " Heart disease mom", ylab="Heart disease %", col=c("green","red"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$ddis7), ], table(ddis7,dis7)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Dad heart disease", ylab="Heart disease %", col=c("green","blue"))
+
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$mdis3), ], table(mdis3,dis3)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Arthritis mom", ylab="Arthritis %",  col=c("green","red"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$ddis3), ], table(ddis3,dis3)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Arthritis mom", ylab="Arthritis %",  col=c("green","blue"))
+
+```
+
+## variable summary and visually check for the numbers
+sum.fmly <- t(summary(fmly))
+write.csv(sum.fmly,file = "/home/Nianfu/BMIN503_Final_Project/data/sum.fmly.csv")
+sum.hshld <- t(summary(hshld))
+write.csv(sum.hshld,file = "/home/Nianfu/BMIN503_Final_Project/data/sum.hshld.csv")
+sum.prsn <- t(summary(prsn))
+write.csv(sum.prsn,file = "/home/Nianfu/BMIN503_Final_Project/data/sum.prsn.csv")
+sum.adlt <- t(summary(adlt))
+write.csv(sum.adlt,file = "/home/Nianfu/BMIN503_Final_Project/data/sum.adlt.csv")
+sum.chldrn <- t(summary(chldrn))
+write.csv(sum.chldrn,file = "/home/Nianfu/BMIN503_Final_Project/data/sum.chldrn.csv")
+
+## map of data
+* tigtis package is used to download metrics for the region map metrics data 
+
+#install.packages("tigris")
+library("tigris")
+library(rgdal)    # for readOGR and others
+library(sp)       # for spatial objects
+
+library(ggmap)
+library(RColorBrewer)
+library(leaflet)
+library(tidyverse)
+library('tidycensus')
+library(sf) 
+us_regions <- regions(resolution ='20m')
+library(maptools)
+ggregion<-fortify(us_regions, region = "GEOID") 
+leaflet(us_regions) %>%
+   addPolygons()
+# sf map data from Census
+vars <- load_variables(dataset = "acs5",  # specify ACS 5-year estimates 
+                       year = 2016)  # specify end year (i.e. this queries ACS 5-year estimates for 2011-2016)
+
+
+#View(vars)
+state_map <- get_acs(geography = "state",         # query data at the region level 
+                   year = 2016,                 # end year (these will give us ACS 5-year estimates for 2011-2016)
+                   variables = c("B01003_001")) # total population
+head(state_map)
+pop_map <- get_acs(geography = "region",         # query data at the region level 
+                   year = 2016,                 # end year (these will give us ACS 5-year estimates for 2011-2016)
+                   variables = c("B01003_001")) # total population
+head(pop_map)
+adR <- ad %>% 
+  left_join(ps[,c("HHX", "FMX", "FPX", "REGION", "REGIONBR")], by =c("HHX", "FMX", "FPX"))
+
+mdt <- adR %>% 
+  group_by(REGION) %>% 
+  summarize(n=n() ) %>% 
+  mutate(GEOID=as.character(REGION), id=GEOID)
+mdt  
+
+map <- us_regions %>% 
+  left_join(pop_map, by=c("id")) %>% 
+  left_join(mdt, by =c("GEOID")) %>% 
+  mutate(population=estimate, samp.percent=n/population*100)
+mapr <- 
+
+prev_min <-min(map$samp.percent, na.rm = TRUE)
+prev_max <- max(map$samp.percent, na.rm = TRUE)
+state <- get_acs(geography = "state",         # query data at the region level 
+                   year = 2016,                 # end year (these will give us ACS 5-year estimates for 2011-2016)
+                   variables = c("B01003_001")) # total population
+*View(state)
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+# Replace "..." with your code
+ggplot() +
+  geom_sf(data=map, lwd = 0,aes(fill = samp.percent)) +
+  my_theme() +
+  ggtitle("US Map of Adult Obesity Rates 2004")+
+  scale_fill_gradientn(name = "Obesity rate (%)", colours = myPalette(100),
+                       limit = range(prev_min, prev_max)) 
+
+
+
+
+
+
