@@ -1,18 +1,7 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository is for my final written report for BMIN503. Originally forked from [Final Project Repo](https://github.com/HimesGroup/BMIN503_Final_Project).
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This is the analysis of a dataset done on a small pilot study that I was involved with a few years ago. It involved a telemedicine intervention on children that were obese or had asthma. Monthly for 6 months we had online sessions with the children and their families where we gave them counseling and had virtual doctor's visits. Each month we would send the child and their parent a copy of the PedsQL Survey via REDCap, and then for the initial and final visit, we did a much more in-depth evaluation, using multiple other surveys.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/19 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+All data in this repo has been de-identified, there are no names present, and all dates have been shifted. 
