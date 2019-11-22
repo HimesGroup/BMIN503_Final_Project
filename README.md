@@ -1,18 +1,11 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains files for the final project for the above course:
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+- final_project_template_Thaker.Rmd is a description of the project including details on methods, code for data cleaning and processing, and output results
+- final_project_template_Thaker.html is HTML knit output of the above source file
+- RAAPS_blocks.csv is Epic raw data output of peripheral nerve blocks performed
+- Anes_staff_mapping.csv includes a list of staff names and their corresponding roles
+- Surgeon_dept_mapping.csv includes a list of attending surgeons and their corresponding clinical departments
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/19 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+** note some files not publicly included in repository out of concern for patient/staff privacy
