@@ -31,8 +31,325 @@ Multiple disciplines can contribute to addressing this research question.  The d
 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+
+For this analysis I will use Flatiron Health, an oncology electronic health record (EHR)-derived dataset that contains detailed information on patient demographics, cancer characteristics, treatment information, diagnoses, concomitant medications, and mortality, among other types. The cohort will include metastatic melanoma patients who received immune checkpoint inhibtor therapy. I will investigate the association between pre-specified immune- and inflammatory-related variables (medical conditions and medications) and one-year survival, using logistic regression. Medical conditions will be captured using ICD-9 and ICD-10 diagnosis codes in the diagnosis file and medications will be captured in the medication administration file.
+
+
+Notes to self:
+Cohort identification and data cleaning
+-identify metastatic melanoma patients on immune checkpoint inhibitors (nivolumab, pembrolizumab, or ipilimumab +/- chemotherapy in metastatic line setting), obtain patient id
+-identify baseline period for covariates, subtract one month from ICI start date
+-identify diagnoses and medications with date in baseline period from diagnosis and med files
+-create binary variable for died within 1 year from ICI start: add one year to ICI start date and compare to date of death
+-include sex, age, race, ecog, geographic region, line number
+-diagnoses: lupus, multiple sclerosis, mastocytosis, rheumatoid arthritis, asthma/COPD, hypothyroidism, crohn's disease, ulcerative colitis
+-meds: antibiotics, antifungals, glucocorticoids, immunosuppresive monoclonal antibodies (adalimumab, infliximab), mTor inhibitors, mycophenolate
+
+
+```{r, eval = TRUE}
+library(dplyr)
+```
+
+```{r, eval = TRUE}
+mel_lineoftherapy <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_lineoftherapy.csv", header = TRUE)
+```
+
+```{r, eval = TRUE}
+#Filtering to metastatic melanoma patients who received immune checkpoint inhibitors. If a single patient received more than one line of therapy with an ICI, I will use the start date for their  first line with ICI as the index date.
+
+mel_ICI <- mel_lineoftherapy %>%
+  filter(grepl("Pembrolizumab|Nivolumab|Ipilimumab", linename)) %>%
+  filter(linesetting=="METASTATIC") %>%
+  arrange(patientid, linenumber) %>%
+  group_by(patientid) %>%
+  slice(1) %>%
+  print()
+```
+```{r, eval = TRUE}
+#Defining the start date of the 30 day baseline period for each patient, by subtracting 30 days from the ICI start date.
+
+mel_ICI_2 <- mel_ICI %>%
+  rename(ICI_startdate = startdate, ICI_enddate = enddate) %>%
+  mutate(ICI_startdate = as.Date(ICI_startdate)) %>%
+  mutate(ICI_enddate = as.Date(ICI_enddate)) %>%
+  mutate(baseline_startdate_30 = ICI_startdate - 30) %>%
+  print()
+
+```
+
+```{r, eval = TRUE}
+#reading in data file that contains date of death for each patient.
+mel_mortality <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_enhanced_mortality_v2.csv", header = TRUE)
+
+```
+
+```{r, eval = TRUE}
+#Only the month and year for death date is reported, possibly due to re-identification concerns. Therefore, I will assign a default day of the 15th for each death date.
+
+mel_mortality <- mel_mortality %>%
+  mutate(dateofdeath = as.character(dateofdeath))
+
+mel_mortality$dateofdeath2 <- sprintf('%s-15', mel_mortality$dateofdeath)
+
+mel_mortality <- mel_mortality %>%
+  mutate(dateofdeath2 = as.Date(dateofdeath2))
+```
+
+```{r, eval = TRUE}
+#adding date of death variable to the mel_ICI table with left join.  Also, dropping the original date of death variable (and only including the date with year, month, and day) to avoid confusion.
+
+mel_ICI_3 <- mel_ICI_2 %>%
+  left_join(mel_mortality, by = "patientid")
+
+mel_ICI_3 <- select(mel_ICI_3, -c(dateofdeath))
+
+```
+
+```{r, eval = TRUE}
+mel_ICI_3 <- mel_ICI_3 %>%
+  mutate(oneyeardeath = ifelse(dateofdeath2 <= (ICI_startdate + 365), 1, 0)) %>%
+  mutate(oneyeardeath = ifelse(is.na(oneyeardeath), 0, oneyeardeath))
+  #mutate(oneyeardeath = factor(oneyeardeath, levels = c(0,1), labels = c("alive", "dead")))
+
+mel_ICI_3 %>%
+  group_by(oneyeardeath) %>%
+  count()
+```
+```{r, eval = TRUE}
+#Reading in data file with patient diagnoses.
+
+mel_diagnoses <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_diagnosis.csv", header = TRUE)
+
+mel_diagnoses <- mel_diagnoses %>%
+  mutate(diagnosisdate = as.Date(diagnosisdate))
+
+```
+
+```{r, eval = TRUE}
+
+mel_multiplesclerosis <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^340|^G35", diagnosiscode))
+
+mel_ICI_4$multiplesclerosis = ifelse(mel_ICI_3$patientid %in% mel_multiplesclerosis$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(multiplesclerosis) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_rheumatoidarthritis <- mel_diagnoses %>%
+  filter(mel_diagnoses$patientid %in% mel_ICI_3$patientid & mel_diagnoses$diagnosisdate <= mel_ICI_3$ICI_startdate & grepl("^714|^M06.9", mel_diagnoses$diagnosiscode))
+
+mel_ICI_4$rheumatoidarthritis = ifelse(mel_ICI_3$patientid %in% mel_rheumatoidarthritis$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(rheumatoidarthritis) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_lupus <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^710|^695.4|^M32.9|^L93.2", diagnosiscode))
+
+mel_ICI_4$lupus = ifelse(mel_ICI_3$patientid %in% mel_lupus$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(lupus) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_psoriasis <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^696|^L40.50|^L40.9", diagnosiscode))
+
+mel_ICI_4$psoriasis = ifelse(mel_ICI_3$patientid %in% mel_psoriasis$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(psoriasis) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_IBD <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^556|^K51|^555|^K50", diagnosiscode))
+
+mel_ICI_4$IBD = ifelse(mel_ICI_3$patientid %in% mel_IBD$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(IBD) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_asthma <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^493|^J45|^E945.7", diagnosiscode))
+
+mel_ICI_4$asthma = ifelse(mel_ICI_3$patientid %in% mel_asthma$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(asthma) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_hypothyroid <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^244|^E89|^E03", diagnosiscode))
+
+mel_ICI_4$hypothyroid = ifelse(mel_ICI_3$patientid %in% mel_hypothyroid$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(hypothyroid) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+
+mel_hyperthyroid <- mel_diagnoses %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+  filter(diagnosisdate <= ICI_startdate & grepl("^242|^E05", diagnosiscode))
+
+mel_ICI_4$hyperthyroid = ifelse(mel_ICI_3$patientid %in% mel_hyperthyroid$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(hyperthyroid) %>%
+  count()
+
+```
+```{r, eval = TRUE}
+#Reading in data file with medications.
+
+mel_medications <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_medicationadministration.csv", header = TRUE)
+
+
+mel_medications <- mel_medications %>%
+  mutate(administereddate = as.Date(administereddate, '%m/%d/%Y'))
+
+```
+
+```{r, eval = TRUE}
+
+mel_glucocorticoid <- mel_medications %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+ filter(administereddate >= ICI_startdate - 42 & administereddate <= ICI_startdate & detaileddrugcategory == 'glucocorticoid')
+
+mel_ICI_4$glucocorticoid = ifelse(mel_ICI_3$patientid %in% mel_glucocorticoid$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(glucocorticoid) %>%
+  count()
+
+```
+
+```{r, eval = TRUE}
+#Reading in data file to classify anti-infectives into antibiotic, antiviral, and antifungal.
+
+mel_antiinfective_class <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/melanoma_antiinfective_classification.csv", header = TRUE)
+
+```
+
+```{r, eval = TRUE}
+library(dplyr)
+
+mel_antiinfectives <- mel_medications %>%
+  filter(detaileddrugcategory == 'anti-infective') %>%
+  left_join(mel_antiinfective_class, by = 'commondrugname')
+
+mel_antibiotic <- mel_antiinfectives %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+ filter(administereddate >= ICI_startdate - 42 & administereddate <= ICI_startdate & antiinfectiveclass == 'antibiotic')
+
+mel_ICI_4$antibiotic = ifelse(mel_ICI_3$patientid %in% mel_antibiotic$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(antibiotic) %>%
+  count()
+
+```
+
+```{r, eval = TRUE}
+
+mel_antiviral <- mel_antiinfectives %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+ filter(administereddate >= ICI_startdate - 42 & administereddate <= ICI_startdate & antiinfectiveclass == 'antiviral')
+
+mel_ICI_4$antiviral = ifelse(mel_ICI_3$patientid %in% mel_antiviral$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(antiviral) %>%
+  count()
+```
+
+```{r, eval = TRUE}
+
+mel_antifungal <- mel_antiinfectives %>%
+  left_join(mel_ICI_3, by = 'patientid') %>%
+ filter(administereddate >= ICI_startdate - 42 & administereddate <= ICI_startdate & antiinfectiveclass == 'antifungal')
+
+mel_ICI_4$antifungal = ifelse(mel_ICI_3$patientid %in% mel_antifungal$patientid, 1, 0)
+
+mel_ICI_4 %>%
+  group_by(antifungal) %>%
+  count()
+```
+
+```{r, eval = TRUE}
+#Reading in demographics data file and linking to main table. Also creating age variable based on birthyear and ICI start date
+
+mel_demographics <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_demographics.csv", header = TRUE)
+
+mel_ICI_5 <- mel_ICI_4 %>%
+  left_join(mel_demographics, by = 'patientid') %>%
+  mutate(age = as.numeric(format(ICI_startdate, '%Y')) - birthyear)
+
+```
+
+```{r, eval = TRUE}
+#Reading in ECOG performance status score data file.  Finding most recent ECOG score before ICI start date for patients with a reported score. Linking ECOG score to main table
+
+mel_ecog <- read.csv("C:/Users/Neil D.000/Documents/UPenn/EPID 600/Final Project/Melanoma_Data/advmel_oral_lot_ecog.csv", header = TRUE)
+
+mel_ecog <- mel_ecog %>%
+  mutate(ecogdate = as.Date(ecogdate))
+
+mel_ecog2 <- mel_ecog %>%
+  left_join(mel_ICI_5, by = 'patientid') %>%
+  filter(!is.na(ICI_startdate)) %>%
+  filter(ecogdate <= ICI_startdate) %>%
+  group_by(patientid) %>%
+  slice(which.max(ecogdate))
+
+mel_ICI_6 <- mel_ICI_5 %>%
+  left_join(select(mel_ecog2, ecogdate, ecogvalue), by = 'patientid')
+  
+
+```
 
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+Analysis
+-visualization of baseline characteristics
+-logistic regression on chosen variables
+
+
+```{r eval = TRUE}
+ICI.glm <- glm(oneyeardeath ~ linenumber + gender + age + race + multiplesclerosis + rheumatoidarthritis + lupus + psoriasis + IBD + asthma + hypothyroid + hyperthyroid + glucocorticoid + antibiotic + antifungal, data = mel_ICI_6, family = binomial(logit))
+summary(ICI.glm)
+exp(cbind(OR = coef(ICI.glm), CI = confint(ICI.glm))) 
+#glm.pred <- predict(ICI.glm, mel_ICI_6, type = "response")
+```
