@@ -13,3 +13,13 @@ Variables to be included in models:
 - **mager41** - Mother's age as a continuous variable. Different from what is published in the user's guide.
 
 - **ubfacil** - Birth facility. Hospital vs other categories. Hospital is coded a 1.
+
+- **mracerec** - Maternal race recoded as White, Black, American Indian/Alaskan Native and Asian/Pacific Islander.
+
+- **mracehisp** - Maternal race hispanic origin. 
+
+- **meduc** - Maternal education.
+
+- **precare_rec** - Month prenatal care began as as categorical. 1 is 1-3 months. 2 is 4-6 months. 3 is 7th on. 4 is none. 5 Unknown.
+
+- **rf_ppterm** - Prior preterm birth as a character variable.
