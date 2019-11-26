@@ -117,20 +117,18 @@ acs.data.2 <- acs.data %>%
 
 head(acs.data)
 
-#PENN DATA
-##Since this is PHI data, I am ommitting the code used to import the data. However, first I imported the data, then I merged a dataset of women with encounters with UPHS, and the lats and longs of their addresses, with a dataset that had outcome data for their deliveries. These variables include information about stillbirth, preterm birth, and c-section. 
 
 library(tidycensus)
 
 #BRFSS DATA
-library(Hmisc)
-BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/LLCP2013XPT/LLCP2013.XPT")
-colnames(BRFSS)
+#library(Hmisc)
+#BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/LLCP2013XPT/LLCP2013.XPT")
+#colnames(BRFSS)
 
-Phila.BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/MMSA2017_XPT/MMSA2017.XPT")
+#Phila.BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/MMSA2017_XPT/MMSA2017.XPT")
 
 #crime Data
-crime <- read.csv("C:/Users/Jessi/Documents/Blanca Class/crime/incidents_part1_part2.csv.crdownload")
+#crime <- read.csv("C:/Users/Jessi/Documents/Blanca Class/crime/incidents_part1_part2.csv.crdownload")
 
 ##geocode lat and long of crime data 
 
@@ -139,6 +137,143 @@ crime <- read.csv("C:/Users/Jessi/Documents/Blanca Class/crime/incidents_part1_p
 
 
 ```
+
+Next we needed to pull in data from Penn. Since this is PHI data, I am ommitting the initial code used to import the data. 
+
+```{r}
+#However, first I imported the data, then I merged a dataset of women with encounters with UPHS, and the lats and longs of their addresses, with a dataset that had outcome data for their deliveries. These variables include information about stillbirth, preterm birth, preeclampsia, hypertnesion and c-section. 
+
+#these libraries were used in the code I used to tunnel in to the data, which has been ommitted here. 
+##library(RMySQL)
+##library("DBI")
+##library(stringr)
+
+encounter_at_deliv_woutcomes = merge(encounter_at_deliv, mat_outcomes, by="PREG_ID") 
+#View(encounter_at_deliv_woutcomes)
+dim(encounter_at_deliv_woutcomes)
+
+#get rid of NAs
+encounter_at_deliv_woutcomes_NAlatlonrem=encounter_at_deliv_woutcomes[-which(encounter_at_deliv_woutcomes$LATITUDE=="NA"), ]
+encounter_at_deliv_woutcomes_NAlatlonrem=encounter_at_deliv_woutcomes_NAlatlonrem[-which(encounter_at_deliv_woutcomes_NAlatlonrem$LONGITUDE=="NA"), ]
+dim(encounter_at_deliv_woutcomes_NAlatlonrem)
+
+#get rid of blanks
+encounter_at_deliv_woutcomes_NAlatlonrem_blanks=encounter_at_deliv_woutcomes_NAlatlonrem[-which(encounter_at_deliv_woutcomes_NAlatlonrem$LATITUDE==""), ]
+encounter_at_deliv_woutcomes_NAlatlonrem_blanks=encounter_at_deliv_woutcomes_NAlatlonrem[-which(encounter_at_deliv_woutcomes_NAlatlonrem$LONGITUDE==""), ]
+dim(encounter_at_deliv_woutcomes_NAlatlonrem_blanks)
+
+outcome.data <- data.frame(encounter_at_deliv_woutcomes_NAlatlonrem_blanks)
+class(outcome.data)
+
+library(tidycensus)
+library(tigris)
+library(dplyr)
+
+#clean the data set 
+outcome.data_clean <- select(outcome.data,PREG_ID,LATITUDE,LONGITUDE,MRN_HUP,YEAR,NH_AFAM,NH_WHITE,HISPANIC,WEIGHT_LBS,ENC_AGE_DEC.x,STILLBIRTH,PRETERM,CSECTION, HYPERTENSION, PREECLAMPSIA)
+dim(outcome.data_clean)
+
+library(sp)
+
+# (!) fill this: 
+data_path <- "C:/Users/Jessi/Documents/Blanca Class/finally project/"
+load(paste0(data_path,"phillytracts")) 
+
+# (!) let's call the dataset data.pre
+data.pre <- outcome.data_clean
+data.pre$LATITUDE[which(data.pre$LATITUDE=="")]=NA
+data.pre$LONGITUDE[which(data.pre$LONGITUDE=="")]=NA
+
+# GPS location:
+temp.pointX <- data.pre$LATITUDE
+temp.pointY <- data.pre$LONGITUDE
+
+## actually they have the same NAs, but just in case
+rem.ind.points <- is.na(temp.pointX) | is.na(temp.pointY)
+## want to make this exact same as old file. Remove crap points, keep order:
+# (!) add other covariates we care about
+data.new <- data.pre[!rem.ind.points,] 
+data.new$LATITUDE=as.numeric(as.character(data.new$LATITUDE))
+data.new$LONGITUDE=as.numeric(as.character(data.new$LONGITUDE))
+pts <- SpatialPoints(data.new[ ,c('LONGITUDE', 'LATITUDE')])
+databytracts <- sp::over(tracts, pts, returnList = T)
+
+data.new$tract <- NA
+data.new$tractID <- NA
+
+datavector <- unlist(databytracts)
+datatractlength <- lapply(databytracts, length)
+
+levels_region <- levels(tracts@data$GEOID10)[tracts@data$GEOID10]
+
+dataind.temp <- c(0, cumsum(datatractlength))
+for(i in 1:length(databytracts)){
+  temp.index <- (dataind.temp[i] + 1): (dataind.temp[i + 1])
+  data.new$tract[datavector[temp.index]] = i
+  data.new$tractID[datavector[temp.index]] = levels_region[i]
+  if(i %% 100 == 0) cat(i, " ")
+}
+sum(is.na(data.new$tractID))
+dim(data.new)
+
+data.new.philly=data.new[-which(is.na(data.new$tractID)), ]
+#View(data.new.philly)
+dim(data.new.philly)
+table(data.new.philly$tract)
+num.tracts = length(unique(data.new.philly$tract))
+unique_tracts = unique(data.new.philly$tract)
+
+num_deliv=rep(NA,num.tracts)
+num_preterm=rep(NA,num.tracts)
+num_stillbirth=rep(NA,num.tracts)
+num_Csection=rep(NA,num.tracts)
+for(i in 1:length(unique(data.new.philly$tract))){
+  data_it = subset(data.new.philly, data.new.philly$tract==unique_tracts[i])
+  num_deliv[i] = length(unique(data_it$PREG_ID))
+  num_preterm[i] = length(unique(data_it$PREG_ID[which(data_it$PRETERM=="1")]))
+  num_stillbirth[i] = length(unique(data_it$PREG_ID[which(data_it$STILLBIRTH=="1")]))
+  num_Csection[i] = length(unique(data_it$PREG_ID[which(data_it$CSECTION=="1")]))
+}
+counts_outcomes_philly_geo = data.frame(tract=unique_tracts,
+                                        num_deliv=num_deliv,
+                                        num_Csection=num_Csection,
+                                        num_preterm=num_preterm,
+                                        num_stillbirth=num_stillbirth)
+
+
+tract_df = data.frame(tract=data.new.philly$tract,
+                      tractID=data.new.philly$tractID)
+
+tract_df=tract_df[!(duplicated(tract_df)), ]
+
+counts_outcomes_philly_geo=merge(counts_outcomes_philly_geo,tract_df, by="tract" )
+
+dim(counts_outcomes_philly_geo)
+
+#View(data.new.philly)
+data.new.philly[which(data.new.philly$tract=="135"), ]
+
+dim(data.new.philly)
+
+
+```
+Now, we need to merge data.new.philly (the geocoded maternal health outcome data) with acs.data.2.
+```{r}
+class(data.new.philly$tractID)
+class(acs.data.2$GEOID)
+
+#first need to make GEOID column in data.new.philly to merge on
+data.new.philly$GEOID=data.new.philly$tractID
+class(data.new.philly$GEOID)
+
+outcome_acs = merge(acs.data.2, data.new.philly, by="GEOID") 
+dim(outcome_acs)
+outcome_acs_clean = outcome_acs[!(duplicated(outcome_acs)), ]
+dim(outcome_acs_clean)
+
+class(outcome_acs)
+```
+
 
 Histograms were generated to look at overall hemmoraghing rate per deliveries
 
