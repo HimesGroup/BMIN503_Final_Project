@@ -42,8 +42,10 @@ Variables to be included in models:
 
 - **dbwt** - Birth weight.
 
-_ **f_ab_vent** - Ever ventilated.
+- **f_ab_vent** - Ever ventilated.
 
-_ **f_ab_vent6** - Ventilated more than 6 hours.
+- **f_ab_vent6** - Ventilated more than 6 hours.
 
-_ **f_ab_nicu** - Admitted to a NICU.
+- **f_ab_nicu** - Admitted to a NICU.
+
+- **aged** - Age at infant death
