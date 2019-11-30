@@ -15,7 +15,7 @@ options(width = 400)
 
 ### Overview
 
-The invention of vaccines has arguably changed the course of human history by drastically decreasing the incidence of many infectious diseases, saving countless lives. However, recent years have seen an increase in reported cases of diseases thought to have been effectively eliminated since the advent and implementation of vaccination. This project seeks to analyze historic and recent trends between vaccination coverage and disease incidence across various infectious diseases and explore the genetic profile of immune cells as a response against vaccination using Ebola as a case study to highlight factors associated with immunity.
+The invention of vaccines has arguably changed the course of human history by drastically decreasing the incidence of many infectious diseases, saving countless lives. However, recent years have seen an increase in reported cases of diseases thought to have been effectively eliminated since the advent and implementation of vaccination. This project seeks to highlight historic and recent trends between vaccination coverage and disease incidence across various infectious diseases and explore these data in comparison to established immunity thresholds that are necessary to eliminate disease persistance. This project takes a particular look at the following diseases: Diphtheria, Pertussis, Measles, Polio, and Rubella from the late 1900s to present day. 
 
 Follow the link [here][repository] to my final project GitHub repository.
 
@@ -26,7 +26,7 @@ Follow the link [here][repository] to my final project GitHub repository.
 
 The first reported vaccine in the western world was invented by Edward Jenner, who observed that milkmaids did not suffer the severe disfiguring seen by others during the contraction of smallpox. It turned out that milkmaids contracted cowpox from contact with the cow’s udders, leading to a milder form of the pox that provided protection against smallpox. Since then, the concept of vaccination has been applied to many different diseases such as measles, mumps, and polio, effectively eliminating them from the western world. However, recent trends show an increase in parents refusing to vaccinate their children due to religious reasons or the belief that vaccines cause impairment. This trend coincides with the resurfacing of diseases thought to be long eliminated since the implementation of comprehensive vaccination policies.
 
-This problem can be best approached with interdisciplinary expertise from clinicians, public health experts, as well as health surveillance officials. However, stakeholders in social economics, vaccine developers, and public health workers would benefit from increased understanding about why particular diseases are resurfacing. I am using datasets provided from the WHO and unicef for vaccination coverage and disease incidence by country over time (1980s - 2018). Their datasets also cover various vaccine antigens on a per country basis. Analysis of these datasets will lead to a greater understanding of how vaccines contributed to the precipitous decline in once-dreaded diseases, and hopefully insight into their recent recurrence. Additionally, I take Ebola vaccination data (sequencing and microwell data of PBMCs) as a case study to highlight what genetic factors are upregulated upon vaccination and identify key differences that lead to effective immunity.
+This problem can be best approached with interdisciplinary expertise from clinicians, public health experts, as well as health surveillance officials. However, stakeholders in social economics, vaccine developers, and public health workers would benefit from increased understanding about why particular diseases are resurfacing. I am using datasets provided from the WHO and unicef for vaccination coverage and disease incidence by country over time (1980s - 2018). Their datasets also cover various vaccine antigens on a per country basis. Analysis of these datasets will lead to a greater understanding of how vaccines contributed to the precipitous decline in once-dreaded diseases, and hopefully insight into their recent recurrence.
 
 
 ### Methods
@@ -40,10 +40,12 @@ Package and library installation:
 library(tidyverse)
 library(dplyr)
 library(ggplot2)
+library(ggplotify)
 library(ggpubr)
 library(rlist)
 library(rapport)
 library(tmap)
+library(RColorBrewer)
 theme_set(theme_pubr())
 
 ```
@@ -54,6 +56,8 @@ Import datasets:
 # Dataset on vaccination coverage
 coverage_series <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/coverage_series.csv"), header = TRUE)
 colnames(coverage_series)[which(names(coverage_series) == "Percent_covrage")] <- "Percent_coverage"
+colnames(coverage_series)[which(names(coverage_series) == "Cname")] <- "Country"
+coverage_series <- select(coverage_series, ISO_code, Country, Vaccine, Year, Percent_coverage)
 
 # Datasets on various disease incidences
 crs_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/crs_incidence.csv"), header = TRUE)
@@ -69,13 +73,162 @@ ttetanus_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BM
 yfever_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/yfever_incidence.csv"), header = TRUE)
 regional_global_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/regional_global_incidence.csv"), header = TRUE)
 
-# Datasets on Ebola factors
-# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5011782/
-# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5497219/
-
 ```
 
 Clean datasets for analysis:
+
+```{r, eval = TRUE, message = FALSE}
+
+# Missing data that skews geographical mapping ... 
+
+# Buffer rows with N/A to fix map issues below
+  # Countries missinng from DTP3 coverage
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2014)$Cname)]
+# [1] "Finland" "Germany" "India"   "Monaco"  "Niue"    "Ukraine"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2015)$Cname)]
+# [1] "Austria"        "Czech Republic" "Germany"        "Monaco"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2016)$Cname)]
+# [1] "Germany" "Monaco"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2017)$Cname)]
+# [1] "Czech Republic" "Germany"        "San Marino"     "Uruguay"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2018)$Cname)]
+# [1] "Belarus"         "Czech Republic"  "France"          "Germany"         "Israel"          "Kuwait"          "Montenegro"      "North Macedonia" "Sweden"
+
+add <- data.frame(
+  ISO_code = c("FIN", "DEU", "IND", "MCO", "NIU", "UKR", "AUT", "CZE", "DEU", "MCO", "DEU", "MCO", "CZE", "DEU", "SMR", "URY", "BLR", "CZE", "FRA", "DEU", "ISR", "KWT", "MNE", "MKD", "SWE"),
+  Country = c("Finland", "Germany", "India", "Monaco", "Niue", "Ukraine", "Austria", "Czech Republic", "Germany", "Monaco", "Germany", "Monaco", "Czech Republic", "Germany", "San Marino", "Uruguay", "Belarus", "Czech Republic", "France", "Germany", "Israel", "Kuwait", "Montenegro", "North Macedonia", "Sweden"),
+  Vaccine = rep("DTP3", 25),
+  Year = c(rep(2014, 6), rep(2015, 4), rep(2016, 2), rep(2017, 4), rep(2018, 9)),
+  Percent_coverage = rep(NA, 25)
+)
+coverage_series <- rbind(coverage_series, add)
+
+  # Countries missing from MCV1 coverage
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2014)$Cname)]
+# [1] "Finland"  "India"    "Kiribati" "Monaco"   "Niue"     "Ukraine"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2015)$Cname)]
+# [1] "Austria"        "Czech Republic" "Monaco"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2016)$Cname)]
+# [1] "Australia" "Monaco"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2017)$Cname)]
+# [1] "Australia"  "San Marino" "Uruguay"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2018)$Cname)]
+# [1] "Australia"       "Belarus"         "France"          "Israel"          "Kuwait"          "Montenegro"      "North Macedonia"
+
+add <- data.frame(
+  ISO_code = c("FIN", "IND", "KIR", "MCO", "NIU", "UKR", "AUT", "CZE", "MCO", "AUS", "MCO", "AUS", "SMR", "URY", "AUS", "BLR", "FRA", "ISR", "KWT", "MNE", "MKD"),
+  Country = c("Finland", "India", "Kiribati", "Monaco", "Niue", "Ukraine", "Austria", "Czech Republic", "Monaco", "Australia", "Monaco", "Australia", "San Marino", "Uruguay", "Australia", "Belarus", "France", "Israel", "Kuwait", "Montenegro", "North Macedonia"),
+  Vaccine = rep("MCV1", 21),
+  Year = c(rep(2014, 6), rep(2015, 3), rep(2016, 2), rep(2017, 3), rep(2018, 7)),
+  Percent_coverage = rep(NA, 21)
+)
+coverage_series <- rbind(coverage_series, add)
+
+  # Countries missing from Pol3 coverage
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2014)$Cname)]
+# [1] "Finland" "India"   "Monaco"  "Niue"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2015)$Cname)]
+# [1] "Austria" "Cuba"    "Monaco"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2016)$Cname)]
+# [1] "Monaco"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2017)$Cname)]
+# [1] "El Salvador" "Monaco"      "San Marino"  "Uruguay"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2018)$Cname)]
+# [1] "Belarus"         "Czech Republic"  "France"          "Israel"          "Kuwait"          "Montenegro"      "North Macedonia"
+
+add <- data.frame(
+  ISO_code = c("FIN", "IND", "MCO", "NIU", "AUT", "CUB", "MCO", "MCO", "SLV", "MCO", "SMO", "URY", "BLR", "CZE", "FRA", "ISR", "KWT", "MNE", "MKD"),
+  Country = c("Finland", "India", "Monaco",  "Niue", "Austria", "Cuba", "Monaco", "Monaco", "El Salvador", "Monaco", "San Marino", "Uruguay", "Belarus", "Czech Republic", "France", "Israel", "Kuwait", "Montenegro", "North Macedonia"),
+  Vaccine = rep("Pol3", 19),
+  Year = c(rep(2014, 4), rep(2015, 3), rep(2016, 1), rep(2017, 4), rep(2018, 7)),
+  Percent_coverage = rep(NA, 19)
+)
+coverage_series <- rbind(coverage_series, add)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Will not move on with RCV1 coverage analysis because it is geographically too sparse
+
+#   # RCV1 coverage
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2014)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Benin"                                       "Botswana"                                    "Burkina Faso"                               
+#  [7] "Burundi"                                     "Cameroon"                                    "Canada"                                     
+# [10] "Central African Republic (the)"              "Chad"                                        "Comoros (the)"                              
+# [13] "Congo (the)"                                 "Côte d'Ivoire"                               "Democratic People's Republic of Korea (the)"
+# [16] "Democratic Republic of the Congo (the)"      "Djibouti"                                    "Equatorial Guinea"                          
+# [19] "Eritrea"                                     "Eswatini"                                    "Ethiopia"                                   
+# [22] "Finland"                                     "Gabon"                                       "Gambia"                                     
+# [25] "Guinea"                                      "Guinea-Bissau"                               "India"                                      
+# [28] "Indonesia"                                   "Kenya"                                       "Kiribati"                                   
+# [31] "Lesotho"                                     "Liberia"                                     "Madagascar"                                 
+# [34] "Malawi"                                      "Mali"                                        "Mauritania"                                 
+# [37] "Monaco"                                      "Morocco"                                     "Mozambique"                                 
+# [40] "Myanmar"                                     "Namibia"                                     "Niger (the)"                                
+# [43] "Nigeria"                                     "Niue"                                        "Pakistan"                                   
+# [46] "Papua New Guinea"                            "Poland"                                      "Romania"                                    
+# [49] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [52] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [55] "Timor-Leste"                                 "Togo"                                        "Uganda"                                     
+# [58] "Ukraine"                                     "United States of America (the)"              "Vanuatu"                                    
+# [61] "Viet Nam"                                    "Yemen"                                       "Zambia"                                     
+# [64] "Zimbabwe"                                   
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2015)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Antigua and Barbuda"                         "Austria"                                     "Benin"                                      
+#  [7] "Botswana"                                    "Burundi"                                     "Cameroon"                                   
+# [10] "Central African Republic (the)"              "Chad"                                        "Comoros (the)"                              
+# [13] "Congo (the)"                                 "Côte d'Ivoire"                               "Democratic People's Republic of Korea (the)"
+# [16] "Democratic Republic of the Congo (the)"      "Djibouti"                                    "Equatorial Guinea"                          
+# [19] "Eritrea"                                     "Eswatini"                                    "Ethiopia"                                   
+# [22] "Gabon"                                       "Gambia"                                      "Guinea"                                     
+# [25] "Guinea-Bissau"                               "India"                                       "Indonesia"                                  
+# [28] "Kenya"                                       "Lesotho"                                     "Liberia"                                    
+# [31] "Madagascar"                                  "Malawi"                                      "Mali"                                       
+# [34] "Mauritania"                                  "Monaco"                                      "Mozambique"                                 
+# [37] "Namibia"                                     "Niger (the)"                                 "Nigeria"                                    
+# [40] "Pakistan"                                    "Papua New Guinea"                            "Poland"                                     
+# [43] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [46] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [49] "Timor-Leste"                                 "Togo"                                        "Trinidad and Tobago"                        
+# [52] "Uganda"                                      "United Arab Emirates (the)"                  "Vanuatu"                                    
+# [55] "Viet Nam"                                    "Zambia"                                      "Zimbabwe"                                   
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2016)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Australia"                                   "Benin"                                       "Burundi"                                    
+#  [7] "Cambodia"                                    "Cameroon"                                    "Central African Republic (the)"             
+# [10] "Chad"                                        "Comoros (the)"                               "Congo (the)"                                
+# [13] "Democratic People's Republic of Korea (the)" "Democratic Republic of the Congo (the)"      "Djibouti"                                   
+# [16] "Equatorial Guinea"                           "Eritrea"                                     "Eswatini"                                   
+# [19] "Ethiopia"                                    "Gabon"                                       "Gambia"                                     
+# [22] "Guinea"                                      "Guinea-Bissau"                               "Haiti"                                      
+# [25] "India"                                       "Indonesia"                                   "Kenya"                                      
+# [28] "Lesotho"                                     "Liberia"                                     "Madagascar"                                 
+# [31] "Malawi"                                      "Mali"                                        "Mauritania"                                 
+# [34] "Mexico"                                      "Monaco"                                      "Mozambique"                                 
+# [37] "Namibia"                                     "Niger (the)"                                 "Nigeria"                                    
+# [40] "Pakistan"                                    "Peru"                                        "Saint Lucia"                                
+# [43] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [46] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [49] "Togo"                                        "Uganda"                                      "Viet Nam"                                   
+# [52] "Zambia"                                     
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2017)$Cname)]
+#  [1] "Afghanistan"                                 "Angola"                                      "Australia"                                  
+#  [4] "Benin"                                       "Central African Republic (the)"              "Chad"                                       
+#  [7] "China"                                       "Comoros (the)"                               "Congo (the)"                                
+# [10] "Democratic People's Republic of Korea (the)" "Democratic Republic of the Congo (the)"      "Djibouti"                                   
+# [13] "Ecuador"                                     "Equatorial Guinea"                           "Eritrea"                                    
+# [16] "Ethiopia"                                    "Gabon"                                       "Guinea"                                     
+# [19] "Guinea-Bissau"                               "Kiribati"                                    "Liberia"                                    
+# [22] "Madagascar"                                  "Mali"                                        "Mauritania"                                 
+# [25] "Mozambique"                                  "Niger (the)"                                 "Nigeria"                                    
+# [28] "Pakistan"                                    "San Marino"                                  "Sierra Leone"                               
+# [31] "Somalia"                                     "South Africa"                                "South Sudan"                                
+# [34] "Sudan (the)"                                 "Togo"                                        "Uganda"                                     
+# [37] "Uruguay"
+
+
+```
+
 ```{r, eval = TRUE, message = FALSE}
 
 # Remove extraneous columns for graphing
@@ -300,12 +453,12 @@ figure1 <- ggarrange(per, dip, tte
                     # ncol = 1, nrow = 3
                     )
 
-figure2 <- ggarrange(mea, mum, jap, crs
+figure2 <- ggarrange(mea, pol, rub, neo
                     # labels = c("A", "B", "C"),
                     # ncol = 1, nrow = 3
                     )
 
-figure3 <- ggarrange(pol, rub, neo, yel
+figure3 <- ggarrange(mum, yel, crs, jap
                     # labels = c("A", "B", "C"),
                     # ncol = 1, nrow = 3
                     )
@@ -317,35 +470,18 @@ figure1; figure2; figure3;
 ```{r, eval = TRUE, message = FALSE}
 
 # Focus on coverage of DTP1 and DTP3 (for diphtheria, tetanus, and pertussis)
-DTP1_coverage <- filter(coverage_series, Vaccine == "DTP1")
+# DTP1_coverage <- filter(coverage_series, Vaccine == "DTP1")
 DTP3_coverage <- filter(coverage_series, Vaccine == "DTP3")
 
 # Focus on coverage of MCV1 and MCV2 (for measles)
 MCV1_coverage <- filter(coverage_series, Vaccine == "MCV1")
-MCV2_coverage <- filter(coverage_series, Vaccine == "MCV2")
+# MCV2_coverage <- filter(coverage_series, Vaccine == "MCV2")
 
 # Focus on coverage of Pol3 (for polio)
 Pol3_coverage <- filter(coverage_series, Vaccine == "Pol3")
 
-# DTP1 coverage per country over time
-for (country in levels(DTP1_coverage$Cname)) {
-  cur <- filter(DTP1_coverage, Cname == country)
-  if (is_empty(cur$Year)) {
-    next
-  }
-  # Plots of reported coverage by country over time
-  print(
-    ggplot(cur, aes(Year, Percent_coverage)) +
-      geom_line(size = 1, linetype = 2) +
-      geom_point(shape = 4, size = 2) +
-      scale_color_manual(values = c("black", "gray40")) +
-      theme_bw() +
-      # geom_smooth() +
-      ggtitle(wrapper(paste("Reported coverage of DTP1 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
-    theme(plot.title = element_text(hjust = 0),
-          axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
-  )
-}
+# Focus on coverage of RCV1 (for rubella)
+RCV1_coverage <- filter(coverage_series, Vaccine == "RCV1")
 
 ```
 
@@ -375,12 +511,91 @@ for (country in levels(DTP3_coverage$Cname)) {
 
 ```{r, eval = TRUE, message = FALSE}
 
-# Herd immunity thresholds for diphtheria and pertussis
+# MCV1 coverage per country over time
+for (country in levels(MCV1_coverage$Cname)) {
+  cur <- filter(MCV1_coverage, Cname == country)
+  if (is_empty(cur$Year)) {
+    next
+  }
+  # Plots of reported coverage by country over time
+  print(
+    ggplot(cur, aes(Year, Percent_coverage)) +
+      geom_line(size = 1, linetype = 2) +
+      geom_point(shape = 4, size = 2) +
+      scale_color_manual(values = c("black", "gray40")) +
+      theme_bw() +
+      # geom_smooth() +
+      ggtitle(wrapper(paste("Reported coverage of MCV1 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+    theme(plot.title = element_text(hjust = 0),
+          axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+  )
+}
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Pol3 coverage per country over time
+for (country in levels(Pol3_coverage$Cname)) {
+  cur <- filter(Pol3_coverage, Cname == country)
+  if (is_empty(cur$Year)) {
+    next
+  }
+  # Plots of reported coverage by country over time
+  print(
+    ggplot(cur, aes(Year, Percent_coverage)) +
+      geom_line(size = 1, linetype = 2) +
+      geom_point(shape = 4, size = 2) +
+      scale_color_manual(values = c("black", "gray40")) +
+      theme_bw() +
+      # geom_smooth() +
+      ggtitle(wrapper(paste("Reported coverage of Pol3 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+    theme(plot.title = element_text(hjust = 0),
+          axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+  )
+}
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# RCV1 coverage per country over time
+for (country in levels(RCV1_coverage$Cname)) {
+  cur <- filter(RCV1_coverage, Cname == country)
+  if (is_empty(cur$Year)) {
+    next
+  }
+  # Plots of reported coverage by country over time
+  print(
+    ggplot(cur, aes(Year, Percent_coverage)) +
+      geom_line(size = 1, linetype = 2) +
+      geom_point(shape = 4, size = 2) +
+      scale_color_manual(values = c("black", "gray40")) +
+      theme_bw() +
+      # geom_smooth() +
+      ggtitle(wrapper(paste("Reported coverage of RCV1 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+    theme(plot.title = element_text(hjust = 0),
+          axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+  )
+}
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Herd immunity thresholds for various infectious diseases
 immunity_thresholds <- data.frame(
   Disease = c("Diphtheria", "Pertussis", "Measles", "Mumps", "Polio", "Rubella", "Smallpox", "Influenza", "Ebola"),
   Reproduction_number = c("6-7", "12-17", "12-18", "4-7", "2-15", "6-7", "5-7", "1.4-4", "1.5-2.5"),
-  Threshold_percentage = c(85, 94, 94, 86, 93, 85, 85, 75, NA)
+  Threshold_percentage = c(85, 92, 92, 75, 50, 83, 80, 30, NA)
 )
+
+# Numerical thresholds for diphtheria, pertussis, measles, polio, and rubella
+diphtheria_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Diphtheria")]
+pertussis_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Pertussis")]
+measles_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Measles")]
+polio_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Polio")]
+rubella_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Rubella")]
 
 head(immunity_thresholds)
 
@@ -392,14 +607,14 @@ head(immunity_thresholds)
 
 # Diphtheria
 counts_dip <- list()
-start_year <- 1980
+start_year <- min(DTP3_coverage$Year)
 i <- 1
 while (start_year != 2019) {
   cur_year_counts <- filter(DTP3_coverage, Year == start_year)
-  coverages <- cur_year_counts$Percent_coverage
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
   coverage_count <- 0
   for (coverage in coverages) {
-    if (coverage >= immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Diphtheria")]) {
+    if (coverage >= diphtheria_threshold) {
       coverage_count <- coverage_count + 1
     }
   }
@@ -408,16 +623,18 @@ while (start_year != 2019) {
   start_year <- start_year + 1
 }
 
+
+
 # Pertussis
 counts_per <- list()
-start_year <- 1980
+start_year <- min(DTP3_coverage$Year)
 i <- 1
 while (start_year != 2019) {
   cur_year_counts <- filter(DTP3_coverage, Year == start_year)
-  coverages <- cur_year_counts$Percent_coverage
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
   coverage_count <- 0
   for (coverage in coverages) {
-    if (coverage >= immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Pertussis")]) {
+    if (coverage >= pertussis_threshold) {
       coverage_count <- coverage_count + 1
     }
   }
@@ -426,9 +643,67 @@ while (start_year != 2019) {
   start_year <- start_year + 1
 }
 
-# Number of countries that reach the vaccine coverage threshold for herd immunity for Diphtheria over time
+# Measles
+counts_mea <- list()
+start_year <- min(MCV1_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(MCV1_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= measles_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_mea[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Polio
+counts_pol <- list()
+start_year <- min(Pol3_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(Pol3_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= polio_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_pol[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Rubella
+counts_rub <- list()
+start_year <- min(RCV1_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(RCV1_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= rubella_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_rub[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for diphtheria over time
 covered_thresh_dip <- data.frame(
-  Year = 1980:2018,
+  Year = min(DTP3_coverage$Year):2018,
   Num_countries_covered = unlist(counts_dip)
 )
 
@@ -437,14 +712,14 @@ ggplot(covered_thresh_dip, aes(Year, Num_countries_covered)) +
   geom_point(shape = 4, size = 2) +
   scale_color_manual(values = c("black", "gray40")) +
   theme_bw() +
-  ggtitle(wrapper("Number of countries at coverage threshold for diphtheria herd immunity from 1980 to 2018", width = 65)) +
+  ggtitle(wrapper(paste("Number of countries at DTP3 coverage threshold for diphtheria herd immunity from ", min(DTP3_coverage$Year), " to 2018"), width = 65)) +
 theme(plot.title = element_text(hjust = 0),
       axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
   geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5)
 
-# Number of countries that reach the vaccine coverage threshold for herd immunity for Pertussis over time
+# Number of countries that reach the vaccine coverage threshold for herd immunity for pertussis over time
 covered_thresh_per <- data.frame(
-  Year = 1980:2018,
+  Year = min(DTP3_coverage$Year):2018,
   Num_countries_covered = unlist(counts_per)
 )
 
@@ -453,9 +728,285 @@ ggplot(covered_thresh_per, aes(Year, Num_countries_covered)) +
   geom_point(shape = 4, size = 2) +
   scale_color_manual(values = c("black", "gray40")) +
   theme_bw() +
-  ggtitle(wrapper("Number of countries at coverage threshold for pertussis herd immunity from 1980 to 2018", width = 65)) +
+  ggtitle(wrapper(paste("Number of countries at DTP3 coverage threshold for pertussis herd immunity from ", min(DTP3_coverage$Year), " to 2018"), width = 65)) +
 theme(plot.title = element_text(hjust = 0),
       axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
   geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for measles over time
+covered_thresh_mea <- data.frame(
+  Year = min(MCV1_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_mea)
+)
+
+ggplot(covered_thresh_mea, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at MCV1 coverage threshold for measles herd immunity from ", min(MCV1_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for polio over time
+covered_thresh_pol <- data.frame(
+  Year = min(Pol3_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_pol)
+)
+
+ggplot(covered_thresh_pol, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at Pol3 coverage threshold for polio herd immunity from ", min(Pol3_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for rubella over time
+covered_thresh_rub <- data.frame(
+  Year = min(RCV1_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_rub)
+)
+
+ggplot(covered_thresh_rub, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at RCV1 coverage threshold for rubella herd immunity from ", min(RCV1_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5)
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Add column to indicate whether a country is at threshold coverage for each year
+DTP3_coverage$Covered_dip <- ifelse(DTP3_coverage$Percent_coverage >= diphtheria_threshold, "Yes", "No")
+DTP3_coverage$Covered_per <- ifelse(DTP3_coverage$Percent_coverage >= pertussis_threshold, "Yes", "No")
+MCV1_coverage$Covered <- ifelse(MCV1_coverage$Percent_coverage >= measles_threshold, "Yes", "No")
+Pol3_coverage$Covered <- ifelse(Pol3_coverage$Percent_coverage >= polio_threshold, "Yes", "No")
+
+# Show which countries are at threshold coverage from 2014 - 2018
+data("World")
+colnames(World)[which(names(World) == "iso_a3")] <- "ISO_code"
+
+# Join datasets
+world_coverage_dip_per <- inner_join(World, DTP3_coverage, "ISO_code")
+world_coverage_measles <- inner_join(World, MCV1_coverage, "ISO_code")
+world_coverage_polio <- inner_join(World, Pol3_coverage, "ISO_code")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Plots: 2014 - 2018 for each disease
+years <- c(2014, 2015, 2016, 2017, 2018)
+
+  # Diphtheria
+dip_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_dip_per, Year == year)) +
+  tm_polygons("Covered_dip", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nDiphtheria Coverage\nThreshold in ", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  dip_figures[[i]] <- fig
+  i <- i + 1
+}
+dip_coverage <- tmap_arrange(dip_figures[[1]], dip_figures[[2]], dip_figures[[3]], dip_figures[[4]], dip_figures[[5]])
+dip_coverage;
+
+  # Pertussis
+per_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_dip_per, Year == year)) +
+  tm_polygons("Covered_per", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nPertussis Coverage\nThreshold in ", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  per_figures[[i]] <- fig
+  i <- i + 1
+}
+per_coverage <- tmap_arrange(per_figures[[1]], per_figures[[2]], per_figures[[3]], per_figures[[4]], per_figures[[5]])
+per_coverage;
+
+  # Measles
+mea_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_measles, Year == year)) +
+  tm_polygons("Covered", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nMeasles Coverage\nThreshold in ", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  mea_figures[[i]] <- fig
+  i <- i + 1
+}
+mea_coverage <- tmap_arrange(mea_figures[[1]], mea_figures[[2]], mea_figures[[3]], mea_figures[[4]], mea_figures[[5]])
+mea_coverage;
+
+  # Polio
+pol_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_polio, Year == year)) +
+  tm_polygons("Covered", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nPolio Coverage\nThreshold in ", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  pol_figures[[i]] <- fig
+  i <- i + 1
+}
+pol_coverage <- tmap_arrange(pol_figures[[1]], pol_figures[[2]], pol_figures[[3]], pol_figures[[4]], pol_figures[[5]])
+pol_coverage;
+
+```
+
+
+```{r, eval = TRUE, message = FALSE}
+
+# Geographical analysis of incidences and coverages by country over time (diphtheria, pertussis, polio, measles, rubella)
+
+data("World")
+colnames(World)[which(names(World) == "iso_a3")] <- "ISO_code"
+
+# Join datasets
+world_incidence_diphtheria <- inner_join(World, diptheria_incidence, "ISO_code")
+world_incidence_pertussis <- inner_join(World, pertussis_incidence, "ISO_code")
+world_incidence_polio <- inner_join(World, polio_incidence, "ISO_code")
+world_incidence_measles <- inner_join(World, measles_incidence, "ISO_code")
+world_incidence_rubella <- inner_join(World, rubella_incidence, "ISO_code")
+
+```
+
+
+```{r, eval = TRUE, message = FALSE}
+
+tm_shape(world_incidence_diphtheria) +
+    tm_polygons("X2018", title = "Worldwide Incidence\nof Diphtheria",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_diphtheria$X2018))),
+              palette = "YlOrRd")
+
+tm_shape(world_incidence_diphtheria) +
+    tm_polygons("X2008", title = "Worldwide Incidence of Diphtheria",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_diphtheria$X2018))),
+              palette = "YlOrRd")
+
+tm_shape(world_incidence_diphtheria) +
+    tm_polygons("X1998", title = "Worldwide Incidence of Diphtheria",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_diphtheria$X2018))),
+              palette = "YlOrRd")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+tm_shape(world_incidence_pertussis) +
+    tm_polygons("X2018", title = "Worldwide Incidence\nof",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_pertussis$X2018))),
+              palette = "YlOrRd")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+tm_shape(world_incidence_polio) +
+    tm_polygons("X2018", title = "Worldwide Incidence\nof",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "cont",
+              # breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_polio$X2018))),
+              palette = "YlOrRd")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+tm_shape(world_incidence_measles) +
+    tm_polygons("X2018", title = "Worldwide Incidence\nof",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_measles$X2018))),
+              palette = "YlOrRd")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+tm_shape(world_incidence_rubella) +
+    tm_polygons("X2018", title = "Worldwide Incidence\nof",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_rubella$X2008))),
+              palette = "YlOrRd")
+
+tm_shape(world_incidence_rubella) +
+    tm_polygons("X2008", title = "Worldwide Incidence\nof",
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, 250, 500, 750, 1000, max(na.omit(world_incidence_rubella$X2008))),
+              palette = "YlOrRd")
 
 ```
