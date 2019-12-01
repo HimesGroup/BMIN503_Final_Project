@@ -13,11 +13,11 @@ output:
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ``` 
 
-
-```{r setup, include=F}
+Note that this chunk can be changed to use sample data to demonstrate code.
+```{r setup, include=T}
 
 # Use this for original data, containing PHI
-knitr::opts_knit$set(root.dir = normalizePath('../../Final_Project_PHI/02_intermediate_data'))
+knitr::opts_knit$set(root.dir = normalizePath('../../Final_Project_PHI/01_raw_data'))
 
 # Use this for simulated data to use with github post
 # knitr::opts_knit$set(root.dir = normalizePath('./sample_data'))
@@ -46,6 +46,7 @@ theme_set(theme_bw())
 
 1. confirm no PHI displayed in report (i.e. str())
 1. confirm works with test data - comment out PHI data pulls
+  1. add simulated allergy data
 1. **finish conclusion**
 1. **make sure code is well documented**
 
@@ -130,6 +131,9 @@ meds <- read_csv(paste0(read_path, '/meds.csv'))
 # Used to associated provider type with medication order
 prov_hx <- read_csv(paste0(read_path, '/prov_hx.csv'))
 
+allergy <- read_csv(paste0(read_path, '/allergy.csv'))
+
+
 ```
 
 
@@ -143,6 +147,53 @@ cohort.cln <- cohort %>%
   left_join(ccc, by = 'PAT_KEY')
 
 ```
+
+#### Clean Up Allergies
+
+```{r}
+
+allergy %>%
+  group_by(ALRG_DESC) %>%
+  summarise(n=n()) %>%
+  mutate(
+    pcn_all = ifelse(str_detect(ALRG_DESC,pattern = regex('(cillin|augmentin|zosyn)',ignore_case = T)),1,0),
+    azith_all = ifelse(str_detect(ALRG_DESC,pattern = regex('(azithro)',ignore_case = T)),1,0),
+    cef_all = ifelse(str_detect(ALRG_DESC,pattern = regex('ce(f|ph)',ignore_case = T)),1,0)
+  )
+
+abx_all <- allergy %>%
+  select(VISIT_KEY, ALRG_DESC) %>%
+  filter(!is.na(ALRG_DESC)) %>%
+  group_by(VISIT_KEY) %>%
+  mutate(
+    pcn_all = ifelse(str_detect(ALRG_DESC,pattern = regex('(cillin|augmentin|zosyn)',ignore_case = T)),1,0),
+    azith_all = ifelse(str_detect(ALRG_DESC,pattern = regex('(azithro)',ignore_case = T)),1,0),
+    cef_all = ifelse(str_detect(ALRG_DESC,pattern = regex('ce(f|ph)',ignore_case = T)),1,0),
+  ) %>%
+  mutate(
+    pcn_all = max(pcn_all),
+    azith_all = max(azith_all),
+    cef_all = max(cef_all)
+  ) %>%
+  select(-ALRG_DESC) %>%
+  arrange(VISIT_KEY) %>%
+  filter(sum(pcn_all, azith_all, cef_all) > 0) %>%
+  distinct()
+
+
+```
+
+#### Add Allergies to Cohort Data
+
+```{r}
+
+cohort.cln <- cohort.cln %>%
+  left_join(abx_all, by = 'VISIT_KEY') %>%
+  mutate_at(vars(pcn_all, azith_all, cef_all), function(x) ifelse(is.na(x), 0, x))
+
+```
+
+
 
 #### Join Provider Type to Medications
 
@@ -1071,13 +1122,13 @@ library(DMwR) # used for SMOTE resampling
 top.meds <- meds.coh %>%
   group_by(abx_name) %>%
   summarise(n = n()) %>%
-  filter(n > 250) %>%
+  filter(n > 25) %>%
   pull(abx_name)
 
 # select covariates of interest
 abx.coh <- meds.coh %>%
   filter(abx_name %in% top.meds) %>%
-  select(abx_name , race_f, age_yr, sex_f, MED_COMPLEX_IND, arr_yr, ss_used_med, prov_rx) %>%
+  select(abx_name , race_f, age_yr, sex_f, MED_COMPLEX_IND, arr_yr, ss_used_med, prov_rx, pcn_all, azith_all, cef_all) %>%
   drop_na() %>%
   mutate(race_f = factor(race_f), # to account for dropped NA
          abx_name = factor(abx_name) # account for dropped names
@@ -1097,6 +1148,10 @@ set.seed(54321)
 idxtrain <- createDataPartition(y = abx.coh$abx_name, p = 0.7, list =F)
 train <- abx.coh[idxtrain,]
 testing <- abx.coh[-idxtrain,]
+
+train <- UBL::SmoteClassif(abx_name ~ ., dat = train, C.perc = "balance", dist = "HEOM")
+# balance results in balancing classes of antibiotics
+# HEOM allwos for both numeric and nominal values in data (default is Euclidian)
 
 # scale and center continuous variables
 pp <- preProcess(train %>% select(age_yr, arr_yr), c('scale','center','nzv')) 
@@ -1119,25 +1174,33 @@ Here we define parameters that control model training and resampling. There is s
 
 ```{r cache=F}
 
+
 # https://topepo.github.io/caret/subsampling-for-class-imbalances.html#subsampling-during-resampling
-smote.cust <- list(name = "SMOTE with more upsampling",
-                func = function (x, y) {
-                  library(DMwR)
-                  dat <- if (is.data.frame(x)) x else as.data.frame(x)
-                  dat$.y <- y
-                  dat <- SMOTE(.y ~ ., data = dat, perc.over = 500, perc.under = 100)
-                  list(x = dat[, !grepl(".y", colnames(dat), fixed = TRUE)],
-                       y = dat$.y)
-                  },
-                first = TRUE)
+# smote.cust <- list(name = "SMOTE with more upsampling",
+#                 func = function (x, y) {
+#                   library(DMwR)
+#                   # library(UBL)
+#                   dat <- if (is.data.frame(x)) x else as.data.frame(x)
+#                   dat$.y <- y
+#                   dat <- SMOTE(.y ~ ., data = dat, perc.over = 500, perc.under = 100)
+#                   # dat <- SmoteClassif(.y ~ ., data = dat, C.perc = C.perc)
+#                   list(x = dat[, !grepl(".y", colnames(dat), fixed = TRUE)],
+#                        y = dat$.y)
+#                   },
+#                 first = TRUE)
+# 
+# 
+# tr_control <- trainControl(## 10-fold CV
+#                            method = "repeatedcv",
+#                            number = 10,
+#                            repeats = 3,
+#                            verboseIter = T,
+#                            sampling = smote.cust) 
 
 tr_control <- trainControl(## 10-fold CV
-                           method = "repeatedcv",
+                           method = "cv",
                            number = 10,
-                           repeats = 3,
-                           verboseIter = T,
-                           sampling = smote.cust) 
-
+                           verboseIter = T)
 ```
 
 #### Penalized Multinomial Regression
@@ -1239,7 +1302,7 @@ varImp(rf.abx)
 
 # Accuracy and Kappa for Test data
 
-rbind_list(c(
+bind_rows(c(
 pmr = pmr.test$overall[c('Accuracy','Kappa')],
 nb = nb.test$overall[c('Accuracy','Kappa')],
 rf = rf.test$overall[c('Accuracy','Kappa')]
@@ -1274,7 +1337,7 @@ roc_names <- c(roc_pred, roc_pmr, roc_nb, roc_rf)
 names(roc_names) <- NULL
 roc_names
 
-# Transform abx facotr into one-hot vectors
+# Transform abx vector into one-hot vectors
 tmp <- caret::dummyVars('~ abx_name', data=trans.test)
 abx_hot <- as_tibble(predict(tmp,trans.test))
 names(abx_hot) <- roc_true
@@ -1329,7 +1392,7 @@ plot_data %>%
 plot_data %>%
   filter(!Group %in% c('Micro','Macro')) %>%
   ggplot() +
-  geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), size = 1.5) +
+  geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), alpha = 0.75, size = 1.5) +
   geom_abline() +
   facet_wrap(~ Method,ncol = 2) + 
   scale_color_brewer('Antibiotic', type = 'qual', palette = 'Set1')
