@@ -3,18 +3,18 @@
 This project is looking at breast cancer and releveant outcome sin the prospective cohort study: the Botswana cancer Cohort
 
 1.Dataset is Botswana Cancer Cohort
-2.Downloaded October 31, 2019
-3.Data collection began  January 2015
-4.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
-  a. UPENN IRB protocol # 820159
-  b. initial approval date: 12/16/2014
-  c. PI of parent study: Surbhi Grover, MD
-5.Title
-6.Outcome
-7.Main exposure/Risk factors
-8.Covariates
-9.Methods
-10.Limitations
+1.Downloaded October 31, 2019
+1.Data collection began  January 2015
+1.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
+  1. UPENN IRB protocol # 820159
+  1. initial approval date: 12/16/2014
+  1. PI of parent study: Surbhi Grover, MD
+1.Title: Breast Cancer: Stage of diagnosis among HIV+ and HIV- patients in a cohort from Botswana
+1.Outcome: Breast Cancer
+1.Main exposure/Risk factors: HIV status
+1.Covariates: age, smoking
+1.Methods: 
+1.Limitations:
 
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
