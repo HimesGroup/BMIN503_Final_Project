@@ -4,11 +4,11 @@ This project is looking at breast cancer and releveant outcome sin the prospecti
 
 1.Dataset is Botswana Cancer Cohort
 1.Downloaded October 31, 2019
-1.Data collection began  January 2015
+1.Data collection began January 2015
 1.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
-  1. UPENN IRB protocol # 820159
-  1. initial approval date: 12/16/2014
-  1. PI of parent study: Surbhi Grover, MD
+1.UPENN IRB protocol # 820159
+1.initial approval date: 12/16/2014
+1.PI of parent study: Surbhi Grover, MD
 1.Title: Breast Cancer: Stage of diagnosis among HIV+ and HIV- patients in a cohort from Botswana
 1.Outcome: Breast Cancer
 1.Main exposure/Risk factors: HIV status
