@@ -16,3 +16,7 @@ DUE DATE FOR FINAL VERSION: 12/13/19 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+1.Dataset is Botswana Cancer Cohort
+2.Downloaded October 31, 2019
+
+
