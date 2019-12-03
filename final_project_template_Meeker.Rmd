@@ -272,10 +272,11 @@ outcome_acs_clean = outcome_acs[!(duplicated(outcome_acs)), ]
 dim(outcome_acs_clean)
 
 class(outcome_acs)
+colnames(outcome_acs)
 ```
 
 
-Histograms were generated to look at overall hemmoraghing rate per deliveries
+Histograms were generated to look at overall outcome counts
 
 ```{r}
 #bar plot for c-section
@@ -383,8 +384,66 @@ We will now utilize the machine learning technique of lass to create a predictiv
 ```{r}
 #Insert lasso code here to run logistic regression with lasso penalty on predictors
 
-#normalize to create scale 
+##CSECTION OUTCOME 
+###make a matrix of all predictors
+data<-as.data.frame(outcome_acs_clean)
+data<-na.omit(data)
 
+x.cont<-data %>% select(percent_poverty, percent_hsgrad, median.gross.rent, median.household.income, rent.burden, fem_nhwhite, fem_afam, fem_hispanic, fem_other, fem_amind_alask, fem_asian, fem_nh.pi, fem_multiple, percent_white, percent_minority, ENC_AGE_DEC.x)
+
+x.cat <- data %>% select(CSECTION, NH_AFAM, NH_WHITE, HISPANIC)
+x.factors<-model.matrix(CSECTION~NH_AFAM + NH_WHITE + HISPANIC, x.cat)[,-1]
+
+x<-as.matrix(cbind(x.cont,x.factors))
+
+library(glmnet)
+set.seed(1234)
+#gets stuck here 
+csection.lasso <- cv.glmnet(x, y = data$CSECTION, alpha = 1, family = "binomial") #alpha = 1 (coefficient used to penalize variables you're using. binomial (log reg))
+csection.lasso$lambda.min
+plot(csection.lasso)
+lasso.coef <- coef(csection.lasso, s = "lambda.min")
+lasso.coef #some are getting higher magnitude weights and some lower (percent poverty is most important)
+csection.lasso.pred <- predict(csection.lasso, x, s = "lambda.min", type = "response")
+head(csection.lasso.pred) #probabilitiy you had a csection (1) for each person
+
+##
+
+```
+We will do some model evaluation.
+
+```{r}
+#K-Fold Cross Validation
+N = nrow(data)
+K = 10
+set.seed(1234)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.lasso <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset <- 0
+
+for(i in 1:K){
+	train <- filter(data, s != i)
+	test <- filter(data, s == i)
+	obs.outputs[1:length(s[s == i]) + offset] <- test$CSECTION
+	
+#lasso train/test
+lasso.m <- cv.glmnet(as.matrix(train[, -1]), y = train[, 1], alpha = 1, family = "binomial")
+lasso.pred.curr <- predict(lasso.m, as.matrix(test[, -1]), s = "lambda.min", type = "response")
+pred.outputs.lasso[1:length(s[s == i]) + offset] <- lasso.pred.curr[ , 1]
+	
+offset <- offset + length(s[s == i])
+}
+```
+Let's take a look at the ROC Curves
+
+```{r}
+library(pROC)
+
+roc(obs.outputs, pred.outputs.lasso, ci = TRUE)
+plot.roc(data$CSECTION, CSECTION.lasso.pred[ ,1])
+plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE)
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "red"), lwd = 1)
 
 ```
 
