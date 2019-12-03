@@ -1,12 +1,19 @@
 # BMIN503/EPID600 Final Project
+# BMIN503Final
+## About / Synopsis
+This project is looking at breast cancer and releveant outcomes in the prospective cohort study: the Botswana Cancer Cohort
 
-This project is looking at breast cancer and releveant outcome sin the prospective cohort study: the Botswana cancer Cohort
-
+This repository contains deidentified data on cancer patients in the Botswana Canecr Cohort. 
+### Usage
+This is a ongoing non-pulished project. Please do not distribute data without contacting the author. 
+#### Author 
+Tara Friebel - Penn Medicine
+##### Details
 1.Dataset is Botswana Cancer Cohort
 
 2.Downloaded October 31, 2019
 
-3.Data collection began January 2015
+3.Study data collection began January 2015
 
 4.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
 
