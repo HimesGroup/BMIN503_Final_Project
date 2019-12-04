@@ -17,7 +17,7 @@ Note that this chunk can be changed to use sample data to demonstrate code.
 ```{r setup, include=T}
 
 # Use this for original data, containing PHI
-knitr::opts_knit$set(root.dir = normalizePath('../../Final_Project_PHI/01_raw_data'))
+knitr::opts_knit$set(root.dir = normalizePath('../Final_Project_PHI/01_raw_data'))
 
 # Use this for simulated data to use with github post
 # knitr::opts_knit$set(root.dir = normalizePath('./sample_data'))
@@ -31,13 +31,21 @@ knitr::opts_knit$set(root.dir = normalizePath('../../Final_Project_PHI/01_raw_da
 options(width = 400)
 ```  
 
-```{r}
+```{r load-libraries}
 library(tidyverse)
 library(ggplot2)
 library(lubridate)
-library(digest)
+# library(digest)
 library(pROC)
 library(knitr) # for table formatting
+
+library(caret)
+library(randomForest) # implicitly used by caret
+library(doParallel)
+library(pROC) #used for multiclass roc
+library(DMwR) # used for SMOTE resampling
+library(naivebayes) # implicitly used by caret
+library(nnet) # implicitly used by caret for penalized multinomial regression
 
 theme_set(theme_bw())
 ```
@@ -48,6 +56,9 @@ theme_set(theme_bw())
 1. confirm works with test data - comment out PHI data pulls
 1. **finish conclusion**
 1. **make sure code is well documented**
+1. p-values vs confidence intervals for comparisons
+1. comparisons for antibiotics classification
+1. ?try XG boost
 
 
 #### Abbreviations Used
@@ -1105,18 +1116,20 @@ Although not a primary outcome, we were interested in whether the chosen covaria
 
 #### Training and Test Samples
 ```{r}
-library(caret)
-library(randomForest)
-library(doParallel)
-library(pROC) #used for multiclass roc
-library(DMwR) # used for SMOTE resampling
+
 
 
 # choose most common antibiotics
+meds.coh %>%
+  group_by(abx_name) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
 top.meds <- meds.coh %>%
   group_by(abx_name) %>%
   summarise(n = n()) %>%
-  filter(n > 25) %>%
+  arrange(desc(n)) %>%
+  filter(n > 150) %>%
   pull(abx_name)
 
 # select covariates of interest
@@ -1143,23 +1156,34 @@ idxtrain <- createDataPartition(y = abx.coh$abx_name, p = 0.7, list =F)
 train <- abx.coh[idxtrain,]
 testing <- abx.coh[-idxtrain,]
 
-train <- UBL::SmoteClassif(abx_name ~ ., dat = train, C.perc = "balance", dist = "HEOM")
+train.resamp <- UBL::SmoteClassif(abx_name ~ ., dat = train, C.perc = "balance", dist = "HEOM")
 # balance results in balancing classes of antibiotics
 # HEOM allwos for both numeric and nominal values in data (default is Euclidian)
 
 # scale and center continuous variables
-pp <- preProcess(train %>% select(age_yr, arr_yr), c('scale','center','nzv')) 
+pp <- preProcess(train.resamp %>% select(age_yr, arr_yr), c('scale','center','nzv')) 
 
-transformed <- predict(pp, newdata = train)
+transformed <- predict(pp, newdata = train.resamp)
 
 # scale and center continuous variables
 trans.test <- predict(pp, newdata = testing)
+```
+```{r}
+
+f.mn <- multinom(abx_name ~ ., data = train)
+# summary(f.mn)
+
+(confusionMatrix(predict(f.mn, testing), testing$abx_name))
+
+
 ```
 
 
 ```{r}
 # Initiate multicore processing to decrease time required to fit models - particularly RF
-cl <- makeCluster(parallel::detectCores())
+(cores <- floor(0.9*(parallel::detectCores())))
+cl <- makeCluster(cores) #use 90% of cores
+# str(cl)
 registerDoParallel(cl)
 
 ```
@@ -1256,13 +1280,13 @@ nb.abx <- train(
 #### Random Forest
 **This could take a while to run!**
 
-```{r cache=T}
+```{r cache=F}
 
 # set seed for random forest
 set.seed(1234)
 
 # tuning model parameters
-tunegrid <- expand.grid(.mtry = (1:10)) 
+tunegrid <- expand.grid(.mtry = c(3,6,9)) 
 
 # fit random forest
 system.time(
@@ -1278,12 +1302,46 @@ rf.abx <- train(
 )
 
 # demonstrate which variables had the highest "importance" in random forest model
-varImp(rf.abx)
+# varImp(rf.abx)
 
 # confusion matrix for random forest model
 (rf.test <- confusionMatrix(predict(rf.abx, trans.test), testing$abx_name))
 
 ```
+
+```{r cache=T}
+tunegrid <-  expand.grid(
+                eta = 0.1, 
+                colsample_bytree=c(0.3,0.8,1),
+                max_depth=c(3,6),
+                nrounds=100,
+                gamma=1,
+                min_child_weight=1,
+                subsample = c(0.8, 1)
+              )
+
+# one approach to tuning - https://towardsdatascience.com/fine-tuning-xgboost-in-python-like-a-boss-b4543ed8b1e
+
+set.seed(1234)
+
+
+system.time(
+xg.abx <- train(
+            abx_name ~ ., 
+            data = transformed, 
+            method = "xgbTree",
+            trControl = tr_control,
+            metric = 'Kappa',
+            tuneGrid = tunegrid
+            )
+)
+
+# varImp(xg.abx)
+
+(xg.test <- confusionMatrix(predict(xg.abx, trans.test), testing$abx_name))
+
+```
+
 
 ```{r}
 
@@ -1299,7 +1357,9 @@ varImp(rf.abx)
 bind_rows(c(
 pmr = pmr.test$overall[c('Accuracy','Kappa')],
 nb = nb.test$overall[c('Accuracy','Kappa')],
-rf = rf.test$overall[c('Accuracy','Kappa')]
+rf = rf.test$overall[c('Accuracy','Kappa')],
+xg = xg.test$overall[c('Accuracy','Kappa')]
+
 )
 )
 
@@ -1326,8 +1386,10 @@ roc_pred <- sapply(prefix,function(x) paste0(x,'_pred'))
 roc_pmr <- sapply(roc_pred,function(x) paste0(x,'_pmr'))
 roc_nb <- sapply(roc_pred,function(x) paste0(x,'_nb'))
 roc_rf <- sapply(roc_pred,function(x) paste0(x,'_rf'))
+roc_xg <- sapply(roc_pred,function(x) paste0(x,'_xg'))
 
-roc_names <- c(roc_pred, roc_pmr, roc_nb, roc_rf)
+
+roc_names <- c(roc_pred, roc_pmr, roc_nb, roc_rf, roc_xg)
 names(roc_names) <- NULL
 # roc_names
 
@@ -1341,24 +1403,31 @@ names(abx_hot) <- roc_true
 pmr_pred <- predict(pmr.abx,trans.test,type = 'prob')
 nb_pred <- predict(nb.abx,trans.test,type = 'prob')
 rf_pred <- predict(rf.abx,trans.test,type = 'prob')
+xg_pred <- predict(xg.abx,trans.test,type = 'prob')
+
 
 names(pmr_pred) <- roc_pmr
 names(nb_pred) <- roc_nb
 names(rf_pred) <- roc_rf
+names(xg_pred) <- roc_xg
+
 
 # combine data into format expected for multiROC
-mroc_data <- cbind(abx_hot, pmr_pred, nb_pred, rf_pred)
+mroc_data <- cbind(abx_hot, pmr_pred, nb_pred, rf_pred, xg_pred)
 
 
-mroc_out <- multiROC::multi_roc(mroc_data)
+mroc_out <- multiROC::multi_roc(mroc_data) #ROC data
+pr_out <- multiROC::multi_pr(mroc_data) #precision-recall data
 
-plot_data <- multiROC::plot_roc_data(mroc_out)
+
+roc_res <- multiROC::plot_roc_data(mroc_out)
+pr_res <- multiROC::plot_pr_data(pr_out)
 ```
 
-Here, we summarise AUC values by model and type.
+Here, we summarise AUC values (test data) by model and type.
 ```{r}
 # AUC Values
-plot_data %>%
+roc_res %>%
   select(Group, Method, AUC) %>%
   distinct() %>%
   pivot_wider(
@@ -1366,14 +1435,14 @@ plot_data %>%
               values_from = AUC)
 
 # make nicer labels
-plot_data <- plot_data %>%
+roc_res <- roc_res %>%
   mutate(
     Group = factor(Group,levels = c('amox','aug','azi','cef','Micro','Macro'), labels=c('Amoxicillin','Amox/Clav','Azithromycin','Cefdinir','Micro','Macro')),
-    Method = factor(Method, levels = c('pmr','nb','rf'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest'))
+    Method = factor(Method, levels = c('pmr','nb','rf','xg'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest','eXtreme Gradient Boosting'))
   )
 
 # plot just micro and macro ROC curves
-plot_data %>%
+roc_res %>%
   filter(Group %in% c('Micro','Macro')) %>%
   ggplot() +
   geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), size = 1.5) +
@@ -1383,12 +1452,42 @@ plot_data %>%
 # Macro ROC takes the average of each class ROC (is less affected by class imbalance because each class contributes equally)
 
 # plot ROC curves for each class
-plot_data %>%
+roc_res %>%
   filter(!Group %in% c('Micro','Macro')) %>%
   ggplot() +
   geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), alpha = 0.75, size = 1.5) +
   geom_abline() +
   facet_wrap(~ Method,ncol = 2) + 
+  scale_color_brewer('Antibiotic', type = 'qual', palette = 'Set1')
+
+```
+
+Next, we plot precision-recall curves for these models. 
+
+```{r}
+
+# make nicer labels
+pr_res <- pr_res %>%
+  mutate(
+    Group = factor(Group,levels = c('amox','aug','azi','cef','Micro','Macro'), labels=c('Amoxicillin','Amox/Clav','Azithromycin','Cefdinir','Micro','Macro')),
+    Method = factor(Method, levels = c('pmr','nb','rf','xg'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest','eXtreme Gradient Boosting'))
+  )
+
+# plot just micro and macro curves
+pr_res %>%
+  filter(Group %in% c('Micro','Macro')) %>%
+  ggplot() +
+  geom_line(aes(y = Precision, x = Recall, color = Group), size = 1.5) +
+  facet_wrap(~ Method, ncol =2)
+
+
+
+# plot PR curves for each class
+pr_res %>%
+  filter(!Group %in% c('Micro','Macro')) %>%
+  ggplot() +
+  geom_line(aes(y = Precision, x = Recall, color = Group), size = 1.5) +
+  facet_wrap(~ Method, ncol =2) +
   scale_color_brewer('Antibiotic', type = 'qual', palette = 'Set1')
 
 ```
