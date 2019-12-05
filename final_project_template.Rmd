@@ -350,8 +350,6 @@ plotting <- function(ins, pre, post) {
       postcoeffs <- c(0,0,0,0)
     }
     ggplot() +
-      #geom_point(data = subset(pre, redcap_id==ins), aes(x=days, y=weight), color="firebrick1") +
-      #geom_point(data = subset(post, redcap_id==ins), aes(x=days, y=weight), color="blue4") +
       geom_segment(aes(x = precoeffs[1], y =precoeffs[2], xend=precoeffs[3], yend=precoeffs[4], color = "blue4"), data=pre) +
       geom_segment(aes(x = postcoeffs[1], y =postcoeffs[2], xend=postcoeffs[3], yend=postcoeffs[4], color = "firebrick1"), data=post) +
       theme(legend.position="none") +
@@ -369,59 +367,48 @@ controlprepost <- subset(measures, group=="control")
 wtplots <- lapply(levels(weights$redcap_id), plotting, pre=prestudy, post=poststudy)
 ```
 ```{r}
-#want to see how easy it is to identify patients
-library(ggdendro)
-library(ggpubr)
+library(randomForest)
 
-#function for graphing via Hierarchical Clustering
-clusterf <- function(info) {
-  info.clust <- hclust(dist(info[,2:ncol(info)]), method = "complete")
-  c <- dendro_data(as.dendrogram(info.clust))
-  labels <- label(c)
-  labels$id <- info$ID[as.numeric(levels(labels$label))]
-
-  ggplot(segment(c), size = 100) +
-    geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
-    geom_text(data = labels, aes(label = label, x = x, y = 0, color = id), size = 5)
-  
-#  c.clust <- cutree(info.clust, 5)
-#  table(c.clust, info$ID)
-}
-
-#try clustering on true patient data
-pts <- as.data.frame(lapply(lapply(demotable[,2:ncol(demotable)], as.factor), as.numeric)) %>%
+#create dataframe of demotable
+pts <- as.data.frame(lapply(demotable[,2:ncol(demotable)], as.factor)) %>%
   add_column(., "ID" = demotable$id, .before = "Is.child.obese")
-clusterf(pts)
 
-#function to define distribution of categorical datta
+#function to define distribution of categorical data
 distro <- function(info, name){
-  dis <- as.data.frame(prop.table(table(info[[name]])))
-  sample(dis$Var1, 10, replace = TRUE, prob=c(dis$Freq))
+  dis <- as.data.frame(prop.table(table(info[[name]]))) #creates a table of values in column, creates prop.table from this
+  sample(dis$Var1, 10, replace = TRUE, prob=c(dis$Freq)) #creates a random sample based on the variable frequency
 }
 
- #set number of samples for creating data
+#set number of samples for creating data
 samples <- 500
-sim <- lapply(colnames(pts[,2:ncol(pts)]), distro, info = pts) # put created data in list sim
+
+sim <- lapply(colnames(pts[,2:ncol(pts)]), distro, info = pts) #create new data, put it into sim
 sim.data <- data.frame(id=1:samples) #make new dataframe
 for(i in 1:length(sim)){
   sim.data <- cbind(sim.data, sim[[i]]) #put all data from list sim in dataframe
 }
-colnames(sim.data) <- colnames(pts) #name columns properly
-clusterf(sim.data)
-```
-```{r}
-library(randomForest)
+colnames(sim.data) <- colnames(pts)
+
+#need to see how many na there are to be able to perform randomforest plots
 pts$na_count <- apply(pts, 1, function(x) sum(is.na(x)))
 
-pts2 <- pts[pts$na_count < 10,] %>%
-  select(.,-c(colnames(.)[ apply(., 2, anyNA) ])) %>%
-  .[1:length(.)-1] %>%
+#clean up dataframe to perform forest plot
+pts <- pts[pts$na_count < 10,] %>% #remove all rows with > 10 NAs
+  select(.,-c(colnames(.)[ apply(., 2, anyNA) ])) %>% #remove all columns with any NAs
+  .[1:length(.)-1] %>% #remove final column (sum of number of NAs)
   droplevels(.)
-pts.forest <- randomForest(ID ~ ., data = pts2, ntree = 1000, importance = TRUE)
-pts.forest
-pts.forest$importance
-sim.forest <- randomForest(ID ~ ., data = sim.data, ntree = 100, importance = TRUE)
-sim.forest$importance
+
+#pts$names <- as.factor(c("Timmy", "Tommy", "Tammy", "Britney", "Bobby", "Bobbie", "Bobbee", "Boby", "Tom", "Tim", "Babs", "Barbra", "Barbie", "Barb", "Brad"))
+sim.data <- cbind(sim.data, as.data.frame(source('randomnames.r')[1]))
+colnames(sim.data) <- c(colnames(sim.data)[1:ncol(sim.data)-1], "name")
+
+#this one works
+pts.rf <- randomForest(as.factor(ID) ~ ., data = pts, ntree = 1000, importance = TRUE)
+pts.rf.pred <- predict(pts.rf, pts, type = "prob")
+
+#this one doesn't, can't have a predictor with more than 53 categories
+sim.rf <- randomForest(as.factor(ID) ~ ., data = sim.data, ntree = 1000, importance = TRUE)
+sim.rf.pred <- predict(sim.rf, sim.data, type = "prob")
 ```
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
