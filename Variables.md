@@ -2,7 +2,7 @@
 
 ## Variables from the Linked Birth and Death Certificate Data
 
-### 2007 - 2017
+### 2003 - 2017
 
 There are data available from the CDC Wonder queries regarding the outcome of data including through 2017. These data do not have a linked birth and death cohort available through that late of a date. The most recent data set avialable through the National Economic Research Bureau is 2013. There is; however, linked birth and death certificate for both the numerator of all deaths as well as the denominator of all births. 
 
@@ -48,4 +48,16 @@ Variables to be included in models:
 
 - **f_ab_nicu** - Admitted to a NICU.
 
-- **aged** - Age at infant death
+- **aged** - Age at infant death.
+
+### 1995 - 2002
+
+- **gestat** - Gestational age(GA) in weeks.
+
+- **biryr** - Birth Year.
+
+- **dbirwt** - Birth weight.
+
+- **aged** - Age at infant death.
+
+- **mrace3** - Maternal race recoded as White, Other and Black.
