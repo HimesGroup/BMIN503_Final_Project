@@ -16,14 +16,15 @@ This repository contains deidentified data on cancer patients in the Botswana Ca
 This is a ongoing non-pulished project. Please do not distribute data without contacting the author. 
 #### Author 
 Tara Friebel - Penn Medicine
-##### Details regarrding the dataset I am using
-1.Dataset is Botswana Cancer Cohort
-2.Downloaded October 31, 2019
+##### Details related to the dataset I am using:
+Botswana Cancer Cohort
+2.Downloaded October 31, 2019 from RedCap
 3.Study data collection began January 2015
-4.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
+4.Parent Project: Treatments an Outcomes of Patients presenting with Cancer in Botswana
  a.UPENN IRB protocol # 820159
  b.initial approval date: 12/16/2014
  c.PI of parent study: Surbhi Grover, MD
+Outline for this project:
 5.Title: Breast Cancer: Stage of diagnosis among HIV+ and HIV- patients in a cohort from Botswana
 6.Outcome: Breast Cancer
 7.Main exposure/Risk factors: HIV status
