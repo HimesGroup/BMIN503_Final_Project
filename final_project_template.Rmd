@@ -367,7 +367,7 @@ controlprepost <- subset(measures, group=="control")
 wtplots <- lapply(levels(weights$redcap_id), plotting, pre=prestudy, post=poststudy)
 ```
 ```{r}
-library(randomForest)
+#this section is just creating some synthetic patient data
 
 #create dataframe of demotable
 pts <- as.data.frame(lapply(demotable[,2:ncol(demotable)], as.factor)) %>%
@@ -379,15 +379,35 @@ distro <- function(info, name){
   sample(dis$Var1, 10, replace = TRUE, prob=c(dis$Freq)) #creates a random sample based on the variable frequency
 }
 
-#set number of samples for creating data
-samples <- 500
-
-sim <- lapply(colnames(pts[,2:ncol(pts)]), distro, info = pts) #create new data, put it into sim
-sim.data <- data.frame(id=1:samples) #make new dataframe
-for(i in 1:length(sim)){
-  sim.data <- cbind(sim.data, sim[[i]]) #put all data from list sim in dataframe
+sim <- function(info){
+  samples <- 500 # set number of samples for test data
+  sim <- lapply(colnames(info[,2:ncol(info)]), distro, info = info) #create new data, put it into sim
+  sim.data <- data.frame(id=1:samples) #make new dataframe
+  for(i in 1:length(sim)){
+    sim.data <- cbind(sim.data, sim[[i]]) #put all data from list sim in dataframe
+  }
+  colnames(sim.data) <- colnames(info)
+  return(sim.data)
 }
-colnames(sim.data) <- colnames(pts)
+
+#function to return barchart
+bars <- function(info, name){ ggplot(info, aes_string(name)) + geom_bar() }
+
+#creates the multiple sets of patient data
+sims <-c(lapply(colnames(pts[,2:ncol(pts)]), bars, info = pts))
+numsims <- 3 #create number of simulations
+for(i in 1:numsims){ sims <- c(sims, lapply(colnames(pts[,2:ncol(pts)]), bars, info = sim(pts)))}
+
+charts <-c()
+for(i in 2:19){
+  for(j in 0:numsims){
+    charts <- c(charts, sims[j*19+i])
+  }
+}
+```
+```{r}
+library(randomForest)
+library(anchors)
 
 #need to see how many na there are to be able to perform randomforest plots
 pts$na_count <- apply(pts, 1, function(x) sum(is.na(x)))
@@ -398,13 +418,17 @@ pts <- pts[pts$na_count < 10,] %>% #remove all rows with > 10 NAs
   .[1:length(.)-1] %>% #remove final column (sum of number of NAs)
   droplevels(.)
 
-#pts$names <- as.factor(c("Timmy", "Tommy", "Tammy", "Britney", "Bobby", "Bobbie", "Bobbee", "Boby", "Tom", "Tim", "Babs", "Barbra", "Barbie", "Barb", "Brad"))
-sim.data <- cbind(sim.data, as.data.frame(source('randomnames.r')[1]))
-colnames(sim.data) <- c(colnames(sim.data)[1:ncol(sim.data)-1], "name")
-
 #this one works
 pts.rf <- randomForest(as.factor(ID) ~ ., data = pts, ntree = 1000, importance = TRUE)
 pts.rf.pred <- predict(pts.rf, pts, type = "prob")
+pts.rf$importance
+
+mostimport <- as.data.frame(which(pts.rf$importance > 1) %% nrow(pts))
+colnames(mostimport) <- c("importance")
+mostimport <- replace.value(mostimport,c('importance'),from=0,to=nrow(pts))
+
+labs <- as.data.frame(labels(pts.rf$importance)[[1]])
+mostimport$names <- labs[mostimport$importance,]
 
 #this one doesn't, can't have a predictor with more than 53 categories
 sim.rf <- randomForest(as.factor(ID) ~ ., data = sim.data, ntree = 1000, importance = TRUE)
@@ -441,3 +465,6 @@ gridExtra::grid.arrange(grobs = weightPts, ncol=2) #patient's answers to weight 
 #plot the weight changes for each participant and control
 gridExtra::grid.arrange(grobs = wtplots, ncol=4)
 ```
+```{r warning=FALSE, fig.height=30, fig.width=20}
+#test patient data
+gridExtra::grid.arrange(grobs = charts, ncol=numsims+1)
