@@ -1,5 +1,9 @@
 # BMIN503/EPID600 Final Project
 # BMIN503Final
+
+This repository contains a few files.  I am still trying to learn and my knitting keeps getting errors so there is one knit document which has little in it-but it's the only one that would work.
+
+
 ## About / Synopsis
 This project is looking at breast cancer and releveant outcomes in the prospective cohort study: the Botswana Cancer Cohort
 
@@ -10,29 +14,17 @@ This is a ongoing non-pulished project. Please do not distribute data without co
 Tara Friebel - Penn Medicine
 ##### Details
 1.Dataset is Botswana Cancer Cohort
-
 2.Downloaded October 31, 2019
-
 3.Study data collection began January 2015
-
 4.Parent Project: Treatments an Outcomes of Patisnts presenting with Cancer in Botswana
-
  a.UPENN IRB protocol # 820159
-
  b.initial approval date: 12/16/2014
-
  c.PI of parent study: Surbhi Grover, MD
-
 5.Title: Breast Cancer: Stage of diagnosis among HIV+ and HIV- patients in a cohort from Botswana
-
 6.Outcome: Breast Cancer
-
 7.Main exposure/Risk factors: HIV status
-
 8.Covariates: age, smoking
-
 9.Methods: 
-
 10.Limitations:
 
 
