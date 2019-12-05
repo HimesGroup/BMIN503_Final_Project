@@ -41,12 +41,13 @@ library(pROC)
 library(knitr) # for table formatting
 
 library(caret)
+library(naivebayes) # implicitly used by caret
+library(nnet) # implicitly used by caret for penalized multinomial regression
 library(randomForest) # implicitly used by caret
+library(xgboost)
 library(doParallel)
 library(pROC) #used for multiclass roc
 library(DMwR) # used for SMOTE resampling
-library(naivebayes) # implicitly used by caret
-library(nnet) # implicitly used by caret for penalized multinomial regression
 
 theme_set(theme_bw())
 ```
@@ -56,7 +57,7 @@ theme_set(theme_bw())
 1. confirm no PHI displayed in report (i.e. str())
 1. confirm works with test data - comment out PHI data pulls
 1. **make sure code is well documented**
-1. p-values vs confidence intervals for comparisons
+1. p-chart for post intervention?
 
 
 #### Abbreviations Used
@@ -197,7 +198,7 @@ cohort.cln <- cohort.cln %>%
 
 #### Join Provider Type to Medications
 
-The provider type history is stored in a different database, so it is not possible to join in initial query.
+The provider type history is stored in a different database, so it is not possible to join in the initial query.
 ```{r}
 
 meds.cln <- meds
@@ -315,7 +316,7 @@ meds.cln.op <- meds.cln.op %>%
 ```
 
 
-If there are multiple antibiotic orders we include only the most recent one. Some medication discontinuations occur at follow-up visits with primary care docotors or ED re-visits. Others reflect a change to the plan of care. We look at the distribution of discontinuation times to select a cutoff which is likely to represent a balance between these two possibilities.
+If there are multiple antibiotic orders we include only the most recent one. Some medication discontinuations occur at follow-up visits with primary care doctors or ED re-visits. Others reflect a change to the plan of care. We look at the distribution of discontinuation times to select a cutoff which is likely to represent a balance between these two possibilities.
 
 ```{r}
 meds.cln.op <- meds.cln.op %>%
@@ -478,8 +479,8 @@ meds.cln.op <- meds.cln.op %>%
 #### Join medication to cohort data
 ```{r}
 
-
-meds.coh <- cohort.cln %>%
+# all refers to the fact that no limits are being placed on the timing of the visit
+meds.coh.all <- cohort.cln %>%
   left_join(meds.cln.op, by='VISIT_KEY') %>%
   filter(!is.na(rx_days)) %>%
   mutate(
@@ -492,7 +493,10 @@ meds.coh <- cohort.cln %>%
   mutate(
     abx_name = factor(abx_name) # refactor to drop NAs induced by joining to cohort
   ) %>%
-  select(-VISIT_KEY, -PAT_KEY) %>%
+  select(-VISIT_KEY, -PAT_KEY)
+
+# for the majority of our analysis we only want visits that occurred through the end of FY 2019
+meds.coh <- meds.coh.all %>%
   filter(arr_yr_mo >= '2011-07-01' & arr_yr_mo <= '2019-06-30')
 
 
@@ -529,7 +533,7 @@ coh.sub %>%
 
 ```
 
-Based on review of the data, we will only include cases where the antibiotic was used > 10 times. This is somewhat arbitrary, although we don't want to focus our efforts on rare cases. We will also exclude azithromycin.
+Based on review of the data, we will only include cases where the antibiotic was used with some reasonable frequency (> 10 times). This is somewhat arbitrary, although we don't want to focus our efforts on rare cases. We will also exclude azithromycin.
 
 ```{r}
 
@@ -552,13 +556,29 @@ Adherence to the guidelines is much lower in patients >= 2 years of age.
 
 ```{r}
 
-meds.coh %>%
+# summarise data
+tab <- meds.coh %>%
  group_by(
    age_ge_2, dur_compl
  ) %>%
   summarise(n = n()) %>%
   mutate(age_sum = sum(n),
-         pct_compl = 100*n/age_sum) %>%
+         pct_compl = 100*n/age_sum)
+
+# turn into a matrix and perform chi-square test
+chi <- tab %>%
+  select(-age_sum, - pct_compl) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames(var = 'age_ge_2') %>%
+  chisq.test(as.matrix())
+
+# chi-square test
+chi
+
+tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   ggplot(aes(x = age_ge_2, y = pct_compl)) +
   geom_col(position = 'dodge') +
@@ -702,6 +722,13 @@ coh.sub %>%
   xlab('Prescribed Duration') +
   ylab('# Cases')
 
+# look at duration by antibiotic
+coh.sub %>%
+  ggplot(aes(x=rx_days, stat(density), color = abx_name)) +
+  geom_freqpoly(binwidth = 1) +
+  # scale_y_log10() + 
+  xlab('Prescribed Duration') +
+  ylab('Density')
 ```
 
 Antibiotic prescriptions were fairly evenly distributed throughout the week with slightly more prescriptions on weekends.
@@ -790,7 +817,12 @@ coh.sub %>%
 #### Explore Adherence to Recommendations by Covariates
 
 The guideline was more more likely to be followed as patients get older.
+
 ```{r}
+
+f <- glm(dur_compl ~ age_yr, family=binomial, data=coh.sub)
+
+broom::tidy(f, conf.int =T, exponentiate = T)
 
 coh.sub %>%
   mutate(var = age_yr) %>%
@@ -799,20 +831,13 @@ coh.sub %>%
   mutate(sum = sum(n), 
          prop = n/sum) %>%
   filter(dur_compl == 'Guideline Followed') %>%
-  # arrange(desc(n)) %>%
-  # ungroup() %>%
-  # mutate(var = fct_reorder(var, n, .desc = T)) %>%
   ggplot(aes(x = var, y = prop)) +
+  # geom_smooth(method = 'glm', method.args = list(family = "binomial")) +
   geom_line() +
-  # geom_text(aes(label=paste0('n = ',n,' \n(',round(100*prop, 2),'%)')), nudge_y = .1) +
-  # scale_y_log10() +
   theme(axis.text.x = element_text(angle=-60, hjust = 0.1)) +
   xlab('Patient Age') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
@@ -820,12 +845,29 @@ Sex does not appear to affect adherence to the guideline.
 
 ```{r}
 
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = SEX) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum) 
+
+## in the future, could make this a function since repeat multiple times - more challenging due to non-standard evaluation with dplyr
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   # arrange(desc(n)) %>%
   # ungroup() %>%
@@ -845,14 +887,38 @@ coh.sub %>%
 ```
 
 Race has a small effect on guideline adherence, although many races are quite under-represented. When we look at the most frequent races from above (black, other, white), adherence to the guideline seemed to be quite similar.
+
 ```{r}
 
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = race_f) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum) 
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+filter(!is.na(var)) %>%
+column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat, simulate.p.value = T)
+
+# to assess by factor level - univariable logistic regression
+
+fit <- glm(data = coh.sub %>%
+          mutate(race_f = fct_relevel(race_f, 'Other'))
+           , formula = dur_compl ~ race_f, family = binomial)
+summary(fit)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed' & !is.na(var)) %>%
   arrange(desc(n)) %>%
   ungroup() %>%
@@ -872,7 +938,12 @@ coh.sub %>%
 ```
 
 Adherence to the guideline has improved over time, although still remains relatively low.
+
 ```{r}
+
+# logistic regression for association between adherence and year of visit
+f <- glm(dur_compl ~ arr_yr, family = binomial, data = coh.sub)
+broom::tidy(f, exponentiate = T, conf.int = T) # the meaning of the estimate for year-mo would be difficult to interpret
 
 coh.sub %>%
   mutate(var = arr_yr_mo) %>%
@@ -901,12 +972,27 @@ coh.sub %>%
 The presence of a "complex chronic condition" does not appear to influence adherence to the guidelines.
 
 ```{r}
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = MED_COMPLEX_IND) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum) 
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   # arrange(desc(n)) %>%
   # ungroup() %>%
@@ -925,6 +1011,26 @@ coh.sub %>%
 There is some variation in adherence to the guidelines by which antibiotic was prescribed.
 
 ```{r}
+
+tab <- coh.sub %>%
+  mutate(var = abx_name) %>%
+  group_by(var, dur_compl) %>%
+  summarise(n = n()) %>%
+  mutate(sum = sum(n), 
+         prop = n/sum)
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat)
 
 coh.sub %>%
   mutate(var = abx_name) %>%
@@ -950,16 +1056,32 @@ coh.sub %>%
 
 ```
 
+
 There is some slight variation in adherence based on day of the week.
 
 ```{r}
-
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = med_dow) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum)
+
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat, simulate.p.value = T)
+
+ tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   # arrange(desc(n)) %>%
   # ungroup() %>%
@@ -978,16 +1100,31 @@ coh.sub %>%
 
 ```
 
-There does not seem to be significant variation in adherence to the guidelines by time of day. We initially hypothesized that adherence might be worse during busier times of day as changing the prescribed duration required extra work.
+There is some, although questionably significant variation in adherence to the guidelines by time of day. We initially hypothesized that adherence might be worse during busier times of day as changing the prescribed duration required extra work.
 
 ```{r}
 
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = med_hr) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum) 
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat, simulate.p.value = T)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   # arrange(desc(n)) %>%
   # ungroup() %>%
@@ -1010,12 +1147,27 @@ There seems to be some significant variation in adherence to guidelines based on
 
 ```{r}
 
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = prov_rx) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum)
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat, simulate.p.value = T)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed' & !is.na(var)) %>%
   arrange(desc(n)) %>%
   ungroup() %>%
@@ -1037,12 +1189,27 @@ coh.sub %>%
 There was slightly better adherence to the guidelines when the Order Set was **not** used. This is perhaps not surprising since the Order Set defaulted to 10 days.
 
 ```{r}
-coh.sub %>%
+tab <- coh.sub %>%
   mutate(var = ss_used_med) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum) %>%
+         prop = n/sum)
+
+# turn into a matrix
+mat <- tab %>%
+  select(-sum, -prop) %>%
+  pivot_wider(
+    names_from = dur_compl,
+    values_from = n
+  ) %>%
+  column_to_rownames('var') %>%
+  as.matrix()
+
+# Fisher's Exact Test
+fisher.test(mat)
+
+tab %>%
   filter(dur_compl == 'Guideline Followed') %>%
   # arrange(desc(n)) %>%
   # ungroup() %>%
@@ -1057,6 +1224,7 @@ coh.sub %>%
   ylim(0,1)
   
 ```
+
 
 #### Logistic Regression
 
