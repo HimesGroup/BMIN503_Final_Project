@@ -28,225 +28,500 @@ The prevalence of depression, anxiety, and other mental health disorders is high
 
 > The data used in this analysis are extracted from Epic Clarity, the reporting database for Epic's EHR. Data are also obtained from the Agent Platform, and interactive tool the clinical team uses to mark patients as cases or controls after conducting chart review.
 
-```{r, eval = TRUE}
-library(dplyr)
-
-# Read in and Clean Data from Epic Clarity export
-clarity <- read.csv("Agent_Admissions_Clarity_08Oct2019.csv",fileEncoding="UTF-8-BOM")
-head(clarity)
-clarity_clean <- clarity %>% select(-c(PAT_ID, MRN, HSP_ACCOUNT_ID))
-agent %>% distinct(mend_contact_result)
-# Read in data export from Agent Tool
-agent <- read.csv("agent_scoring_data_09oct2019.csv")
-head(agent)
-# Merge data
-data <- clarity_clean %>% left_join(agent, by=c("PAT_ENC_CSN_ID"="encounter_id"))
-head(data)
-data <- data %>% mutate(outcome=factor(if_else(mend_contact_result%in%c("success_patient_ambivolent","success_patient_eager","successful","accepted_resource_mgmt_only","accepted_team_support_only"),1,0,missing=0))) 
-data <- data %>% mutate(mend_contact_result=gsub('_',' ',gsub("(?<=\\b)([a-z])","\\U\\1", tolower(mend_contact_result),perl=TRUE)))
-data <- data %>% mutate(psychothera_admin_yn=factor(if_else(INPATIENT_PSYCHOTHERAPEUTIC_MEDICATION_ADMIN_DATE=='',0,1)))
-head(data)
-
-```
-
-# Exploratory Data Analysis
-
-```{r, eval = TRUE}
+## R Libraries
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
+library(tidyverse)
 library(ggplot2)
 library(grid)
 library(gridExtra)
+library(reshape2)
+library(readxl)
+library(tableone)
+library(tidycensus)
+library(sf)
+library(RColorBrewer)
+library(car)
+
+```
+
+```{r, eval = TRUE}
+
+# Importing and cleaning data
+
+setwd("U:/MEND/BMIN503/Project")
+getwd()
+
+# Read in and Clean Data from Epic Clarity export
+clarity <- read_xlsx("Agent_Admissions_Clarity_01Dec2019.xlsx",col_names=TRUE)
+
+# Read in data export from Agent Tool
+agent <- read.csv("agent_scoring_data_22nov2019.csv")
+
+# Merge data
+data <- clarity %>% left_join(agent, by=c("PAT_ENC_CSN_ID"="encounter_id"))
+
+# De-identify Data
+data <- data %>% select(-c(PAT_ID, MRN, HSP_ACCOUNT_ID,PAT_ENC_CSN_ID))
+
+# Filter Admissions to patients admitted after March, 1, 2017 (Date of Epic Inpatient)
+data <- data %>% filter(HOSP_ADMSN_TIME >= '2017-03-01' & AGE >= 18)
+
+# Clean Data
+clean_data <- data %>% mutate(screening_outcome=factor(if_else(mend_screening_result%in%c("included"),1,0),
+                                       levels=c(1,0),
+                                       labels=c("Positive","Negative"))) %>%
+  mutate(mend_contact_result=gsub('_',' ',gsub("(?<=\\b)([a-z])","\\U\\1",tolower(mend_contact_result),perl=TRUE))) %>%
+  mutate(mend_contact_result=if_else(mend_contact_result=='','None',mend_contact_result)) %>%
+  mutate(RACE=factor(case_when(RACE=='HLB-Hispanic Latino/Black'~'Black',
+                RACE=='HLW-Hispanic Latino/White'~'White',
+                RACE %in% c('East Indian','Pacific Island')~'Asian',
+                TRUE ~ as.character(RACE)))) %>%
+  mutate(ETHNICITY=factor(case_when(ETHNICITY%in% c('Hispanic Latino','HLW','Hlb-Hispanic Latino/Black')~'Hispanic Latino',
+                ETHNICITY %in% c('WHITE','Non-Hispanic Non-Latino','Black','Blk','Caucasian')~'Non-Hispanic Non-Latino',
+                ETHNICITY %in% c('Patient Declined','Unknown','')~'Unknown',
+                TRUE ~ as.character(ETHNICITY)))) %>%
+  mutate(AGE_CATEGORY = factor(if_else(AGE<=29,"18-29",
+                                               if_else(AGE<=39,"30-39",
+                                                       if_else(AGE<=49,"40-49",
+                                                               if_else(AGE<=64,"50-64",
+                                                                       if_else(AGE>=65,">=65","Other"))))),
+                               levels=c("18-29","30-39","40-49","50-64",">=65"))) %>%
+  mutate(PCP_INSYSTEM_YN = factor(PCP_INSYSTEM_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  mutate(PREVIOUS_ED_VISIT_YN = factor(PREVIOUS_ED_VISIT_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  mutate(PREVIOUS_ADMISSION_YN = factor(PREVIOUS_ADMISSION_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  mutate(FINANCIAL_CLASS = factor(if_else(FINANCIAL_CLASS %in% c("Blue Cross","Commercial","Managed Care"),"Commercial",
+                                          if_else(FINANCIAL_CLASS %in% c("Managed Medicaid","Medicaid (MA)"),"Medicaid",
+                                                  if_else(FINANCIAL_CLASS %in% c("Managed Medicare","Medicare"),"Medicare","None"))))) %>%
+  mutate(COUNTY = if_else(STATE=='PA' & COUNTY=='PHILADELPHIA','PHILADELPHIA COUNTY, PA',
+                          if_else(STATE=='PA' & COUNTY=='DELAWARE','DELAWARE COUNTY, PA',
+                                  if_else(STATE=='PA' & COUNTY=='MONTGOMERY','MONTGOMERY COUNTY, PA',
+                                          if_else(STATE=='PA' & COUNTY=='CHESTER','CHESTER COUNTY, PA',
+                                                  if_else(STATE=='PA' & COUNTY=='BUCKS','BUCKS COUNTY, PA',
+                                                          if_else(STATE=='NJ' & COUNTY=='BURLINGTON','BURLINGTON COUNTY, NJ',
+                                                                  if_else(STATE=='NJ' & COUNTY=='CAMDEN','CAMDEN COUNTY, NJ','OTHER')))))))) %>%
+  mutate(REGION = if_else(ZIP %in% c("19104","19131","19139","19151"),'West Philadelphia',
+                          if_else(ZIP %in% c("19118","19119","19127","19128","19129","19144"),'Upper Northwest Philadelphia',
+                                         if_else(ZIP %in% c("19120","19126","19138","19141","19150"),'Olney-Oak Lane, Philadelphia',
+                                                 if_else(ZIP %in% c("19132","19133","19140"),'Upper North Philadelphia',
+                                                         if_else(ZIP %in% c("19121","19122","19123","19130"),'Lower North Philadelphia',
+                                                                 if_else(ZIP %in% c("19125","19134"),'Kensington-Port Richmond, Philadelphia',
+                                                                         if_else(ZIP %in% c("19111","19124","19135","19137","19149"),
+                                                                                 'Near Northeast Philadelphia',
+                                                                                 if_else(ZIP %in% c("19114","19115","19116","19136","19152","19154"),
+                                                                                         'Far Northeast Philadelphia',
+                                                                                         if_else(ZIP %in% c("19102","19103","19106","19107","19109"),
+                                                                                                 'Center City Philadelphia',
+                                                                                                 if_else(ZIP %in% c("19112","19145","19146","19147","19148"),
+                                                                                                         'South Philadelphia',
+                                                                                                         if_else(ZIP %in% c("19142","19143","19153"),
+                                                                                                                 'Southwest Philadelphia',
+                                                                                                                 COUNTY))))))))))))
+
+## Identifying Patient Characteristics that automatically qualify the patient for a psychiatry consult
+# Last PHQ-9 Score >= 20 (in past year) indicating severe depression
+clean_data %>% group_by(screening_outcome,LAST_PHQ9_SCORE) %>% count() %>% arrange(desc(LAST_PHQ9_SCORE))
+
+# Encounter Diagnosis or Problem List Diagnosis of Suicide or Intential Injury
+clean_data %>% group_by(screening_outcome,ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% arrange(desc(ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY))
+clean_data %>% group_by(screening_outcome,PL_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% arrange(desc(PL_CCS_662_SUICIDE_INTENTIONAL_INJURY))
+
+# Take only the most recent admission for each patient. This way each patient will have equal weight in the model.
+final_cohort <- clean_data %>% 
+  group_by(RANDOM_ID) %>%
+  slice(which.max(HOSP_ADMSN_TIME)) %>%
+  # Exclude patients with PHQ-9 scores >= 20, which indicates severe depression and patients with a problem list or encounter diagnosis 
+  # of suicide/intential injury.
+  filter(if_else(is.na(LAST_PHQ9_SCORE),-1,LAST_PHQ9_SCORE)<20 & ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0 & PL_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0)
+
+
+
+
+```
+
+```{r, eval = TRUE}
+
+## Describing Population
+# Includes patients admitted to HUP and bedded on floors Founders 12 and Founders 14 during their admission
+
+population <-CreateTableOne(vars=c("AGE","AGE_CATEGORY","GENDER","RACE", "ETHNICITY", "FINANCIAL_CLASS","PCP_INSYSTEM_YN","PREVIOUS_ED_VISIT_YN","PREVIOUS_ADMISSION_YN","REGION"), #, strata ="Intervention", 
+                            data=final_cohort, test = FALSE)
+pop_table <- print(population, showAllLevels = TRUE)
+
+```
+
+```{r, eval = TRUE}
 
 # Show bar plot of screening result
-data %>% count(mend_screening_result) %>%
-  ggplot(aes(x=reorder(mend_screening_result,-n),n)) +
-  geom_bar(stat='identity',width=0.5,fill='steelblue') +
+final_cohort %>% group_by(screening_outcome) %>% count() %>%
+  ggplot(aes(x=reorder(screening_outcome,-n),n,fill=screening_outcome)) +
+  geom_bar(stat='identity',width=0.5) +
   theme(axis.text.x = element_text(size=12)) +
   ggtitle("MEND Screening Results") +
   theme(plot.title = element_text(hjust = 0.5)) +
   xlab("Result") +
   ylab("Frequency") +
-  scale_fill_manual(values=c("#999999", "red3")) +
-  geom_text(aes(x = mend_screening_result, y = n+80, label = n), colour="black", size = 3)
+  scale_fill_manual(values=c("red3","#999999")) +
+  geom_text(aes(x = screening_outcome, y = n+80, label = n), colour="black", size = 3) +
+  labs(fill="Screening Result")
 
-# Show bar plot of outcomes
-plot_outcomes <- data %>% count(mend_contact_result, outcome) %>%
-  ggplot(aes(x=reorder(mend_contact_result,-n),n,fill=outcome)) +
-  geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,size=12)) +
-  ggtitle("MEND Contact Results") +
-  xlab("MEND Contact Result") +
-  ylab("Frequency") +
-  scale_fill_manual(values=c("#999999", "red3")) +
-  geom_text(aes(x = mend_contact_result, y = n+80, label = n), colour="black", size = 3)
+```
 
-jpeg("Outcomes_plot_09Oct2019.jpeg", units="in", width=11, height=8, res=300)
-grid.newpage()
-grid.draw(ggplotGrob(plot_outcomes))
-dev.off()
+
+
+```{r, eval = TRUE}
+
+# Evaluate availability of prior data
+final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_OUTPATIENT_VISIT_YN==1), Prop_Yes = sum(PREVIOUS_OUTPATIENT_VISIT_YN==1)/n(),
+                                         Freq_No = sum(PREVIOUS_OUTPATIENT_VISIT_YN==0), Prop_No = sum(PREVIOUS_OUTPATIENT_VISIT_YN==0)/n(),
+                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+
+final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(ANY_MEDICATION_ORDER_YN==1), Prop_Yes = sum(ANY_MEDICATION_ORDER_YN==1)/n(),
+                                         Freq_No = sum(ANY_MEDICATION_ORDER_YN==0), Prop_No = sum(ANY_MEDICATION_ORDER_YN==0)/n(),
+                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+
+final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(ANY_MEDICATION_ORDER_YN==1), Prop_Yes = sum(ANY_MEDICATION_ORDER_YN==1)/n(),
+                                         Freq_No = sum(ANY_MEDICATION_ORDER_YN==0), Prop_No = sum(ANY_MEDICATION_ORDER_YN==0)/n(),
+                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+
+final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_ED_VISIT_YN=="Yes"), Prop_Yes = sum(PREVIOUS_ED_VISIT_YN=="Yes")/n(),
+                                         Freq_No = sum(PREVIOUS_ED_VISIT_YN=="No"), Prop_No = sum(PREVIOUS_ED_VISIT_YN=="No")/n(),
+                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+
+final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_ADMISSION_YN=="Yes"), Prop_Yes = sum(PREVIOUS_ADMISSION_YN=="Yes")/n(),
+                                         Freq_No = sum(PREVIOUS_ADMISSION_YN=="No"), Prop_No = sum(PREVIOUS_ADMISSION_YN=="No")/n(),
+                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+```
+
+```{r, eval = TRUE}
+
+# Admissions/Screening Outcomes by zip code
+admissions_zip <- final_cohort %>% group_by(ZIP) %>% summarise(Total_Admissions = n(), Proportion_Positive = mean(if_else(screening_outcome=="Positive",1,0)))
+
+# Install census api key
+census_api_key("9bbda6b4cb68c4beb4f7510f920872eba33713c7", install=TRUE, overwrite=TRUE)
+
+# Load variables
+vars <- load_variables(dataset = "acs5",  # ACS 5-year estimates 
+                       year = 2017)  # end year
+
+# View variables 
+#View(vars)
+
+us_zip <- get_acs(geography = "zcta",         # query data at the tract level 
+                   year = 2017,                 # end year (these will give us ACS 5-year estimates for 2013-2017)
+                   variables = c("B19013_001"),  # Total Population
+                   #state = "PA", 
+                   #county = "Philadelphia",
+                   geometry=TRUE
+                   )
+
+# Create color palette 
+yor <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+blues <- colorRampPalette(brewer.pal(9, "Blues"))
+
+phila_zip <- us_zip %>% filter(GEOID %in% c("19104","19131","19139","19151", # West Philadelphia
+                                "19118","19119","19129","19144", # Upper Northwest
+                                "19127","19128", # Roxborough-Manayunk
+                                "19120","19126","19138","19141","19150", # Olney-Oak Lane
+                                "19132","19133","19140", # Upper North Philadelphia
+                                "19121","19122","19123","19130", # Lower North Philadelphia
+                                "19125","19134", # Kensington-Port Richmond
+                                "19111","19124","19135","19137","19149", # Near Northeast Philadelphia
+                                "19114","19115","19116","19136","19152","19154", # Far Northeast
+                                "19102","19103","19106","19107","19109", # Center City
+                                "19112","19145","19146","19147","19148", # South Philadelphia
+                                "19142","19143","19153" # Southwest Philadelphia
+                                )
+                   ) 
+
+check <- phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% mutate(Total_Admissions=if_else(is.na(Total_Admissions),0,as.numeric(Total_Admissions)),
+  Proportion_Positive=if_else(is.na(Proportion_Positive),0,Proportion_Positive)) %>%
+  ggplot(aes(fill = Total_Admissions)) +
+  geom_sf() +
+  scale_fill_gradientn(name = "Total Admissions", colors = blues(100), limit=range(0, 400)) +
+  ggtitle("Total Admissions, Philadelphia Zip Codes") +
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.6, "cm"),          
+        legend.text = element_text(size = 12),       
+        legend.title = element_text(size = 14),
+        plot.title = element_text(size=16, hjust=0.5)) 
+
+phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% mutate(Total_Admissions=if_else(is.na(Total_Admissions),0,as.numeric(Total_Admissions)),
+  Proportion_Positive=if_else(is.na(Proportion_Positive),0,Proportion_Positive)) %>%
+  ggplot(aes(fill = Proportion_Positive)) +
+  geom_sf() +
+  scale_fill_gradientn(name = "Proportion Positive", colors = yor(100), limit=range(0, 1)) +
+  ggtitle("Proportion Screening Positive, Philadelphia Zip Codes") +
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.6, "cm"),          
+        legend.text = element_text(size = 12),       
+        legend.title = element_text(size = 14),
+        plot.title = element_text(size=16, hjust=0.5)) 
+
+```
+
+```{r, eval = TRUE}
 
 # Potential Predictors
-data %>% count(FINANCIAL_CLASS, outcome) %>%
-  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=outcome)) +
-  geom_bar(stat='identity') +
+final_cohort %>% mutate(FINANCIAL_CLASS = if_else(FINANCIAL_CLASS=='','None',as.character(FINANCIAL_CLASS))) %>%
+  count(FINANCIAL_CLASS, screening_outcome) %>%
+  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=screening_outcome)) +
+  geom_bar(stat='identity',position=position_stack(reverse=TRUE)) +
   theme(axis.text.x = element_text(angle = 90)) +
   theme(plot.title = element_text(hjust = 0.5)) +
   ggtitle("Financial Class") +
   xlab("Financial Class") +
   ylab("Frequency") +
-  scale_fill_manual(values=c("#999999", "red3"))
+  scale_fill_manual(values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
+
+final_cohort %>% mutate(FINANCIAL_CLASS = if_else(FINANCIAL_CLASS=='','None',as.character(FINANCIAL_CLASS))) %>%
+  count(FINANCIAL_CLASS, screening_outcome) %>%
+  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=screening_outcome)) +
+  geom_bar(stat='identity',position=position_fill(reverse=TRUE)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Financial Class") +
+  xlab("Financial Class") +
+  ylab("Frequency") +
+  scale_fill_manual(values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
+
+```
+
+```{r, eval = TRUE}
+
+# Gender Bar Plot
+final_cohort %>% ggplot(aes(factor(GENDER),fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Outcome by Gender") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
+  ylab("Proportion") +
+  xlab("Gender")
+
+# Race Bar Plot
+final_cohort %>% ggplot(aes(factor(RACE),fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Outcome by Race") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2),legend.position="none") +
+  ylab("Proportion") +
+  xlab("Race")
+
+# Ethnicity
+final_cohort %>% ggplot(aes(factor(ETHNICITY),fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Outcome by Ethnicity") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
+  ylab("Proportion") +
+  xlab("Ethnicity")
+
+```
+
+```{r, eval = TRUE}
 
 # Boxplot of Age by outcome
-data %>% ggplot(aes(outcome,AGE,color=outcome)) +
+final_cohort %>% ggplot(aes(screening_outcome,AGE,color=screening_outcome)) +
   geom_boxplot(width=0.5) +
   geom_jitter(width=0.1,alpha=0.3) +
   ggtitle("Age by Outcome") +
   xlab("Outcome") +
   ylab("Age (Years)") +
-  scale_color_manual(values=c("#999999", "red3"))
+  scale_color_manual(values=c("red3","#999999")) +
+  theme(plot.title=element_text(hjust=0.5))
 
 # Boxplot of ED Visits by outcome
-ed_vis <- data %>% ggplot(aes(outcome,NUM_ED_VISITS_PAST_YEAR,color=outcome)) +
+final_cohort %>% ggplot(aes(screening_outcome,NUM_ED_VISITS_PAST_YEAR,color=screening_outcome)) +
   geom_boxplot(width=0.5) +
   geom_jitter(width=0.1,alpha=0.3) +
   ggtitle("ED Visits (Past Year)") +
-  theme(plot.title = element_text(hjust = 0.5)) +
-  xlab("Outcome") +
+  theme(plot.title = element_text(hjust = 0.5,size=24),
+        axis.title.y=element_text(size=18),axis.title.x=element_text(size=18),
+        axis.text.y=element_text(size=16),axis.text.x=element_text(size=16)) +
+  xlab("Screening Outcome") +
   ylab("Number of Visits") +
-  ylim(c(0,150)) +
-  scale_color_manual(values=c("#999999", "red3"))
+  ylim(c(-1,150)) +
+  scale_color_manual(values=c("red3","#999999"))
 
-jpeg("ED_Visits_10Oct2019.jpeg", units="in", width=8, height=11, res=300)
-grid.newpage()
-grid.draw(ggplotGrob(ed_vis))
-dev.off()
+# Boxplot of Admissions by outcome
+final_cohort %>% ggplot(aes(screening_outcome,NUM_ADMISSIONS_PAST_YEAR,color=screening_outcome)) +
+  geom_boxplot(width=0.5) +
+  geom_jitter(width=0.1,alpha=0.3) +
+  ggtitle("Admissions (Past Year)") +
+  theme(plot.title = element_text(hjust = 0.5,size=24),
+        axis.title.y=element_text(size=18),axis.title.x=element_text(size=18),
+        axis.text.y=element_text(size=16),axis.text.x=element_text(size=16)) +
+  xlab("Outcome") +
+  ylab("Number of Admissions") +
+  ylim(c(-1,30)) +
+  scale_color_manual(values=c("red3","#999999"))
 
-# Gender Bar Plot
-data %>% ggplot(aes(factor(GENDER),fill=outcome)) +
-  geom_bar(position='fill',width=0.5) +
-  scale_fill_manual(values=c("#999999", "red3")) + 
-  scale_y_continuous(labels=scales::percent) +
-  ggtitle("Outcome by Gender") +
-  theme(plot.title = element_text(hjust = 0.5)) +
-  ylab("Proportion") +
-  xlab("Gender")
 
-# Race Bar Plot
-data %>% mutate(RACE2=factor(case_when(RACE=='HLB-Hispanic Latino/Black'~'Black',
-                RACE=='HLW-Hispanic Latino/White'~'White',
-                RACE %in% c('East Indian','Pacific Island')~'Asian',
-                TRUE ~ as.character(RACE)))) %>%
-  ggplot(aes(factor(RACE2),fill=outcome)) +
-  geom_bar(position='fill',width=0.5) +
-  scale_fill_manual(values=c("#999999", "red3")) + 
-  scale_y_continuous(labels=scales::percent) +
-  ggtitle("Outcome by Race") +
-  theme(plot.title = element_text(hjust = 0.5)) +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  ylab("Proportion") +
-  xlab("Race")
+```
+
+
+```{r, eval = TRUE}
 
 # Total ED Visits by ED Visits with Mental Health Chief Complaint 
-data %>% ggplot(aes(NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,color=outcome)) +
+final_cohort %>% ggplot(aes(NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,color=screening_outcome)) +
   geom_jitter(alpha=0.3) + 
   ggtitle("ED Visits with Mental Health Chief Complaint") +
   theme(plot.title = element_text(hjust = 0.5)) +
   xlab("Total ED Visits (Past Year)") +
   ylab("ED Visits with Any Mental Health Chief Complaint") +
-  scale_color_manual(values=c("#999999", "red3"))
+  scale_color_manual(values=c("red3","#999999"))
 
-# Inpatient Psychotherapeutric Admin
-data %>% ggplot(aes(psychothera_admin_yn,fill=outcome)) +
-  geom_bar(position='fill',width=0.5) +
-  scale_fill_manual(values=c("#999999", "red3")) + 
+```
+
+```{r, eval = TRUE}
+
+# Visualize Potential Features
+
+# Previous Medication Orders
+med1 <- final_cohort %>% mutate(ANTIANXIETY_YN = factor(ANTIANXIETY_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(ANTIANXIETY_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
-  ggtitle("Psychotherapeutic Medication Admins") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Anti-Anxiety Medication Ordered \n(in Past Year)") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.x=element_blank()) +
   ylab("Proportion") +
-  xlab("Psychotherapeutic Med Admin (Y/N)")
+  xlab("Ordered (Y/N)")
+
+med2 <- final_cohort %>% mutate(ANTIDEPRESSANT_YN = factor(ANTIDEPRESSANT_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(ANTIDEPRESSANT_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Antidepressant Medication Ordered \n(in Past Year)") +
+  xlab("Ordered (Y/N)") +
+  ylab("Proportion") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.y=element_blank(),axis.title.x=element_blank()) 
+
+med3 <- final_cohort %>% mutate(ANTIPSYCHOTIC_YN = factor(ANTIPSYCHOTIC_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(ANTIPSYCHOTIC_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Anti-Psychotic Medication Ordered \n(in Past Year)") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.x=element_blank()) +
+  ylab("Proportion") +
+  xlab("Ordered (Y/N)")
+
+med4 <- final_cohort %>% mutate(ANY_MEDICATION_ORDER_YN = factor(ANY_MEDICATION_ORDER_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(ANY_MEDICATION_ORDER_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Any Medication Ordered \n(in Past Year)") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.y=element_blank(),axis.title.x=element_blank()) +
+  ylab("Proportion") +
+  xlab("Ordered (Y/N)")
+
+grid.arrange(med1,med2,med3,med4,nrow=2)
 
 #Restraints
-data %>% ggplot(aes(factor(RESTRAINTS_ORDERED_YN),fill=outcome)) +
-  geom_bar(position='fill',width=0.5) +
-  scale_fill_manual(values=c("#999999", "red3")) + 
+final_cohort %>% mutate(RESTRAINTS_ORDERED_YN = factor(RESTRAINTS_ORDERED_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(RESTRAINTS_ORDERED_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.4) +
+  scale_fill_manual(name="Screening Result",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Restraints Ordered") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
   ylab("Proportion") +
   xlab("Restraints Ordered (Y/N)")
 
 # One-to-One Obs
-data %>% ggplot(aes(factor(ONE_TO_ONE_OBSERVATION_ORDERED_YN),fill=outcome)) +
-  geom_bar(position='fill',width=0.5) +
-  scale_fill_manual(values=c("#999999", "red3")) + 
+final_cohort%>% mutate(ONE_TO_ONE_OBSERVATION_ORDERED_YN = factor(ONE_TO_ONE_OBSERVATION_ORDERED_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(ONE_TO_ONE_OBSERVATION_ORDERED_YN,fill=screening_outcome)) +
+  geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
+  scale_fill_manual(name="Screening Result",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("One-to-One Observation Orders") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5),axis.title.y=element_blank()) +
   ylab("Proportion") +
   xlab("One-to-One Observation (Y/N)")
 
+```
+
+```{r, eval = TRUE}
+
 # Last PHQ-9
-phq9_1 <- data %>% mutate(PHQ9_YN=factor(if_else(is.na(PHQ9_SCORE_PAST_YEAR),0,1))) %>%
-  ggplot(aes(PHQ9_YN,fill=outcome)) +
-  geom_bar() +
-  scale_fill_manual(values=c("#999999", "red3")) +
+phq9_1 <- final_cohort %>% mutate(PHQ9_YN=factor(if_else(is.na(LAST_PHQ9_SCORE),0,1),levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(PHQ9_YN,fill=screening_outcome)) +
+  geom_bar(position=position_stack(reverse=TRUE)) +
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
   ggtitle("PHQ-9 Completion in Past Year") +
   theme(plot.title = element_text(hjust = 0.5)) + 
   xlab("PHQ-9 Completed (Y/N)") +
   ylab("Frequency")
 
-phq9_2 <- data %>% filter(!is.na(PHQ9_SCORE_PAST_YEAR)) %>%
-  ggplot(aes(outcome,PHQ9_SCORE_PAST_YEAR)) +
+phq9_2 <- final_cohort %>% filter(!is.na(LAST_PHQ9_SCORE)) %>%
+  ggplot(aes(screening_outcome,LAST_PHQ9_SCORE)) +
   geom_boxplot(width=0.5) +
-  geom_jitter(width=0.05,alpha=0.3) +
+  geom_jitter(width=0.05,alpha=0.3,aes(col=screening_outcome)) +
+  #scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
+  scale_color_manual(values = c("red3","#999999")) +
   ggtitle("Last PHQ-9 Score in Past Year") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
   xlab("Outcome") +
   ylab("Score")
 
-grid.arrange(phq9_1,phq9_2,ncol=2)
+grid.arrange(phq9_2,phq9_1,ncol=2)
 
-# Last GAD
-gad_1 <- data %>% mutate(GAD_YN=factor(if_else(is.na(LAST_GAD_7_SCORE),0,1))) %>%
-  ggplot(aes(GAD_YN,fill=outcome)) +
-  geom_bar() +
-  scale_fill_manual(values=c("#999999", "red3")) +
-  ggtitle("GAD-7 Completed (Ever)") +
+# Last GAD-7
+gad7_1 <- final_cohort %>% mutate(GAD_YN=factor(if_else(is.na(LAST_GAD_7_SCORE),0,1),levels=c(0,1),labels=c("No","Yes"))) %>%
+  ggplot(aes(GAD_YN,fill=screening_outcome)) +
+  geom_bar(position=position_stack(reverse=TRUE)) +
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
+  ggtitle("GAD-7 Completion in Past Year") +
   theme(plot.title = element_text(hjust = 0.5)) + 
   xlab("GAD-7 Completed (Y/N)") +
   ylab("Frequency")
 
-gad_2 <- data %>% filter(!is.na(LAST_GAD_7_SCORE)) %>%
-  ggplot(aes(outcome,LAST_GAD_7_SCORE)) +
+gad7_2 <- final_cohort %>% filter(!is.na(LAST_GAD_7_SCORE)) %>%
+  ggplot(aes(screening_outcome,LAST_GAD_7_SCORE)) +
   geom_boxplot(width=0.5) +
-  geom_jitter(width=0.05,alpha=0.3) +
-  ggtitle("Last GAD-7 Score") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_jitter(width=0.05,alpha=0.3,aes(col=screening_outcome)) +
+  #scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
+  scale_color_manual(values = c("red3","#999999")) +
+  ggtitle("Last GAD-7 Score in Past Year") +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
   xlab("Outcome") +
   ylab("Score")
 
-grid.arrange(gad_1,gad_2,ncol=2)
+grid.arrange(gad7_2,gad7_1,ncol=2)
 
 ```
 
 ```{r, eval = TRUE}
-library(reshape2)
 
-tall <- melt(data[,c('RANDOM_ENC_ID','outcome','PL_CCS_650_ADJUSTMENT_DISORDERS','PL_CCS_651_ANXIETY_DISORDERS','PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS','PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS','PL_CCS_654_DEVELOPMENTAL_DISORDERS','PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL','PL_CCS_656_IMPULSE_CONTROL_DISORDERS','PL_CCS_657_MOOD_DISORDERS','PL_CCS_658_PERSONALITY_DISORDERS','PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS','PL_CCS_660_ALCOHOL_RELATED_DISORDERS','PL_CCS_661_SUBSTANCE_RELATED_DISORDERS','PL_CCS_662_SUICIDE_INTENTIONAL_INJURY','PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE','PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS')], id=c('RANDOM_ENC_ID','outcome'))
-
-tall %>% mutate(variable=gsub('PL CCS ','',gsub("_"," ",variable))) %>%
-  mutate(variable=gsub('DISORDERS','DIS',variable)) %>%
-  group_by(variable) %>% summarize(prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>%
-  ggplot(aes(variable,y=prop)) +
-  geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  scale_y_continuous(labels=scales::percent) +
-  xlab("Problem List Dx (CCS Code)") +
-  ylab("Proportion Positive") +
-  coord_flip()
+# Odds Ratio Plots 
+tall <- melt(final_cohort[,c('RANDOM_ENC_ID','screening_outcome','PL_CCS_650_ADJUSTMENT_DISORDERS','PL_CCS_651_ANXIETY_DISORDERS','PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS','PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS','PL_CCS_654_DEVELOPMENTAL_DISORDERS','PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL','PL_CCS_656_IMPULSE_CONTROL_DISORDERS','PL_CCS_657_MOOD_DISORDERS','PL_CCS_658_PERSONALITY_DISORDERS','PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS','PL_CCS_660_ALCOHOL_RELATED_DISORDERS','PL_CCS_661_SUBSTANCE_RELATED_DISORDERS','PL_CCS_662_SUICIDE_INTENTIONAL_INJURY','PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE','PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS')], id=c('RANDOM_ENC_ID','screening_outcome'))
 
 tall %>% mutate(variable=gsub('PL CCS ','',gsub("_"," ",variable))) %>%
   mutate(variable=gsub('DISORDERS','DIS',variable)) %>%
-  group_by(variable) %>% summarize(count=sum(value>=1),prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>% filter(count>=10) %>%
+  group_by(variable) %>% summarize(prevalence=sum(value==1)/n(),prop=sum(screening_outcome=="Positive"&value==1)/sum(value==1),
+                                   odds_ratio=sum(screening_outcome=="Positive"&value==1)*sum(screening_outcome=="Negative"&value==0)/
+                                     (sum(screening_outcome=="Positive"&value==0)*sum(screening_outcome=="Negative"&value==1))) %>% filter(prevalence>=0.02) %>%
   ggplot(aes(reorder(variable,odds_ratio),y=odds_ratio)) +
   geom_bar(stat='identity') +
   theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
@@ -254,96 +529,129 @@ tall %>% mutate(variable=gsub('PL CCS ','',gsub("_"," ",variable))) %>%
   xlab("Problem List Dx (CCS Code)") +
   ylab("Odds Ratio") +
   geom_hline(yintercept=1,color='red') +
-  scale_y_continuous(breaks=c(0:10),limits=c(0, 10)) +
+  scale_y_continuous(breaks=c(0:10),limits=c(-1, 10)) +
   coord_flip()
 
-encdx <- melt(data[,c('RANDOM_ENC_ID','outcome','ENC_DX_CCS_650_ADJUSTMENT_DISORDERS','ENC_DX_CCS_651_ANXIETY_DISORDERS','ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS','ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS','ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS','ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL','ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS','ENC_DX_CCS_657_MOOD_DISORDERS','ENC_DX_CCS_658_PERSONALITY_DISORDERS','ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS','ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS','ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS','ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY','ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE','ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS')], id=c('RANDOM_ENC_ID','outcome'))
+encdx <- melt(final_cohort[,c('RANDOM_ENC_ID','screening_outcome','ENC_DX_CCS_650_ADJUSTMENT_DISORDERS','ENC_DX_CCS_651_ANXIETY_DISORDERS','ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS','ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS','ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS','ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL','ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS','ENC_DX_CCS_657_MOOD_DISORDERS','ENC_DX_CCS_658_PERSONALITY_DISORDERS','ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS','ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS','ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS','ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY','ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE','ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS')], id=c('RANDOM_ENC_ID','screening_outcome'))
 
 encdx %>% mutate(variable=gsub('ENC DX CCS ','',gsub("_"," ",variable))) %>%
   mutate(variable=gsub('DISORDERS','DIS',variable)) %>%
-  group_by(variable) %>% summarize(prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>%
-  ggplot(aes(variable,y=prop)) +
-  geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  scale_y_continuous(labels=scales::percent) +
-  xlab("Problem List Dx (CCS Code)") +
-  ylab("Proportion Positive") +
-  coord_flip()
-
-encdx %>% mutate(variable=gsub('ENC DX CCS ','',gsub("_"," ",variable))) %>%
-  mutate(variable=gsub('DISORDERS','DIS',variable)) %>%
-  group_by(variable) %>% summarize(count=sum(value>=1),prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>% filter(!is.na(odds_ratio)) %>% filter(count>=10) %>%
+  group_by(variable) %>% summarize(prevalence=sum(value==1)/n(),prop=sum(screening_outcome==1&value==1)/sum(value==1), 
+                                   odds_ratio=sum(screening_outcome=="Positive"&value==1)*sum(screening_outcome=="Negative"&value==0)/
+                                     (sum(screening_outcome=="Positive"&value==0)*sum(screening_outcome=="Negative"&value==1))) %>% 
+  filter(!is.na(odds_ratio)) %>% filter(prevalence>=0.02) %>%
   ggplot(aes(reorder(variable,odds_ratio),y=odds_ratio)) +
   geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  ggtitle("Encounter Diagnoses (Past Year)") +
+  theme(plot.title=element_text(hjust=0.5), axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0,size=12), 
+        axis.title.y=element_blank(),axis.text.y=element_text(size=10)) +
+  ggtitle("Encounter Diagnoses \n(Past Year)") +
   xlab("Encounter Dx (CCS Code)") +
-  ylab("Odds Ratio") +
-  geom_hline(yintercept=1,color='red') +
-  scale_y_continuous(breaks=c(0:15),limits=c(0, 15)) +
-  coord_flip()
-
-edcc <- melt(data[,c('RANDOM_ENC_ID','outcome','ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS','ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS','ED_VISITS_ALCOHOL_INTOXICATION_CHIEF_COMPLAINTS','ED_VISITS_SUICIDAL_CHIEF_COMPLAINTS','ED_VISITS_PSYCH_EVAL_CHIEF_COMPLAINTS','ED_VISITS_ALCOHOL_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_WITHDRAWAL_CHIEF_COMPLAINTS','ED_VISITS_DETOX_CHIEF_COMPLAINTS','ED_VISITS_DRUG_OVERDOSE_CHIEF_COMPLAINTS','ED_VISITS_ADDICTION_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_NEUROLOGIC_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_ANXIETY_CHIEF_COMPLAINTS','ED_VISITS_HOMICIDAL_CHIEF_COMPLAINTS','ED_VISITS_DRUG_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_SUICIDE_ATTEMPT_CHIEF_COMPLAINTS','ED_VISITS_MANIC_BEHAVIOR_CHIEF_COMPLAINTS','ED_VISITS_PARANOIA_CHIEF_COMPLAINTS','ED_VISITS_PANIC_ATTACK_CHIEF_COMPLAINTS','ED_VISITS_ANOREXIA_CHIEF_COMPLAINTS','ED_VISITS_DELUSIONAL_CHIEF_COMPLAINTS','ED_VISITS_MENTAL_HEALTH_PROBLEM_CHIEF_COMPLAINTS')], id=c('RANDOM_ENC_ID','outcome'))
-
-edcc %>% mutate(variable=gsub(' CHIEF COMPLAINTS','',gsub('ED VISITS ','',gsub("_"," ",variable)))) %>%
-  group_by(variable) %>% summarize(prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>%
-  ggplot(aes(variable,y=prop)) +
-  geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  scale_y_continuous(labels=scales::percent) +
-  xlab("Problem List Dx (CCS Code)") +
-  ylab("Proportion Positive") +
-  coord_flip()
-
-edcc %>% mutate(variable=gsub(' CHIEF COMPLAINTS','',gsub('ED VISITS ','',gsub("_"," ",variable)))) %>%
-  mutate(value=if_else(value>=1,1,0)) %>%
-  group_by(variable) %>% summarize(count=sum(value>=1),prop=sum(outcome==1&value==1)/sum(value==1), odds_ratio=sum(outcome==1&value==1)*sum(outcome==0&value==0)/(sum(outcome==1&value==0)*sum(outcome==0&value==1))) %>% filter(count>=10) %>%
-  ggplot(aes(reorder(variable,odds_ratio),y=odds_ratio)) +
-  geom_bar(stat='identity') +
-  theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
-  ggtitle("ED Chief Complaints (Past Year)") +
-  xlab("Chief Complaint") +
   ylab("Odds Ratio") +
   geom_hline(yintercept=1,color='red') +
   scale_y_continuous(breaks=c(0:12),limits=c(0, 12)) +
   coord_flip()
 
+edcc <- melt(final_cohort[,c('RANDOM_ENC_ID','screening_outcome','ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS','ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS','ED_VISITS_ALCOHOL_INTOXICATION_CHIEF_COMPLAINTS','ED_VISITS_SUICIDAL_CHIEF_COMPLAINTS','ED_VISITS_PSYCH_EVAL_CHIEF_COMPLAINTS','ED_VISITS_ALCOHOL_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_WITHDRAWAL_CHIEF_COMPLAINTS','ED_VISITS_DETOX_CHIEF_COMPLAINTS','ED_VISITS_DRUG_OVERDOSE_CHIEF_COMPLAINTS','ED_VISITS_ADDICTION_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_NEUROLOGIC_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_ANXIETY_CHIEF_COMPLAINTS','ED_VISITS_HOMICIDAL_CHIEF_COMPLAINTS','ED_VISITS_DRUG_PROBLEM_CHIEF_COMPLAINTS','ED_VISITS_SUICIDE_ATTEMPT_CHIEF_COMPLAINTS','ED_VISITS_MANIC_BEHAVIOR_CHIEF_COMPLAINTS','ED_VISITS_PARANOIA_CHIEF_COMPLAINTS','ED_VISITS_PANIC_ATTACK_CHIEF_COMPLAINTS','ED_VISITS_ANOREXIA_CHIEF_COMPLAINTS','ED_VISITS_DELUSIONAL_CHIEF_COMPLAINTS','ED_VISITS_MENTAL_HEALTH_PROBLEM_CHIEF_COMPLAINTS')], id=c('RANDOM_ENC_ID','screening_outcome'))
 
-jpeg("Problem_List_09Oct2019.jpeg", units="in", width=11, height=8, res=300)
-grid.newpage()
-grid.draw(ggplotGrob(plot_problems))
-dev.off()
+edcc %>% mutate(variable=gsub(' CHIEF COMPLAINTS','',gsub('ED VISITS ','',gsub("_"," ",variable)))) %>%
+  mutate(value=if_else(value>=1,1,0)) %>%
+  group_by(variable) %>% summarize(prevalence=sum(value==1)/n(),prop=sum(screening_outcome=="Positive"&value==1)/sum(value==1),
+                                   odds_ratio=sum(screening_outcome=="Positive"&value==1)*sum(screening_outcome=="Negative"&value==0)/
+                                     (sum(screening_outcome=="Positive"&value==0)*sum(screening_outcome=="Negative"&value==1))) %>% 
+  filter(prevalence>=0.02) %>%
+  ggplot(aes(reorder(variable,odds_ratio),y=odds_ratio)) +
+  geom_bar(stat='identity',width=0.5) +
+  theme(plot.title=element_text(hjust=0.5),axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2,size=12), 
+        axis.title.y=element_blank(),axis.text.y=element_text(size=12)) +
+  ggtitle("ED Chief Complaints (Past Year)") +
+  xlab("Chief Complaint") +
+  ylab("Odds Ratio") +
+  geom_hline(yintercept=1,color='red') +
+  scale_y_continuous(breaks=c(0:4),limits=c(0, 4)) +
+  coord_flip()
 
 ```
 
-# Predictive Models 
-
-# Logistic regression 
+### Logistic regression 
 
 ```{r eval=TRUE}
-analytic <- data %>% mutate(RACE2=factor(case_when(RACE=='HLB-Hispanic Latino/Black'~'Black',
-  RACE=='HLW-Hispanic Latino/White'~'White',
-  RACE %in% c('East Indian','Pacific Island')~'Asian',
-  TRUE ~ as.character(RACE)))) %>% select(outcome,AGE,GENDER,RACE2,FINANCIAL_CLASS,ADMIT_SOURCE,PATIENT_CLASS,RESTRAINTS_ORDERED_YN,ONE_TO_ONE_OBSERVATION_ORDERED_YN,psychothera_admin_yn,PL_CCS_650_ADJUSTMENT_DISORDERS,PL_CCS_651_ANXIETY_DISORDERS,PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,PL_CCS_654_DEVELOPMENTAL_DISORDERS,PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,PL_CCS_656_IMPULSE_CONTROL_DISORDERS,PL_CCS_657_MOOD_DISORDERS,PL_CCS_658_PERSONALITY_DISORDERS,PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,PL_CCS_660_ALCOHOL_RELATED_DISORDERS,PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,ED_VISITS_ALCOHOL_INTOXICATION_CHIEF_COMPLAINTS,ED_VISITS_SUICIDAL_CHIEF_COMPLAINTS,ED_VISITS_PSYCH_EVAL_CHIEF_COMPLAINTS,ED_VISITS_ALCOHOL_PROBLEM_CHIEF_COMPLAINTS,ED_VISITS_WITHDRAWAL_CHIEF_COMPLAINTS,ED_VISITS_DETOX_CHIEF_COMPLAINTS,ED_VISITS_DRUG_OVERDOSE_CHIEF_COMPLAINTS,ED_VISITS_ADDICTION_PROBLEM_CHIEF_COMPLAINTS,ED_VISITS_NEUROLOGIC_PROBLEM_CHIEF_COMPLAINTS,ED_VISITS_ANXIETY_CHIEF_COMPLAINTS,ED_VISITS_HOMICIDAL_CHIEF_COMPLAINTS,ED_VISITS_DRUG_PROBLEM_CHIEF_COMPLAINTS,ED_VISITS_SUICIDE_ATTEMPT_CHIEF_COMPLAINTS,ED_VISITS_MANIC_BEHAVIOR_CHIEF_COMPLAINTS,ED_VISITS_PARANOIA_CHIEF_COMPLAINTS,ED_VISITS_PANIC_ATTACK_CHIEF_COMPLAINTS,ED_VISITS_ANOREXIA_CHIEF_COMPLAINTS,ED_VISITS_DELUSIONAL_CHIEF_COMPLAINTS,ED_VISITS_MENTAL_HEALTH_PROBLEM_CHIEF_COMPLAINTS,NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,PREVIOUS_PSYCHIATRY_VISIT_YN)
 
-logistic_model <- glm(outcome ~AGE+GENDER+RACE2+FINANCIAL_CLASS+RESTRAINTS_ORDERED_YN+ONE_TO_ONE_OBSERVATION_ORDERED_YN+psychothera_admin_yn+PL_CCS_662_SUICIDE_INTENTIONAL_INJURY+PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS+PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL+PL_CCS_660_ALCOHOL_RELATED_DISORDERS+PL_CCS_661_SUBSTANCE_RELATED_DISORDERS+PL_CCS_658_PERSONALITY_DISORDERS+PL_CCS_657_MOOD_DISORDERS+PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS+PL_CCS_651_ANXIETY_DISORDERS+PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS+NUM_ED_VISITS_PAST_YEAR+ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS, data = analytic, family = binomial(logit))
+# Create Analytic Dataset Limited to Features of Interest
+analytic <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(screening_outcome,levels=c("Negative","Positive"))) %>% 
+  select(screening_outcome,AGE,GENDER,RACE,ETHNICITY,FINANCIAL_CLASS,SOI_SCORE,ROM_SCORE,ADMIT_SOURCE,PATIENT_CLASS,
+         RESTRAINTS_ORDERED_YN,ONE_TO_ONE_OBSERVATION_ORDERED_YN,ANY_OBSERVATION_ORDERED_YN,INPATIENT_PSYCH_CONSULT_YN,ANTIANXIETY_YN,
+         ANTIDEPRESSANT_YN,ANTIPSYCHOTIC_YN,ANY_MEDICATION_ORDER_YN,BEHAVIORAL_HEALTH_CONSULT_YN,PSYCHIATRY_CONSULT_YN,
+         PSYCHOLOGY_CONSULT_YN,PL_CCS_651_ANXIETY_DISORDERS,PL_CCS_657_MOOD_DISORDERS,
+         PL_CCS_660_ALCOHOL_RELATED_DISORDERS,PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+         PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+         ENC_DX_CCS_651_ANXIETY_DISORDERS,ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+         ENC_DX_CCS_657_MOOD_DISORDERS,ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+         ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,PREVIOUS_ED_VISIT_YN,NUM_ED_VISITS_PAST_YEAR,
+         ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
+         PREVIOUS_ADMISSION_YN,NUM_ADMISSIONS_PAST_YEAR,LAST_PHQ2_SCORE,LAST_PHQ9_SCORE,LAST_GAD_7_SCORE,
+         UPHS_RISK_SCORE) 
+
+# Identify significant features using logistic regression (bivariate analyses)
+results <- data.frame()
+
+for(var in colnames(analytic[c(2:44)])){
+  bivariate <- analytic %>% select(screening_outcome,var)
+  logistic_model <- glm(screening_outcome~.,data=bivariate,family=binomial())
+  OR <- exp(coef(logistic_model))
+  CI <- confint(logistic_model) 
+  pval <- as.numeric(coef(summary(logistic_model))[2,'Pr(>|z|)'])
+  results <- rbind(results,data.frame(var=var,OR=OR,CI=CI,pval=pval))
+}
+
+results %>% filter(pval<0.05/43) %>% arrange(pval)
+
+logistic_model <- glm(screening_outcome ~ANTIDEPRESSANT_YN+PL_CCS_657_MOOD_DISORDERS+INPATIENT_PSYCH_CONSULT_YN+ENC_DX_CCS_657_MOOD_DISORDERS+PSYCHIATRY_CONSULT_YN+
+                        PL_CCS_651_ANXIETY_DISORDERS+ENC_DX_CCS_651_ANXIETY_DISORDERS+PL_CCS_661_SUBSTANCE_RELATED_DISORDERS+UPHS_RISK_SCORE+AGE+
+                        ANTIPSYCHOTIC_YN+NUM_ED_VISITS_PAST_YEAR+NUM_ADMISSIONS_PAST_YEAR+ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS+
+                        ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS+PL_CCS_660_ALCOHOL_RELATED_DISORDERS+ANY_OBSERVATION_ORDERED_YN+BEHAVIORAL_HEALTH_CONSULT_YN+
+                        ONE_TO_ONE_OBSERVATION_ORDERED_YN+ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE+PREVIOUS_ADMISSION_YN+
+                        ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS+ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS+GENDER+
+                        ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS+RESTRAINTS_ORDERED_YN+PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE, 
+                      data = analytic, family = binomial(logit))
+
 summary(logistic_model)
-glm.pred <- predict(titanic.glm, titanic, type = "response")
+OR <- data.frame(exp(coef(logistic_model)))
+CI <- exp(confint(logistic_model))
+pvals <- data.frame(as.numeric(coef(summary(logistic_model))[,'Pr(>|z|)']))
+
+
 ```
 
 ### Random Forest
 ```{r eval=TRUE}
 
 library(randomForest)
-rf <- randomForest(outcome ~ ., data = analytic, ntree = 100, importance = TRUE)
+
+rf_data <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(screening_outcome,levels=c("Negative","Positive"))) %>% 
+  mutate(GENDER = factor(GENDER,levels=c("Male","Female"))) %>%
+  select(screening_outcome,AGE,GENDER,RACE,
+         RESTRAINTS_ORDERED_YN,ONE_TO_ONE_OBSERVATION_ORDERED_YN,ANY_OBSERVATION_ORDERED_YN,INPATIENT_PSYCH_CONSULT_YN,ANTIANXIETY_YN,
+         ANTIDEPRESSANT_YN,ANTIPSYCHOTIC_YN,ANY_MEDICATION_ORDER_YN,BEHAVIORAL_HEALTH_CONSULT_YN,PSYCHIATRY_CONSULT_YN,
+         PSYCHOLOGY_CONSULT_YN,PL_CCS_651_ANXIETY_DISORDERS,PL_CCS_657_MOOD_DISORDERS,
+         PL_CCS_660_ALCOHOL_RELATED_DISORDERS,PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+         PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+         ENC_DX_CCS_651_ANXIETY_DISORDERS,ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+         ENC_DX_CCS_657_MOOD_DISORDERS,ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+         ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,PREVIOUS_ED_VISIT_YN,NUM_ED_VISITS_PAST_YEAR,
+         ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
+         PREVIOUS_ADMISSION_YN,NUM_ADMISSIONS_PAST_YEAR) 
+
+rf <- randomForest(screening_outcome ~ ., data = rf_data, ntree = 100, importance = TRUE)
 rf
 rf$importance
-rf.pred <- predict(rf, analytic, type = "prob")
+rf.pred <- predict(rf, rf_data, type = "prob")
 head(rf.pred)
 rf.pred.pos <- rf.pred[ , 2]
 
 #K-Fold Cross Validation
-N = nrow(analytic)
+N = nrow(rf_data)
 K = 10
 set.seed(1234)
 s = sample(1:K, size = N, replace = T)
@@ -351,12 +659,12 @@ pred.outputs.rf <- vector(mode = "numeric", length = N)
 obs.outputs <- vector(mode = "numeric", length = N)
 offset <- 0
 for(i in 1:K){
-	train <- filter(analytic, s != i)
-	test <- filter(analytic, s == i)
-	obs.outputs[1:length(s[s == i]) + offset] <- test$outcome
+	train <- filter(rf_data, s != i)
+	test <- filter(rf_data, s == i)
+	obs.outputs[1:length(s[s == i]) + offset] <- test$screening_outcome
 
 	#RF train/test
-	rf <- randomForest(outcome ~ ., data = train, ntree = 100)
+	rf <- randomForest(screening_outcome ~ ., data = train, ntree = 100)
 	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
 	pred.outputs.rf[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
 
@@ -367,8 +675,9 @@ for(i in 1:K){
 library(pROC)
 
 #Random Forest
+par(pty = "s")
 roc(obs.outputs, pred.outputs.rf, ci = TRUE)
-plot.roc(analytic$outcome, rf.pred.pos)
+plot.roc(rf_data$screening_outcome, rf.pred.pos)
 plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE)
 legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "darkgreen"), lwd = 1)
 
@@ -381,20 +690,231 @@ dotchart(sort(impToPlot[,1]), xlim=c(0,100), xlab="%IncMSE", cex=0.5, main='Rand
 
 ### Naive Bayes
 ```{r eval = TRUE, message = FALSE}
-library(e1071)
-library(caret)
-set.seed(1)
-traning.indices <- createDataPartition(y = analytic$outcome, p = 0.7, list = FALSE)
-training.set <- analytic[traning.indices,]
-test.set <- analytic[-traning.indices,]
+#library(e1071)
+#library(caret)
+#set.seed(1)
+#traning.indices <- createDataPartition(y = analytic$outcome, p = 0.7, list = FALSE)
+#training.set <- analytic[traning.indices,]
+#test.set <- analytic[-traning.indices,]
 
-classifier = naiveBayes(x=training.set[,-47], y=training.set$outcome)
+#classifier = naiveBayes(x=training.set[,-47], y=training.set$outcome)
 
-prediction = predict(classifier, newdata = test.set[,-47], type='raw')
+#prediction = predict(classifier, newdata = test.set[,-47], type='raw')
 
-roc(test.set$outcome, factor(prediction,ordered=TRUE), ci = TRUE)
+#roc(test.set$outcome, factor(prediction,ordered=TRUE), ci = TRUE)
 
 ```
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r eval = TRUE}
+
+# Text Analysis
+library(tidytext)
+patient_notes <- read_xlsx("U:/MEND/Agent_Patient_Notes_05dec2019.xlsx",col_names=TRUE,n_max = 1001)
+
+classified_notes <- clarity %>% select(PAT_ENC_CSN_ID,RANDOM_ID,RANDOM_ENC_ID) %>% 
+  inner_join(select(final_cohort,RANDOM_ID,RANDOM_ENC_ID,screening_outcome),by="RANDOM_ENC_ID") %>%
+  inner_join(select(patient_notes,PAT_ENC_CSN_ID,progress_note),by="PAT_ENC_CSN_ID") %>%
+  select(RANDOM_ENC_ID,screening_outcome,progress_note)
+  
+custom_stop_words <- tribble(
+  ~word, ~lexicon,
+  "â","CUSTOM",
+  "1","CUSTOM",
+  "2","CUSTOM",
+  "3","CUSTOM",
+  "4","CUSTOM",
+  "5","CUSTOM",
+  "6","CUSTOM",
+  "7","CUSTOM",
+  "8","CUSTOM",
+  "9","CUSTOM"
+) %>% rbind(stop_words)
+
+word_counts <- classified_notes %>% 
+  # Tokenize text
+  unnest_tokens(word,progress_note) %>% 
+  # Remove Stopwords
+  anti_join(custom_stop_words) %>%
+  # Summarize
+  count(word, screening_outcome) %>% 
+  group_by(screening_outcome) %>%
+  top_n(20, n) %>%
+  ungroup() %>%
+  mutate(word2 = fct_reorder(word,n))
+
+word_counts %>% 
+  ggplot(aes(x=reorder(word2,n),y=n,fill=screening_outcome)) +
+  geom_col(show.legend=FALSE) +
+  facet_wrap(~ screening_outcome, scales="free_y") +
+  coord_flip() +
+  ggtitle("Word Frequencies") +
+  xlab("Word") +
+  ylab("Frequency")
+
+# Word Cloud
+library(wordcloud)
+
+word_counts <- classified_notes %>% 
+  # Tokenize text
+  unnest_tokens(word,progress_note) %>% 
+  # Remove Stopwords
+  anti_join(custom_stop_words) %>%
+  # Summarize
+  count(word) %>% 
+  top_n(100)
+
+wordcloud(
+  words = word_counts$word,
+  freq = word_counts$n,
+  max.words = 30,
+  colors = "steelblue"
+)
+
+
+```
+
+## Evaluating the Impact of the Program
+
+> This section evaluates if there are any differences in who receives the MEND intervention. Although those receiving the intervention were significantly younger (mean 53 vs 55.6 years), this was not a clinically meaningful difference. There were no significant differences by race or gender.
+
+```{r, eval = TRUE}
+
+# Show bar plot MEND Contact Results Among Those Screened Positive
+final_cohort %>% filter(screening_outcome=="Positive") %>% group_by(mend_contact_result) %>% count() %>%
+  ggplot(aes(x=reorder(mend_contact_result,-n),n)) +
+  geom_bar(stat='identity',fill='red3') +
+  theme(axis.text.x = element_text(angle = 90,size=10),plot.title=element_text(hjust=0.5)) +
+  ggtitle("MEND Contact Results (Positive Cases)") +
+  xlab("MEND Contact Result") +
+  ylab("Frequency") +
+  scale_fill_manual(values=c("#999999", "red3")) +
+  geom_text(aes(x = mend_contact_result, y = n+50, label = n), colour="black", size = 3) 
+
+outcome_eval <- final_cohort %>% filter(screening_outcome=="Positive") %>% 
+  mutate(Received_Intervention_YN = factor(if_else(mend_contact_result %in% 
+                                                     c("Accepted resource mgmt only","Accepted team support only",
+                                                       "Success patient ambivolent","Success patient eager"),1,0),
+                                           levels=c(1,0),labels=c("Yes","No"))) 
+
+# Categorical Variables
+outcome_eval %>% group_by(Received_Intervention_YN,RACE) %>% 
+  summarize(Freq=n()) %>% 
+  group_by(RACE) %>% 
+  mutate(Prop = Freq/sum(Freq), N_Proportion = paste(Freq," (", round(Freq / sum(Freq)*100,2),")",sep='')) %>% 
+  arrange(desc(Received_Intervention_YN),RACE)
+
+fisher.test(table(outcome_eval$Received_Intervention_YN,outcome_eval$RACE))
+
+outcome_eval %>% group_by(Received_Intervention_YN,GENDER) %>% 
+  summarize(Freq=n()) %>% 
+  group_by(GENDER) %>% 
+  mutate(Prop = Freq/sum(Freq), N_Proportion = paste(Freq," (", round(Freq / sum(Freq)*100,2),")",sep='')) %>% 
+  arrange(desc(Received_Intervention_YN),GENDER)
+
+chisq.test(table(outcome_eval$Received_Intervention_YN,outcome_eval$GENDER))
+
+# Continous Variables
+outcome_eval %>% group_by(Received_Intervention_YN) %>% summarize(n=n(), avg=mean(AGE), sd=sd(AGE), med=median(AGE), 
+q1s=quantile(AGE,0.25), q3=quantile(AGE,0.75), min=min(AGE),max=max(AGE)) 
+
+t.test(outcome_eval$AGE~outcome_eval$Received_Intervention_YN)
+```
+
+> This section evaluates whether there were changes in inpatient length of stay (LOS) after the program was initiated. An interrupted time series analysis was performed to compare level and trend changes in LOS for floors Founders 12 and 14, relative to inpatients on other floors at the Hospital of the University of Pennsylvania.
+
+```{r, eval = TRUE}
+
+# Time series data
+mend <- read.csv('U:/MEND/MEND_ITS_Data_Mar2017_05Dec2019.csv',header=TRUE,stringsAsFactors=FALSE)
+
+mend_eval <- mend %>% mutate(Level = if_else(Time>=22,1,0), Trend = if_else(Time>=22,Time-21,0)) %>% 
+  mutate(Int_Time = if_else(Site=='FP12-14',Time,as.integer(0)),
+         Int_Level = if_else(Site=='FP12-14',Level,0), 
+         Int_Trend = if_else(Site=='FP12-14',Trend,0)) %>% 
+  filter(Site %in% c("FP12-14","HUP")) %>%
+  filter(Time!=34) %>%
+  mutate(Site = factor(Site,levels=c("HUP","FP12-14")))
+
+# Excl December 2018 from the model because the MEND team started piloting
+mend_excl <- mend_eval %>% filter(Time!=22) 
+
+its_model <- lm(Avg_Floor_Disch_Time~Site+Time+Level+Trend+Int_Time+Int_Level+Int_Trend,data=mend_excl)
+
+coef <- data.frame(coefficients(summary(its_model)))
+conf_int <- data.frame(confint(its_model))
+
+month_labels <- unique(paste(mend_eval$Year,'-',substr(mend_eval$Month_Name,1,3),sep=''))
+
+# Model tests 
+dwt_res <- dwt(its_model,max.lag=12,alternative="two.sided")
+dwt <- round(data.frame(dwt_res[1]),4)
+
+# Residual plot
+par(mfrow=c(1,1))
+plot(mend_excl$Time[1:32], residuals(its_model)[1:32],type='o',pch=16, col='red',
+     main='Residual Plot: FP12/14', xlab='Time',ylab='OLS Residuals') +
+  abline(h=0)
+plot(mend_excl$Time[33:64], residuals(its_model)[33:64],type='o',pch=16, col='darkgrey',
+     main='Residual Plot: HUP', xlab='Time',ylab='OLS Residuals') +
+  abline(h=0)
+
+par(mfrow=c(1,1))
+acf(residuals(its_model),main='ACF')
+acf(residuals(its_model),type='partial',main='PACF')
+
+# Plot
+mend_eval %>% ggplot(aes(Time,Avg_Floor_Disch_Time,col=Site)) +
+  geom_line() + 
+  scale_x_continuous(breaks=seq(1:33),labels=month_labels) +
+  ggtitle("MEND Time Series: Average Floor to Discharge Time (Days)") +
+  ylab("Avg Days") +
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90,size=8,vjust=0.4),
+        axis.title.x=element_blank(),legend.position="none") +
+  guides(colour = guide_legend(reverse=TRUE)) +
+  ylim(c(0,10)) +
+  #scale_y_continuous(breaks=seq(0:10), labels=c(0:10)) +
+  scale_colour_manual(values=c("darkgrey","steelblue","darkgrey","steelblue")) +
+  geom_vline(xintercept = 22) +
+  geom_segment(aes(0,coef['(Intercept)','Estimate'],
+                   xend=21,yend=coef['(Intercept)','Estimate']+21*coef['Time','Estimate']),col="darkgrey")+
+  geom_segment(aes(23,coef['(Intercept)','Estimate']+23*coef['Time','Estimate']+
+                     coef['Level','Estimate']+coef['Trend','Estimate'],
+               xend=33,yend=coef['(Intercept)','Estimate']+33*coef['Time','Estimate']
+               +coef['Level','Estimate']+10*coef['Trend','Estimate']),col="darkgrey") +
+  geom_segment(aes(0,coef['(Intercept)','Estimate']+coef['SiteFP12-14','Estimate'],
+               xend=21,yend=coef['(Intercept','Estimate']+coef['SiteFP12-14','Estimate']+
+                 21*coef['Time','Estimate']+21*coef['Int_Time','Estimate']),col="steelblue") +
+  geom_segment(aes(23,coef['(Intercept)','Estimate']+
+                     coef['SiteFP12-14','Estimate']+
+                     23*coef['Time','Estimate']+
+                     23*coef['Int_Time','Estimate']+
+                     coef['Level','Estimate']+
+                     coef['Trend','Estimate']+
+                     coef['Int_Level','Estimate']+
+                     coef['Int_Trend','Estimate'],
+               xend=33,yend=coef['(Intercept','Estimate']+coef['SiteFP12-14','Estimate']+
+                 33*coef['Time','Estimate']+
+                 coef['Level','Estimate']+
+                 10*coef['Trend','Estimate']+
+                 33*coef['Int_Time','Estimate']+
+                 +coef['Int_Level','Estimate']+
+                 10*coef['Int_Trend','Estimate']),col="steelblue") +
+  geom_segment(aes(23,coef['(Intercept)','Estimate']+
+                     coef['SiteFP12-14','Estimate']+
+                     23*coef['Time','Estimate']+
+                     23*coef['Int_Time','Estimate']+
+                     coef['Level','Estimate']+
+                     coef['Trend','Estimate'],
+               xend=33,yend=coef['(Intercept)','Estimate']+
+                 coef['SiteFP12-14','Estimate']+
+                 33*coef['Time','Estimate']+
+                 33*coef['Int_Time','Estimate']+
+                 coef['Level','Estimate']+
+                10*coef['Trend','Estimate']), col="steelblue",linetype="dashed") +
+  geom_text(aes(x=28,y=5.85,label="HUP",color = "darkgrey",angle=2),size=4) +
+  geom_text(aes(x=28,y=6.75,label="FP12/14",color="steelblue",angle=7),size=4) +
+  geom_text(aes(x=27,y=8.45,label="Counterfactual", color = "steelblue",angle=12),size=4)
+
+
+
+```
