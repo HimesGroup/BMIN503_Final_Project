@@ -35,7 +35,7 @@ The Mimic-III Clinic Database contains de-identified health data records for ove
 Demographic, procedure, mortality, and billing-related information such as International Classification of Disease (ICD) codes, will be used to explore patient characteristics and care while being treated at Beth Isreal Deaconess Medical Center, and mortality studied as an outcome.
 
 #### Connection to server
-```{r Connection, include=FALSE, cache=TRUE, collapse=TRUE}
+```{r Connection, include=FALSE, collapse=TRUE}
 rm(list=ls()) # clears the environment
 
 # load packages
@@ -55,7 +55,7 @@ mimic_iii = dbConnect(drv, dbname="clinical_mimic_III",
                            user=keyring::key_list("Curie")[1,2], #username for mysql
                            password=keyring::key_get("Curie"))  #password for mysql
 
-#on.exit(dbDisconnect(mimic_iii)) # had to comment out in order to knit document
+on.exit(dbDisconnect(mimic_iii)) # had to comment out in order to knit document
 ```
 
 #### Importing data
@@ -306,7 +306,7 @@ patients_recoded <- patients_recoded %>%
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 #### Descriptive information
-```{r GGPairs, collapse=TRUE}
+```{r GGPairs, warning=FALSE, collapse=TRUE}
 patients_recoded_trim <- patients_recoded %>% 
   select(ADMISSION_TYPE,INSURANCE,GENDER,AGE_ADM,AGE_DOD,LOS_ICU,ETHNICITY_BROAD,DELIVERY,CSECTION, MORTALITY) %>% unique()
 length(unique(patients_recoded_trim)) #38888
@@ -332,7 +332,7 @@ Green = "#83944e" #CCEB
 Grey = "#999999"
 ```
 
-```{r Age, collapse=TRUE, collapse=TRUE}
+```{r Age, collapse=TRUE}
 pats_age <- patients_recoded_trim %>% 
   gather(AGE_ADM:AGE_DOD, key = "TIMEPOINT", value = "AGE") %>%
   mutate(TIMEPOINT = recode(TIMEPOINT, "AGE_ADM" = "ADMISSION", "AGE_DOD" = "DEATH"))
@@ -364,7 +364,7 @@ summary((glm(MORTALITY ~ AGE_ADM, data = patients_recoded_trim, family = binomia
 # AGE_ADM was positively associated with MORTALITY with p-value <2e-16
 ```
 
-```{r Gender/Sex, collapse=TRUE, collapse=TRUE}
+```{r Gender, collapse=TRUE}
 ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = GENDER)) +
     geom_bar(position = "fill", color = "white") + 
   scale_fill_manual(values = c(Green, DarkBlue)) +
@@ -375,8 +375,6 @@ ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = GENDER)) +
 summary((glm(MORTALITY ~ GENDER, data = patients_recoded_trim, family = binomial()))) # 0.00226
 
 # There is a relationship between GENDER and MORTALITY with p-value 0.00226
-
-#exp(coef(glm(MORTALITY ~ GENDER, data = patients_recoded_trim, family = binomial())))
 ```
 ```{r Ethnicity, collapse=TRUE, collapse=TRUE}
 summary(patients_recoded_trim$ETHNICITY_BROAD)
@@ -428,28 +426,44 @@ summary((glm(MORTALITY ~ LOS_ICU, data = patients_recoded_trim, family = binomia
 # LOS_ICU was positively associated with MORTALITY with p-value <2e-16
 ```
 
+```{r ADMISSION_TYPE, collapse=TRUE}
+# Type of ICU admission as predictor
+ggplot(patients_recoded_trim, aes(x = MORTALITY, fill = ADMISSION_TYPE)) + 
+  geom_bar(aes(fill = ADMISSION_TYPE), position = "dodge") +
+  labs(y = "Count", x = "Mortality")
+  #scale_fill_manual(values = c(Grey, Yellow, PennRed)) +
+
+summary((glm(MORTALITY ~ ADMISSION_TYPE, data = patients_recoded_trim, family = binomial()))) # p-value <2e-16
+
+# ADMISSION_TYPEs EMERGENCY and URGENT were both positively associated with MORTALITY with p-value <2e-16
+```
+
+
 ```{r Delivery, collapse=TRUE}
-ggplot(data = patients_recoded_trim %>% filter(GENDER == "F"), aes(x = MORTALITY, fill = DELIVERY)) +
+# narrowing down to female patients
+patients_recoded_trim_f <- patients_recoded_trim %>% filter(GENDER == "F")
+
+ggplot(data = patients_recoded_trim_f, aes(x = MORTALITY, fill = DELIVERY)) +
     geom_bar(position = "dodge", color = "white") + 
   scale_fill_manual(values = c(Green, DarkBlue)) +
   theme_bw() +
   labs(y = "Proportion", x = "Mortality")
 
 # Delivery as predictor
-summary((glm(MORTALITY ~ DELIVERY, data = patients_recoded_trim, family = binomial()))) # 0.00226
+summary((glm(MORTALITY ~ DELIVERY, data = patients_recoded_trim_f, family = binomial()))) # 0.00226
 
 # There is a non-significant positive association between NO DELIVERY and MORTALITY
 ```
 
 ```{r C-section, collapse=TRUE}
-ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = CSECTION)) +
+ggplot(data = patients_recoded_trim_f, aes(x = MORTALITY, fill = CSECTION)) +
     geom_bar(position = "dodge", color = "white") + 
   scale_fill_manual(values = c(Green, DarkBlue)) +
   theme_bw() +
   labs(y = "Proportion", x = "Mortality")
 
 # C-section as predictor
-summary((glm(MORTALITY ~ CSECTION, data = patients_recoded_trim, family = binomial()))) # 0.00226
+summary((glm(MORTALITY ~ CSECTION, data = patients_recoded_trim_f, family = binomial()))) # 0.00226
 
 # There is a non-significant positive association between NO CSECTION and MORTALITY
 ```
@@ -471,16 +485,58 @@ patients_recoded_trim %>% group_by(MORTALITY) %>% summarize(COUNT = n(), PROP = 
 ```
 
 #### Logistic regression
-```{r, collapse=TRUE}
+```{r GLM Model, collapse=TRUE}
 # narrowing to only binary variables of interest
-patients_recoded_trim_glm <- patients_recoded_trim %>% select(-(AGE_ADM:LOS_ICU))
+patients_recoded_trim_glm <- patients_recoded_trim %>% select(-(AGE_ADM:LOS_ICU),-(DELIVERY:CSECTION))
 
 # logistic regression model
 patients_glm <- glm(MORTALITY ~ ., data = patients_recoded_trim_glm, family = binomial(logit))
 summary(patients_glm)
 
 # There were signficant positive associations between all insurance types and MORTALITY
+
+glm_pred <- predict(patients_glm, patients_recoded_trim_glm, type = "response")
+head(glm_pred)
+
+table(glm_pred > 0.5) # 0 admissions had probability > 0.5
 ```
+
+#### Model Evaluation
+
+```{r Cross Validation}
+#K-Fold Cross Validation
+N = nrow(patients_recoded_trim_glm)
+K = 10
+set.seed(1234)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.glm <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset <- 0
+for(i in 1:K){
+    train <- filter(patients_recoded_trim_glm, s != i)
+    test <- filter(patients_recoded_trim_glm, s == i)
+  obs.outputs[1:length(s[s == i]) + offset] <- test$MORTALITY
+    
+  #GLM train/test
+    glm <- glm(MORTALITY ~ ., data = train, family = binomial(logit))
+  glm.pred.curr <- predict(glm, test, type = "response")
+  pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.pred.curr
+
+    offset <- offset + length(s[s == i])
+}
+head(pred.outputs.glm)
+
+table(pred.outputs.glm > .5) # No admissions had probability > 0.5 
+```
+
+```{r ROC Curve, message=FALSE}
+library(pROC)
+roc(patients_recoded_trim_glm$MORTALITY, glm_pred, ci = TRUE) # AOC: 0.6399
+
+plot.roc(patients_recoded_trim_glm$MORTALITY, glm_pred, ci = TRUE)
+plot.roc(obs.outputs, pred.outputs.glm, col = "red", add = TRUE)
+```
+
 
 #### Limitations
 - Because all dates in the database have been shifted to protect patient confidentiality, I could not compare c-section rates to national rates reported by the CDC per year. Reference: https://mimic.physionet.org/mimicdata/time/
