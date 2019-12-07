@@ -23,12 +23,13 @@ knitr::opts_knit$set(root.dir = normalizePath('../Final_Project_PHI/01_raw_data'
 # Use this for simulated data to use with github post
 # knitr::opts_knit$set(root.dir = normalizePath('./sample_data'))
 
-
+# set this variable to TRUE to cache machine learning models so they are not executed everytime (i.e. while revising text, etc)
+cache_models <- TRUE
 
 ```
 
 
-```{r set-options, echo=FALSE, cache=FALSE}
+```{r set-options, echo=FALSE}
 options(width = 400)
 ```  
 
@@ -46,7 +47,7 @@ library(nnet) # implicitly used by caret for penalized multinomial regression
 library(randomForest) # implicitly used by caret
 library(xgboost)
 library(doParallel)
-library(pROC) #used for multiclass roc
+library(multiROC) #used for multiclass roc
 library(DMwR) # used for SMOTE resampling
 
 theme_set(theme_bw())
@@ -56,9 +57,7 @@ theme_set(theme_bw())
 
 1. confirm no PHI displayed in report (i.e. str())
 1. confirm works with test data - comment out PHI data pulls
-1. **make sure code is well documented**
-1. p-chart for post intervention?
-
+1. make sure code is well documented
 
 #### Abbreviations Used
 Abbreviation | 
@@ -104,7 +103,7 @@ Our ASP pharmacist (TM) has been crucial to help define which clinical actions a
 
 ### Methods
 
-The data is derived from an institutional data warehouse. JB wrote SQL queries to extract the data from the data warehouse. We included data for patients seen in the ED between July 1, 2011 and June 30, 2018. Patients were included if:
+The data is derived from an institutional data warehouse. JB wrote SQL queries to extract the data from the data warehouse. We included data for patients seen in the ED between July 1, 2011 and June 30, 2019. Patients were included if:
 
 1. They were discharged from the ED (not admitted to an inpatient unit)
 1. Had a diagnosis (visit diagnosis entered by provider or coded diagnosis for billing) matching 'otitis', but not 'externa'
@@ -112,7 +111,7 @@ The data is derived from an institutional data warehouse. JB wrote SQL queries t
 
 The primary analysis shown below depends on a patient having received an antibiotic prescription. The data warehouse provides a unique key for visits, which was used to identify antibiotic prescriptions for patients in the cohort. We did not include antibiotics administered in the ED, only outpatient prescriptions. We primarily identified antibiotics using standardized classifications from the EHR. Identification of a standard antibiotic name was preformed in the database queries. The name can be derived from various fields, none of which are completely reliable (some are missing). The names or descriptions tend to include descriptions of the concentrations and/or the salt of the molecule. A series of regular expressions was used to extract the "base" or generce name such as "amoxicllin).
 
-In general, we use descriptive statistics to examine variables associated with adherence to the recommendations. These variables were chosen based on clinical expertise and suspected to impact adherence to the guidelines. In addition to descriptive statistics, we additionally used logistic regression to examine the contribution of each variable when accounting for the others.
+In general, we use descriptive statistics to examine variables associated with adherence to the recommendations. These variables were chosen based on clinical expertise and suspected to impact adherence to the guidelines. In addition to descriptive statistics, we additionally used logistic regression to examine the contribution of each variable when accounting for the others. Where appropriate, chi-square and Fisher's exact tests are used to compare proprotions across groups. Logistic regression is used to exam the relationship between guideline adherence and continuous variables (i.e. age). As described in the section regarding antibiotic prediction, several machine learning models were used.
 
 
 #### Read in Data
@@ -121,12 +120,8 @@ In general, we use descriptive statistics to examine variables associated with a
 
 # Path to PHI data
 
-read_path <- normalizePath('./')
+read_path <- normalizePath('./') # used in the past to change path, now controlled by root directory, above
 
-
-# Path to local non-PHI data
-
-# read_path <- normalizePath('../../github_final_project/BMIN503_Final_Project/sample_data')
 
 # Read Data
 cohort <- read_csv(paste0(read_path, '/cohort.csv'))
@@ -161,7 +156,7 @@ cohort.cln <- cohort %>%
 
 ```{r}
 
-
+# combine different ways that the same allergy might be documented; summarise at the patient level
 abx_all <- allergy %>%
   select(VISIT_KEY, ALRG_DESC) %>%
   filter(!is.na(ALRG_DESC)) %>%
@@ -241,7 +236,7 @@ cohort.cln <- cohort.cln %>%
          sex_f = factor(SEX),
          arr_yr = year(ARRIVE_ED_DT), #extract year from date for grouping
          arr_mo = month(ARRIVE_ED_DT), #extract month from date
-         fy_yr = ifelse(arr_mo < 7, arr_yr, arr_yr + 1),
+         fy_yr = ifelse(arr_mo < 7, arr_yr, arr_yr + 1), # extract fiscal year
          arr_yr_mo = floor_date(ARRIVE_ED_DT,'month'), # keep year-month
          arr_yr_qtr = floor_date(ARRIVE_ED_DT, unit = 'quarter'), # keep year-quarter
          arr_yr_wk = floor_date(ARRIVE_ED_DT, unit = 'week'),
@@ -570,7 +565,8 @@ chi <- tab %>%
   select(-age_sum, - pct_compl) %>%
   pivot_wider(
     names_from = dur_compl,
-    values_from = n
+    values_from = n,
+    values_fill = list(n=0)
   ) %>%
   column_to_rownames(var = 'age_ge_2') %>%
   chisq.test(as.matrix())
@@ -711,7 +707,7 @@ coh.sub %>%
 
 ```
 
-A histogram of prescribed antibiotic duration providers more granular detail than the binary classifer of adherence to recommendations. The majority of prescriptions were written for 7 or 10 days with small numbers written for 5, 9, or 14 days.
+A histogram of prescribed antibiotic duration provides more granular detail than the binary classifer of adherence to recommendations. The majority of prescriptions were written for 7 or 10 days with small numbers written for 5, 9, or 14 days.
 
 ```{r}
 
@@ -722,13 +718,14 @@ coh.sub %>%
   xlab('Prescribed Duration') +
   ylab('# Cases')
 
-# look at duration by antibiotic
+# look at duration by antibiotic, use density so that we can compare across antibiotics
 coh.sub %>%
   ggplot(aes(x=rx_days, stat(density), color = abx_name)) +
   geom_freqpoly(binwidth = 1) +
   # scale_y_log10() + 
   xlab('Prescribed Duration') +
-  ylab('Density')
+  ylab('Density') +
+  scale_color_discrete('')
 ```
 
 Antibiotic prescriptions were fairly evenly distributed throughout the week with slightly more prescriptions on weekends.
@@ -1230,10 +1227,10 @@ tab %>%
 
 With all variables included in the model, several features remained significant. As might be expected from univariable analyses above, these included:
 
-* Year of Visit - more adherence with later (more recent years)
+* Year of Visit - better adherence in later (more recent) years
 * Patient Age - better adherence for older patients
 * Provider Type - relative to attending physicians, residents and fellows were more likely to prescribe adherent durations, while advanced-practice providers were less likely to prescribe adherent durations
-* Whether the order set was used - use of the Order Set was associated with worse adherence to the Order Set (possibly because of the default, longer duration)
+* Whether the order set was used - use of the Order Set was associated with worse adherence to the guideline (possibly because of the default, longer duration)
 * Time of day - late morning prescriptions were more likely to be adherent
 * Day of the week - prescriptions on Friday and Saturday were more likely to be adherent (the reason for this is unclear)
 * Prescriptions for Amoxicillin/Clav (Augmentin) were less likely to be adherent to the guideline
@@ -1276,11 +1273,105 @@ roc(coh.mod_var$dur_compl ~ predict(f.full, type='response'), plot=T, print.auc=
 
 ```
 
+#### Proportions (p) Chart for Guideline Adherence
+
+After reviewing this baseline data, we updated the order set used by clinicians to discharge patient's with ear complaints form the ED. To assess the effectiveness of our intervention, we used a Shewart control chart known as a p- or "proportions" chart. We see that adherence to the guidelines improved following updates to the order set.
+
+```{r}
+
+# there are packages in R for control charts, but there is less control over the display, so we will create our own
+
+# patch to deal with inconsistent names between real and sample data, and absence of day in sample data
+
+set.seed(1234)
+if (!all(c('ARR_YEAR','ARR_MO','ARR_DAY') %in% names(meds.coh.all))) {
+  meds.coh.all <- meds.coh.all %>%
+    rowwise() %>% # force rowwise evaluation for sampling of days
+    mutate(ARR_YEAR = arr_yr,
+           ARR_MO = arr_mo,
+           ARR_DAY = sample(1:days_in_month(ARR_MO),1) # sample days from reasonable days for the month
+           ) %>%
+    ungroup()
+} else {
+  print('no changes made')
+}
+
+# pull data for the p chart
+cont.chart.data <- meds.coh.all %>% # we left this data frame unfiltered above, so it contains the most recent data
+  mutate(arr_date = ymd(paste0(ARR_YEAR, str_pad(ARR_MO, 2, 'left', pad = '0'), str_pad(ARR_DAY, 2, 'left', pad = '0')))) %>%
+  filter(age_yr >= 2) %>%
+  filter(arr_date >= ymd('2018-10-15',tz='UTC')) %>% # we only want to look at the year prior to the intervention
+  filter(abx_name != 'Azithromycin') 
+
+p.data <- cont.chart.data %>%
+  mutate(time = arr_yr_wk) %>%
+  group_by(time) %>% 
+  summarise(
+    # n_ss = sum(ss_used_med == 'No Order Set'),
+    n = sum(dur_compl == 'Guideline Followed'),
+    total = n(),
+    # prop_no_ss = n_ss/total,
+    prop = n/total
+  )
+
+cl <- cont.chart.data %>% 
+  filter(arr_date <= ymd('2019-10-15',tz='UTC')) %>% # for the center line, we only want data through the data of the intervention
+  mutate(time = arr_yr_wk) %>%
+  group_by(time) %>%
+  summarise(
+    # n_ss = sum(ss_used_med == 'No Order Set'),
+    n_dur = sum(dur_compl == 'Guideline Followed'),
+    total = n(),
+    # prop_no_ss = n_ss/total,
+    prop_dur = n_dur/total
+  ) %>%
+  ungroup() %>%
+  summarise(
+    n = sum(n_dur),
+    total = sum(total),
+    cl = n/total
+  ) %>%
+  pull(cl) # extract just this variable
+
+p.data <- p.data %>%
+  mutate(
+    sd = sqrt((cl*(1-cl))/total),
+    ucl = cl + 3*sd,
+    lcl = cl - 3*sd,
+    ucl = ifelse(ucl > 1, 1, ucl),
+    lcl = ifelse(lcl < 0, 0, lcl)
+  )
+
+p.data %>%
+  ggplot(aes(x=time, y=prop)) +
+  geom_line() +
+  geom_point(aes(x=time, y=prop, size = total), alpha = 0.5) + # points on chart - size proportional to n per group
+  # geom_errorbar(aes(ymin = lcl , ymax = ucl)) +
+  geom_line(aes(y=lcl), linetype = 3, color = 'black', alpha = 0.75) +
+  geom_line(aes(y=ucl), linetype = 3, color = 'black', alpha = 0.75) +
+  geom_hline(yintercept = cl, linetype = 2, color = 'black', alpha = 0.5) +
+  geom_vline(aes(xintercept=ymd('2019-10-15',tz='UTC'))) +
+  annotate('text',x=ymd('2019-10-22',tz='UTC'),y=0.25,angle=90,label='Order Set Updated', size = 2.5) +
+  annotate('text',x=ymd('2018-11-15',tz='UTC'),y=0.55,label='3-sigma control limit', size = 2.5) +
+  ylim(0,1) +
+  scale_x_datetime(date_minor_breaks = '1 week', date_breaks = '1 month', date_labels = '%Y-%m') +
+  xlab('Week') +
+  ylab('Guideline Adherence') +
+  # ggtitle('Adherence to AOM Guidelines Over Time (age >= 2 years)') +
+  theme(axis.text.x = element_text(angle = -60), legend.position = 'none') +
+  scale_size('')
+
+```
+
+
 ### Prediction Model for Antibiotic Choice
 
-Although not a primary outcome, we were interested in whether the chosen covariates could be used to predict which antibiotic would be prescribed. We used several machine learning models to explore this - penalized multinomial regression, naive Bayes, and random forest.
+Although not a primary outcome, we were interested in whether the chosen covariates could be used to predict which antibiotic would be prescribed. We used several machine learning models to explore this - penalized multinomial regression, naive Bayes, random forest, and eXtreme gradient boosting (xgboost).
 
 #### Training and Test Samples
+
+There is significant class imbalance in the outcome variable (antibiotic) as amoxicillin is by far the most commonly prescribed. To deal with this, we will use resampling methods so that the models don't just predict the over-represented class (amoxicillin).
+
 ```{r}
 
 
@@ -1297,6 +1388,10 @@ top.meds <- meds.coh %>%
   arrange(desc(n)) %>%
   filter(n > 150) %>%
   pull(abx_name)
+
+if (cohort <= 5000) {
+  top.meds <- c('Amoxicillin','Amoxicillin Clavulanate','Cefdinir','Azithromycin') # patch so multicloss roc curves work for sample data
+}
 
 # select covariates of interest
 abx.coh <- meds.coh %>%
@@ -1336,6 +1431,8 @@ trans.test <- predict(pp, newdata = testing)
 ```
 ```{r}
 
+# fit multinomial logistic regression model
+
 f.mn <- multinom(abx_name ~ ., data = train)
 # summary(f.mn)
 
@@ -1345,7 +1442,7 @@ f.mn <- multinom(abx_name ~ ., data = train)
 ```
 
 
-```{r}
+```{r initiate-cluster}
 # Initiate multicore processing to decrease time required to fit models - particularly RF
 (cores <- floor(0.9*(parallel::detectCores())))
 cl <- makeCluster(cores) #use 90% of cores
@@ -1354,32 +1451,10 @@ registerDoParallel(cl)
 
 ```
 
-Here we define parameters that control model training and resampling. There is significant class imbalance in the outcome variable (antibiotic) as amoxicillin is by far the most commonly prescribed. To deal with this, we will use resampling methods so that the models don't just predict the over-represented class (amoxicillin).
+Here we define parameters that control model training and resampling.
 
-```{r cache=F}
+```{r}
 
-
-# https://topepo.github.io/caret/subsampling-for-class-imbalances.html#subsampling-during-resampling
-# smote.cust <- list(name = "SMOTE with more upsampling",
-#                 func = function (x, y) {
-#                   library(DMwR)
-#                   # library(UBL)
-#                   dat <- if (is.data.frame(x)) x else as.data.frame(x)
-#                   dat$.y <- y
-#                   dat <- SMOTE(.y ~ ., data = dat, perc.over = 500, perc.under = 100)
-#                   # dat <- SmoteClassif(.y ~ ., data = dat, C.perc = C.perc)
-#                   list(x = dat[, !grepl(".y", colnames(dat), fixed = TRUE)],
-#                        y = dat$.y)
-#                   },
-#                 first = TRUE)
-# 
-# 
-# tr_control <- trainControl(## 10-fold CV
-#                            method = "repeatedcv",
-#                            number = 10,
-#                            repeats = 3,
-#                            verboseIter = T,
-#                            sampling = smote.cust) 
 
 tr_control <- trainControl(## 10-fold CV
                            method = "cv",
@@ -1389,7 +1464,7 @@ tr_control <- trainControl(## 10-fold CV
 
 #### Penalized Multinomial Regression
 
-```{r cache=T}
+```{r cache=cache_models}
 
 # set seed as random samples are used for cross-validation
 set.seed(1234)
@@ -1401,8 +1476,8 @@ pmr.abx <- train(
             data = transformed, 
             method = "multinom",
             trControl = tr_control,
-            tuneLength = 10,
-            metric = 'Kappa'
+            tuneLength = 10, # fit using 10 different values of hyper-parameter
+            metric = 'Kappa' # optimize to Kapp (as opposed to accuracy)
             )
 )
 
@@ -1413,7 +1488,7 @@ pmr.abx <- train(
 
 
 #### Naive Bayes
-```{r cache=T}
+```{r cache=cache_models}
 
 # Grid of model parameters for optimizing fit
 tunegrid <- expand.grid(
@@ -1432,7 +1507,7 @@ nb.abx <- train(
             data = transformed, 
             method = "naive_bayes",
             trControl = tr_control,
-            metric = 'Kappa',
+            metric = 'Kappa', 
             tuneGrid = tunegrid
             )
 )
@@ -1444,15 +1519,14 @@ nb.abx <- train(
 
 
 #### Random Forest
-**This could take a while to run!**
 
-```{r cache=T}
+```{r cache=cache_models}
 
 # set seed for random forest
 set.seed(1234)
 
 # tuning model parameters
-tunegrid <- expand.grid(.mtry = c(3,6,9)) 
+tunegrid <- expand.grid(.mtry = c(3,6,9)) # use these options for model hyper-parameter
 
 # fit random forest
 system.time(
@@ -1461,21 +1535,21 @@ rf.abx <- train(
             data = transformed, 
             method = "rf",
             trControl = tr_control,
-            ntree = 500,
+            ntree = 500, # number of trees
             metric = 'Kappa',
             tuneGrid = tunegrid
             )
 )
 
 # demonstrate which variables had the highest "importance" in random forest model
-# varImp(rf.abx)
+varImp(rf.abx)
 
 # confusion matrix for random forest model
 (rf.test <- confusionMatrix(predict(rf.abx, trans.test), testing$abx_name))
 
 ```
 
-```{r cache=T}
+```{r cache=cache_models}
 tunegrid <-  expand.grid(
                 eta = 0.1, 
                 colsample_bytree=c(0.3,0.8,1),
@@ -1520,18 +1594,18 @@ xg.abx <- train(
 
 # Accuracy and Kappa for Test data
 
-bind_rows(c(
+bind_cols(
 pmr = pmr.test$overall[c('Accuracy','Kappa')],
 nb = nb.test$overall[c('Accuracy','Kappa')],
 rf = rf.test$overall[c('Accuracy','Kappa')],
 xg = xg.test$overall[c('Accuracy','Kappa')]
-
-)
-)
+) %>%
+  mutate(Parameter = c('Accuracy','Kappa')) %>%
+  select(Parameter, everything())
 
 ```
 
-```{r}
+```{r release-cluster}
 
 # Release multicore cluster.
 
@@ -1540,7 +1614,7 @@ rm(cl)
 
 ```
 
-#### Multiclass ROC Curves for Models Above
+#### Multiclass ROC and PR Curves for Models Above
 
 ```{r}
 
@@ -1590,7 +1664,19 @@ roc_res <- multiROC::plot_roc_data(mroc_out)
 pr_res <- multiROC::plot_pr_data(pr_out)
 ```
 
+##### ROC AUC Values
 Here, we summarise AUC values (test data) by model and type.
+
+```{r}
+# make nicer labels
+roc_res <- roc_res %>%
+  mutate(
+    Group = factor(Group,levels = c('amox','aug','azi','cef','Micro','Macro'), labels=c('Amoxicillin','Amox/Clav','Azithromycin','Cefdinir','Micro','Macro')),
+    Method = factor(Method, levels = c('pmr','nb','rf','xg'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest','eXtreme Gradient Boosting'))
+  )
+
+```
+
 ```{r}
 # AUC Values
 roc_res %>%
@@ -1599,24 +1685,23 @@ roc_res %>%
   pivot_wider(
               names_from = Method, 
               values_from = AUC)
+```
 
-# make nicer labels
-roc_res <- roc_res %>%
-  mutate(
-    Group = factor(Group,levels = c('amox','aug','azi','cef','Micro','Macro'), labels=c('Amoxicillin','Amox/Clav','Azithromycin','Cefdinir','Micro','Macro')),
-    Method = factor(Method, levels = c('pmr','nb','rf','xg'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest','eXtreme Gradient Boosting'))
-  )
 
+```{r, include=F}
 # plot just micro and macro ROC curves
-roc_res %>%
-  filter(Group %in% c('Micro','Macro')) %>%
-  ggplot() +
-  geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), size = 1.5) +
-  geom_abline() +
-  facet_wrap(~ Method, ncol =2)
+# roc_res %>%
+#   filter(Group %in% c('Micro','Macro')) %>%
+#   ggplot() +
+#   geom_line(aes(y = Sensitivity, x = 1-Specificity, color = Group), size = 1.5) +
+#   geom_abline() +
+#   facet_wrap(~ Method, ncol =2)
 
 # Macro ROC takes the average of each class ROC (is less affected by class imbalance because each class contributes equally)
+```
 
+##### ROC Curves
+```{r}
 # plot ROC curves for each class
 roc_res %>%
   filter(!Group %in% c('Micro','Macro')) %>%
@@ -1628,7 +1713,9 @@ roc_res %>%
 
 ```
 
-Next, we plot precision-recall curves for these models. 
+None of the ROC curves look particularly good for any of the models. The performance based on AUC and ROC seems to be best for azithromycin.
+
+##### Precision-Recall AUCs
 
 ```{r}
 
@@ -1638,16 +1725,32 @@ pr_res <- pr_res %>%
     Group = factor(Group,levels = c('amox','aug','azi','cef','Micro','Macro'), labels=c('Amoxicillin','Amox/Clav','Azithromycin','Cefdinir','Micro','Macro')),
     Method = factor(Method, levels = c('pmr','nb','rf','xg'), labels = c('Penalized Multinomial','Naive Bayes','Random Forest','eXtreme Gradient Boosting'))
   )
+```
 
+```{r}
+
+pr_res %>% 
+  select(AUC, Group, Method) %>% 
+  distinct() %>%
+  pivot_wider(names_from = Method, values_from = AUC)
+
+```
+
+
+##### Precision-Recall Curves
+Next, we plot precision-recall curves for these models. 
+
+```{r, include = F}
 # plot just micro and macro curves
-pr_res %>%
-  filter(Group %in% c('Micro','Macro')) %>%
-  ggplot() +
-  geom_line(aes(y = Precision, x = Recall, color = Group), size = 1.5) +
-  facet_wrap(~ Method, ncol =2)
+# pr_res %>%
+#   filter(Group %in% c('Micro','Macro')) %>%
+#   ggplot() +
+#   geom_line(aes(y = Precision, x = Recall, color = Group), size = 1.5) +
+#   facet_wrap(~ Method, ncol =2)
 
+```
 
-
+```{r}
 # plot PR curves for each class
 pr_res %>%
   filter(!Group %in% c('Micro','Macro')) %>%
@@ -1656,8 +1759,11 @@ pr_res %>%
   facet_wrap(~ Method, ncol =2) +
   scale_color_brewer('Antibiotic', type = 'qual', palette = 'Set1')
 
+
+
 ```
 
+In interpretation of the PR curves, it is important to note that Precision (aka PPV) for an unskilled learner will be directly proportional to the proportion of the specific class. As a result, it is not surprising that amoxicillin appears to have the best precision. For the other classes, we see that as Recall (aka sensitivity) improves, the Precision quickly drops off because we are trading better sensitivity for worse specificty (more false positives). While not great, the PR curves demonstrate that xgboost seems to be performing best.
 
 #### Discussion of Classification Models
 Initially, models were trained on unbalanced training data. Accuracies of 80%+ were obtained, but essentially the models always predicted the majority class (amoxicillin). To address this, we took two appraoches: 1) we used sampling methods (SMOTE) to improve class balance and 2) hyper-parameter selection was based on kappa rather than accuracy. SMOTE resulted in better results than pure downsampling. Upsampling was too inefficient to tune hyper-parameters and did not result in significant-enough improvements to justify the addditional time spent training models. Overall, despite attempts at optimization, model performance remained relatively poor for antibiotic class-prediction. It would potentially be nearly as useful to predict patients which were prescribed any antibiotic other than amoxicillin (resulting in a binary classification). In this case, we might be better able to address the problem with class-imbalance. Alternatively, we could consider whether there are additional features that me helpful. Although there are many, they might include specific co-morbidities (immunodeficiency, chronic serous otitis, history of ear tubes), recent visits to the ED or primary care provider (as an indicator or previously failed treatment).
