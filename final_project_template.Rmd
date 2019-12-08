@@ -1,6 +1,6 @@
 ---
-title: "Due to the change of topic, my project progress has fallen behind. I will update my templete by Dec. 7"
-author: "To peer reviewers: please review my final project on Dec. 8 or Dec. 9"
+title: "Project Template"
+author: "Shufan Lin"
 output: 
   html_document:
     toc: false 
@@ -16,27 +16,142 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ### Overview
 
-###Due to the change of topic, my project progress has fallen behind. I will update my templete by Dec. 7
-###To peer reviewers: please review my final project on Dec. 8 or Dec. 9
+The goal of my project is to explore the potential relationship between alcohol consumption and economic causes, such as median income and unemployment. I use the dataset from GHDx named [United States Alcohol Use Prevalence by County 2002-2012](http://ghdx.healthdata.org/record/ihme-data/united-states-alcohol-use-prevalence-county-2002-2012) to get information of the alcohol pattern across the U.S. (by year and sex). Additionally, I will use a map shapefile from the US Census Bureau to create map plots, and data from the American Community Survey (ACS) to get the information of median income and unemployment.
+
+[Github Repository](https://github.com/Slin94/BMIN503_Final_Project)
 
 In this section, give a brief a description of your project and its goal, what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
 
 ### Introduction
 
-###Due to the change of topic, my project progress has fallen behind. I will update my templete by Dec. 7
-###To peer reviewers: please review my final project on Dec. 8 or Dec. 9
+Alcohol consumption is the 7th leading risk factor for both death and disability all over the world. It led to 2.8 million deaths in 2016. Although several previous research suggests that moderate level of alcohol consumption brings benefit to humans, this finding has resently been questioned. 
+As a matter of fact, a new study published in 2018 (Griswold et al. 2018) states that the level of alcohol consumption which minimize harm on human health is zero. Additionally, negative effect of alcohol on health outcomes raise with the increase in the level of consumption. Therefore, while it is impossible to fully stop populational alcohol use, analyzing potential causes which affect alcohol consumption helps develop preventive strategies.
+
 In the first paragraph, describe the problem addressed, its significance, and some background to motivate the problem.
 In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
   
   
 ### Methods
 
-###Due to the change of topic, my project progress has fallen behind. I will update my templete by Dec. 7
-###To peer reviewers: please review my final project on Dec. 8 or Dec. 9
 In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
 
 ```{r, eval = FALSE}
+install.packages("readxl")
 
+library(tidyverse)
+library(sf)
+library(tidycensus)
+library(leaflet)
+library(maptools)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library("readxl")
+
+#load dataframe
+alcohol_any <- read_excel("alcohol_2002_2012.xlsx", sheet = "Any")
+alcohol_heavy <- read_excel("alcohol_2002_2012.xlsx", sheet = "Heavy")
+alcohol_binge <- read_excel("alcohol_2002_2012.xlsx", sheet = "Binge")
+
+str(alcohol_any)
+str(alcohol_heavy)
+str(alcohol_binge)
+
+#merge dataframe (alcohol_heavy lack the data from 2002-2004)
+alcohol_any <- mutate(alcohol_any, Degree = "Any")
+alcohol_binge <- mutate(alcohol_binge, Degree = "Binge")
+alcohol_heavy <- mutate(alcohol_heavy, Degree = "Heavy", "2002 Both Sexes" = NA, "2003 Both Sexes" = NA, "2004 Both Sexes" = NA, "2002 Males" = NA, "2003 Males" = NA, "2004 Males" = NA, "2002 Females" = NA, "2003 Females" = NA, "2004 Females" = NA, "Percent Change 2002-2012, Both Sexes" = NA, "Percent Change 2002-2012, Females" = NA, "Percent Change 2002-2012, Males" = NA)
+combine_alcohol <- rbind(alcohol_any, alcohol_heavy, alcohol_binge)
+
+#compare national change of alcohol consumption by sexes (2002 vs. 2012, any vs. binge (2002-2004 heavy data is missing))
+#extract data
+c_ten <- c(36, 37, 38, 42)
+ten_years <- combine_alcohol%>%
+  filter(State == "National")%>%
+  filter(Degree == "Any"|Degree =="Binge")
+
+#clean up
+ten_years <- ten_years[c_ten] %>%
+  rename(Both = "Percent Change 2002-2012, Both Sexes", Males = "Percent Change 2002-2012, Males", Females = "Percent Change 2002-2012, Females")
+
+ten_years <- melt(ten_years, id.vars = "Degree")
+
+#plot
+ggplot(ten_years, aes(x = Degree, y = value, fill = variable)) +
+  geom_col(stat = "identity", position = "dodge") +
+  scale_fill_manual("Sexes", values = c("Both" = "goldenrod1", "Females" = "brown1", "Males" = "cornflowerblue")) +
+  ylab("Change between 2002 and 2012 (%)")
+
+#compare national change of alcohol consumption by sexes (2005 vs. 2012, any vs. heavy vs. binge)
+#extract data
+eight_years <- combine_alcohol%>%
+  filter(State == "National")
+
+#clean up
+eight_years <- eight_years[39:42] %>%
+  rename(Both = "Percent Change 2005-2012, Both Sexes", Males = "Percent Change 2005-2012, Males", Females = "Percent Change 2005-2012, Females")
+
+eight_years <- melt(eight_years, id.vars = "Degree")
+
+#plot
+ggplot(eight_years, aes(x = Degree, y = value, fill = variable)) +
+  geom_col(stat = "identity", position = "dodge") +
+  scale_fill_manual("Sexes", values = c("Both" = "goldenrod1", "Females" = "brown1", "Males" = "cornflowerblue")) +
+  ylab("Change between 2005 and 2012 (%)")
+
+#given that there is a large gap between 2002/2005 vs. 2012 alcohol consomption in heavy & binge, I check how they change over the ten years
+
+#get national alcohol use values (2002-2012)
+changes_national <- combine_alcohol%>%
+  filter(State == "National")
+changes_national <- changes_national[3:35]
+
+#clean up
+any_changes <- as.data.frame(matrix(as.numeric(changes_national[1,]), nrow = 3, ncol = 11))
+heavy_changes <- as.data.frame(matrix(as.numeric(changes_national[2,]), nrow = 3, ncol = 11))
+binge_changes <- as.data.frame(matrix(as.numeric(changes_national[3,]), nrow = 3, ncol = 11))
+combine_changes_national <- rbind(any_changes, heavy_changes, binge_changes)
+combine_changes_national$Degree <-c(rep("Any", 3), rep("Heavy", 3), rep("Binge",3))
+combine_changes_national <- combine_changes_national%>%
+  rename("2002" = "V1", "2003" = "V2", "2004" = "V3", "2005" = "V4", "2006" = "V5", "2007" = "V6", "2008" = "V7", "2009" = "V8", "2010" = "V9", "2011" = "V10", "2012" = "V11")
+
+#Plot change in heavy alcohol use from 2002 to 2012
+#clean up
+combine_changes_national <- melt(combine_changes_national, id.vars = "Degree")%>%
+  rename("Year" = "variable")
+combine_changes_national$Sexes <- rep(c("Both", "Females", "Males"), 33)
+combine_changes_national_heavy <- combine_changes_national%>%
+  filter(Degree == "Heavy")
+
+#plot
+ggplot(combine_changes_national_heavy, aes(x = Year, y = value, colour = Sexes)) + 
+  geom_line(aes(x = Year, y = value)) +
+  geom_point() +
+  ylab("Change in heavy alcohol use from 2002 to 2012 (%)")
+
+#Change in binge alcohol use from 2002 to 2012 (%)
+#clean up
+combine_changes_national_binge <- combine_changes_national%>%
+  filter(Degree == "Binge")
+
+#plot
+ggplot(combine_changes_national_binge, aes(x = Year, y = value, colour = Sexes)) + 
+  geom_line(aes(x = Year, y = value)) +
+  geom_point() +
+  ylab("Change in binge alcohol use from 2002 to 2012 (%)")
+
+#My plots show that the most dramatic changes happened between 2010-2012. Therefore, I am going to focus on these years in the next step.
+#I plan to make static & interactive maps of those three years.
+#After that, I will import median income and unemployment data from the ACS to explore the relationship between the alcohol consumption levels and economic factors
+
+area <- readShapePoly("gz_2010_us_050_00_20m/gz_2010_us_050_00_20m.shp")
+str(area)
+
+library(dplyr)
+area <- area %>%
+  select(GEOID, geometry) %>%
+  rename(State="STUSPS")
+  
 ```
 
 ### Results
