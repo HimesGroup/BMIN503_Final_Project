@@ -1,9 +1,12 @@
 ----start tables creation
 /*
+
+Written in collaboration with Dr. Srinivas Denduluri, PhD, senior clinical informaticist at the 
+Division of Cardiovascular Medicine at the Hospital of the University of Pennsylvania.
+
 a few tables created #Pat_ID_PL, #Pat_ID_PL_2,  #Pat_ID_MH etc.. 
 for pulling the diagnosis dated and getting the first noted 
-of the disease. Because there are lots of dates, so we need to put together
-to get the fist date
+of the disease. Because there are lots of dates, we need to put them toge
 
 */
 
