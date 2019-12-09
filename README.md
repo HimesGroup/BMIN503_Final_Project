@@ -1,18 +1,12 @@
-# BMIN503/EPID600 Final Project
+# nsong1/BMIN503_Final_Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This is Nianfu Song's Repo for BMIN503/EPID600 Data Science for Biomedical Informatics Final Project
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This project contains a R markdown file (.Rmd) and a HTML file produced by the markdown file. The .Rmd file can be run independently. Data are all retrieved by the code chunks of the .Rmd. it may take some time and please be patient to wait for the results.  The HTML file may be incomplete because it is too large upload to Github. This files represent the analysis of National Health Survey Data 2018 for the relationship between health and some measures of activities and life style of US adults. There are a total 11 sections. You are welcome to use any section of the code.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+This project feathered with heatmaps that represent the significance of logistic and rare event logistic regressions. The rare event logistic regress is supposed to be better represent the correlation between covariates and the selected chronic diseases. 
 
-DUE DATE FOR FINAL VERSION: 12/13/19 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+Please be aware that the resulted correlation do not represent causality, they can be used to predict known diseases better than unknown ones. However, this correlation could be an clue about risk of diseases for any positive predictions. Please be cautious about the high sensitivity, because low precision is a company of the predictions. 
 
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+Thank you for your interest and please leave your comments.
 
