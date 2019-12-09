@@ -12,7 +12,7 @@ output:
 options(width = 400)
 ```  
 
-```{r eval = FALSE}
+```{r include=FALSE}
 library(icd)
 library(magrittr)
 library(dplyr)
@@ -25,9 +25,10 @@ library(knitr)
 library(MASS)
 library(readr)
 library(naniar)
-
-n_distinct(consults_teams$Pat_Enc_CSN_ID)
-
+library(table1)
+library(htmlTable)
+library(readxl)
+library(eeptools)
 ```
 
 ***
@@ -50,14 +51,83 @@ Final GitHub repository: https://github.com/sri-adu/BMIN503_Final_Project
 ### Introduction 
 Introduction:  Cardiovascular disease is the leading cause of mortality and morbidity in the United States and beyond.  As such, it is one of the most common presenting complaints at the Hospital of the University of Pennsylvania, a busy quarternary care academic medical center.  The cardiovascular medicine consult service is one of the most busy (if not the busiest) consult services in the hospital.  Despite this, we have little data on which to base the operations of our service.  This is critical both for current operational needs as well as the future as we think about how to staff the new HUP East/New Patient Pavilion.  My aim is to examine patterns of consultation of the cardiovascular disease consult service since the implementation of an inpatient EHR in March 2017.  As a clinical informatician, I helped to build the informatics infrastucture for using the EHR to answer these questions and now would like to use it 
 
-The problem of how to staff the cardiovascular medicine consult service is multidisciplinary as our service interacts with all types of providers from all specialities (ranging from MDs, to RNs, to physical therapists, and beyond).  Additionally, I am working with our division senior clinical informatician (different discipline than my primary one) as well as a cardiovascular medicine colleague on this project.  In talking with my background sources, I have discovered data needed to address my question is stored in a complex format in PennChart and Clarity.  Even a seemingly simple task such as determining what sequence of teams cared for a particular patient is not so simple through PennChart.  Despite this, we have now developed a dataset of patients seen by the cardiovascular medicine service as well as their background characteristics and teams from which consults came from which we will use to answer my question.
+The problem of how to staff the cardiovascular medicine consult service is multidisciplinary as our service interacts with all types of providers from all specialities (ranging from MDs, to RNs, to physical therapists, and beyond).  Additionally, I am working with our division senior clinical informatician (different discipline than my primary one) as well as a cardiovascular medicine colleague on this project.  In talking with my background sources, I have discovered data needed to address my question is stored in a complex format in PennChart and Clarity.  Even a seemingly simple task such as determining what sequence of teams cared for a particular patient is not so simple through PennChart, Epic, or any EHR.  Despite this, we have now developed a dataset of patients seen by the cardiovascular medicine service as well as their background characteristics and teams from which consults came from which we will use to answer my question.  
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+Given considerable effort was required to compile this dataset from EHR data, the analysis itself will be primarily descriptive and aimed at characterizing patterns of consultation.  As mentioned above, these data are derived from the Clarity data warehouse which represents an extract of data from the PennChart/Epic production environment done every morning at 2am. The SQL code to obtain these data is contained within this repo and also linked here (https://github.com/sri-adu/BMIN503_Final_Project/blob/master/Epic_Consult_Query_SriA.sql).  These data were supplemented by summary data obtained via a self-service tool called SlicerDicer (for total number of HUP admissions).  
 
-The data set used to address the question above is from the Epic Clarity dataset.  Code to acquire the dataset from Clarity included.
+If you look closely at the SQL code, part of the work we did was define logic for obtaining patient comorbidities.  As it turns out, Epic/PennChart leaves much to be desired regarding clinically relevant groupers of diagnoses (meaning they are very "dirty" and, at times, nonspecific"). An example of this is "Unspecified cardiovascular disease" being equal to "atherosclerotic cardiovascular disease". As such, we created our own groupings/groupers of diagnoses based on ICD-9-CM and ICD-10-CM diagnosis codes which are modified from Elixhauser comorbitity ICD coding algorithms.  Additionally, we defined search criteria of how to find those data in the EHR by looking in medical history, problem list, and visit/encounter diagnosis tables.
+
+With regards to determining who had a cardiology consult, this is based on tools I created within the EHR.  When we went live with PennChart in 2017, I created consult orders and subsequent patient lists for each of our consult services.  In the majority of instances, when a consult is ordered, and order is placed into PennChart - this order (procedure in Epic terms) is what we are using to define consult.  Furthermore, these orders are grouped into types of cardiology consult which we are using to determine consult buckets (i.e. general cardiology consults, consultative attending rounder consults, etc.).  We are also using provider team information, which corresponds to whether a consult team decided to follow a patient in the hospital and how long they followed a patient while in the hospital.
+
+```{r eval = FALSE}
+## Import of data
+
+setwd("~/Box")
+
+# Overall consult patient list
+consult_patient_list <- read_excel("consult patient list.xlsx", col_types = c("numeric", "text", "numeric", "date", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text"))
+
+# Hospital visit overview information
+consults_hospital_visit_IDs <- read_excel("consults hospital visit IDs.xlsx", col_types = c("numeric", "text", "numeric", "numeric", "date"))
+
+# Hospital visit diagnoses
+consults_hospital_visits_dx <- read_excel("consults hospital vistis.xlsx", col_types = c("text", "text", "text", "numeric", "date", "numeric", "date", "date", "text", "numeric", "text", "text", "date", "text", "text", "numeric"))
+
+# Consult team data
+> consults_teams <- read_excel("consults teams.xlsx", col_types = c("numeric", "numeric", "text", "numeric", "date", "date", "text", "text", "text", "date", "text", "numeric", "text", "text", "text", "date", "date", "numeric", "numeric", "numeric", "numeric"))
+
+# Patient comorbidity data
+consults_comorbids <- read_excel("consults comorbids.xlsx", col_types = c("numeric", "text", "numeric", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text"))
+
+```
+
+```{r eval = TRUE}
+# Data cleaning of comorbidities 
+consults_comorbids <- consults_comorbids %>%
+  replace_with_na_all(condition = ~.x %in% common_na_strings)
+
+# Renaming MRN field in consult patient list to join with comorbidities
+consult_patient_list <- consult_patient_list %>% 
+  rename(HUP_MRN = MRN) 
+
+# Linking comorbidity data with patient demographic data table in order to obtain full demographic/baseline data
+consults_table1 <- inner_join(consult_patient_list,consults_comorbids,by="HUP_MRN")
+View(consults_table1)
+
+# Adding in consult type and renaming MRN field for inner join
+consults_teams <- consults_teams %>% 
+  rename(HUP_MRN = MRN) 
+
+consults_teams <- distinct(consults_teams, consults_teams$HUP_MRN, .keep_all = TRUE)
+
+consults_table_complete <- inner_join(consults_table1,consults_teams,by="HUP_MRN")
+View(consults_table_complete)
+
+# Creation of patient age
+consults_table_complete$Birth_Date <- as.Date(consults_table_complete$Birth_Date)
+consults_table_complete$age <- floor(age_calc(consults_table_complete$Birth_Date, units = "years"))
+
+```
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+From March 2017 - November 2019, there were 3,220 unique cardiology consults at the Hospital of the University of Pennsylvania.  By combining these data with a quick search in PennChart/Epic Hyperspace using the SlicerDicer tool (from the Caboodle data warehouse), we find that during that same period of time, there were a total of 75,990 admissions to HUP.  Therefore, our services consulted on 4.23% of all admitted patients through the hospital and in the emergency department during this period of time.  
 
-There are 12,097 unique patients with cardiology consults.
+```{r eval = FALSE}
+# Find number of distinct consults based on consult teams
+n_distinct(consults_teams$Pat_Enc_CSN_ID)
+
+# Percentage of hospitalized patients who recieved a cardiology consult
+3220/75990*100
+```
+
+```{r eval = TRUE}
+# Creation of table 1 for consults
+table1(~ factor(EAP_Procedure) + age + factor(Gender) + factor(Race) + factor(AFib) + factor(CAD) + factor(Dyslipidemia) + factor(HF) + factor(HTN) + factor(Ischemic_Stroke) + factor(Aortic_Aneurysm), data=consults_table_complete, topclass = "Rtable1-zebra")
+
+# Creation of day of the week table for consults
+table1(~ factor(Day_of_Week), data=consults_teams, topclass = "Rtable1-zebra")
+
+```
+
+Overall, we see that our consult population is fairly representative of a population of patients with cardiovascular disease.  With regards to our initial question of how to staff the consult service, we note that the least number of consults are seen on Sundays with the most being seen during the middle of the week, which is reflective of the experience most of us have had while on service.  Therefore, we would like to staff the service with additional providers Tuesdays - Fridays.  Presumably, teams have not yet aggregated their thoughts for consults on Mondays, so likely we can give additional providers days off on Saturday, Sunday, and Monday.
