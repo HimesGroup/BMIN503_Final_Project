@@ -2,8 +2,6 @@
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
-This research aims at building a model to predict a person's possibility of getting type II diabetes (DM2) given that person's current physical situation. This model use subjects with or without DM2. The predictors will include subjects' SNPs, height, weight, BMI, sex, race, and age.
-
 1. To start, **fork** this BMIN503_Final_Project repository.
 1. **Clone** the forked repository to your computer.
 1. Modify the files provided, add your own, and **commit** changes to complete your final project.
