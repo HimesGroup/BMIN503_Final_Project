@@ -32,29 +32,56 @@ In the second paragraph, explain why your problem is interdisciplinary, what fie
 
 ### Methods
 
->The data for this project are scientific abstracts archived in PubMed and Web of Science that include the words "actionable" or "actionability." I conducted searches on the PubMed and Web of Science websites and saved results as text files (or, when using the RISmed package, searched PubMed abstracts directly in RStudio). I used three R packages to read and analyze this data: pubmed.mineR, bibiometrix, and RISmed. These tools allowed me to identify words associated with actionability (in a variety of ways), graph patterns in the dataset, and create wordclouds. [Still adding more details to methods section!]
+>The data for this project are scientific abstracts archived in PubMed and Web of Science that include the words "actionable" or "actionability." I conducted searches on the PubMed and Web of Science websites and saved results as text files (or, when using the RISmed package, searched PubMed abstracts directly in RStudio). I used three R packages to read and analyze this data: pubmed.mineR, bibiometrix, and RISmed. These tools allowed me to identify words associated with actionability (in a variety of ways), graph patterns in the dataset, and create wordclouds. 
 
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+> I am a sociologist and bioethicist who primarily works with qualitative data. I usually read documents (like published abstracts) myself and annotate them to look for themes and patterns. This project serves as a proof of concept for me to see what kinds of qualitative work I could be automating. I loaded PubMed data in three different ways (using three different R packages) to assess which packages would be most helpful for different types of analyses.
+
+>Below, I've shown how I loaded data for the three packages:
 
 ```{r eval = TRUE}
+#Find Abstracts via pubmed.mineR
 library(pubmed.mineR)
-getwd()
 # Read PubMed Abstracts, Print info and first/last abstract
 pubmed.actionab = readabs("/Users/knowens/Desktop/BMIN503_Final_Project/Data/PubMed.Actionab.txt")
 printabs(pubmed.actionab)
 ```
 
 ```{r eval = TRUE}
-# Extract top frequency words
-actionab.words = word_atomizations(pubmed.actionab)
-actionab.words[1:50,]
+#Find Abstracts via bibliometrix
+library(bibliometrix)
+WebOfScience <- readFiles("/Users/knowens/Desktop/BMIN503_Final_Project/Data/file1.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file2.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file3.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file4.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file5.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file6.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file7.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file8.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file9.txt", "/Users/knowens/Desktop/BMIN503_Final_Project/Data/file10.txt")
+WS <- convert2df(WebOfScience, dbsource = "isi", format = "plaintext")
+WSresults <- biblioAnalysis(WS, sep = ";")
 ```
 
 ```{r eval = TRUE}
-# Find the sentence where "actionable" occurs
+#Find Abstract via RISmed
+library(RISmed)
+search <- EUtilsSummary("actionab*", 
+                      type = "esearch", 
+                      db = "pubmed",
+                      datetype = "pdat",
+                      retmax = 12000,
+                      mindate = 1960, 
+                      maxdate = 2019)
+fetch <- EUtilsGet(search, type = "efetch", db = "pubmed")
+RISmed_abstracts <- data.frame(title = fetch@ArticleTitle,
+                        abstract = fetch@AbstractText, 
+                        journal = fetch@Title,
+                        DOI = fetch@PMID, 
+                        year = fetch@YearPubmed)
+library(dplyr)
+RISmed_abstracts <- RISmed_abstracts %>% mutate(abstract = as.character(abstract))
+```
+
+>I started my analysis by looking for basic context about the dataset. First, I wanted to get some examples of where "actionable" occurs in the abstracts. Below are five examples of sentences where "actionable" occurs:
+
+```{r eval = TRUE}
 sentence = Give_Sentences("actionable", abs = pubmed.actionab)
 sentence[1:5]
 ```
+
+>To simplify things further, I also looked just at the words before and after "actionable" in a given abstract. Here are ten examples:
 
 ```{r eval = TRUE}
 # Find words before and after "actionable"
@@ -62,100 +89,31 @@ associations = word_associations("actionable", pubmed.actionab)
 associations[1:10]
 ```
 
+> Then, I wanted to identify the top frequency words in the dataset. The package "pubmed.mineR" includes a function called word_atomizations that breaks down abstract text into words (removing spaces, punctuation marks, and very common english words). I can then produce a text file sorts words by their frequencies. The top 25 most frequent words are below:
+
 ```{r eval = TRUE}
-# Word clusters
-clusters = wordscluster(5, 10)
-wordsclusterview(clusters)
+actionab.words = word_atomizations(pubmed.actionab)
+actionab.words[1:25,]
+```
+>This method isn't perfect, and it includes some words like "has" that should be excluded. But it does give me a crude words appear most frequently in abstracts mentioning "actionability". 
+
+>Like word frequencies, it would also be helpful to know which journals are most frequently represented in the dataset.
+
+```{r eval = TRUE}
+library(tidyverse)
+simplified_journals <- str_trunc(WS$SO, 30, "right")
+top_journals <- as.data.frame(sort(table(simplified_journals), decreasing = TRUE)[1:15])
+
+ggplot(top_journals, aes(x = simplified_journals, y = Freq)) +
+    geom_bar(stat = "identity") +
+    labs(title = "Journal Frequency") +
+    labs(x = "Journal", y = "Number of Articles") +
+    theme(axis.text.x = element_text(angle = 90))
 ```
 
-```{r eval = TRUE}
-#Themes
-themes <- searchabsL(pubmed.actionab, include = c("Genomic", "Genetic", "Gene", "Cancer"))
-```
+>Because I am interested in how actionability emerged as a concept in the literature, it would be useful to know when actionability first appeared and how it's use has spread over time. I can plot the number of abstracts mentioning actionability by year. This plot shows me that "actionability" became a common phrase over the past ten years:
 
 ```{r eval = TRUE}
-#Journals
-journals <- pubmed.actionab@Journal
-journals[1:10]
-```
-
-
-```{r eval = TRUE}
-#Web of Science Analysis
-library(bibliometrix)
-
-WebOfScience <- readFiles("file1.txt", "file2.txt", "file3.txt", "file4.txt", "file5.txt", "file6.txt", "file7.txt", "file8.txt", "file9.txt", "file10.txt")
-WS <- convert2df(WebOfScience, dbsource = "isi", format = "plaintext")
-WSresults <- biblioAnalysis(WS, sep = ";")
-
-#general summaries of Web of Science
-options(width=100)
-summary <- summary(object = WSresults, k=10, pause = FALSE)
-plot(x = WSresults, k=10, pause = FALSE)
-
-#Keyword co-occurences
-NetMatrix <- biblioNetwork(WS, analysis = "co-occurrences", network = "keywords", sep = ";")
-net=networkPlot(NetMatrix, normalize="association", weighted=T, n=30, Title = "Keyword Co-occurences", type = "fruchterman", size=T,edgesize = 5,labelsize=0.7)
-
-#Source co-occurences
-NetMatrixSource <- biblioNetwork(WS, analysis = "co-occurrences", network = "sources", sep = ";")
-net=networkPlot(NetMatrixSource, normalize="association", weighted=T, n=30, Title = "Source Co-occurences", type = "fruchterman", size=T,edgesize = 5,labelsize=0.7)
-
-#Co-word analysis
-CS <- conceptualStructure(WS, field="ID", method="CA", minDegree=4, clust=5, stemming=FALSE, labelsize=10, documents=10)
-
-#RISmed Analysis
-library(RISmed)
-res1 <- EUtilsSummary("actionab*", 
-                      type = "esearch", 
-                      db = "pubmed",
-                      datetype = "pdat",
-                      retmax = 12000,
-                      mindate = 1960, 
-                      maxdate = 2019)
-fetch <- EUtilsGet(res1, type = "efetch", db = "pubmed")
-RISmed_abstracts <- data.frame(title = fetch@ArticleTitle,
-                        abstract = fetch@AbstractText, 
-                        journal = fetch@Title,
-                        DOI = fetch@PMID, 
-                        year = fetch@YearPubmed)
-## ensure abstracts are character fields (not factors)
-RISmed_abstracts <- RISmed_abstracts %>% mutate(abstract = as.character(abstract))
-RISmed_abstracts %>%
-  head()
-
-#Abstracts by Year
-library(ggplot2)
-RISmed_abstracts %>%
-group_by(year) %>%
-count() %>%
-ggplot(aes(year, n)) +
-geom_point() +
-geom_line() +
-labs(title = "Pubmed Articles by Year", hjust = 0.5,
-y = "Articles")
-
-#Journal Word Cloud
-journal_wordcloud <- RISmed_abstracts %>%
-  select(journal) %>%
-  group_by(journal) %>%
-  count(sort = TRUE)
-journal_wordcloud %>%
-  with(wordcloud(journal, n, min.freq = 10, random.order = FALSE, max.words = 80, colors = brewer.pal(9, "Set1")), rot.per = .6)
-```
-
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
-
-```{r eval = TRUE}
-#Subset of abstracts related to genetics/genomics
-gene_abstracts = searchabsL(pubmed.actionab, include = c("Genomic", "Genetic", "Gene", "Genomics", "Genetics"))
-gene_abstracts = cleanabs(gene_abstracts)
-
-#Top frequency words for genetics/genomics dataset
-actionab.gene.words = word_atomizations(gene_abstracts)
-actionab.gene.words[1:50,]
-
 #Abstracts by Year
 library(ggplot2)
 RISmed_abstracts %>%
@@ -168,10 +126,10 @@ labs(title = "Pubmed Articles by Year", hjust = 0.5,
 y = "Articles")
 ```
 
+>While I have already made a table of word frequencies, I can also make a wordcloud to help visualize word frequency. To do this, I use the "tm" and "wordcloud" packages in R. I have removed the words "actionable" and "actionability" because I already expect them to show up in every abstract.
+
 ```{r eval = TRUE}
-#Word Cloud for whole sample
-install.packages("tm")
-install.packages("wordcloud")
+#Word Cloud
 library(tm)
 library(wordcloud)
 library(RColorBrewer)
@@ -185,8 +143,129 @@ wordcloud_corpus <- tm_map(wordcloud_corpus,
 wordcloud_corpus <- tm_map(wordcloud_corpus, content_transformer(tolower))
 wordcloud_corpus <- tm_map(wordcloud_corpus, removePunctuation)
 wordcloud_corpus <- tm_map(wordcloud_corpus, removeNumbers)
+wordcloud_corpus <- tm_map(wordcloud_corpus, removeWords, stopwords("english"))
 myStopwords <- c(stopwords(), "actionable", "actionability")
 wordcloud_corpus <- tm_map(wordcloud_corpus, function(x) removeWords(x, myStopwords))
 
-wordcloud(wordcloud_corpus, min.freq = 10, max.words = 100, scale = c(3,.1), random.order = FALSE, colors = brewer.pal(8, "Dark2"))
-```-
+wordcloud(wordcloud_corpus, min.freq = 10, max.words = 100, scale = c(4,.2), random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+```
+
+>To see the same data in table form, I can use "ggplot":
+
+```{r eval = TRUE}
+library(tm)
+library(ggplot2)
+tdm <- TermDocumentMatrix(wordcloud_corpus)
+dtm <- DocumentTermMatrix(wordcloud_corpus)
+
+word.freq = sort(rowSums(as.matrix(tdm)),decreasing = TRUE)
+freq.df = data.frame(word=names(word.freq), freq=word.freq)
+head(freq.df, 20)
+
+ggplot(head(freq.df,15), aes(reorder(word,freq), freq)) +
+  geom_bar(stat = "identity") + coord_flip() +
+  xlab("Words") + ylab("Frequency") +
+  ggtitle("Most Frequent Words")
+```
+
+> Now, it would be helpful to identify relationships between keywords in the abstacts. I can identify keyword co-occurances using a tool from the bibliometrix package. [ADD MORE DETAIL ABOUT WHAT THIS MEANS]
+
+```{r eval = TRUE}
+library(bibliometrix)
+NetMatrix <- biblioNetwork(WS, analysis = "co-occurrences", network = "keywords", sep = ";")
+net=networkPlot(NetMatrix, normalize="association", weighted=T, n=30, Title = "Keyword Co-occurences", type = "fruchterman", size=T,edgesize = 5,labelsize=0.7)
+```
+
+>While one-word keywords are useful, it would also be helpful to see which two-word phrases appear most often in the abstracts. To do this, I made a bi-gram word cloud.
+
+```{r eval = TRUE}
+#Bi-gram Word Cloud
+library(NLP)
+library(tm)
+library(wordcloud)
+
+bigram_corpus <- VCorpus(VectorSource(wordcloud_text))
+bigram_corpus <- tm_map(bigram_corpus,
+                              content_transformer(function(x) iconv(x, to = 'UTF-8-MAC', sub =' byte'))
+)
+
+bigram_corpus <- tm_map(bigram_corpus, content_transformer(tolower))
+bigram_corpus <- tm_map(bigram_corpus, removePunctuation)
+bigram_corpus <- tm_map(bigram_corpus, removeNumbers)
+bigram_corpus <- tm_map(bigram_corpus, removeWords, stopwords("english"))
+myStopwords <- c(stopwords(), "actionable", "actionability", "copyright", "elsevier", "p", "inc", "reserved", "american", "united")
+bigram_corpus <- tm_map(bigram_corpus, function(x) removeWords(x, myStopwords))
+
+BigramTokenizer <- function(x) {
+      unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+}
+
+tdm.bigram <- TermDocumentMatrix(bigram_corpus, control = list(wordLengths=c(0,Inf), tokenize = BigramTokenizer))
+tdm.bigram.nonsparse <- removeSparseTerms(tdm.bigram, 0.99)
+
+freq2 = sort(rowSums(as.matrix(tdm.bigram.nonsparse)),decreasing = TRUE)
+freq.df = data.frame(word=names(freq2), freq=freq2)
+
+wordcloud(freq.df$word, freq.df$freq, scale = c(2, 0.1), max.words=30, random.order = F, colors = brewer.pal(8, "Dark2"))
+```
+
+> Finally, as a qualitative researcher I spend a lot of time trying to sort documents into categories based on theme. Or, I try to identify which themes are most frequently represented in a dataset. I'd like to try to do this computationally using topic modeling. I chose to sort the abstracts into 30 topics, but for ease of reading the output, I've shown 5 topics as examples. [ADD MORE DETAIL ABOUT WHAT TOPIC MODELING IS]
+
+```{r eval = TRUE}
+#Topic Modeling
+library(slam)
+library(dplyr)
+library(reshape2)
+library(topicmodels)
+
+summary(col_sums(dtm))
+
+#tf-idf
+term_tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i], dtm$j, mean) *
+  log2(nDocs(dtm)/col_sums(dtm > 0))
+summary(term_tfidf)
+
+dtm <- dtm[,term_tfidf >= 0.1]
+dtm <- dtm[row_sums(dtm) > 0,]
+summary(col_sums(dtm))
+dim(dtm)
+
+k <- 30
+SEED <- 2010
+TM <-
+   list(VEM = LDA(dtm, k = k, control = list(seed = SEED)),
+     VEM_fixed = LDA(dtm, k = k,
+       control = list(estimate.alpha = FALSE, seed = SEED)),
+     Gibbs = LDA(dtm, k = k, method = "Gibbs",
+       control = list(seed = SEED, burnin = 1000,
+         thin = 100, iter = 1000)),
+     CTM = CTM(dtm, k = k,
+       control = list(seed = SEED,
+         var = list(tol = 10^-4), em = list(tol = 10^-3))))
+
+sapply(TM[1:2], slot, "alpha")
+
+sapply(TM, function(x) +
+  mean(apply(posterior(x)$topics, +
+  1, function(z) - sum(z *log(z)))))
+
+words_per_topic <- 5
+Terms <- terms(TM[["VEM"]], words_per_topic)
+Terms[,c(3, 11, 18, 21, 22)]
+```
+
+```{r eval = TRUE}
+Topic <- topics(TM[["VEM"]], 1)
+Topic2 <- as.data.frame(sort(table(Topic), decreasing = TRUE))
+
+ggplot(Topic2, aes(x = Topic, y = Freq)) +
+    geom_bar(stat = "identity") +
+    labs(title = "Topic Frequency") +
+    labs(x = "Topic", y = "Frequency")
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+  
+  
