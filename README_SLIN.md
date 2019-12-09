@@ -9,4 +9,4 @@ Methods:  I use the dataset from GHDx named [United States Alcohol Use Prevalenc
 
 Results: I first compared the national value between 2002 and 2012, and I found that the heavy&binge levels of alcohol consumption increase. Additionally, it seems sexes affect the change in alcohol consumption. Therefore, I use box plots to confirm the difference between males and females. To figure out how the increase pattern, I made plots for the changes in heavy/binge level of alcohol consumption over the ten years. To figure out whether geographic location (states) has an impact on alcohol consumption, I build static maps for changes in prevalence in both heavy/binge drinking and both/females/males. I am also going to explore potential relationship between alcohol consumption levels and economic factors.
 
-Files: Please download alcohol_2002_2012.XLSX to get dataframe and plots in the final_project_template.Rmd.
+Files: Please download alcohol_2002_2012.XLSX and acs_2012_2016_county_us_B27001 to get dataframe and plots in the final_project_SLIN.Rmd.
