@@ -15,16 +15,22 @@ options(width = 400)
 ### Overview
 Anti-PD1 therapy has revolutionized cancer treatment however, in hepatocellular carcinoma (HCC) only 20% of respond to treatment.  The mechanisms underlying HCC resistance to anti-PD1 are presently unknown.  This work analyzes HCC RNA sequencing data from the Cancer Genome Atlas (TCGA) to assess whether signatures predictive of anti-PD1 therapy resistance in other tumor types are also present in HCC.
 
-Include a link to your final project GitHub repository.
+https://github.com/cfoley04/BMIN503_Final_Project
 
 
 ### Introduction 
 Hepatocellular carcinoma (HCC) is a primary malignancy of liver hepatocytes and the third leading cause of cancer mortality world wide.  In recent years, new systemic therapies have been approved for the treatment of advanced HCC, including immune checkpoint blockade (ICB) targeting programmed cell death protein 1 (PD1).  Unfortunately, only a minority of HCC patients (20%) respond to anti-PD1 therapy and there is little understanding of how anti-PD1 resistance occurs.  Our laboratory has previosly shown in melanoma, breast, and lung cancers that a gene expression signature composed of a subset of interferon (IFN) target genes, termed ISG.RS, predicts acquired resistance to ICB.  Re-analyzing the RNA sequencing data from the TCGA HCC project will offer insights as to whether HCC ICB resistance is mediated by this ISG.RS signature.
 
-Despite precision medicine advances in other tumor types, molecular phenotyping has been limited in HCC as this cancer is typically diagnosed based on radiographic criteria and not biopsied.  However, in 2017, TCGA released molecular profiling including RNA sequencing on 196 HCCs.  This profiling has confirmed the involvement of previously known pathways in HCC pathogenesis, including TP53, beta-catenin, and TERT, however predictive molecular phenotypes of treatment response remain elusive.  Re-analysis of these data crosses multiple disciplines, utilizing gene expression signatures initially described in human data sets and then confirmed mechanistically in mouse models, leveraging RNA sequencing analysis pipelines developed by data scientists, and correlating these findings to clinical care of HCC.  A significant challenge in this analysis is the heterogenity of HCC tumors in the data set in terms of etiology of HCC (hepatitis B, hepatitis C, alcoholic cirrhosis, etc), tumor grade, and purity of tumor sample.  Additionally, these specimens were obtained from surgical resections and may not be representative of tumors which would be exposed to anti-PD1 therapy. However, HCC molecular phenotyping is presently accelerating with a Chinese cohort released in October so additional data sets can be added to this analysis to improve power. 
+Despite precision medicine advances in other tumor types, molecular phenotyping has been limited in HCC as this cancer is typically diagnosed based on radiographic criteria and not biopsied.  However, in 2017, TCGA released molecular profiling including RNA sequencing.  This profiling has confirmed the involvement of previously known pathways in HCC pathogenesis, including TP53, beta-catenin, and TERT, however predictive molecular phenotypes of treatment response remain elusive.  Re-analysis of these data crosses multiple disciplines, utilizing gene expression signatures initially described in human data sets and then confirmed mechanistically in mouse models, leveraging RNA sequencing analysis pipelines developed by data scientists, and correlating these findings to clinical care of HCC.  A significant challenge in this analysis is the heterogenity of HCC tumors in the data set in terms of etiology of HCC (hepatitis B, hepatitis C, alcoholic cirrhosis, etc), tumor grade, and purity of tumor sample.  Additionally, these specimens were obtained from surgical resections and may not be representative of tumors which would be exposed to anti-PD1 therapy. However, HCC molecular phenotyping is presently accelerating with a Chinese cohort released in October so additional data sets can be added to this analysis to improve power. 
 
 ### Methods
-In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+TCGA hepatocellular carcinoma dataset includes somatic mutation and DNA copy number analysis from 363 patient samples (surgical resections) and full analysis of DNA methylation, mRNA expression, microRNA expression, and protein expression in 196 patients and was published in Cell in 2017.  The National Cancer Institute Genomic Data Commons (GDC) is the repository for all TCGA data in addition to other data sources.  Any de-identified data (including RNA sequencing) is open access.  GDC currently contains RNA sequecning for 371 hepatocellular carcinomas.  For a different project, Jingya Qui (GCB PhD candidate) had already done some of the initial data processing which she shared with me.  The HTseq-counts files were downloaded for each sample using the GDC download client.  This data was then loaded into a table (genes by sample (file name)).  Using PMACS, DESeq2 was performed and low count genes (<1% samples with counts >3) were filtered out.  Counts were then normalized using VST.
+
+I obtained the normalized RNA counts table from Jingya.  I then modified the table to include gene name (HGNC) instead of ENSMBL ID (removing any genes without HGNC or duplicates).  To interface with sample meta-data, I converted the sample name to GDC UUID based on the manifest which had been used to download the original files.  I then filtered the expression data into two subsets of interferon-target genes of interest, the treatment-resistance signature (ISG.RS) and the treatment-responsive signature (IFNG.GS).  Given that there appeared to be a subset of samples with high expression of these signatures, I then generated a "score" to be able to exam samples with a high signature vs low signature.  Because all of the genes in the signatures are targets for upregulation following interferon signaling, I created a simple score by scaling the expression of each gene to avoid highly expressed genes dominating the signature and summed the scaled values for all genes across each sample.  This score was then used to divide the data into quartiles so first and fourth quartiles could be correlated with survival data.  
+
+Survival and other meta data was obtained from the supplemental tables of Liu, J. et al, Cell (2018).
+
+ 
 ```{r}
 library(tidyverse)
 library(biomaRt) #enables retrieval from biomart
@@ -32,6 +38,8 @@ library(rjson) #reads JSON file (TCGA metadata)
 library(pheatmap) #generates clustered heatmaps
 library(TCGAutils) #From bioconductor to convert UUIDs
 library(RColorBrewer)
+library(survminer)
+library(ggplot2)
 ```
 
 Manipulating HCC sequencing counts data frame to include patient UUID
@@ -149,12 +157,13 @@ Sens_Score <- Sens_Score %>% rename(Sensitivity_Score = V2)
 
 HCCmetaScored <- inner_join(Resis_Score, HCCmeta2, by = "case_id")
 HCCmetaScored <- inner_join(Sens_Score, HCCmetaScored, by = "case_id")
+
 ```
 
 
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+Consistent with other cancer types our group has studied, the hepatocellular carcinoma samples display heterogenity in expression of the interferon target signatures with some patients demonstrating high expression of the resistance signature and some patients having high response signatures.
 
 ```{r}
  ## 'Overwrite' default draw_colnames with your own version 
@@ -177,22 +186,29 @@ draw_colnames_45 <- function (coln, gaps, ...) {
     return(res)}
 
 
-p <- pheatmap(t(scale(t(HCCseq_IFNG.GS))), color=color_palette, border_color=NA, fontsize_row=3, show_colnames=F, cluster_cols=T, cluster_rows=T)
+p <- pheatmap(t(scale(t(HCCseq_IFNG.GS))), color=color_palette, border_color=NA, fontsize_row=3, show_colnames=F, cluster_cols=T, cluster_rows=T, main = "Response gene set")
 
-pr <- pheatmap(t(scale(t(HCCseq_ISG.RS))), color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T)
+#pr <- pheatmap(t(scale(t(HCCseq_ISG.RS))), color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T)
 #a few random genes in random samples are skewing the color scale and not centering on 0, rescale data to bring white to zero
 ISG_meta <- as.numeric(colMeans(t(scale(t(HCCseq_ISG.RS)))))
 quantile(ISG_meta)
 mat_scaled <- t(scale(t(HCCseq_ISG.RS)))
 mat_scaled[which(mat_scaled>5)] <- 5 #cap any scale values >5
-p2 <- pheatmap(mat_scaled, color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T)
+p2 <- pheatmap(mat_scaled, color=color_palette, border_color=NA, fontsize_row=6, show_colnames=F, cluster_cols=T, cluster_rows=T, main = "Resistance gene set")
 
 ```
 
-Check with SNP in type III interferon (IL28) which generates either IFNL4 or psuedogene has variable expression and might predict IL28 SNP status
-
+Survival for patients with high versus low expression of the interferon response signature (high expression should be improved survival).
 ```{r}
-lambda <- filter(HCCseq_hgnc, HCCseq_hgnc$hgnc_symbol == "IFNL4")
-quantile(lambda)
+quantile(as.numeric(HCCmetaScored$Sensitivity_Score))
+high <- HCCmetaScored %>% filter(as.numeric(HCCmetaScored$Sensitivity_Score) > 0.25)
+low <- HCCmetaScored %>% filter(as.numeric(HCCmetaScored$Sensitivity_Score) < -0.35)
+```
+
+Survival for patients with high versus low expression of the interferon resistance signature (high expression should be worse survival).
+```{r}
+
+
+
 ```
 
