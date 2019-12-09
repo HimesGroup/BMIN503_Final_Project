@@ -47,10 +47,12 @@ library(tidycensus)
 library(tidyverse)
 library(sf)
 library(ggplot2)
+library(tidycensus)
 library(leaflet)
+library(tigris)
 ```
 
-Next, we load in all of our predictor variables from the ACS, our outcome variables from the UPHS EMR, and clean the data for analysis. 
+Next, we load in all of our predictor variables from the ACS and clean the data for analysis. 
 
 ```{r}
 #ACS DATA
@@ -117,39 +119,22 @@ acs.data.2 <- acs.data %>%
 
 head(acs.data)
 
-
-library(tidycensus)
-
-#BRFSS DATA
-#library(Hmisc)
-#BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/LLCP2013XPT/LLCP2013.XPT")
-#colnames(BRFSS)
-
-#Phila.BRFSS <- sasxport.get("C:/Users/Jessi/Documents/Blanca Class/BRFSS2017/MMSA2017_XPT/MMSA2017.XPT")
-
-#crime Data
-#crime <- read.csv("C:/Users/Jessi/Documents/Blanca Class/crime/incidents_part1_part2.csv.crdownload")
-
-##geocode lat and long of crime data 
-
-#api code
-
-
-
 ```
 
-Next we needed to pull in data from Penn. Since this is PHI data, I am ommitting the initial code used to import the data. 
+Next we needed to pull in the patient level maternal health data from Penn. Since this is PHI data, I am ommitting the initial code used to import the data from SQL. 
 
 ```{r}
-#However, first I imported the data, then I merged a dataset of women with encounters with UPHS, and the lats and longs of their addresses, with a dataset that had outcome data for their deliveries. These variables include information about stillbirth, preterm birth, preeclampsia, hypertnesion and c-section. 
+#However, first I imported the data, then I merged a dataset of women with encounters at UPHS with a dataset that had outcome data for their deliveries. These variables include information about stillbirth, preterm birth, preeclampsia, hypertnesion and C-section. 
 
 #these libraries were used in the code I used to tunnel in to the data, which has been ommitted here. 
 ##library(RMySQL)
 ##library("DBI")
 ##library(stringr)
 
+#Merging the data sets together
+dim(encounter_at_deliv)
+dim(mat_outcomes)
 encounter_at_deliv_woutcomes = merge(encounter_at_deliv, mat_outcomes, by="PREG_ID") 
-#View(encounter_at_deliv_woutcomes)
 dim(encounter_at_deliv_woutcomes)
 
 #get rid of NAs
@@ -165,16 +150,12 @@ dim(encounter_at_deliv_woutcomes_NAlatlonrem_blanks)
 outcome.data <- data.frame(encounter_at_deliv_woutcomes_NAlatlonrem_blanks)
 class(outcome.data)
 
-library(tidycensus)
-library(tigris)
-library(dplyr)
 
-#clean the data set 
+#Choose only the variables we want. 
 outcome.data_clean <- select(outcome.data,PREG_ID,LATITUDE,LONGITUDE,MRN_HUP,YEAR,NH_AFAM,NH_WHITE,HISPANIC,WEIGHT_LBS,ENC_AGE_DEC.x,STILLBIRTH,PRETERM,CSECTION, HYPERTENSION, PREECLAMPSIA)
 dim(outcome.data_clean)
 
-library(sp)
-
+#Take the patient data and append GEOIDs to each patient's address so that we can link it with ACS data
 # (!) fill this: 
 data_path <- "C:/Users/Jessi/Documents/Blanca Class/finally project/"
 load(paste0(data_path,"phillytracts")) 
@@ -190,7 +171,7 @@ temp.pointY <- data.pre$LONGITUDE
 
 ## actually they have the same NAs, but just in case
 rem.ind.points <- is.na(temp.pointX) | is.na(temp.pointY)
-## want to make this exact same as old file. Remove crap points, keep order:
+## want to make this exact same as old file. Remove extraneous points, keep order:
 # (!) add other covariates we care about
 data.new <- data.pre[!rem.ind.points,] 
 data.new$LATITUDE=as.numeric(as.character(data.new$LATITUDE))
@@ -250,9 +231,6 @@ counts_outcomes_philly_geo=merge(counts_outcomes_philly_geo,tract_df, by="tract"
 
 dim(counts_outcomes_philly_geo)
 
-#View(data.new.philly)
-data.new.philly[which(data.new.philly$tract=="135"), ]
-
 dim(data.new.philly)
 
 
@@ -274,9 +252,10 @@ dim(outcome_acs_clean)
 class(outcome_acs)
 colnames(outcome_acs)
 ```
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
-
-Histograms were generated to look at overall outcome counts
+Bar Plots were generated to look at overall outcome counts
 
 ```{r}
 #bar plot for c-section
@@ -290,22 +269,43 @@ table(outcome.data_clean$CSECTION)
 
 #bar plot for stillbirth
 ggplot(data = outcome.data_clean, aes(x = STILLBIRTH, group = YEAR)) +
-  geom_bar(stat = "count", fill = "pink") +
+  geom_bar(stat = "count", fill = "black") +
   ggtitle ("Number of stillbirths per pregnancies") +
   theme_bw() +
   facet_grid(YEAR ~ .)
 
+ggplot(data = outcome.data_clean, aes(x = STILLBIRTH, group = YEAR)) +
+  geom_bar(stat = "count", fill = "pink") +
+  ggtitle ("Number of stillbirths per pregnancies") +
+  theme_bw()
+
 table(outcome.data_clean$STILLBIRTH)
 
-#bar plot for pre-term birth
+#bar plot for pre-term birth by year
 ggplot(data = outcome.data_clean, aes(x = PRETERM, group = YEAR)) +
   geom_bar(stat = "count", fill = "purple") +
   ggtitle ("Number of pre-term births per pregnancies") +
   theme_bw() +
   facet_grid(YEAR ~ .)
+#overall
+ggplot(data = outcome.data_clean, aes(x = PRETERM, group = YEAR)) +
+  geom_bar(stat = "count", fill = "purple") +
+  ggtitle ("Number of pre-term births per pregnancies") +
+  theme_bw() 
 
-table(outcome.data_clean$PRETERM)
+#bar plot for pre-eeclampsia
+ggplot(data = outcome.data_clean, aes(x = PREECLAMPSIA, group = YEAR)) +
+  geom_bar(stat = "count", fill = "dark green") +
+  ggtitle ("Number of preeclampsia diagnoses per pregnancies") +
+  theme_bw() +
+  facet_grid(YEAR ~.)
 
+#bar plot for hypertension
+ggplot(data = outcome.data_clean, aes(x = HYPERTENSION, group = YEAR)) +
+  geom_bar(stat = "count", fill = "red") +
+  ggtitle ("Number of hypertension diagnoses per total pregnancies") +
+  theme_bw() +
+  facet_grid(YEAR ~.)
 
 #make race category for graph
 outcome.data_clean <- outcome.data_clean %>%
@@ -315,24 +315,63 @@ outcome.data_clean <- outcome.data_clean %>%
 
 table(outcome.data_clean$RACE)
 
-#bar plot for race - add colors 
+#bar plot for race 
 ggplot (data = outcome.data_clean, aes (x = RACE)) +
   geom_bar(stat = "count") +
   ggtitle("Total race breakdown per pregnancies") 
 
-Breakdown of Morbidity by Indicator Category
-```{r}
-#maybe we'll do this if not too hard 
-## e.g hemmoraghing/total morbidities
+#Looking at A bar plot of all the variables together
+#9592/19682 = 49%
+outcome.data_clean%>%
+  filter(CSECTION==1)%>%
+  count()
+outcome.data_clean%>%
+  filter(CSECTION==0)%>%
+  count()
+#1760/27515 = 6.4%
+outcome.data_clean%>%
+  filter(PRETERM==1)%>%
+  count()
+outcome.data_clean%>%
+  filter(PRETERM==0)%>%
+  count()
+#18%
+outcome.data_clean%>%
+  filter(HYPERTENSION==1)%>%
+  count()
+outcome.data_clean%>%
+  filter(HYPERTENSION==0)%>%
+  count()
+#8.1%
+outcome.data_clean%>%
+  filter(PREECLAMPSIA==1)%>%
+  count()
+outcome.data_clean%>%
+  filter(PREECLAMPSIA==0)%>%
+  count()
+#1%
+outcome.data_clean%>%
+  filter(STILLBIRTH==1)%>%
+  count()
+outcome.data_clean%>%
+  filter(STILLBIRTH==0)%>%
+  count()
+
+9592/19682
+percents <- data.frame("Variable" = c("CSECTION", "PRETERM", "HYPERTENSION", "PREECLAMPSIA", "STILLBIRTH"), "Percent" = c(49,7,18,8,1))
+
+ggplot (data = percents, aes (x = Variable, y=Percent)) +
+  geom_bar(stat="identity") +
+  ggtitle("Percents of morbidities per total number of pregnancies") 
+
+# to look at the women who have different combinations of outcomes
+outcome.data_clean %>%
+  group_by(PRETERM, CSECTION, PREECLAMPSIA, HYPERTENSION, STILLBIRTH) %>%
+  summarise(n = n())
 
 ```
 
 
-Outcome and Predictor data need to be joined based upon geocoding data.
-
-```{r}
-#join geocoded pregnant women with ACS variable data
-```
 
 Download shape file for Philadelphia for mapping purposes
 
@@ -376,8 +415,7 @@ class(acs_philly_sf)
 alldata <- inner_join(philly.tracts, acs.data.2, by = "GEOID")
 ```
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
 
 We will now utilize the machine learning technique of lass to create a predictive neighborhood index for maternal health. 
 
@@ -388,7 +426,11 @@ We will now utilize the machine learning technique of lass to create a predictiv
 ###make a matrix of all predictors
 data<-as.data.frame(outcome_acs_clean)
 data<-na.omit(data)
+str(data)
 
+#make CSECTION a factor 
+data$CSECTION <- factor(data$CSECTION)
+class(data$CSECTION)
 x.cont<-data %>% select(percent_poverty, percent_hsgrad, median.gross.rent, median.household.income, rent.burden, fem_nhwhite, fem_afam, fem_hispanic, fem_other, fem_amind_alask, fem_asian, fem_nh.pi, fem_multiple, percent_white, percent_minority, ENC_AGE_DEC.x)
 
 x.cat <- data %>% select(CSECTION, NH_AFAM, NH_WHITE, HISPANIC)
@@ -398,7 +440,6 @@ x<-as.matrix(cbind(x.cont,x.factors))
 
 library(glmnet)
 set.seed(1234)
-#gets stuck here 
 csection.lasso <- cv.glmnet(x, y = data$CSECTION, alpha = 1, family = "binomial") #alpha = 1 (coefficient used to penalize variables you're using. binomial (log reg))
 csection.lasso$lambda.min
 plot(csection.lasso)
@@ -413,6 +454,15 @@ head(csection.lasso.pred) #probabilitiy you had a csection (1) for each person
 We will do some model evaluation.
 
 ```{r}
+class(data$CSECTION)
+class(data)
+
+num_deliv_per_tract=table(data$GEOID)
+tracts_to_keep = num_deliv_per_tract[which(num_deliv_per_tract>10)] 
+tracts_to_keep=names(tracts_to_keep)
+data_all=data
+data=data[which(data$GEOID %in% tracts_to_keep), ]
+
 #K-Fold Cross Validation
 N = nrow(data)
 K = 10
@@ -422,28 +472,31 @@ pred.outputs.lasso <- vector(mode = "numeric", length = N)
 obs.outputs <- vector(mode = "numeric", length = N)
 offset <- 0
 
+#getting this error: Error in lognet(x, is.sparse, ix, jx, y, weights, offset, alpha, nobs,:one multinomial or binomial class has 1 or 0 observations; not allowed"
 for(i in 1:K){
 	train <- filter(data, s != i)
 	test <- filter(data, s == i)
 	obs.outputs[1:length(s[s == i]) + offset] <- test$CSECTION
-	
+	colnames(train)
 #lasso train/test
-lasso.m <- cv.glmnet(as.matrix(train[, -1]), y = train[, 1], alpha = 1, family = "binomial")
-lasso.pred.curr <- predict(lasso.m, as.matrix(test[, -1]), s = "lambda.min", type = "response")
+lasso.m <- cv.glmnet(as.matrix(train[, 3:27]), y = train$CSECTION, alpha = 1, family = "binomial")
+lasso.pred.curr <- predict(lasso.m, as.matrix(test[, 3:27]), s = "lambda.min", type = "response")
 pred.outputs.lasso[1:length(s[s == i]) + offset] <- lasso.pred.curr[ , 1]
 	
 offset <- offset + length(s[s == i])
 }
+
 ```
 Let's take a look at the ROC Curves
 
 ```{r}
-library(pROC)
+library('pROC')
 
 roc(obs.outputs, pred.outputs.lasso, ci = TRUE)
-plot.roc(data$CSECTION, CSECTION.lasso.pred[ ,1])
-plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE)
-legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "red"), lwd = 1)
+roc(data_all$CSECTION, csection.lasso.pred)
+plot.roc(data_all$CSECTION, csection.lasso.pred[ ,1])
+plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add=TRUE)
+legend("bottomright", legend = c("All Data", "Cross-Validation"), col = c("black", "red"), lwd = 1)
 
 ```
 
