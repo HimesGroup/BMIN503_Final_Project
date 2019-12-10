@@ -30,7 +30,7 @@ In the second paragraph, explain why your problem is interdisciplinary, what fie
 Since the car crash data also contains information on observed dangerous driving behaviors, including alcohol consumption, speeding, this data would be useful to study the effect of human psychology and health status on the severity of accidents. 
 
 
-### Methods
+### Methods & Results
 In the first paragraph, describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
 ```{r, eval = TRUE}
@@ -150,6 +150,11 @@ flag.2018 %>%
     geom_bar()+
     labs(x = "Road condition 2018")+
     ggsave("Roadcondition18.tiff") #Mostly happens on dry roads, and wet roads are the second contributing factors. 
+nrow(flag.2018)
+flag.2018%>%
+  group_by(ROAD_CONDITION)%>%
+  count(ROAD_CONDITION)
+#There are 207 sunny days in Philadelphia. 158 non-sunny days.
 
 flag.2018 %>% 
     ggplot(aes(x = ILLUMINATION))+
@@ -165,6 +170,7 @@ flag.2018 %>%
 flag.2018 %>% 
   group_by(COLLISION_TYPE)%>% 
   count(COLLISION_TYPE)
+ 
   
 
 crash.2018 %>% 
@@ -179,7 +185,7 @@ flag.2018 %>%
     ggsave("TCD18.tiff")
 flag.2018 %>% 
   group_by(TCD_FUNC_CD)%>% 
-  count(TCD_FUNC_CD)#About 4878/11003=0.44%: with no controls, another 5998/11003=0.55%: device functioning properly.
+  count(TCD_FUNC_CD)#About 4878/11003=0.44%: device functioning properly, another 5998/11003=0.55%:with no controls 
 nrow(flag.2018) #11003 accidents.
 
 ```
@@ -192,7 +198,7 @@ damage.08 <- flag.2008 %>%
              select(CRN,MAJOR_INJURY,MODERATE_INJURY, MINOR_INJURY, FATAL, INJURY,FATAL_OR_MAJ_INJ) 
 fig8<-ggplot(data = damage.08,aes(x = factor(INJURY)))+
     geom_bar()+
-    labs(x = "Injury") # plot shows accidents cateogrised into no injury vs injury.
+    labs(x = "Injury 2008") # plot shows accidents cateogrised into no injury vs injury.
 ggsave("injury08.tiff",plot=fig8)
 damage.08%>%
   filter(INJURY==1)%>%
@@ -272,8 +278,14 @@ class(flag.2008.r$FATAL_OR_MAJ_INJ)
 library(randomForest) 
 #Need to remove CRN
 flag.2008.r$CRN<-NULL
-flag08.rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = flag.2008.r, ntree = 100, importance = TRUE) 
-flag08.rf #OOB=3.1%
+#Tune random forest by changing mtry
+#mtry: Number of random variables collected at each split. In normal equal square number columns.
+f18r.res<-tuneRF(flag.2008.r, flag.2008.r$FATAL_OR_MAJ_INJ,mtry=6, ntreeTry=50, stepFactor=1.5,improve=0,
+trace=TRUE, plot=TRUE, doBest=FALSE)
+#When mtry=13, the OOB is the lowest, so we use mtry=13 for random forest.
+flag08.rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = flag.2008.r, ntree = 100, importance = TRUE,mtry=13)  #OOB estimate of  error rate: 3.15%
+flag08.rf
+
 flag08.rf$importance
 rf.pred.08 <- predict(flag08.rf , flag.2008.r, type = "prob")
 head(rf.pred.08)
@@ -284,7 +296,7 @@ varImpPlot(flag08.rf, type=2)#Plot of import variables vs MeanDecreaseGini score
 imp08 <- flag08.rf $importance
 rf08.im<-as.data.frame(head(sort(imp08[ , 4], decreasing = TRUE), n = 83))
 rf08.im#Dataframe of import variables vs MeanDecreaseGini scores
-#Most important factors are MOTORCYCLE, PEDESTRIAN,UNBELTED, LOCAL_ROAD_ONLY,ILLUMINATION_DARK, DRIVER_50_64YR,WET_ROAD,SPEEDING,SV_RUN_OFF_RD,LOCAL_ROAD, AGGRESSIVE_DRIVING, MC_DRINKING_DRIVER, SPEEDING_RELATED, Driveryoung, INTERSECTION,IMPAIRED_DRIVER, HIT_PARKED_VEHICLE, SIGNALIZED_INT, HIT_FIXED_OBJECT, ALCOHOL_RELATED, COMM_VEHICLE, UNSIGNALIZED_INT	, HIT_TREE_SHRUB, REAR_END,HO_OPPDIR_SDSWP 
+
 
 #Create a logistic regression model, find variables are significant at p < 0.05.
 library(dplyr) #We first need to exclude columns with only 1 value (otherwise cause error in logistic regression)
@@ -317,7 +329,7 @@ for(i in 1:K){
   obs.outputs[1:length(s[s == i]) + offset] <- test$FATAL_OR_MAJ_INJ
     
   #RF train/test
-	rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = train, ntree = 100)
+	rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = train, ntree = 100,mtry=13)
 	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
 	pred.outputs.rf.08[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
   
@@ -325,8 +337,8 @@ for(i in 1:K){
 }
 
 library(pROC) 
-auc(roc(flag.2008.r$FATAL_OR_MAJ_INJ, rf.pred.yes.08))#AUC=0.8591
-auc(roc(obs.outputs, pred.outputs.rf.08))#AUC=0.6659
+auc(roc(flag.2008.r$FATAL_OR_MAJ_INJ, rf.pred.yes.08))#AUC=0.8799
+auc(roc(obs.outputs, pred.outputs.rf.08))#AUC=0.6649
 
 plot.roc(flag.2008.r$FATAL_OR_MAJ_INJ, rf.pred.no.08, col = "black") #random forest
 plot.roc(obs.outputs, pred.outputs.rf.08, ci = TRUE, col = "blue", add = TRUE)
@@ -375,7 +387,7 @@ damage.18 <- flag.2018 %>%
              select(CRN,MAJOR_INJURY,MODERATE_INJURY, MINOR_INJURY, FATAL, INJURY,FATAL_OR_MAJ_INJ) 
 ggplot(data = damage.18,aes(x = factor(INJURY)))+
     geom_bar()+
-    labs(x = "Injury")+ # plot shows accidents cateogrised into no injury vs injury.
+    labs(x = "Injury 2018")+ # plot shows accidents cateogrised into no injury vs injury.
     ggsave("injury18.tiff",plot=fig8)
 damage.18%>%
   filter(INJURY=="Yes")%>%
@@ -432,39 +444,62 @@ colnames(flagse.18)
 flagse.18<-flagu.18%>%
   select("Driveryoung","INTERSTATE","LOCAL_ROAD_ONLY","WET_ROAD","SNOW_SLUSH_ROAD","ICY_ROAD","SUDDEN_DEER","SHLDR_RELATED","REAR_END","HO_OPPDIR_SDSWP","HIT_FIXED_OBJECT","SV_RUN_OFF_RD","WORK_ZONE","FATAL_OR_MAJ_INJ","INTERSECTION","SIGNALIZED_INT","STOP_CONTROLLED_INT","UNSIGNALIZED_INT","SCHOOL_BUS","SCHOOL_ZONE","HIT_DEER","HIT_TREE_SHRUB","HIT_EMBANKMENT","HIT_POLE","HIT_GDRAIL","HIT_GDRAIL_END","HIT_BARRIER","HIT_BRIDGE","OVERTURNED","MOTORCYCLE","BICYCLE","HVY_TRUCK_RELATED","VEHICLE_FAILURE","PHANTOM_VEHICLE","ALCOHOL_RELATED","UNDERAGE_DRNK_DRV","UNLICENSED","DISTRACTED","CELL_PHONE","NO_CLEARANCE","RUNNING_RED_LT","TAILGATING","CROSS_MEDIAN","CURVED_ROAD","CURVE_DVR_ERROR","LIMIT_65MPH","SPEEDING","SPEEDING_RELATED","AGGRESSIVE_DRIVING","FATIGUE_ASLEEP","DRIVER_65_74YR","DRIVER_75PLUS","UNBELTED","PEDESTRIAN","COMM_VEHICLE","PSP_REPORTED","NHTSA_AGG_DRIVING","DEER_RELATED","ILLUMINATION_DARK","RUNNING_STOP_SIGN","TRAIN","TROLLEY","HIT_PARKED_VEHICLE","FIRE_IN_VEHICLE","VEHICLE_TOWED","HAZARDOUS_TRUCK","MC_DRINKING_DRIVER","DRUG_RELATED","ILLEGAL_DRUG_RELATED","SCHOOL_BUS_UNIT","IMPAIRED_DRIVER","CRASH_MONTH", "DAY_OF_WEEK","HOUR_OF_DAY","WEATHER", "COLLISION_TYPE" , "TCD_TYPE","TCD_FUNC_CD", "DRIVER_5NO_64YR","LIMIT_70MPH", "ANGLE_CRASH", "HORSE_BUGGY", "ATV", "CORE_NETWORK", "OPIOID_RELATED", "LANE_DEPARTURE", "BACKUP_PRIOR", "BACKUP_NONRECURRING" ,"BACKUP_CONGESTION")
 
-
 ```
 
 ```{r, eval = TRUE}
 #Use random forest to map out import factors related to fatal/major injuries 2018 using flagse.18 dataframe
 library(randomForest) 
-flag18.rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = flagse.18, ntree = 200, importance = TRUE) 
-flag18.rf #OOB=3.02% for ntree=100, OOB=3% for ntree=200
+#Tune random forest by changing mtry
+#mtry: Number of random variables collected at each split. In normal equal square number columns.
+f18.res<-tuneRF(flagse.18, flagse.18$FATAL_OR_MAJ_INJ,mtry=6, ntreeTry=100, stepFactor=1.5,trace=TRUE, doBest=FALSE)
+#When mtry=13, the OOB is the lowest, so we use mtry=13 for random forest.
+flag18.rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = flagse.18, ntree = 200, importance = TRUE, mtry=13) 
+flag18.rf #OOB=2.93% for ntree=200
 flag18.rf$importance
 varImpPlot(flag18.rf, type=2)#Plot of import variables vs MeanDecreaseGini scores
 
 imp18 <- flag18.rf $importance
 rf18.im<-as.data.frame(head(sort(imp18[ , 4], decreasing = TRUE), n = 99))
 rf18.im#Dataframe of import variables vs MeanDecreaseGini scores
-rf.pred.18 <- predict(flag18.rf , flagse.18, type = "prob")
-head(rf.pred.18)
-rf.pred.yes.18<- rf.pred.18[ ,2]
-#Most important factors are HOUR_OF_DAY, CRASH_MONTH, DAY_OF_WEEK, COLLISION_TYPE, MOTORCYCLE,WEATHER,LOCAL_ROAD_ONLY, DRIVER_50_64YR, ILLUMINATION_DARK, TCD_TYPE, AGGRESSIVE_DRIVING, UNBELTED, PEDESTRIAN, CORE_NETWORK, OPIOID_RELATED, WET_ROAD, ALCOHOL_RELATED, DRIVER_65_74YR, TCD_FUNC_CD,INTERSECTION,SPEEDING_RELATED,SPEEDING, HIT_PARKED_VEHICLE, COMM_VEHICLE, CURVED_ROAD, UNSIGNALIZED_INT, SIGNALIZED_INT, IMPAIRED_DRIVER
+#Most important factors are HOUR_OF_DAY, CRASH_MONTH, DAY_OF_WEEK, COLLISION_TYPE, MOTORCYCLE,WEATHER,LOCAL_ROAD_ONLY, DRIVER_5NO_64YR, ILLUMINATION_DARK, TCD_TYPE, AGGRESSIVE_DRIVING, UNBELTED, PEDESTRIAN, CORE_NETWORK, OPIOID_RELATED, OPIOID_RELATED, WET_ROAD, ALCOHOL_RELATED, DRIVER_65_74YR,TCD_FUNC_CD,INTERSECTION,SPEEDING_RELATED,SPEEDING, HIT_PARKED_VEHICLE, COMM_VEHICLE, CURVED_ROAD, UNSIGNALIZED_INT, SIGNALIZED_INT, IMPAIRED_DRIVER, HIT_TREE_SHRUB, HORSE_BUGGY, SV_RUN_OFF_RD
+rf.pred.18 <- predict(flag18.rf, flagse.18, type = "prob")
+
+
+#Try to use very important factors to run Random forest again.
+flag18rf<-flagse.18%>% 
+  select(HOUR_OF_DAY, CRASH_MONTH, DAY_OF_WEEK, COLLISION_TYPE, MOTORCYCLE,WEATHER,LOCAL_ROAD_ONLY, DRIVER_5NO_64YR, ILLUMINATION_DARK, TCD_TYPE, AGGRESSIVE_DRIVING, UNBELTED, PEDESTRIAN, CORE_NETWORK, OPIOID_RELATED, OPIOID_RELATED, WET_ROAD, ALCOHOL_RELATED, DRIVER_65_74YR,TCD_FUNC_CD,INTERSECTION,SPEEDING_RELATED,SPEEDING, HIT_PARKED_VEHICLE, COMM_VEHICLE, CURVED_ROAD, UNSIGNALIZED_INT, SIGNALIZED_INT, IMPAIRED_DRIVER, HIT_TREE_SHRUB, HORSE_BUGGY, SV_RUN_OFF_RD, FATAL_OR_MAJ_INJ)
+flag18.rf.2 <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = flag18rf, ntree = 200, importance = TRUE) 
+flag18.rf.2 #OOB=3.04% for ntree=200 using those important variables only, but class.error rate increases.
+
 
 #Create a logistic regression model, find variables are significant at p < 0.05.
 library(dplyr) 
+flag18lr<-flagse.18 %>% 
+  select_if(~n_distinct(.) > 1)
+flag18lr$CRASH_MONTH <- as.factor(as.character(flag18lr$CRASH_MONTH))
+flag18lr$DAY_OF_WEEK <- as.factor(as.character(flag18lr$DAY_OF_WEEK))
+flag18lr$HOUR_OF_DAY <- as.factor(as.character(flag18lr$HOUR_OF_DAY))
 
-flag18.glm <- glm(FATAL_OR_MAJ_INJ ~ ., data = flagse.18, family = binomial(logit))
+
+flag18.glm <- glm(FATAL_OR_MAJ_INJ ~ ., data = flag18lr, family = binomial(logit))
 summary(flag18.glm) 
 lr18<-data.frame(summary(flag18.glm)$coef[summary(flag18.glm)$coef[,4]<=0.05, 4])#most important factors are INTERSTATEYes,LOCAL_ROAD_ONLYes,REAR_ENDYes, WORK_ZONEYes,STOP_CONTROLLED_INTYes, HIT_TREE_SHRUBYes,HIT_GDRAILYes, OVERTURNEDYes, MOTORCYCLEYes, BICYCLEYes, ALCOHOL_RELATEDYes, CROSS_MEDIANYes, SPEEDINGYes, DRIVER_65_74YRYes, UNBELTEDYes, PEDESTRIANYes, COMM_VEHICLEYes, ILLUMINATION_DARKYes, RUNNING_STOP_SIGNYes, VEHICLE_TOWEDYes, DRUG_RELATEDYes,CRASH_MONTH, COLLISION_TYPESideswipe (same dir.), HORSE_BUGGYNo, ATVYes, OPIOID_RELATEDYes 
 lr18
-glm.pred.18 <- predict(flag18.glm, flagse.18, type = "response") 
-
+# Use only significant factors to do the glm again, and create ROC plot.
+flag18lr2<-flag18lr%>%
+  select(INTERSTATE, LOCAL_ROAD_ONLY,REAR_END, STOP_CONTROLLED_INT, HIT_TREE_SHRUB, HIT_GDRAIL, HIT_BRIDGE,OVERTURNED, MOTORCYCLE, BICYCLE, ALCOHOL_RELATED, CROSS_MEDIAN, SPEEDING,DRIVER_65_74YR, UNBELTED, PEDESTRIAN, COMM_VEHICLE, ILLUMINATION_DARK, RUNNING_STOP_SIGN, DRUG_RELATED, CRASH_MONTH, DAY_OF_WEEK, HOUR_OF_DAY, COLLISION_TYPE, HORSE_BUGGY,ATV, OPIOID_RELATED, FATAL_OR_MAJ_INJ)
+flag18.glm2 <- glm(FATAL_OR_MAJ_INJ ~ ., data = flag18lr2, family = binomial(logit))
+summary(flag18.glm2) 
+lr18.2<-data.frame(summary(flag18.glm2)$coef[summary(flag18.glm2)$coef[,4]<=0.05, 4])
+lr18.2#still all those factors are significant.
+glm.pred.18 <- predict(flag18.glm2, flag18lr2, type = "response")
+glm.pred.18 
 ```
+
 
 Create 10-fold cross validation classification vectors for each model. Obtain AUC values and make an ROC plot that shows ROC curves corresponding to predictive accuracy using the training data as well as the 10-fold cross-validations.
 
-```{r eval=, message=FALSE, warning=TRUE, paged.print=FALSE}
+```{r, eval = TRUE}
 #K-fold cross validation for random forest and logistic regression 2018
 N = nrow(flagse.18) 
 K = 10 
@@ -478,37 +513,55 @@ for(i in 1:K){
 	train <- filter(flagse.18, s != i)
 	test <- filter(flagse.18, s == i) #hold sample
   obs.outputs[1:length(s[s == i]) + offset] <- test$FATAL_OR_MAJ_INJ
-  
-  #GLM train/test
-	glm <- glm(FATAL_OR_MAJ_INJ~ ., data = train, family = binomial(logit))
-  glm.pred.curr <- predict(glm, test, type = "response")
-  pred.outputs.glm.18[1:length(s[s == i]) + offset] <- glm.pred.curr
     
   #RF train/test
-	rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = train, ntree = 200)
+	rf <- randomForest(FATAL_OR_MAJ_INJ ~ ., data = train, ntree = 200, mtry=13)
 	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
 	pred.outputs.rf.18[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
   
   offset <- offset + length(s[s == i])
 }
 
+
+
+#GLM train/test
+N = nrow(flag18lr2) 
+K = 10 
+set.seed(1234) 
+s = sample(1:K, size = N, replace = T) 
+pred.outputs.glm.18 <- vector(mode = "numeric", length = N) 
+obs.outputs <- vector(mode = "numeric", length = N)
+offset <- 0
+for(i in 1:K){
+	train <- filter(flag18lr2, s != i)
+	test <- filter(flag18lr2, s == i) #hold sample
+  obs.outputs[1:length(s[s == i]) + offset] <- test$FATAL_OR_MAJ_INJ
+  
+  #logistic regression
+  glm <- glm(FATAL_OR_MAJ_INJ~ ., data = train, family = binomial(logit))
+  glm.pred.curr <- predict(glm, test, type = "response")
+  pred.outputs.glm.18[1:length(s[s == i]) + offset] <- glm.pred.curr
+  
+  offset <- offset + length(s[s == i])
+}
+	
 library(pROC) 
 #For random forest
-auc(roc(flagse.18$FATAL_OR_MAJ_INJ, rf.pred.yes.18))#AUC=0.8665
-auc(roc(obs.outputs, pred.outputs.rf.18))#AUC=0.673
+auc(roc(flagse.18$FATAL_OR_MAJ_INJ, rf.pred.yes.18))#AUC=0.9991
+auc(roc(obs.outputs, pred.outputs.rf.18))#AUC=0.7751
 
-plot.roc(flag.2008.r$FATAL_OR_MAJ_INJ, rf.pred.no.08, col = "black") #random forest
-plot.roc(obs.outputs, pred.outputs.rf.08, ci = TRUE, col = "blue", add = TRUE)
+plot.roc(flagse.18$FATAL_OR_MAJ_INJ, rf.pred.yes.18, col = "black") #random forest
+plot.roc(obs.outputs, pred.outputs.rf.18, ci = TRUE, col = "blue", add = TRUE)
 legend("bottomright", legend = c("2008 RF Training", "2008 RF Cross-Validation"), col = c("black", "blue"), lwd = 1)
 
 #For logistic regression
-auc(roc(flagse.18$FATAL_OR_MAJ_INJ, glm.pred.18))#AUC=0.8
-auc(roc(obs.outputs, pred.outputs.glm.18))#AUC=0.7548
-plot.roc(flagu.08$FATAL_OR_MAJ_INJ, glm.pred.08,col = c("black"))
-plot.roc(obs.outputs, pred.outputs.glm.08, col = "red", add = TRUE)
+auc(roc(flag18lr2$FATAL_OR_MAJ_INJ, glm.pred.18))#AUC=0.8415
+auc(roc(obs.outputs, pred.outputs.glm.18))#AUC=0.8034
+plot.roc(flag18lr2$FATAL_OR_MAJ_INJ, glm.pred.18,col = c("black"))
+plot.roc(obs.outputs, pred.outputs.glm.18, col = "red", add = TRUE)
 legend("bottomright", legend = c("2008 logistic regression Training", "2008 logistic regression Cross-Validation"), col = c("black", "red"), lwd = 1)
 # Turns out the logistic regression is a better model of predicting fatal or major injury containing crashes in 2008. The common factors related to fatal or major injury containing crashes predicted by both rf and logistic regression are....
+```
 
-
-### Results
+###Conclusion
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
