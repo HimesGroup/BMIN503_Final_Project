@@ -37,10 +37,8 @@ options(width = 400)
 library(tidyverse)
 library(ggplot2)
 library(lubridate)
-# library(digest)
 library(pROC)
 library(knitr) # for table formatting
-
 library(caret)
 library(naivebayes) # implicitly used by caret
 library(nnet) # implicitly used by caret for penalized multinomial regression
@@ -53,18 +51,13 @@ library(DMwR) # used for SMOTE resampling
 theme_set(theme_bw())
 ```
 
-# TO-DO
-
-1. confirm no PHI displayed in report (i.e. str())
-1. confirm works with test data - comment out PHI data pulls
-1. make sure code is well documented
-
 #### Abbreviations Used
 Abbreviation | 
 ---|---
 AAP | American Academy of Pediatrics
 AOM | Acute Otitis Media
 ASP | Antimicrobial Stewardship Program
+CCC | Complex Chronic Condition
 CDS | Clinical Decision Support
 ED | Emergency Department
 QI | Quality Improvement
@@ -72,15 +65,15 @@ QI | Quality Improvement
 
 ### Overview
 
-[Jonathan Beus BMIN503 Final Project](https://github.com/beusj/BMIN503_Final_Project)
+[Jonathan Beus BMIN503 Final Project GitHub Repository](https://github.com/beusj/BMIN503_Final_Project)
 
-This project examines adherence to treatment guidelines for antibiotic duration for [acute otitis media](https://www.healthychildren.org/English/health-issues/conditions/ear-nose-throat/Pages/Middle-Ear-Infections.aspx) (common ear infection) for patients seen and discharged from our emergency department. An American Academy of Pediatrics (AAP) guideline was published in 2013 with soft recommendations regarding treatment duration [AAP Guidleline](https://pediatrics.aappublications.org/content/131/3/e964) which were reflected in a local "Clinical Pathway." Essentially, while 10 days of therapy has classicaly been used, for patients 2 years and older, 7 days of therapy is likely adequate. Our antimicrobial stewardship program (ASP) has asked that we consider implementing clinical decision support to encourage clinicians to follow these guidelines. In preparation for this, we would like to evaluate past rates of adherence to these guidelines and to identify patient and provider characteristics associated with adherence or non-adherence to these guidelines. This information will serve to define the magnitude of the problem and potentially highlight patient or provider populations for additional intervention.
+This project examines adherence to treatment guidelines for antibiotic duration for [acute otitis media](https://www.healthychildren.org/English/health-issues/conditions/ear-nose-throat/Pages/Middle-Ear-Infections.aspx) (common ear infection) for patients seen and discharged from our emergency department. An American Academy of Pediatrics (AAP) guideline was published in 2013 with recommendations regarding treatment duration ([AAP Guidleline](https://pediatrics.aappublications.org/content/131/3/e964)) which was reflected in a local [Clinical Pathway](https://www.chop.edu/clinical-pathway/otitis-media-acute-clinical-pathway). Essentially, while 10 days of therapy has classicaly been used, for patients 2 years and older, 7 days of therapy is likely adequate. Our antimicrobial stewardship program (ASP) has asked that we consider implementing clinical decision support to encourage clinicians to follow these guidelines. In preparation for this, we would like to evaluate past rates of adherence to these guidelines and to identify patient and provider characteristics associated with adherence or non-adherence to these guidelines. This information will serve to define the magnitude of the problem and potentially highlight patient or provider populations for additional intervention.
 
-To explore this question, we are using an internal data warehouse, extracted from the Electronic Health Record. We have written SQL queries to extract the pertinent information, identifying patients seen in our ED for Otitis Media from July 2011 through June 2019.
+To explore this question, we used an internal data warehouse, extracted from the Electronic Health Record. We wrote SQL queries to extract the pertinent information, identifying patients seen in our ED for Otitis Media from July 2011 through June 2019.
 
 Name | Title | Division/Department | Primary Discussion Points
 ---|---|---|---
-Joe Zorc, MD, MSCE | Professor of Pediatrics, Director of Emergency Information Systems | Department of Emergency Medicine | We discussed which factors were most likely to be associated with adherence to the guidelines, including provider type (trainee, advanced practice provider, attending), calendar year, and use of an Order Set. We also discussed potentially un-intended consequences of our CDS intervention including driving providers away from using the Order Set or encouraging providers to use broader-spectrum antibiotics.
+Joe Zorc, MD, MSCE | Professor of Pediatrics, Director of Emergency Information Systems | Department of Emergency Medicine | We discussed which factors were most likely to be associated with adherence to the guidelines, including provider type (trainee, advanced practice provider, attending), calendar year, and use of the Order Set. We also discussed potentially un-intended consequences of our CDS intervention including driving providers away from using the Order Set or encouraging providers to use broader-spectrum antibiotics.
 Brandon Ku, MD | Associate Director for ED QI | Department of Emergency Medicine | We primarily discussed post-intervention assessment of the impact of a CDS-based QI intervention. Due to the rapid-cycle nature of improvement, we discussed using control charts for improvement monitoring. With this in mind, we set a goal of an absolute 10% increase in adherence to the guidelines for patients >= 2 years.
 Talene Metjian, PharmD | Manager, Antimicrobial Stewardship Program | Antimicrobial Stewardship Program | The majority of non-adherence occurs in patients >= 2 years as the shorter duration was a change from prior practice. The use of 10 days in patients < 2 years was and is the standard duration. As a result, we should focus our analysis on the cohort of patients 2 years and older.
 
@@ -90,7 +83,7 @@ Talene Metjian, PharmD | Manager, Antimicrobial Stewardship Program | Antimicrob
 #### Background and Significance
 Antimicrobial resistance is a significant threat to modern healthcare. Antimicrobial resistance is developing more rapidly than new antimicrobials can be discovered. It is generally felt that antibiotic overuse is a major factor driving worsening resistance patterns. Antimicrobial stewardship is a field developed to help providers limit inappropriate antibiotic use. As discussed above, in 2013 an AAP policy guideline noted that, for patients >= 2 years, 7 days of antibiotic therapy was likely as effective as longer durations. The policy was well received, but probably more notable in that it provided guidance to providers about when *not* treating with antibiotics could be appropriate. The discussion about duration seems to have been overshadowed by the more surprising endorsement to not treat in specific cases. For many providers, when the decision was made to treat a patient with antibiotics, they continued to use 10 days of therapy.
 
-When a patient diagnosed with AOM is discharged from our ED, there are several ways that an order for antibiotics can be placed. The provider could go to their "order tab" and enter the name of the antibiotic they would like to prescribe and, subsequently, the dosing and duration. This occurs some in the ED, but most ED providers have become accustomed to using a discharge Order Set. There is such an Order Set that currently exists for ear complaints. Historically, it has provided a list of antibiotics for providers to choose from (in addition to the ability to add a discharge diagnosis, instructions, etc). The antibiotic group is shared with Order Sets for other kinds of problems that might present to the ED and has historically been defaulted to 10 days. This has made ordering 10 days of antibiotics, the easiest thing to do. While outside the scope of the current report, we are implementing some features in the Order Set to help providers choose an appropriate antibiotic and also to guide them to the recommended duration based on age.
+When a patient diagnosed with AOM is discharged from our ED, there are several ways that an order for antibiotics can be placed. The provider could go to their "order tab" and enter the name of the antibiotic they would like to prescribe and, subsequently, the dosing and duration. This occurs some in the ED, but most ED providers have become accustomed to using a discharge Order Set. There is such an Order Set that currently exists for ear complaints. Historically, it has provided a list of antibiotics for providers to choose from (in addition to the ability to add a discharge diagnosis, instructions, etc). The antibiotic group is shared with Order Sets for other kinds of problems that might present to the ED (e.g. pneumonia) and has historically been defaulted to 10 days. This has made ordering 10 days of antibiotics the easiest thing to do. While outside the scope of the current report, we are implementing some features in the Order Set to help providers choose an appropriate antibiotic and also to guide them to the recommended duration based on age.
 
 The goal of the current analysis and report is preparatory to CDS interventions and assessment of their effectiveness. As discussed above, we are interested in patient and provider factors that influence the selection of antibiotic duration.
 
@@ -98,7 +91,7 @@ The goal of the current analysis and report is preparatory to CDS interventions 
 #### Interdisciplinary Approach
 For this project, we have primarily gathered resources with expertise in Clinical Informatics, Antimicrobial Stewardship (pharmacy), and Quality Improvement. Clinical informatics generally includes clinicians and draws from disciplines including human-computer interaction, decision science, analytics, and computer science. Clinical informatics is a burgeoning field and includes broad definitions, although here, we will generally consider its primary intent to be to help clinicians and patients by supporting quality, timely, efficient, and safe care through the use of information technology. While a software engineer might easily be able to add antibiotics and durations to an Order Set, a clinical informaticist gathers additional information from providers and/or their own clinical experience to think about the workflow by which a process is performed to improve the likelihood that the anticipated goal will be achieved in a way that supports, rather than disrupts, the provider's clinical activities. The clinical informaticists involved (JZ and JB) have extensively discussed which dependent-variables are reasonably extracted from our data warehouse and might be informative in targeting CDS.
 
-Our ASP pharmacist (TM) has been crucial to help define which clinical actions are desired and to incoporate the appropriate antibiotics as well as durations for appropriate patients. Our ASP pharmacist and QI expert (BK) have been instrumental in confirming the decision to focus our analysis on patients >= 2 years and to exclude patients prescribed azithromycin. Azithromycin is not a preferred antibiotic for the treatment of AOM, but is sometimes used in patients with sever-allergies to the preferred agents. Unlike other antibiotics used to treat AOM, the duration of azithromycin is dependent on the dose used, not associated with age, and typically just 3 to 5 days. As a result, for patients treated with azithromycin, the prescription would almost always be adherent to the guideline to use 7 days of therapy. Its inclusion would thus artificially inflate the estimate of adherence to the prescribing recommendations.
+Our ASP pharmacist (TM) has been crucial to help define which clinical actions are desired and to incoporate the appropriate antibiotics as well as durations for appropriate patients. Our ASP pharmacist and QI expert (BK) have been instrumental in confirming the decision to focus our analysis on patients >= 2 years and to exclude patients prescribed azithromycin. Azithromycin is not a preferred antibiotic for the treatment of AOM, but is sometimes used in patients with severe allergies to the preferred agents. Unlike other antibiotics used to treat AOM, the duration of azithromycin is dependent on the dose used, not associated with age, and typically just 3 to 5 days. As a result, for patients treated with azithromycin, the prescription would almost always be adherent to the guideline to use 7 days of therapy. Its inclusion would thus artificially inflate the estimate of adherence to the prescribing recommendations.
 
 
 ### Methods
@@ -109,17 +102,14 @@ The data is derived from an institutional data warehouse. JB wrote SQL queries t
 1. Had a diagnosis (visit diagnosis entered by provider or coded diagnosis for billing) matching 'otitis', but not 'externa'
 1. Were less than 21 years at the time of arrival to the ED
 
-The primary analysis shown below depends on a patient having received an antibiotic prescription. The data warehouse provides a unique key for visits, which was used to identify antibiotic prescriptions for patients in the cohort. We did not include antibiotics administered in the ED, only outpatient prescriptions. We primarily identified antibiotics using standardized classifications from the EHR. Identification of a standard antibiotic name was preformed in the database queries. The name can be derived from various fields, none of which are completely reliable (some are missing). The names or descriptions tend to include descriptions of the concentrations and/or the salt of the molecule. A series of regular expressions was used to extract the "base" or generce name such as "amoxicllin).
+The primary analysis shown below depends on a patient having received an antibiotic prescription. The data warehouse provides a unique key for visits, which was used to identify antibiotic prescriptions for patients in the cohort. We did not include antibiotics administered in the ED, only outpatient prescriptions. We primarily identified antibiotics using standardized classifications from the EHR. Identification of a standard antibiotic name was preformed in the database queries. The name can be derived from various fields, none of which are completely reliable (some are missing). The names or descriptions tend to include descriptions of the concentrations and/or the salt of the molecule. A series of regular expressions was used to extract the "base" or generic name such as "amoxicllin").
 
 In general, we use descriptive statistics to examine variables associated with adherence to the recommendations. These variables were chosen based on clinical expertise and suspected to impact adherence to the guidelines. In addition to descriptive statistics, we additionally used logistic regression to examine the contribution of each variable when accounting for the others. Where appropriate, chi-square and Fisher's exact tests are used to compare proprotions across groups. Logistic regression is used to exam the relationship between guideline adherence and continuous variables (i.e. age). As described in the section regarding antibiotic prediction, several machine learning models were used.
 
 
 #### Read in Data
 ```{r}
-
-
 # Path to PHI data
-
 read_path <- normalizePath('./') # used in the past to change path, now controlled by root directory, above
 
 
@@ -145,6 +135,7 @@ allergy <- read_csv(paste0(read_path, '/allergy.csv'))
 
 ```{r}
 
+# join overall cohort with race and ccc tables by visit key
 cohort.cln <- cohort %>%
   # left_join(tx_team.cln, by = 'VISIT_KEY') %>%
   left_join(race, by = 'PAT_KEY') %>%
@@ -157,6 +148,7 @@ cohort.cln <- cohort %>%
 ```{r}
 
 # combine different ways that the same allergy might be documented; summarise at the patient level
+# prior to processing, each patient will have a separate entry for each allergen
 abx_all <- allergy %>%
   select(VISIT_KEY, ALRG_DESC) %>%
   filter(!is.na(ALRG_DESC)) %>%
@@ -205,8 +197,8 @@ prov_hx.meds <- meds.cln %>%
   filter(MED_ORD_CREATE_DT >= CONTACT_DATE, MED_ORD_CREATE_DT < EFF_TO_DATE) %>%
   select(MED_ORD_KEY, PROV_TYPE)
 
-prov_hx.meds %>%
-  summarise(n_distinct(MED_ORD_KEY))
+# prov_hx.meds %>%
+#   summarise(n_distinct(MED_ORD_KEY))
 
 meds.cln <- meds.cln %>%
   left_join(prov_hx.meds, by = 'MED_ORD_KEY')
@@ -247,7 +239,7 @@ cohort.cln <- cohort.cln %>%
           age_f = cut(floor(AGE_AT_VISIT), breaks = c(0,6/12,1,2,5,12,Inf), labels = c('0-6 months','6-12 months','1-2 years','2-5 years','5-12 years','12+ years'), right = F), #splint into reasonable ages ranges based on clinical reasoning
           age_yr = floor(AGE_AT_VISIT) # essentially round age to first digit for use as continuous variable (little interest in more precision than this)
   ) %>%
-  select(-AGE_AT_VISIT, -ARRIVE_ED_DT) %>% # don't need this anymore
+  select(-AGE_AT_VISIT, -ARRIVE_ED_DT) %>% # don't need these anymore
   mutate(
       race_f = factor(RACE),
       ethn_f = factor(ETHNICITY)
@@ -268,7 +260,7 @@ meds.cln <- meds.cln %>%
   mutate(med_yr = year(MED_ORD_CREATE_DT),
          med_mo = month(MED_ORD_CREATE_DT),
          med_hr = hour(MED_ORD_CREATE_DT),
-         med_hr_cut = cut(med_hr,breaks = seq(0, 24, 3),right = F),
+         med_hr_cut = cut(med_hr,breaks = seq(0, 24, 3),right = F), # split time of med administration into 3 hour intervals
          med_dow = wday(MED_ORD_CREATE_DT, label = T),
          med_dow_fri_sat = ifelse(med_dow %in% c('Fri','Sat'), 1, 0)
          ) %>%
@@ -289,11 +281,10 @@ meds.cln.op <- meds.cln %>%
   filter(D_ORD_CLASS != 'Historical Med') %>%
   filter(!D_PHARM_CLASS %in% c('Antiviral','Anthelmintic','Antifungals','Antimalarial','Antimycobacterial agents'))
 
-length(unique(meds.cln.op$VISIT_KEY))
 ```
 
 
-We need to align how dates/times are coded. DISCONT_DT is stored in UTC, while ARR_ED_DT is stored in local timezone, so need to adjust DISCONT_DT in order to assess time to discontinuation of an order.
+We need to align how dates/times are coded. DISCONT_DT is stored in UTC, while ARR_ED_DT is stored in local timezone, so we need to adjust DISCONT_DT in order to assess time to discontinuation of an order.
 
 ```{r}
 
@@ -310,8 +301,7 @@ meds.cln.op <- meds.cln.op %>%
 
 ```
 
-
-If there are multiple antibiotic orders we include only the most recent one. Some medication discontinuations occur at follow-up visits with primary care doctors or ED re-visits. Others reflect a change to the plan of care. We look at the distribution of discontinuation times to select a cutoff which is likely to represent a balance between these two possibilities.
+If there are multiple antibiotic orders we include only the most recent one. Some medication discontinuations occur at follow-up visits with primary care doctors or ED re-visits. Others reflect a change to the plan of care. We look at the distribution of discontinuation times to select a cutoff which is likely to represent a balance between these two possibilities. Ultimately, we will need to review some patient charts to explore the cases were the order was discontinued after several hours.
 
 ```{r}
 meds.cln.op <- meds.cln.op %>%
@@ -325,6 +315,7 @@ meds.cln.op <- meds.cln.op %>%
 
 # majority of discontinuations happen in first 2-3 hours
 
+# plot histogram of time to discontinuation
 meds.cln.op %>%
   filter(all_disc == 1) %>%
   ggplot(aes(disc_min/60)) + 
@@ -336,8 +327,8 @@ nrow_pre <- nrow(meds.cln.op)
 
 meds.cln.op <- meds.cln.op %>%
   ungroup() %>%
-  filter(is.na(med_disc_dt) | disc_min >= 120) %>%
-  filter(vk_abx_ct == ord_seq)
+  filter(is.na(med_disc_dt) | disc_min >= 120) %>% # only keep if no discontinuation or discontinuation time >= 120 min
+  filter(vk_abx_ct == ord_seq) # only include the most recent order
 
 paste0('Rows Dropped: ',nrow_pre - nrow(meds.cln.op))
   
@@ -346,11 +337,11 @@ paste0('Rows Dropped: ',nrow_pre - nrow(meds.cln.op))
 
 #### Medication Duration Cleanup
 
-To assess guidelines adhrenece, we need to know the duration for which the antibiotic was prescribed. The information is not recorded in an easily accessible discrete way. 
+To assess guideline adhrenece, we need to know the duration for which the antibiotic was prescribed. The information is not recorded in an easily accessible discrete way. 
 
 ```{r}
 
-table(meds.cln.op$FREQ_NM,useNA = 'always')
+knitr::kable(table(meds.cln.op$FREQ_NM,useNA = 'always'), col.names = c('Frequency','Count'))
 
 # Use ordered frequency from a discrete field to determine number of doses per day
 times_daily <- meds.cln.op %>%
@@ -388,7 +379,7 @@ meds.cln.op %>%
   mutate(abx_wt = 1/n()) %>%
   ungroup() %>%
   sample_n(size = 10, weight = abx_wt) %>%
-  select(abx_name, SIG) %>% 
+  select(Antibiotic = abx_name, SIG) %>% 
   kable()
 
 
@@ -448,6 +439,7 @@ tmp %>%
 #   filter(rx_days > 10)
 
 
+# combine extracted duration back with medications table
 meds.cln.op <- tmp %>%
   select(MED_ORD_KEY, rx_days) %>%
   left_join(meds.cln.op,by='MED_ORD_KEY') %>%
@@ -457,7 +449,7 @@ meds.cln.op <- tmp %>%
 
 ```{r}
 
-# Condense provider type to sensical values.
+# Relabel provider types to clean them up
 meds.cln.op <- meds.cln.op %>%
   mutate(
          prov_rx = ifelse(PROV_TYPE %in% c('Medical Student','Resident'), PROV_TYPE, NA),
@@ -478,15 +470,15 @@ meds.cln.op <- meds.cln.op %>%
 meds.coh.all <- cohort.cln %>%
   left_join(meds.cln.op, by='VISIT_KEY') %>%
   filter(!is.na(rx_days)) %>%
-  mutate(
-         dur_compl = 0,
-         dur_compl = ifelse(age_ge_2 == 'Age >= 2 yrs' & rx_days <= 7, 1, dur_compl),
-         dur_compl = ifelse(age_ge_2 == 'Age < 2 yrs' & rx_days <= 10, 1, dur_compl),
-         dur_compl = ifelse(abx_name == 'Azithromycin' & rx_days <= 5, 1, dur_compl),
+  mutate( # create binary variable for adherence
+         dur_compl = 0, # default not adherent
+         dur_compl = ifelse(age_ge_2 == 'Age >= 2 yrs' & rx_days <= 7, 1, dur_compl), # if 2 or over, adherent if <= 7 days
+         dur_compl = ifelse(age_ge_2 == 'Age < 2 yrs' & rx_days <= 10, 1, dur_compl), # if less than 2, adherent if <= 10 days
+         dur_compl = ifelse(abx_name == 'Azithromycin' & rx_days <= 5, 1, dur_compl), # Azithromycin shouldn't be > 5 days, but we will exclude these later, anyway
          dur_compl = factor(dur_compl, levels = c('0','1'), labels = c( 'Prolonged Duration' , 'Guideline Followed'))
          ) %>%
   mutate(
-    abx_name = factor(abx_name) # refactor to drop NAs induced by joining to cohort
+    abx_name = factor(abx_name) # refactor to drop NAs in labels induced by joining to cohort
   ) %>%
   select(-VISIT_KEY, -PAT_KEY)
 
@@ -497,7 +489,7 @@ meds.coh <- meds.coh.all %>%
 
 ```
 
-After cleaning, there are `r nrow(meds.coh)` unique visits. This indicates that `r 100*round(nrow(meds.coh)/nrow(cohort.cln),2)` % of ED patients had a matching antibiotic. On review of a sample (20) of cases without a match, either no antibiotic was prescribed or the patient received an antibiotic by injection in the ED. 
+After cleaning, there are `r nrow(meds.coh)` unique visits. This indicates that `r 100*round(nrow(meds.coh)/nrow(cohort.cln),2)`% of ED patients had a matching antibiotic. On review of a sample (20) of cases without a match, either no antibiotic was prescribed or the patient received an antibiotic by injection in the ED. 
 
 Our primary focus will be on patients >= 2 years old, since this is the group in which the guidelines and our clinical pathway specify a different duration than has been standard. Additionally, we really only are interested in the most frequently used antibiotics. Finally, azithromcyin is not informative, since the duration is almost always 5 days, regardless of the indication (and is not addressed by the guidelines that are referenced).
 
@@ -524,7 +516,7 @@ coh.sub %>%
   geom_text(aes(label=n_visits), nudge_y = .25) +
   scale_y_log10() +
   theme(axis.text.x = element_text(angle=-60, hjust = 0.05)) +
-  ylab('# Visits')
+  ylab('# Visits (log scale)')
 
 ```
 
@@ -546,6 +538,8 @@ coh.sub <- coh.sub %>%
 
 
 ### Results
+
+In this section, we summarise variables of interest in the cohort as defined above and present the results of the primary analysis.
 
 Adherence to the guidelines is much lower in patients >= 2 years of age.
 
@@ -639,7 +633,6 @@ coh.sub %>%
   xlab('Race') +
   ylab('Proportion') +
   ylim(0,1)
-  # scale_fill_brewer(type = 'qualitative', palette = 'Set1')
 
 ```
 
@@ -813,14 +806,17 @@ coh.sub %>%
 
 #### Explore Adherence to Recommendations by Covariates
 
-The guideline was more more likely to be followed as patients get older.
+The guideline was more more likely to be followed for older patients.
 
 ```{r}
 
+# Logistic Regression with guideline adherence as the outcome and age as the model variable
 f <- glm(dur_compl ~ age_yr, family=binomial, data=coh.sub)
 
 broom::tidy(f, conf.int =T, exponentiate = T)
 
+
+# plot of adherence versus age
 coh.sub %>%
   mutate(var = age_yr) %>%
   group_by(var, dur_compl) %>%
@@ -861,7 +857,7 @@ mat <- tab %>%
   column_to_rownames('var') %>%
   as.matrix()
 
-# Fisher's Exact Test
+# Fisher's Exact Test for guideline adherence versus sex
 fisher.test(mat)
 
 tab %>%
@@ -905,7 +901,7 @@ filter(!is.na(var)) %>%
 column_to_rownames('var') %>%
   as.matrix()
 
-# Fisher's Exact Test
+# Fisher's Exact Test for guideline adherence versus race
 fisher.test(mat, simulate.p.value = T)
 
 # to assess by factor level - univariable logistic regression
@@ -942,6 +938,7 @@ Adherence to the guideline has improved over time, although still remains relati
 f <- glm(dur_compl ~ arr_yr, family = binomial, data = coh.sub)
 broom::tidy(f, exponentiate = T, conf.int = T) # the meaning of the estimate for year-mo would be difficult to interpret
 
+# adherence over time
 coh.sub %>%
   mutate(var = arr_yr_mo) %>%
   group_by(var, dur_compl) %>%
@@ -949,20 +946,13 @@ coh.sub %>%
   mutate(sum = sum(n), 
          prop = n/sum) %>%
   filter(dur_compl == 'Guideline Followed') %>%
-  # arrange(desc(n)) %>%
-  # ungroup() %>%
   # mutate(var = fct_reorder(var, n, .desc = T)) %>%
   ggplot(aes(x = var, y = prop)) +
   geom_line() +
-  # geom_text(aes(label=paste0('n = ',n,' \n(',round(100*prop, 2),'%)')), nudge_y = .1) +
-  # scale_y_log10() +
   theme(axis.text.x = element_text(angle=-60, hjust = 0.1)) +
   xlab('ED Visit Month') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
@@ -986,7 +976,7 @@ mat <- tab %>%
   column_to_rownames('var') %>%
   as.matrix()
 
-# Fisher's Exact Test
+# Fisher's Exact Test adherence versus CCC
 fisher.test(mat)
 
 tab %>%
@@ -1047,9 +1037,6 @@ coh.sub %>%
   xlab('Race') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
@@ -1091,9 +1078,6 @@ fisher.test(mat, simulate.p.value = T)
   xlab('Day of Week') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
@@ -1134,13 +1118,10 @@ tab %>%
   xlab('Arrival Hour') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
-There seems to be some significant variation in adherence to guidelines based on provider type, noting that medical students are quite underpresented (only 3 in the cohort).
+There seems to be significant variation in adherence to guidelines based on provider type, noting that medical students are quite underpresented (only 3 in the cohort).
 
 ```{r}
 
@@ -1183,7 +1164,7 @@ tab %>%
 
 ```
 
-There was slightly better adherence to the guidelines when the Order Set was **not** used. This is perhaps not surprising since the Order Set defaulted to 10 days.
+There was slightly better adherence to the guidelines when the Order Set was **not** used. This is perhaps not surprising since the Order Set defaulted to 10 days. Even when the Order Set was not used, adherence still was not great.
 
 ```{r}
 tab <- coh.sub %>%
@@ -1225,7 +1206,7 @@ tab %>%
 
 #### Logistic Regression
 
-With all variables included in the model, several features remained significant. As might be expected from univariable analyses above, these included:
+With all variables summarized above included in the model, several features remained significant. As might be expected from univariable analyses above, these included:
 
 * Year of Visit - better adherence in later (more recent) years
 * Patient Age - better adherence for older patients
@@ -1275,7 +1256,7 @@ roc(coh.mod_var$dur_compl ~ predict(f.full, type='response'), plot=T, print.auc=
 
 #### Proportions (p) Chart for Guideline Adherence
 
-After reviewing this baseline data, we updated the order set used by clinicians to discharge patient's with ear complaints form the ED. To assess the effectiveness of our intervention, we used a Shewart control chart known as a p- or "proportions" chart. We see that adherence to the guidelines improved following updates to the order set.
+After reviewing this baseline data, we updated the order set used by clinicians to discharge patients with ear complaints form the ED. To assess the effectiveness of our intervention, we used a Shewart control chart known as a p- or "proportions" chart. We see that adherence to the guidelines improved following updates to the order set.
 
 ```{r}
 
@@ -1314,8 +1295,9 @@ p.data <- cont.chart.data %>%
     prop = n/total
   )
 
+# calculate the center line for the p-chart
 cl <- cont.chart.data %>% 
-  filter(arr_date <= ymd('2019-10-15',tz='UTC')) %>% # for the center line, we only want data through the data of the intervention
+  filter(arr_date <= ymd('2019-10-15',tz='UTC')) %>% # for the center line, we only want data through the date of the intervention
   mutate(time = arr_yr_wk) %>%
   group_by(time) %>%
   summarise(
@@ -1333,10 +1315,11 @@ cl <- cont.chart.data %>%
   ) %>%
   pull(cl) # extract just this variable
 
+# calculate parameters needed for control chart
 p.data <- p.data %>%
   mutate(
-    sd = sqrt((cl*(1-cl))/total),
-    ucl = cl + 3*sd,
+    sd = sqrt((cl*(1-cl))/total), # standard deviation for binomial proportion
+    ucl = cl + 3*sd, # upper and lower control limits with z of 3
     lcl = cl - 3*sd,
     ucl = ifelse(ucl > 1, 1, ucl),
     lcl = ifelse(lcl < 0, 0, lcl)
@@ -1368,15 +1351,15 @@ p.data %>%
 
 Although not a primary outcome, we were interested in whether the chosen covariates could be used to predict which antibiotic would be prescribed. We used several machine learning models to explore this - penalized multinomial regression, naive Bayes, random forest, and eXtreme gradient boosting (xgboost).
 
-#### Training and Test Samples
-
 There is significant class imbalance in the outcome variable (antibiotic) as amoxicillin is by far the most commonly prescribed. To deal with this, we will use resampling methods so that the models don't just predict the over-represented class (amoxicillin).
+
+#### Training and Test Samples
 
 ```{r}
 
 
 
-# choose most common antibiotics
+# choose most common antibiotics - here we can include azithromycin since duration is not important for this classifier
 meds.coh %>%
   group_by(abx_name) %>%
   summarise(n = n()) %>%
@@ -1389,8 +1372,9 @@ top.meds <- meds.coh %>%
   filter(n > 150) %>%
   pull(abx_name)
 
+# patch so multicloss roc curves work for sample data
 if (cohort <= 5000) {
-  top.meds <- c('Amoxicillin','Amoxicillin Clavulanate','Cefdinir','Azithromycin') # patch so multicloss roc curves work for sample data
+  top.meds <- c('Amoxicillin','Amoxicillin Clavulanate','Cefdinir','Azithromycin')
 }
 
 # select covariates of interest
@@ -1403,9 +1387,8 @@ abx.coh <- meds.coh %>%
          ) 
 
 
-# create dummy variables for multi-level factors
+# create dummy variables for multi-level factors - essentially 1-hot vectors for categories
 dummies <- dummyVars(abx_name ~ ., data=abx.coh)
-# head(predict(dummies, abx.coh), 10)
 
 dummies <- as_tibble(predict(dummies, abx.coh))
 
@@ -1766,14 +1749,14 @@ pr_res %>%
 In interpretation of the PR curves, it is important to note that Precision (aka PPV) for an unskilled learner will be directly proportional to the proportion of the specific class. As a result, it is not surprising that amoxicillin appears to have the best precision. For the other classes, we see that as Recall (aka sensitivity) improves, the Precision quickly drops off because we are trading better sensitivity for worse specificty (more false positives). While not great, the PR curves demonstrate that xgboost seems to be performing best.
 
 #### Discussion of Classification Models
-Initially, models were trained on unbalanced training data. Accuracies of 80%+ were obtained, but essentially the models always predicted the majority class (amoxicillin). To address this, we took two appraoches: 1) we used sampling methods (SMOTE) to improve class balance and 2) hyper-parameter selection was based on kappa rather than accuracy. SMOTE resulted in better results than pure downsampling. Upsampling was too inefficient to tune hyper-parameters and did not result in significant-enough improvements to justify the addditional time spent training models. Overall, despite attempts at optimization, model performance remained relatively poor for antibiotic class-prediction. It would potentially be nearly as useful to predict patients which were prescribed any antibiotic other than amoxicillin (resulting in a binary classification). In this case, we might be better able to address the problem with class-imbalance. Alternatively, we could consider whether there are additional features that me helpful. Although there are many, they might include specific co-morbidities (immunodeficiency, chronic serous otitis, history of ear tubes), recent visits to the ED or primary care provider (as an indicator or previously failed treatment).
+Initially, models were trained on unbalanced training data. Accuracies of 80%+ were obtained, but essentially the models always predicted the majority class (amoxicillin). To address this, we took two appraoches: 1) we used sampling methods (SMOTE) to improve class balance and 2) hyper-parameter selection was based on kappa rather than accuracy. SMOTE resulted in better results than pure downsampling. Upsampling was too inefficient to tune hyper-parameters and did not result in significant-enough improvements to justify the addditional time spent training models. Overall, despite attempts at optimization, model performance remained relatively poor for antibiotic class-prediction. Clinically, it would potentially be nearly as useful to predict patients which were prescribed any antibiotic other than amoxicillin (resulting in a binary classification). In this case, we might be better able to address the problem with class-imbalance. Alternatively, we could consider whether there are additional features that me helpful. Although there are many, they might include specific co-morbidities (immunodeficiency, chronic serous otitis, history of ear tubes) or recent visits to the ED or primary care provider (as an indicator or previously failed treatment).
 
 
 ### Conclusions
-One of the more challenging aspects of this project was extracting prescribed duration from the prescription "SIG." Fortunately, there were relatively consistent patterns that could be leveraged to obtain this data. In cases, were this could not be extracted from the SIG, we estimated the duration from the prescribed volume.
+One of the more challenging aspects of this project was extracting prescribed duration from the prescription "SIG." Fortunately, there were relatively consistent patterns that could be leveraged to obtain this data. In cases where this could not be extracted from the SIG, we estimated the duration from the prescribed volume.
 
 Several features [(noted above)](#logistic-regression) were found to be associated with adherence to the recommended guidelines. Most importantly given our intent to best target clinical decision support, was the fact that most providers used an Order Set to order antibiotics. Similarly, the association with age was important, both with respect to different guidelines by age and the fact that older patients were likely to receive shorter durations. If our change to the CDS system is not effective, we might need to evaluate the differential adherence between provider types.
 
-While not shown here, we used the baseline evaluation to support a decision to provide age-based CDS for antibiotics in the Order Set for ear complaints from the ED. In just a few weeks, we have observed an increase in adherence to the guidelines for patients >= 2 years to 70-80%. Ongoing analyses will determine whether this change has had any unintended consequences such as driving providers away from using the Order Set or to using broader spectrum (non-amoxicillin) antibiotics.
+We used the baseline evaluation to support a decision to provide age-based CDS for antibiotics in the Order Set for ear complaints from the ED. In just a few weeks, we have observed an increase in adherence to the guidelines for patients >= 2 years to 70-80%. Ongoing analyses will determine whether this change has had any unintended consequences such as driving providers away from using the Order Set or to using broader spectrum (non-amoxicillin) antibiotics.
 
 As noted [above](#discussion-of-classification-models), we attempted to predict which antibiotic a patient was likely to be prescibred. We had limited success in doing so based on currently available features (covariates). To improve these models, additional features will likely be required.
