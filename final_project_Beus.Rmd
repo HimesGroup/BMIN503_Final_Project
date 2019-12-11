@@ -489,7 +489,7 @@ meds.coh <- meds.coh.all %>%
 
 ```
 
-After cleaning, there are `r nrow(meds.coh)` unique visits. This indicates that `r 100*round(nrow(meds.coh)/nrow(cohort.cln),2)`% of ED patients had a matching antibiotic. On review of a sample (20) of cases without a match, either no antibiotic was prescribed or the patient received an antibiotic by injection in the ED. 
+After cleaning, there are `r nrow(meds.coh)` unique visits. This indicates that `r 100*round(nrow(meds.coh)/nrow(cohort.cln %>% filter(arr_yr_mo >= '2011-07-01' & arr_yr_mo <= '2019-06-30')),2)`% of ED patients had a matching antibiotic. On review of a sample (20) of cases without a match, either no antibiotic was prescribed or the patient received an antibiotic by injection in the ED. 
 
 Our primary focus will be on patients >= 2 years old, since this is the group in which the guidelines and our clinical pathway specify a different duration than has been standard. Additionally, we really only are interested in the most frequently used antibiotics. Finally, azithromcyin is not informative, since the duration is almost always 5 days, regardless of the indication (and is not addressed by the guidelines that are referenced).
 
@@ -541,7 +541,7 @@ coh.sub <- coh.sub %>%
 
 In this section, we summarise variables of interest in the cohort as defined above and present the results of the primary analysis.
 
-Adherence to the guidelines is much lower in patients >= 2 years of age.
+Adherence to the guidelines was much lower in patients >= 2 years of age.
 
 ```{r}
 
@@ -999,25 +999,10 @@ There is some variation in adherence to the guidelines by which antibiotic was p
 
 ```{r}
 
-tab <- coh.sub %>%
-  mutate(var = abx_name) %>%
-  group_by(var, dur_compl) %>%
-  summarise(n = n()) %>%
-  mutate(sum = sum(n), 
-         prop = n/sum)
 
-# turn into a matrix
-mat <- tab %>%
-  select(-sum, -prop) %>%
-  pivot_wider(
-    names_from = dur_compl,
-    values_from = n
-  ) %>%
-  column_to_rownames('var') %>%
-  as.matrix()
-
-# Fisher's Exact Test
-fisher.test(mat)
+# logistic regression for association between adherence and antibiotic
+f <- glm(dur_compl ~ abx_name, family = binomial, data = coh.sub)
+broom::tidy(f, exponentiate = T, conf.int = T) # the meaning of the estimate for year-mo would be difficult to interpret
 
 coh.sub %>%
   mutate(var = abx_name) %>%
@@ -1125,27 +1110,17 @@ There seems to be significant variation in adherence to guidelines based on prov
 
 ```{r}
 
-tab <- coh.sub %>%
+
+# logistic regression for association between adherence and provider type
+f <- glm(dur_compl ~ prov_rx, family = binomial, data = coh.sub)
+broom::tidy(f, exponentiate = T, conf.int = T)
+
+coh.sub %>%
   mutate(var = prov_rx) %>%
   group_by(var, dur_compl) %>%
   summarise(n = n()) %>%
   mutate(sum = sum(n), 
-         prop = n/sum)
-
-# turn into a matrix
-mat <- tab %>%
-  select(-sum, -prop) %>%
-  pivot_wider(
-    names_from = dur_compl,
-    values_from = n
-  ) %>%
-  column_to_rownames('var') %>%
-  as.matrix()
-
-# Fisher's Exact Test
-fisher.test(mat, simulate.p.value = T)
-
-tab %>%
+         prop = n/sum) %>%
   filter(dur_compl == 'Guideline Followed' & !is.na(var)) %>%
   arrange(desc(n)) %>%
   ungroup() %>%
@@ -1158,9 +1133,6 @@ tab %>%
   xlab('Provider Type') +
   ylab('Guideline Followed - Proportion') +
   ylim(0,1)
-  # scale_color_discrete('Adherence to Guidelines')
-  # scale_fill_brewer(type = 'qualitative', palette = 'Paired') +
-  # theme(legend.position = 'none')
 
 ```
 
@@ -1372,7 +1344,7 @@ top.meds <- meds.coh %>%
   filter(n > 150) %>%
   pull(abx_name)
 
-# patch so multicloss roc curves work for sample data
+# patch so multiclass roc curves work for sample data
 if (cohort <= 5000) {
   top.meds <- c('Amoxicillin','Amoxicillin Clavulanate','Cefdinir','Azithromycin')
 }
@@ -1597,7 +1569,7 @@ rm(cl)
 
 ```
 
-#### Multiclass ROC and PR Curves for Models Above
+#### Multiclass ROC and PR Curves for ML Models (Test Data)
 
 ```{r}
 
@@ -1622,7 +1594,7 @@ abx_hot <- as_tibble(predict(tmp,trans.test))
 names(abx_hot) <- roc_true
 # str(abx_hot)
 
-# extract probablities for each class for each method
+# extract probablities for each class for each method using testing data
 pmr_pred <- predict(pmr.abx,trans.test,type = 'prob')
 nb_pred <- predict(nb.abx,trans.test,type = 'prob')
 rf_pred <- predict(rf.abx,trans.test,type = 'prob')
@@ -1638,7 +1610,7 @@ names(xg_pred) <- roc_xg
 # combine data into format expected for multiROC
 mroc_data <- cbind(abx_hot, pmr_pred, nb_pred, rf_pred, xg_pred)
 
-
+# get ROC and Precision-recall data for testing data
 mroc_out <- multiROC::multi_roc(mroc_data) #ROC data
 pr_out <- multiROC::multi_pr(mroc_data) #precision-recall data
 
@@ -1746,7 +1718,7 @@ pr_res %>%
 
 ```
 
-In interpretation of the PR curves, it is important to note that Precision (aka PPV) for an unskilled learner will be directly proportional to the proportion of the specific class. As a result, it is not surprising that amoxicillin appears to have the best precision. For the other classes, we see that as Recall (aka sensitivity) improves, the Precision quickly drops off because we are trading better sensitivity for worse specificty (more false positives). While not great, the PR curves demonstrate that xgboost seems to be performing best.
+In interpretation of the PR curves, it is important to note that Precision (aka PPV) for an unskilled learner will be directly proportional to the proportion of the specific class. As a result, it is not surprising that amoxicillin appears to have the best precision. For the other classes, we see that as Recall (aka sensitivity) improves, the Precision quickly drops off because we are trading better sensitivity for worse specificity (more false positives). None of the models are particularly good, but extreme gradient boosting achieved the best kappa.
 
 #### Discussion of Classification Models
 Initially, models were trained on unbalanced training data. Accuracies of 80%+ were obtained, but essentially the models always predicted the majority class (amoxicillin). To address this, we took two appraoches: 1) we used sampling methods (SMOTE) to improve class balance and 2) hyper-parameter selection was based on kappa rather than accuracy. SMOTE resulted in better results than pure downsampling. Upsampling was too inefficient to tune hyper-parameters and did not result in significant-enough improvements to justify the addditional time spent training models. Overall, despite attempts at optimization, model performance remained relatively poor for antibiotic class-prediction. Clinically, it would potentially be nearly as useful to predict patients which were prescribed any antibiotic other than amoxicillin (resulting in a binary classification). In this case, we might be better able to address the problem with class-imbalance. Alternatively, we could consider whether there are additional features that me helpful. Although there are many, they might include specific co-morbidities (immunodeficiency, chronic serous otitis, history of ear tubes) or recent visits to the ED or primary care provider (as an indicator or previously failed treatment).
