@@ -9,7 +9,7 @@ output:
     theme: paper 
     highlight: tango
 ---
-```{r set-options, echo=FALSE, cache=FALSE, collapse=TRUE}
+```{r set-options, echo=FALSE, cache=FALSE, collapse=TRUE, message=FALSE}
 options(width = 400)
 ```  
 
@@ -35,7 +35,9 @@ The Mimic-III Clinic Database contains de-identified health data records for ove
 Demographic, procedure, mortality, and billing-related information such as International Classification of Disease (ICD) codes, will be used to explore patient characteristics and care while being treated at Beth Isreal Deaconess Medical Center, and mortality studied as an outcome.
 
 #### Connection to server
-```{r Connection, include=FALSE, collapse=TRUE}
+
+Packages are loaded and the MIMIC-III dataset is imported from the MySQL database it is stored in.
+```{r Connection, include=FALSE, collapse=TRUE, message=FALSE}
 rm(list=ls()) # clears the environment
 
 # load packages
@@ -44,22 +46,20 @@ lapply(pkgs, library, character.only = TRUE) # load packages
 
 drv = dbDriver("MySQL")
 
-#change these below
-username= #username for mysql
-mysql_password=  #password for mysql
-
-###
+# connecting to the secure server "Curie"
 mimic_iii = dbConnect(drv, dbname="clinical_mimic_III", 
                            host="127.0.0.1",
                            port=3307,
                            user=keyring::key_list("Curie")[1,2], #username for mysql
                            password=keyring::key_get("Curie"))  #password for mysql
 
-on.exit(dbDisconnect(mimic_iii)) # had to comment out in order to knit document
+#on.exit(dbDisconnect(mimic_iii)) # had to comment out in order to knit document
 ```
 
 #### Importing data
-```{r Data import, cache=TRUE, collapse=TRUE}
+
+This section imports MIMIC-III data from separate tables, most of them including health records and a couple of them including dictionaries for ICD codes.
+```{r Data import, cache=TRUE, collapse=TRUE, message=FALSE}
 tic("data import") # takes about 20 secs
 
 rs = dbSendQuery(mimic_iii, "select distinct * from ADMISSIONS;")
@@ -104,7 +104,8 @@ toc()
 #### Data tyding
 
 ##### Trimming/formatting data
-```{r Trimming/formatting, collapse=TRUE}
+This section selects only the relevant variables from admissionss, expired patient, services, and ICU stay data, and adjusts variable class as needed (namely to `date` or `numeric` classes).
+```{r Trimming/formatting, collapse=TRUE, message=FALSE}
 # trimming and formatting admissions data
 admissions <- data_admissions %>% 
   select(-(ADMISSION_LOCATION:DISCHARGE_LOCATION),-(EDREGTIME:DIAGNOSIS),
@@ -130,7 +131,8 @@ icustays <- data_icustays %>% select(-(FIRST_WARDID:LAST_WARDID)) %>%
 ```
 
 ##### Joining data
-```{r Joining diagnosis/procedures, collapse=TRUE}
+This section joins diagnosis and procedure records to the ICD diagnosis and procedure data dictionaries by `ICD9_CODE`.
+```{r Joining diagnosis/procedures, collapse=TRUE, message=FALSE}
 # joining diagnosis and procedure data to ICD codes
 icd_diag <- left_join(data_icd_diag, dd_icd_diag %>% select(-ROW_ID), by = "ICD9_CODE")
 icd_proc <- left_join(data_icd_proc, dd_icd_proc %>% select(-ROW_ID), by = "ICD9_CODE")
@@ -152,13 +154,14 @@ proc_wo_code <- icd_proc %>% filter(is.na(SHORT_TITLE))
 dim(proc_wo_code) #2147
 ```
 
-```{r Joining admission/patient, collapse=TRUE}
+This section joins admission records to a table containing patient data, and then to Intensive Care Unit (ICU) stay records. It also record dates and dates of birth to calculate the age at the time of admission (`AGE_ADM`), hospital discharge (`AGE_DIS`), and hospital death (`AGE_DOD`).
+```{r Joining admission/patient, collapse=TRUE, message=FALSE}
 # joining admission data to adult patient data
 patients_adm <- left_join(admissions, patients %>% select(-ROW_ID), by = "SUBJECT_ID") %>%
-  mutate(AGE_ADM = round(as.duration(DOB %--% ADMITTIME)/dyears(1),2),
-         AGE_DIS = round(as.duration(DOB %--% DISCHTIME)/dyears(1),2),
-         AGE_DOD = round(as.duration(DOB %--% DOD_HOSP)/dyears(1),2)) %>%
-  filter(AGE_ADM >= 18)
+  mutate(AGE_ADM = round(as.duration(DOB %--% ADMITTIME)/dyears(1),2), # age at admission
+         AGE_DIS = round(as.duration(DOB %--% DISCHTIME)/dyears(1),2), # age at discharge
+         AGE_DOD = round(as.duration(DOB %--% DOD_HOSP)/dyears(1),2)) %>% # age at death
+  filter(AGE_ADM >= 18) # age at admission was used to select records from only adults
 
 # joining ICU data to admission+patient data
 patients_adm_icu <- left_join(patients_adm, icustays %>% select(SUBJECT_ID, HADM_ID, LOS),
@@ -171,12 +174,14 @@ patients_adm_icu_proc <- left_join(patients_adm_icu, icd_proc %>% select(-ROW_ID
                                by = c("SUBJECT_ID","HADM_ID"))
 ```
 
-
 ##### Recoding data
-```{r Recoding, collapse=TRUE}
-# simplifying ethnicity category
+
+This section identifies the different categories present in the dataset `ETHNICITY` variable and then recodes those that could reasonably be binned together in order to increase the sample size in each major ethnicity category. For example, ethnicity subcategory `ASIAN - JAPANESE` was recoded as `ASIAN`. It should be noted that with a large enough dataset with larger representation of each ethnicity subcategory, important nuance could be captured between these subpopulations that experience different experiences with the health care system. This is not possible with datasets that, by default, allow for only a handful of ethnicity categories. Produces primary data frame `patients_recoded`.
+```{r Recoding ethnicity, collapse=TRUE, message=FALSE}
+# identifying the frequency different ethnicity categories present in the dataset
 cat_ethnicity <- table(patients_adm_icu$ETHNICITY) %>% data.frame()
 
+# binning subethnicities into larger ethnicity categories
 patients_recoded <- patients_adm_icu %>% 
   mutate(ETHNICITY_BROAD = as.factor(ETHNICITY)) %>%
   mutate(ETHNICITY_BROAD = recode(ETHNICITY_BROAD,
@@ -211,8 +216,12 @@ patients_recoded <- patients_adm_icu %>%
                                   "WHITE - OTHER EUROPEAN" = "WHITE",
                                   "WHITE - RUSSIAN" = "WHITE"))
 
+# identifying the frequency of different ethnicity categories after the recoding efforts
 cat_ethnicity_broad <- table(patients_recoded$ETHNICITY_BROAD) %>% data.frame()
+```
 
+This section adjusts the class of certain variables in the new `patients_recoded` data frame and recodes mortality and age variables. The MIMIC-III dataset shifts all dates to protect patient confidentiality and all patients 89 years or older are marked as being 300 years or older. These 300 year old ages were adjusted to 89 for easier interpretation.
+```{r Formatting and recoding other vars, collapse=TRUE, message=FALSE}
 # formatting/recoding insurance, gender, hospital death, and age variables
 patients_recoded <- patients_recoded %>% 
   mutate(ADMISSION_TYPE = as.factor(ADMISSION_TYPE),
@@ -226,17 +235,19 @@ patients_recoded <- patients_recoded %>%
                             "Government" = "GOV", "Medicaid" = "MEDICAID","Medicare" = "MEDICARE",
                             "Private" = "PRIVATE", "Self Pay" = "SELF PAY"))
 
-# trimming data
+# trimming data to remove variables no longer needed
 patients_recoded <- patients_recoded %>% select(-ETHNICITY, -HOSPITAL_EXPIRE_FLAG, -EXPIRE_FLAG)
 ```
 
 #### Delivery codes
-
-```{r Importing delivery codes, collapse=TRUE}
+This section imports tables of ICD codes for delivery diagnoses and procedures.
+```{r Importing delivery codes, collapse=TRUE, message=FALSE}
 # Importing all delivery DIAGNOSIS ICD9 codes
 codes_delivery_diag = read.csv("delivery_diag_codes_SPC.csv", header = F) %>% 
   mutate(V1 = as.character(V1))
 head(codes_delivery_diag)
+
+# adjusting the CODE variable to remove the decimal point
 codes_delivery_diag_icd9 <- codes_delivery_diag %>% filter(V2 == "ICD9") %>% 
   mutate(CODE = str_remove(V1, "\\.")) %>% select(CODE)
 head(codes_delivery_diag_icd9)
@@ -244,12 +255,15 @@ head(codes_delivery_diag_icd9)
 # Importing all delivery PROCEDURE ICD9 codes
 codes_delivery_proc = read.csv("delivery_proc_codes_SPC.csv", header = F)
 head(codes_delivery_proc)
+
+# adjusting the CODE variable to remove the decimal point
 codes_delivery_proc_icd9 <- codes_delivery_proc %>% filter(V2 == "ICD9") %>% 
   mutate(CODE = str_remove(V1, "\\.")) %>% select(CODE)
 head(codes_delivery_proc_icd9)
 ```
 
-```{r Delivery records, collapse=TRUE}
+This section identifies patient records assigned a delivery ICD diagnosis or procedure code.
+```{r Delivery records, collapse=TRUE, message=FALSE}
 # Records with delivery diagnosis codes
 records_delivery_diag = icd_diag %>% filter(ICD9_CODE %in% codes_delivery_diag_icd9$CODE) %>% 
   mutate(CODE_TYPE = "DIAGNOSIS")
@@ -269,8 +283,9 @@ length(unique(records_delivery$HADM_ID)) #48
 - There are 203 delivery diagnosis or procedure records from 48 patients
 
 #### C-section codes
-```{r Importing c-section codes, collapse=TRUE}
-# Importing all c-section PROCEDURE codes
+This section imports tables of ICD codes for cesarean section (C-section) procedures.
+```{r Importing C-section codes, collapse=TRUE, message=FALSE}
+# Importing all C-section PROCEDURE codes
 codes_csection_proc = read.csv("csection_proc_codes_SPC.csv", header = F)
 head(codes_csection_proc)
 codes_csection_proc_icd9 <- codes_csection_proc %>% filter(V2 == "ICD9") %>%
@@ -278,8 +293,9 @@ codes_csection_proc_icd9 <- codes_csection_proc %>% filter(V2 == "ICD9") %>%
 head(codes_csection_proc_icd9)
 ```
 
-```{r C-section records, collapse=TRUE}
-# Records with csection procedure codes
+This section identifies patient records assigned a C-section ICD procedure code.
+```{r C-section records, collapse=TRUE, message=FALSE}
+# Records with C-section procedure codes
 records_csection_proc = icd_proc %>% filter(ICD9_CODE %in% codes_csection_proc_icd9$CODE) %>%
   mutate(CODE_TYPE = "PROCEDURE")
 head(records_csection_proc)
@@ -292,8 +308,9 @@ length(unique(records_csection$HADM_ID)) #37
 ```
 - There are 38 csection procedure codes from 37 patients
 
-#### Joining delivery and csection
-```{r Delivery + Csection as variables, collapse=TRUE}
+#### Joining delivery and C-section
+This section adds binary variables to the primary `patients_recoded` dataframe to account for the presence/absence of a delivery or C-section ICD code.
+```{r Delivery + C-section as variables, collapse=TRUE, message=FALSE}
 # adding in variables for delivery and csection
 patients_recoded <- patients_recoded %>%
   mutate(DELIVERY = ifelse(HADM_ID %in% records_delivery$HADM_ID, "DELIVERY", "NO DELIVERY"),
@@ -303,19 +320,19 @@ patients_recoded <- patients_recoded %>%
 ```
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 #### Descriptive information
-```{r GGPairs, warning=FALSE, collapse=TRUE}
+```{r GGPairs, warning=FALSE, collapse=TRUE, message=FALSE}
+# trimmming data to only the predictor variables of interest
 patients_recoded_trim <- patients_recoded %>% 
   select(ADMISSION_TYPE,INSURANCE,GENDER,AGE_ADM,AGE_DOD,LOS_ICU,ETHNICITY_BROAD,DELIVERY,CSECTION, MORTALITY) %>% unique()
-length(unique(patients_recoded_trim)) #38888
+dim(unique(patients_recoded_trim)) #54362 unique records and 10 variables of interest
 
-ggpairs(patients_recoded_trim, mapping = aes(col = MORTALITY), columns = c("GENDER","ETHNICITY_BROAD", "AGE_ADM","AGE_DOD"))
+# ggpairs(patients_recoded_trim, mapping = aes(col = MORTALITY), columns = c("GENDER","ETHNICITY_BROAD", "AGE_ADM","AGE_DOD"))
 ```
 
 #### Visualization
-```{r Color palette, collapse=TRUE}
+```{r Color palette, collapse=TRUE, message=FALSE}
 # Penn and DBEI/CCEB colors
 PennBlue = "#1e376c" #DBEI/CCEB
 PennRed = "#a90533" #DBEI/CCEB
@@ -332,51 +349,54 @@ Green = "#83944e" #CCEB
 Grey = "#999999"
 ```
 
-```{r Age, collapse=TRUE}
+```{r Age, collapse=TRUE, message=FALSE, warning=FALSE}
+# gathering different age variables into a single variable "AGE" and corresponding age type "TIMEPOINT"
 pats_age <- patients_recoded_trim %>% 
   gather(AGE_ADM:AGE_DOD, key = "TIMEPOINT", value = "AGE") %>%
   mutate(TIMEPOINT = recode(TIMEPOINT, "AGE_ADM" = "ADMISSION", "AGE_DOD" = "DEATH"))
+head(pats_age)
 
-ggplot(pats_age, aes(x = AGE), bins = 50) + #bins = 25 looks good
+# creating a histogram for AGE at admission and at death
+ggplot(pats_age, aes(x = AGE), bins = 50) +
   geom_histogram(aes(fill = TIMEPOINT), color = "white") + 
   scale_fill_manual(values = c(Grey, "black")) +
   theme_bw() +
   labs(y = "Record Count", x = "Patient Age")
 
-# Age summaries
+# AGE_ADM descriptive information
 table(patients_recoded_trim$AGE_ADM > 89) # only 36 records with patient age > 89
 
 summary(patients_recoded_trim$AGE_ADM) # mean 64.02
 sd(patients_recoded_trim$AGE_ADM) # std dev 16.9921
 
-# AGE_DOD
+# AGE_DOD descriptive information
 age_dod <- patients_recoded_trim %>% filter(!(is.na(AGE_DOD)))
 summary(age_dod$AGE_DOD) # mean 70.13
 sd(age_dod$AGE_DOD) # std dev 14.86695
 
-# AGE at admission as predictor
+# AGE_ADM as predictor
 ggplot(data = patients_recoded_trim, aes(x = MORTALITY, y = AGE_ADM)) +
     geom_boxplot() +
   labs(y = "Age at Admission (years)", x = "Mortality")
 
+# AGE_ADM as a predictor
 summary((glm(MORTALITY ~ AGE_ADM, data = patients_recoded_trim, family = binomial()))) # p-value <2e-16
-
-# AGE_ADM was positively associated with MORTALITY with p-value <2e-16
 ```
+- AGE_ADM was positively associated with MORTALITY with p-value <2e-16
 
-```{r Gender, collapse=TRUE}
+```{r Gender, collapse=TRUE, message=FALSE}
 ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = GENDER)) +
     geom_bar(position = "fill", color = "white") + 
   scale_fill_manual(values = c(Green, DarkBlue)) +
   theme_bw() +
   labs(y = "Proportion", x = "Mortality")
 
-# Gender as predictor
+# GENDER as predictor
 summary((glm(MORTALITY ~ GENDER, data = patients_recoded_trim, family = binomial()))) # 0.00226
-
-# There is a relationship between GENDER and MORTALITY with p-value 0.00226
 ```
-```{r Ethnicity, collapse=TRUE, collapse=TRUE}
+- There is a relationship between GENDER and MORTALITY with p-value 0.00226
+
+```{r Ethnicity, collapse=TRUE, collapse=TRUE, message=FALSE}
 summary(patients_recoded_trim$ETHNICITY_BROAD)
 
 ggplot(patients_recoded_trim, aes(x = MORTALITY, fill = ETHNICITY_BROAD)) + 
@@ -389,57 +409,78 @@ ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = ETHNICITY_BROAD))
   theme_bw() +
   labs(y = "Proportion", x = "Mortality")
 
-# Ethnicity as predictor
+# ETHNICITY_BROAD as predictor
 summary((glm(MORTALITY ~ ETHNICITY_BROAD, data = patients_recoded_trim, family = binomial()))) # 0.00226
-
-# There is no signficant association between any particular ETHNICITY and MORTALITY
 ```
+- There is no significant association between any particular `ETHNICITY_BROAD` and `MORTALITY`
 
-```{r Insurance, collapse=TRUE}
+```{r Insurance, collapse=TRUE, message=FALSE}
 summary(patients_recoded_trim$INSURANCE)
 
+# standard bar plot
 ggplot(patients_recoded_trim, aes(x = MORTALITY, fill = INSURANCE)) + 
   geom_bar(aes(fill = INSURANCE), position = "dodge") +
   labs(y = "Count", x = "Mortality")
   #scale_fill_manual(values = c(Grey, Yellow, PennRed)) +
 
+# stacked bar plot
 ggplot(data = patients_recoded_trim, aes(x = MORTALITY, fill = INSURANCE)) +
     geom_bar(position = "fill", color = "white") + 
   #scale_fill_manual(values = c(Green, DarkBlue)) +
   theme_bw() +
   labs(y = "Proportion", x = "Mortality")
 
-# Insurance type as predictor
+# INSURANCE_TYPE as predictor
 summary((glm(MORTALITY ~ INSURANCE, data = patients_recoded_trim, family = binomial())))
-
-# There is a signficant association between all INSURANCE and MORTALITY (i.e. having any insurance)
 ```
+- There is a signficant association between all `INSURANCE` and `MORTALITY` (i.e. having any insurance)
 
-```{r LOS_ICU, collapse=TRUE}
+```{r LOS_ICU, collapse=TRUE, message=FALSE, warning=FALSE}
 # Length of stay (LOS) in the ICU as predictor
 ggplot(data = patients_recoded_trim, aes(x = MORTALITY, y = LOS_ICU)) +
     geom_boxplot() +
   labs(y = "Length of Stay in ICU (days)", x = "Mortality")
 
+# LOS_ICU as predictor
 summary((glm(MORTALITY ~ LOS_ICU, data = patients_recoded_trim, family = binomial()))) # p-value <2e-16
-
-# LOS_ICU was positively associated with MORTALITY with p-value <2e-16
 ```
+- `LOS_ICU` was positively associated with `MORTALITY` with p-value <2e-16
 
-```{r ADMISSION_TYPE, collapse=TRUE}
-# Type of ICU admission as predictor
+```{r ADMISSION_TYPE, collapse=TRUE, message=FALSE}
+# standard bar plot
 ggplot(patients_recoded_trim, aes(x = MORTALITY, fill = ADMISSION_TYPE)) + 
   geom_bar(aes(fill = ADMISSION_TYPE), position = "dodge") +
   labs(y = "Count", x = "Mortality")
   #scale_fill_manual(values = c(Grey, Yellow, PennRed)) +
 
+# Type of ICU admission as predictor
 summary((glm(MORTALITY ~ ADMISSION_TYPE, data = patients_recoded_trim, family = binomial()))) # p-value <2e-16
 
-# ADMISSION_TYPEs EMERGENCY and URGENT were both positively associated with MORTALITY with p-value <2e-16
 ```
+- `ADMISSION_TYPE`s EMERGENCY and URGENT were both positively associated with `MORTALITY` with p-value <2e-16
 
+This section summarizes the record count for each variable of interest and calculates the proportion (%).
+```{r Summary, message=FALSE}
+summary(patients_recoded_trim)
 
-```{r Delivery, collapse=TRUE}
+patients_recoded_trim %>% group_by(MORTALITY, GENDER) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY, INSURANCE) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY, ADMISSION_TYPE) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY, ETHNICITY_BROAD) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY, DELIVERY, GENDER) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY, CSECTION, GENDER) %>% 
+  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+patients_recoded_trim %>% group_by(MORTALITY) %>% summarize(COUNT = n(), PROP = round(n()/54362*100,2))
+```
+- From the summarized data it is clear that there are no records of patients that died within the hospital and also delivered a child during their care. Subsequently there are also no records of patients that died within the hospital and delivered a child via a C-section procedure. 
+- Therefore, any logistic model assessing `DELIVERY` or `CSECTION` as a predictor of `MORTALITY` will be inadequate, as evidenced below.
+
+```{r Delivery, collapse=TRUE, message=FALSE}
 # narrowing down to female patients
 patients_recoded_trim_f <- patients_recoded_trim %>% filter(GENDER == "F")
 
@@ -451,11 +492,10 @@ ggplot(data = patients_recoded_trim_f, aes(x = MORTALITY, fill = DELIVERY)) +
 
 # Delivery as predictor
 summary((glm(MORTALITY ~ DELIVERY, data = patients_recoded_trim_f, family = binomial()))) # 0.00226
-
-# There is a non-significant positive association between NO DELIVERY and MORTALITY
 ```
+- There is a **non-significant** positive association between `NO DELIVERY` and `MORTALITY`
 
-```{r C-section, collapse=TRUE}
+```{r C-section, collapse=TRUE, message=FALSE}
 ggplot(data = patients_recoded_trim_f, aes(x = MORTALITY, fill = CSECTION)) +
     geom_bar(position = "dodge", color = "white") + 
   scale_fill_manual(values = c(Green, DarkBlue)) +
@@ -464,28 +504,13 @@ ggplot(data = patients_recoded_trim_f, aes(x = MORTALITY, fill = CSECTION)) +
 
 # C-section as predictor
 summary((glm(MORTALITY ~ CSECTION, data = patients_recoded_trim_f, family = binomial()))) # 0.00226
-
-# There is a non-significant positive association between NO CSECTION and MORTALITY
 ```
-
-```{r Summary, collapse=TRUE}
-summary(patients_recoded_trim)
-
-patients_recoded_trim %>% group_by(GENDER) %>% summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(INSURANCE) %>% summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(ADMISSION_TYPE) %>% 
-  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(ETHNICITY_BROAD) %>% 
-  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(DELIVERY, GENDER) %>% 
-  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(CSECTION, GENDER) %>% 
-  summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-patients_recoded_trim %>% group_by(MORTALITY) %>% summarize(COUNT = n(), PROP = round(n()/54362*100,2))
-```
+- There is a **non-significant** positive association between `NO CSECTION` and `MORTALITY`
 
 #### Logistic regression
-```{r GLM Model, collapse=TRUE}
+
+This section uses a logistic regression model that includes all variables of interest as predictors of `MORTALITY`.
+```{r GLM Model, collapse=TRUE, message=FALSE}
 # narrowing to only binary variables of interest
 patients_recoded_trim_glm <- patients_recoded_trim %>% select(-(AGE_ADM:LOS_ICU),-(DELIVERY:CSECTION))
 
@@ -500,10 +525,12 @@ head(glm_pred)
 
 table(glm_pred > 0.5) # 0 admissions had probability > 0.5
 ```
+- There were no admissions with a probability greater than 0.5 using this model, meaning the prediction was no better than chance.
 
 #### Model Evaluation
 
-```{r Cross Validation}
+This section performs a 10-fold cross-validation of the model
+```{r Cross Validation, message=FALSE}
 #K-Fold Cross Validation
 N = nrow(patients_recoded_trim_glm)
 K = 10
@@ -529,23 +556,25 @@ head(pred.outputs.glm)
 table(pred.outputs.glm > .5) # No admissions had probability > 0.5 
 ```
 
-```{r ROC Curve, message=FALSE}
+```{r ROC Curve, message=FALSE, message=FALSE}
 library(pROC)
 roc(patients_recoded_trim_glm$MORTALITY, glm_pred, ci = TRUE) # AOC: 0.6399
 
 plot.roc(patients_recoded_trim_glm$MORTALITY, glm_pred, ci = TRUE)
 plot.roc(obs.outputs, pred.outputs.glm, col = "red", add = TRUE)
 ```
+- An area under the curve (AUC) of 0.6399 showed the logistic model was slightly better at fitting the admissions data than chance (~0.5).
 
-
-#### Limitations
-- Because all dates in the database have been shifted to protect patient confidentiality, I could not compare c-section rates to national rates reported by the CDC per year. Reference: https://mimic.physionet.org/mimicdata/time/
+#### Conclusions and Limitations
+- The logistic model as utilized in this project was not an ideal for the admissions data in the MIMIC-III database. Approaching the analysis of mortality as a binary outcome might benefit from exploration using a random forest classifier, potentially in addition to regularization of the data to identify the most important variables in the dataset.
+- The patient population is mostly of an age beyond the reproductive lifespan, which means fewer pregnancies, particularly those unassisted by Artificial Reproductive Technology, so the MIMIC-III databse is not adequate for studying pregnancy-related outcomes.
+- Because all dates in the database have been shifted to protect patient confidentiality, C-section rates could not be compared to national rates reported by the Centers for Disease Control and Prevention (CDC) because years could not be matched. Reference: https://mimic.physionet.org/mimicdata/time/
   - Date shifting removed:
-      - Year - The year is randomly distributed between 2100 - 2200
-      - Day of the month - The absolute day of the month is not preserved
-      - Inter-patient information - Two patients in the ICU on 2150-01-01 were not in the ICU at the same time
-- Not all `ICD9_CODES` in the database match to a ICD code
-- Population is mostly older which means fewer pregnancies, so pregnancy-related outcomes are not easily studied
+      - Year: The year was randomly distributed between 2100 and 2200
+      - Day of the month: The absolute day of the month is not preserved (though the day of the week is)
+      - Inter-patient information: Meaning two patients in the ICU on the same date were not actually in the ICU at the same time
+- Not all `ICD9_CODES` in the MIMIC-III database matched to an exisiting ICD code, which reduced the number of records available for analysis.
+
 
 ### References
 - Johnson, A., Pollard, T., Mark, R. (2016) MIMIC-III, a freely accessible critical care database. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available from: http://www.nature.com/articles/sdata201635
