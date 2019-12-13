@@ -6,7 +6,7 @@ This project contains a R markdown file (.Rmd) and a HTML file produced by the m
 
 This project features heatmaps that represent the significance of logistic and rare event logistic estimates. The rare event logistic models are theoratically better in representing the correlations between covariates and the selected chronic diseases that are rare events in the population. 
 
-Please be aware that the resulted correlations do not represent causality. However, these correlations could be candidate causes in risks analysese of diseases. Please be cautious about the high sensitivity of the prediction at some point of the ROC, because low precision is a company of the high sensitivity. The highest F-score of the prediction often occures at low sensitivity because of the unbalanced ocurrances of disease and non-disease. 
+Please be aware that the resulted correlations do not represent causality. However, these correlations could be candidate causes in risks analysese of diseases. Please be cautious about the high sensitivity of the prediction at some point of the ROC, because low precision is a company of the high sensitivity. The highest F-score of the prediction often occures at low sensitivity because of the unbalanced ocurrances of diseases. 
 
 Thank you for your interest and please leave your comments.
 
