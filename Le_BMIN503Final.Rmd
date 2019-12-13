@@ -1,0 +1,222 @@
+---
+title: "Evaluation of clinical notes, pathology reports, and institutional cancer registry for automated abstraction of Gleason score in prostate cancer patients"
+author: "Anh Le"
+date: "12/13/2019"
+output: 
+    html_document: 
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```
+***
+Evaluation of clinical notes, pathology reports, and institutional cancer registry for automated abstraction of Gleason score in prostate cancer patients
+
+### Overview
+
+The primary objective of this study is to evaluate data structures including physician progress note, pathology report, and the Penn Medicine Cancer Registry for abstraction of Gleason score in prostate cancer patients in the Penn Medicine Biobank. On a deeper level, the utility of data abstraction methods including natural language processing and use of legally-binding and abstractor-curated database is also being investigated. Encounter notes and pathology reports are pulled from EPIC Clarity and the Penn Data Store by the Data Analytics Center. 
+
+Mentors:
+Kara Maxwell, M.D., Ph.D, Department of Medicine, Division of Hem/Onc
+Danielle Mowery, Ph.D, M.S., M.S., Institute for Biomedical Informatics
+Lauren Schwartz, M.D., Department of Pathology
+
+Github Link:
+https://github.com/leanhn/BMIN503_Final_Project
+
+### Introduction 
+
+Prostate cancer (PCa) is the most common cancer in American men where it is the second leading cause of cancer-related deaths. Recent studies suggest that up to 20% of metastatic PCa have germline mutations in DNA repair genes, which are associated with more aggressive disease and worse survival outcomes.There are various guidelines for germline mutation screenings for PCa patients, mostly in the metastatic population. However, there is a paucity of data on the incidence and role of inherited DNA repair mutations in localized PCa and the relationship between these mutations and Gleason score. Genotype-phenotype analysis are pertinent to determine the rate of germline DNA repair mutations in patients with localized PCa stratified by Gleason score.
+To address this problem, a multidisciplinary approach involing cancer genetics and informatics for clinical phenotyping and genotyping is imperative. This project can be broken down to two parallel arms: phenotyping and genotyping. In the phenotyping arm, we aim to develop a rule-based data extraction algorithm to perform large-scale deep phenotyping of prostate patients in the Penn Medicine BioBank (PMBB) for Gleason Score. To abstract a Gleason Score that is most clinically relevant, it is important to incorporate clinical expertise in urologic medical oncology, pathology, and surgery to formulate a “ground truth” for Gleason Score abstraction. In the genotyping arm, targeted gene and RNA sequencing are performed for this cohort. However, this project is focused on the phenotyping effort. 
+
+### Methods
+
+A deep Phenotyping Rule-Based Algorithm is developed by team of physicians with expertise in urologic
+medical oncology, pathology, and surgery based on clinical practice principles and the Data Analytics Center using PennSeek. 
+Cohort identification is conducted by rapid phenotyping of the Penn Medicine Biobank using ICD9 code of “185 Malignant neoplasm of prostate” and ICD10 code of “C61 Malignant neoplasm of prostate”.
+Gleason Score is extracted from three data structures: (1) Pathology Reports,(2) Oncology Encounter Notes, and (3) Penn Medicine Cancer Registry.
+Gleason Score selection criteria prioritize Gleason score reported on prostatectomy pathology
+report. If there is no prostatectomy available, the highest score reported on all available biopsy reports regardless of temporal order.NLP is performed by DAC using PennSeek. PennSeek queries data pulled from PDS/ EPIC Clarity. Manual chart review is performed to create a gold standard set of Gleason Score data. Evaluation of data performance stratified by data structure 
+
+### Results 
+
+# Demographic distribution (race, ethnicity, Ashkenazi Jewish descent, vital status) 
+```{r}
+# Load data
+data <-read.csv("/Users/lea3/Desktop/BMIN503FinalData_Le.csv", stringsAsFactors = FALSE)
+data<-data.frame(data, header=T)
+str(data)
+# Load packages 
+library (MASS)
+library(ggplot2)
+library (dplyr)
+library (tidyverse)
+# Prostate cancer cohort 
+table(data$PCA)
+print("Out of 1954 patients  identified in the Penn Medicine Biobankby a query of ICD9/10 codes for prostate cancer, 1843 truly had a history of prostate cancer. This leave 111 false positives.")
+# Vital Status Descriptive Data
+table(data$Vital.status)
+print("Out of 1843 patients with positive history of prostate cancer, 1659 were alive and 184 were deceased.")
+
+# Cleaning data for plots 
+w = which(data$Ethnictity == "0")
+data$Ethnictity[w] = "Non-Hispanic"
+w = which(data$AJ == "0")
+data$AJ[w] = "Unknown"
+
+# Descriptive plots of Askenazi Jewish status, race, and ethnicity 
+ggplot(data = na.omit(data), aes(x = Race, fill = Ethnictity)) +
+  geom_bar()
+ggplot(data = na.omit(data), aes(x = Race, fill = AJ)) +
+  geom_bar()
+
+```
+
+# Breakdown of clinical stage at diagnosis and biochemical recurrence
+```{r}
+ggplot(data = na.omit(data), aes(x = Clinical.stage.at.diagnosis, fill = Biochemical.Recurrence)) +
+  geom_bar()
+print("A small percentage of patients who were diagnosed with localized prostate cancer then developed biochemical recurrence. The majority of localized prostate cancer remained disease free after treatment.")
+```
+# Age at diagnosis 
+```{r}
+# Calculate median, mean, and standard deviation of age at diagnosis
+median(data$Age.of.Dgx, na.rm = TRUE)
+mean(data$Age.of.Dgx, na.rm = TRUE)
+sd(data$Age.of.Dgx, na.rm = TRUE)
+
+# Report age of onset by race 
+data %>%
+  group_by(Race) %>%
+  summarise(AgeofDgx = mean(Age.of.Dgx, na.rm=TRUE))
+print("Age of onset was comparative among different ethnicity groups.")
+```
+
+# Gleason score data distribution across data sources 
+```{r}
+# Clean data
+w = which(data$Chart.review.final == "")
+data$Chart.review.final[w] = "not available"
+w = which(data$Chart.review.final == "3 + 4 = 7, tert 5")
+data$Chart.review.final[w] = "3 + 4 = 7"
+w = which(data$Chart.review.final == "4 + 3 = 7, tert 5")
+data$Chart.review.final[w] = "4 + 3 = 7"
+
+# Measure GS data availability across sources 
+area1=nrow(data[data$ORQID != "",])
+area2=nrow(data[data$ENC != "",])
+area3=nrow(data[data$PATH != "",])
+print("We found GS for 1399 patients from encounter notes, 1132 from pathology reports, and 1003 from cancer registry.")
+
+## Calculate Venn diagram areas
+n123=sum(data$ENC!="" &
+     data$PATH!="" &
+      data$ORQID!="")
+n12=sum(data$ENC!="" &
+      data$ORQID!="")
+n23=sum(data$ENC!="" &
+     data$PATH!="" )
+n13=sum(data$PATH!="" &
+      data$ORQID!="")
+
+# Create Venn chart
+library(VennDiagram)
+grid.newpage()
+draw.triple.venn(area1 = 1003, area2 = 1399, area3 = 1132, n12 = 981, n23 = 1097, n13 = 898, n123 = 886, category = c("ORQID", "ENC", "PATH"), lty = "blank", fill = c("skyblue", "pink1", "mediumorchid"))
+
+```
+
+# Evaluation of data structure performance:[insert code to calculate positive prediction value, sensitivity, and F-score].
+
+```{r}
+
+enc_cont = c()
+path_cont = c()
+orqid_cont = c()
+# Precision
+for(i in 1:nrow(data)){
+  gs = data$Chart.review.final[i]
+  enc = data$ENC[i]
+  path = data$PATH[i]
+  orqid = data$ORQID[i]
+  # True Negative
+  if(gs == "not available" & enc == ""){
+    enc_cont = c(enc_cont, "TN")
+  }
+  if(gs == "not available" & path == ""){
+    path_cont = c(path_cont, "TN")
+  }
+  if(gs == "not available" & orqid == ""){
+    orqid_cont = c(orqid_cont, "TN")
+  }
+  # True Positive
+  if(gs != "not available" & gs == enc){
+    enc_cont = c(enc_cont, "TP")
+  }
+  if(gs != "not available" & gs == path){
+    path_cont = c(path_cont, "TP")
+  }
+  if(gs != "not available" & gs == orqid){
+    orqid_cont = c(orqid_cont, "TP")
+  }
+  # False Negative
+  if(gs != "not available" & enc == ""){
+    enc_cont = c(enc_cont, "FN")
+  }
+  if(gs != "not available" & path == ""){
+    path_cont = c(path_cont, "FN")
+  }
+  if(gs != "not available" & orqid == ""){
+    orqid_cont = c(orqid_cont, "FN")
+  }
+  # False Positive
+  if( (gs == "not available" & enc != "") | (gs != "not available" & enc != "" & gs != enc)){
+    enc_cont = c(enc_cont, "FP")
+  }
+  if( (gs == "not available" & path != "") | (gs != "not available" & path != "" & gs != path) ){
+    path_cont = c(path_cont, "FP")
+  }
+  if( (gs == "not available" & orqid != "") | (gs != "not available" & orqid != "" & gs != orqid) ){
+    orqid_cont = c(orqid_cont, "FP")
+  }
+}
+
+# Precision = TP / (TP + FP)
+enc_precision = table(enc_cont)["TP"] / (table(enc_cont)["TP"] + table(enc_cont)["FP"])
+path_precision = table(path_cont)["TP"] / (table(path_cont)["TP"] + table(path_cont)["FP"])
+orqid_precision = table(orqid_cont)["TP"] / (table(orqid_cont)["TP"] + table(orqid_cont)["FP"])
+
+# Recall = TP / (TP + FN)
+enc_recall = table(enc_cont)["TP"] / (table(enc_cont)["TP"] + table(enc_cont)["FN"])
+path_recall = table(path_cont)["TP"] / (table(path_cont)["TP"] + table(path_cont)["FN"])
+orqid_recall = table(orqid_cont)["TP"] / (table(orqid_cont)["TP"] + table(orqid_cont)["FN"])
+
+# F Score = 2*(Precision * Recall) / (Precision + Recall)
+enc_f = 2*(enc_precision * enc_recall) / (enc_precision + enc_recall)
+path_f = 2*(path_precision * path_recall) / (path_precision + path_recall)
+orqid_f = 2*(orqid_precision * orqid_recall) / (orqid_precision + orqid_recall)
+
+# Print
+print(paste0("Encounter Precision = ", as.character(enc_precision)))
+print(paste0("Encounter Recall = ", as.character(enc_recall)))
+print(paste0("Encounter F Score = ", as.character(enc_f)))
+
+print(paste0("Pathology Precision = ", as.character(path_precision)))
+print(paste0("Pathology Recall = ", as.character(path_recall)))
+print(paste0("Pathology F Score = ", as.character(path_f)))
+
+print(paste0("ORQID Precision = ", as.character(orqid_precision)))
+print(paste0("ORQID Recall = ", as.character(orqid_recall)))
+print(paste0("ORQID F Score = ", as.character(orqid_f)))
+print("Encounter Notes had the highest recall, and F score. ORQID (aka Cancer Registry) has the highest precision but lowest recall and F score.")
+```
+### CONCLUSION
+
+Using three data structures, there was discordance in Gleason scores extracted. 
+EHR encounter notes achieved the best results for complex phenotyping requiring extensive elimination-selection. 
+Encounter notes contain data most relevant to patient care and therefore are most in line with our rule-based phenotype algorithm. 
+NLP contributed significantly to abstracting Gleason score from the EHR. However, manual chart review remains critical to generating comprehensive databases, overcome limitations, and ensure data quality. 
