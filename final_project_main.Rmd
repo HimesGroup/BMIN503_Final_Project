@@ -1,0 +1,1336 @@
+---
+title: "BMIN503/EPID600 Final Project - Exploratory analysis of vaccination coverage and worldwide incidence of infectious diseases"
+author: "David Mai"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+### Overview
+
+The invention of vaccines has arguably changed the course of human history by drastically decreasing the incidence of many infectious diseases, saving countless lives. However, to prevent the persistance of a disease in a population, there needs to be a certain portion of the population that is immune to the disease. This amount is known as the herd immunity threshold, and relies on that portion of the population to be vaccinated so that herd immunity is achieved. This is important for eliminating a disease even when not everyone is immune, since some portion of the population, such as immunocompromised individuals, will not be able to get vaccinated. This project seeks to highlight historic and recent trends about vaccination coverage and disease across various infectious disease and explore these data in comparison to established immunity thresholds. In particular, we take a took at diphtheria, pertussis, measles, polio, and rubella from the 1980s to present day, and identify current geographical areas that still require aid to address disease persistence. 
+
+Follow the link [here][repository] to my final project GitHub repository.
+
+<!-- Links -->
+[repository]: https://github.com/davemai/BMIN503_Final_Project
+
+### Introduction
+
+The first reported vaccine in the western world was invented by Edward Jenner, who observed that milkmaids did not suffer the severe disfiguring seen by others during the contraction of smallpox. It turned out that milkmaids contracted cowpox from contact with the cow’s udders, leading to a milder form of the pox that provided protection against smallpox. Since then, the concept of vaccination has been applied to many different diseases such as measles, mumps, and polio, effectively eliminating them from the western world. However, recent trends show an increase in parents refusing to vaccinate their children due to religious reasons or the belief that vaccines cause impairment. This trend coincides with the resurfacing of diseases thought to be long eliminated since the implementation of comprehensive vaccination policies.
+
+This problem can be best approached with interdisciplinary expertise from clinicians, public health experts, as well as health surveillance officials. However, stakeholders in social economics, vaccine developers, and public health workers would benefit from increased understanding about why particular diseases are resurfacing. I am using datasets provided from the WHO and Unicef for vaccination coverage and disease incidence by country over time (1980s - 2018). Their datasets also cover various vaccine antigens on a per country basis. Analysis of these datasets will lead to a greater understanding of how vaccines contributed to the precipitous decline in once-dreaded diseases, and hopefully insight into their recent recurrence.
+
+
+### Methods
+This project retrieves longitudinal data from WHO about vaccine coverage for various infectious diseases as well as the incidence of those disease on a per country basis up to 2018. We will reformat and parse through this data so that we can plot longitudinal trends about worldwide coverage and incidence of each disease, and then break down into specific country or world region trends to analyze whether a particular behavior is significant or consistent across all countries. We will also dive more deeply into specific infectious diseases that are particularly important in US history, such as measles and polio.
+
+We start with an overarching view of worldwide incidence and coverage through the mid 1900s to 2018, and then dive more deeply into trends in the past 5 years and analyze trends by WHO-defined regions. Finally, we take a geospatial approach to observe incidence and coverage around the world on a per country basis. 
+
+First, we need to add the necessary packages to our library:
+
+```{r, eval = TRUE, message = FALSE}
+
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(reshape2)
+library(knitr)
+library(dsmodels)
+library(ggplot2)
+library(ggplotify)
+library(ggpubr)
+library(rlist)
+library(rapport)
+library(tmap)
+library(leaflet)
+library(RColorBrewer)
+library(countrycode)
+theme_set(theme_pubr())
+
+```
+
+Next, we need to import our datasets. These datasets are longitudinal datasets about worldwide incidence of various infectious diseases and worldwide coverage of specific vaccines taken from publically available WHO and Unicef estimates up to 2018.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Dataset on vaccination coverage
+coverage_series <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/coverage_series.csv"), header = TRUE)
+
+# Change variable names to be more self-explanatory and discard unnecessary columns
+colnames(coverage_series)[which(names(coverage_series) == "Percent_covrage")] <- "Percent_coverage"
+colnames(coverage_series)[which(names(coverage_series) == "Cname")] <- "Country"
+coverage_series <- select(coverage_series, WHO_REGION, ISO_code, Country, Continent, Vaccine, Year, Percent_coverage)
+
+# Datasets on various disease incidences
+crs_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/crs_incidence.csv"), header = TRUE)
+diptheria_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/diptheria_incidence.csv"), header = TRUE)
+japenc_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/japenc_incidence.csv"), header = TRUE)
+measles_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/measles_incidence.csv"), header = TRUE)
+mumps_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/mumps_incidence.csv"), header = TRUE)
+ntetanus_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/ntetanus_incidence.csv"), header = TRUE)
+pertussis_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/pertussis_incidence.csv"), header = TRUE)
+polio_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/polio_incidence.csv"), header = TRUE)
+rubella_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/rubella_incidence.csv"), header = TRUE)
+ttetanus_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/ttetanus_incidence.csv"), header = TRUE)
+yfever_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/yfever_incidence.csv"), header = TRUE)
+regional_global_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/regional_global_incidence.csv"), header = TRUE)
+
+```
+
+Next we need to clean and reformat some of our datasets. In our vaccine coverage dataset, we have missing years that aren't physically present in the dataset, which will make later year-by-year analysis difficult. As a result, we will introduce those years into the dataset and fill them with the appropriate information and NAs for that year's 'Vaccine_coverage".
+
+```{r, eval = TRUE, message = FALSE}
+
+# Missing data that skews geographical mapping - identify which years from which countries are missing and fill them with appropriate information and NAs so that they can be present for the mapping.
+
+# Buffer rows with N/A to fix map issues below
+  # Countries missinng from DTP3 coverage
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2014)$Cname)]
+# [1] "Finland" "Germany" "India"   "Monaco"  "Niue"    "Ukraine"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2015)$Cname)]
+# [1] "Austria"        "Czech Republic" "Germany"        "Monaco"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2016)$Cname)]
+# [1] "Germany" "Monaco"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2017)$Cname)]
+# [1] "Czech Republic" "Germany"        "San Marino"     "Uruguay"
+# > levels(DTP3_coverage$Cname)[!(levels(DTP3_coverage$Cname) %in% filter(DTP3_coverage, Year == 2018)$Cname)]
+# [1] "Belarus"         "Czech Republic"  "France"          "Germany"         "Israel"          "Kuwait"          "Montenegro"      "North Macedonia" "Sweden"
+
+add <- data.frame(
+  WHO_REGION = c("EUR", "EUR", "SEAR", "EUR", "WPR", "EUR", "EUR", "EUR", "EUR", "EUR", "EUR", "EUR", "EUR", "EUR", "EUR", "AMR", "EUR", "EUR", "EUR", "EUR", "EUR", "EMR", "EUR", "EUR", "EUR"),
+  ISO_code = c("FIN", "DEU", "IND", "MCO", "NIU", "UKR", "AUT", "CZE", "DEU", "MCO", "DEU", "MCO", "CZE", "DEU", "SMR", "URY", "BLR", "CZE", "FRA", "DEU", "ISR", "KWT", "MNE", "MKD", "SWE"),
+  Country = c("Finland", "Germany", "India", "Monaco", "Niue", "Ukraine", "Austria", "Czech Republic", "Germany", "Monaco", "Germany", "Monaco", "Czech Republic", "Germany", "San Marino", "Uruguay", "Belarus", "Czech Republic", "France", "Germany", "Israel", "Kuwait", "Montenegro", "North Macedonia", "Sweden"),
+  Continent = c("Europe", "Europe", "Asia", "Europe", "Australia", "Europe", "Europe", "Europe", "Europe", "Europe", "Europe", "Europe", "Europe", "Europe", "Europe", "South America", "Europe", "Europe", "Europe", "Europe", "Asia", "Asia", "Europe", "Europe", "Europe"),
+  Vaccine = rep("DTP3", 25),
+  Year = c(rep(2014, 6), rep(2015, 4), rep(2016, 2), rep(2017, 4), rep(2018, 9)),
+  Percent_coverage = rep(NA, 25)
+)
+coverage_series <- rbind(coverage_series, add)
+
+  # Countries missing from MCV1 coverage
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2014)$Cname)]
+# [1] "Finland"  "India"    "Kiribati" "Monaco"   "Niue"     "Ukraine"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2015)$Cname)]
+# [1] "Austria"        "Czech Republic" "Monaco"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2016)$Cname)]
+# [1] "Australia" "Monaco"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2017)$Cname)]
+# [1] "Australia"  "San Marino" "Uruguay"
+# > levels(MCV1_coverage$Cname)[!(levels(MCV1_coverage$Cname) %in% filter(MCV1_coverage, Year == 2018)$Cname)]
+# [1] "Australia"       "Belarus"         "France"          "Israel"          "Kuwait"          "Montenegro"      "North Macedonia"
+
+add <- data.frame(
+  WHO_REGION = c("EUR", "SEAR", "WPR", "EUR", "WPR", "EUR", "EUR", "EUR", "EUR", "WPR", "EUR", "WPR", "EUR", "AMR", "WPR", "EUR", "EUR", "EUR", "EMR", "EUR", "EUR"),
+  ISO_code = c("FIN", "IND", "KIR", "MCO", "NIU", "UKR", "AUT", "CZE", "MCO", "AUS", "MCO", "AUS", "SMR", "URY", "AUS", "BLR", "FRA", "ISR", "KWT", "MNE", "MKD"),
+  Country = c("Finland", "India", "Kiribati", "Monaco", "Niue", "Ukraine", "Austria", "Czech Republic", "Monaco", "Australia", "Monaco", "Australia", "San Marino", "Uruguay", "Australia", "Belarus", "France", "Israel", "Kuwait", "Montenegro", "North Macedonia"),
+  Continent = c("Europe", "Asia", "Australia", "Europe", "Australia", "Europe", "Europe", "Europe", "Europe", "Australia", "Europe", "Australia", "Europe", "South America", "Australia", "Europe", "Europe", "Asia", "Asia", "Europe", "Europe"),
+  Vaccine = rep("MCV1", 21),
+  Year = c(rep(2014, 6), rep(2015, 3), rep(2016, 2), rep(2017, 3), rep(2018, 7)),
+  Percent_coverage = rep(NA, 21)
+)
+coverage_series <- rbind(coverage_series, add)
+
+  # Countries missing from Pol3 coverage
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2014)$Cname)]
+# [1] "Finland" "India"   "Monaco"  "Niue"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2015)$Cname)]
+# [1] "Austria" "Cuba"    "Monaco"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2016)$Cname)]
+# [1] "Monaco"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2017)$Cname)]
+# [1] "El Salvador" "Monaco"      "San Marino"  "Uruguay"
+# > levels(Pol3_coverage$Cname)[!(levels(Pol3_coverage$Cname) %in% filter(Pol3_coverage, Year == 2018)$Cname)]
+# [1] "Belarus"         "Czech Republic"  "France"          "Israel"          "Kuwait"          "Montenegro"      "North Macedonia"
+
+add <- data.frame(
+  WHO_REGION = c("EUR", "SEAR", "EUR", "WPR", "EUR", "AMR", "EUR", "EUR", "AMR", "EUR", "EUR", "AMR", "EUR", "EUR", "EUR", "EUR", "EMR", "EUR", "EUR"),
+  ISO_code = c("FIN", "IND", "MCO", "NIU", "AUT", "CUB", "MCO", "MCO", "SLV", "MCO", "SMO", "URY", "BLR", "CZE", "FRA", "ISR", "KWT", "MNE", "MKD"),
+  Country = c("Finland", "India", "Monaco",  "Niue", "Austria", "Cuba", "Monaco", "Monaco", "El Salvador", "Monaco", "San Marino", "Uruguay", "Belarus", "Czech Republic", "France", "Israel", "Kuwait", "Montenegro", "North Macedonia"),
+  Continent = c("Europe", "Asia", "Europe", "Australia", "Europe", "North America", "Europe", "Europe", "North America", "Europe", "Europe", "South America", "Europe", "Europe", "Europe", "Asia", "Australia", "Europe", "Europe"),
+  Vaccine = rep("Pol3", 19),
+  Year = c(rep(2014, 4), rep(2015, 3), rep(2016, 1), rep(2017, 4), rep(2018, 7)),
+  Percent_coverage = rep(NA, 19)
+)
+coverage_series <- rbind(coverage_series, add)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# We will not move on with RCV1 coverage analysis as originally desired because it is too sparse
+
+#   # RCV1 coverage
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2014)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Benin"                                       "Botswana"                                    "Burkina Faso"                               
+#  [7] "Burundi"                                     "Cameroon"                                    "Canada"                                     
+# [10] "Central African Republic (the)"              "Chad"                                        "Comoros (the)"                              
+# [13] "Congo (the)"                                 "Côte d'Ivoire"                               "Democratic People's Republic of Korea (the)"
+# [16] "Democratic Republic of the Congo (the)"      "Djibouti"                                    "Equatorial Guinea"                          
+# [19] "Eritrea"                                     "Eswatini"                                    "Ethiopia"                                   
+# [22] "Finland"                                     "Gabon"                                       "Gambia"                                     
+# [25] "Guinea"                                      "Guinea-Bissau"                               "India"                                      
+# [28] "Indonesia"                                   "Kenya"                                       "Kiribati"                                   
+# [31] "Lesotho"                                     "Liberia"                                     "Madagascar"                                 
+# [34] "Malawi"                                      "Mali"                                        "Mauritania"                                 
+# [37] "Monaco"                                      "Morocco"                                     "Mozambique"                                 
+# [40] "Myanmar"                                     "Namibia"                                     "Niger (the)"                                
+# [43] "Nigeria"                                     "Niue"                                        "Pakistan"                                   
+# [46] "Papua New Guinea"                            "Poland"                                      "Romania"                                    
+# [49] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [52] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [55] "Timor-Leste"                                 "Togo"                                        "Uganda"                                     
+# [58] "Ukraine"                                     "United States of America (the)"              "Vanuatu"                                    
+# [61] "Viet Nam"                                    "Yemen"                                       "Zambia"                                     
+# [64] "Zimbabwe"                                   
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2015)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Antigua and Barbuda"                         "Austria"                                     "Benin"                                      
+#  [7] "Botswana"                                    "Burundi"                                     "Cameroon"                                   
+# [10] "Central African Republic (the)"              "Chad"                                        "Comoros (the)"                              
+# [13] "Congo (the)"                                 "Côte d'Ivoire"                               "Democratic People's Republic of Korea (the)"
+# [16] "Democratic Republic of the Congo (the)"      "Djibouti"                                    "Equatorial Guinea"                          
+# [19] "Eritrea"                                     "Eswatini"                                    "Ethiopia"                                   
+# [22] "Gabon"                                       "Gambia"                                      "Guinea"                                     
+# [25] "Guinea-Bissau"                               "India"                                       "Indonesia"                                  
+# [28] "Kenya"                                       "Lesotho"                                     "Liberia"                                    
+# [31] "Madagascar"                                  "Malawi"                                      "Mali"                                       
+# [34] "Mauritania"                                  "Monaco"                                      "Mozambique"                                 
+# [37] "Namibia"                                     "Niger (the)"                                 "Nigeria"                                    
+# [40] "Pakistan"                                    "Papua New Guinea"                            "Poland"                                     
+# [43] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [46] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [49] "Timor-Leste"                                 "Togo"                                        "Trinidad and Tobago"                        
+# [52] "Uganda"                                      "United Arab Emirates (the)"                  "Vanuatu"                                    
+# [55] "Viet Nam"                                    "Zambia"                                      "Zimbabwe"                                   
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2016)$Cname)]
+#  [1] "Afghanistan"                                 "Algeria"                                     "Angola"                                     
+#  [4] "Australia"                                   "Benin"                                       "Burundi"                                    
+#  [7] "Cambodia"                                    "Cameroon"                                    "Central African Republic (the)"             
+# [10] "Chad"                                        "Comoros (the)"                               "Congo (the)"                                
+# [13] "Democratic People's Republic of Korea (the)" "Democratic Republic of the Congo (the)"      "Djibouti"                                   
+# [16] "Equatorial Guinea"                           "Eritrea"                                     "Eswatini"                                   
+# [19] "Ethiopia"                                    "Gabon"                                       "Gambia"                                     
+# [22] "Guinea"                                      "Guinea-Bissau"                               "Haiti"                                      
+# [25] "India"                                       "Indonesia"                                   "Kenya"                                      
+# [28] "Lesotho"                                     "Liberia"                                     "Madagascar"                                 
+# [31] "Malawi"                                      "Mali"                                        "Mauritania"                                 
+# [34] "Mexico"                                      "Monaco"                                      "Mozambique"                                 
+# [37] "Namibia"                                     "Niger (the)"                                 "Nigeria"                                    
+# [40] "Pakistan"                                    "Peru"                                        "Saint Lucia"                                
+# [43] "Sao Tome and Principe"                       "Sierra Leone"                                "Somalia"                                    
+# [46] "South Africa"                                "South Sudan"                                 "Sudan (the)"                                
+# [49] "Togo"                                        "Uganda"                                      "Viet Nam"                                   
+# [52] "Zambia"                                     
+# > levels(RCV1_coverage$Cname)[!(levels(RCV1_coverage$Cname) %in% filter(RCV1_coverage, Year == 2017)$Cname)]
+#  [1] "Afghanistan"                                 "Angola"                                      "Australia"                                  
+#  [4] "Benin"                                       "Central African Republic (the)"              "Chad"                                       
+#  [7] "China"                                       "Comoros (the)"                               "Congo (the)"                                
+# [10] "Democratic People's Republic of Korea (the)" "Democratic Republic of the Congo (the)"      "Djibouti"                                   
+# [13] "Ecuador"                                     "Equatorial Guinea"                           "Eritrea"                                    
+# [16] "Ethiopia"                                    "Gabon"                                       "Guinea"                                     
+# [19] "Guinea-Bissau"                               "Kiribati"                                    "Liberia"                                    
+# [22] "Madagascar"                                  "Mali"                                        "Mauritania"                                 
+# [25] "Mozambique"                                  "Niger (the)"                                 "Nigeria"                                    
+# [28] "Pakistan"                                    "San Marino"                                  "Sierra Leone"                               
+# [31] "Somalia"                                     "South Africa"                                "South Sudan"                                
+# [34] "Sudan (the)"                                 "Togo"                                        "Uganda"                                     
+# [37] "Uruguay"
+
+
+```
+
+First, we define the immunity thresholds for some notable infectious diseases. These thresholds are calculated based on each disease's reproduction number, which is the average number of people an infected person spreads the disease to. As expected, for diseases with higher reproduction numbers, the vaccination thresholds are greater. The threshold percentages here correspond to the lower estimate of the reproduction number (less stringent).
+
+```{r, eval = TRUE, message = FALSE}
+
+# Herd immunity thresholds for various infectious diseases
+immunity_thresholds <- data.frame(
+  Disease = c("Diphtheria", "Pertussis", "Measles", "Mumps", "Polio", "Rubella", "Smallpox", "Influenza", "Ebola"),
+  Reproduction_number = c("6-7", "12-17", "12-18", "4-7", "2-15", "6-7", "5-7", "1.4-4", "1.5-2.5"),
+  Threshold_percentage = c(85, 92, 92, 75, 50, 83, 80, 30, NA)
+)
+
+# Numerical thresholds for diphtheria, pertussis, measles, polio, and rubella
+diphtheria_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Diphtheria")]
+pertussis_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Pertussis")]
+measles_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Measles")]
+polio_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Polio")]
+rubella_threshold <- immunity_thresholds$Threshold_percentage[which(immunity_thresholds$Disease == "Rubella")]
+
+head(immunity_thresholds)
+
+```
+
+Let's take a look at reported worldwide incidence over time of various diseases.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Better code but is not well-formatted, will update in the future
+
+# global_incidence <- filter(regional_global_incidence, region == "world")
+# 
+# # Rename disease values in entries
+# global_incidence$Disease <- revalue(levels(global_incidence$Disease), c("CRS" = "congenital rubella syndrome", "JapEnc" = "japanese encephalitis", "ntetanus" = "neonatal tetanus", "Mumps" = "mumps", "Rubella" = "rubella", "ttetanus" = "tetanus toxoid", "yfever" = "yellow fever"))
+# colnames(global_incidence) <- str_remove(colnames(global_incidence), "X")
+# global_incidence <- melt(global_incidence)
+# 
+# for (disease in unique(global_incidence$Disease)) {
+#     print( 
+#       ggplot(global_incidence[global_incidence$Disease == disease,], aes(variable, value)) + 
+#         geom_point() +
+#       theme(plot.title = element_text(hjust = 0),
+#           axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+#     )
+# }
+
+# Lengthier code that still works (I didn't realize that I had a dataset that summarized all the computations I did below ...)
+
+# Remove extraneous columns for graphing
+  # CRS
+crs_incidence_trimmed <- select(crs_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998"))
+years_crs <- str_remove(colnames(crs_incidence_trimmed), "X")
+
+  # Diptheria
+dip_incidence_trimmed <- select(diptheria_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_dip <- str_remove(colnames(dip_incidence_trimmed), "X")
+
+  # Japanese Encephalitis
+japenc_incidence_trimmed <- select(japenc_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006"))
+years_japenc <- str_remove(colnames(japenc_incidence_trimmed), "X")
+
+  # Measles
+measles_incidence_trimmed <- select(measles_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_measles <- str_remove(colnames(measles_incidence_trimmed), "X")
+
+  # Mumps
+mumps_incidence_trimmed <- select(mumps_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998"))
+years_mumps <- str_remove(colnames(mumps_incidence_trimmed), "X")
+
+  # Neonatal Tetanus
+ntet_incidence_trimmed <- select(ntetanus_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_ntet <- str_remove(colnames(ntet_incidence_trimmed), "X")
+
+  # Pertussis
+pertussis_incidence_trimmed <- select(pertussis_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_pertussis <- str_remove(colnames(pertussis_incidence_trimmed), "X")
+
+  # Polio
+polio_incidence_trimmed <- select(polio_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_polio <- str_remove(colnames(polio_incidence_trimmed), "X")
+
+  # Rubella
+rubella_incidence_trimmed <- select(rubella_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998"))
+years_rubella <- str_remove(colnames(rubella_incidence_trimmed), "X")
+
+  # TTetanus
+ttet_incidence_trimmed <- select(ttetanus_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_ttet <- str_remove(colnames(ttet_incidence_trimmed), "X")
+
+  # Yellow Fever
+yfever_incidence_trimmed <- select(yfever_incidence, c("X2018", "X2017", "X2016", "X2015", "X2014", "X2013", "X2012", "X2011", "X2010", "X2009", "X2008", "X2007", "X2006", "X2005", "X2004", "X2003", "X2002", "X2001", "X2000", "X1999", "X1998", "X1997", "X1996", "X1995", "X1994", "X1993", "X1992", "X1991", "X1990", "X1989", "X1988", "X1987", "X1986", "X1985", "X1984", "X1983", "X1982", "X1981", "X1980"))
+years_yfever <- str_remove(colnames(yfever_incidence_trimmed), "X")
+
+
+# Reformat dataframe into columns by year and total incidence
+  # CRS
+total_crs_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_crs)), "Incidence" = colSums(crs_incidence_trimmed, na.rm = TRUE))
+
+  # Diptheria
+total_dip_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_dip)), "Incidence" = colSums(dip_incidence_trimmed, na.rm = TRUE))
+
+  # Japanese Encephalitis
+total_japenc_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_japenc)), "Incidence" = colSums(japenc_incidence_trimmed, na.rm = TRUE))
+
+  # Measles
+total_measles_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_measles)), "Incidence" = colSums(measles_incidence_trimmed, na.rm = TRUE))
+
+  # Mumps
+total_mumps_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_mumps)), "Incidence" = colSums(mumps_incidence_trimmed, na.rm = TRUE))
+
+  # Neonatal Tetanus
+total_ntet_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_ntet)), "Incidence" = colSums(ntet_incidence_trimmed, na.rm = TRUE))
+
+  # Pertussis
+total_pertussis_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_pertussis)), "Incidence" = colSums(pertussis_incidence_trimmed, na.rm = TRUE))
+
+  # Polio
+total_polio_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_polio)), "Incidence" = colSums(polio_incidence_trimmed, na.rm = TRUE))
+
+  # Rubella
+total_rubella_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_rubella)), "Incidence" = colSums(rubella_incidence_trimmed, na.rm = TRUE))
+
+  # TTetanus
+total_ttet_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_ttet)), "Incidence" = colSums(ttet_incidence_trimmed, na.rm = TRUE))
+
+  # Yellow Fever
+total_yfever_incidence_by_year <- data.frame("Year" = as.numeric(as.character(years_yfever)), "Incidence" = colSums(yfever_incidence_trimmed, na.rm = TRUE))
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Generate plots
+
+# Wrapper function for title fitting
+wrapper <- function(x, ...) 
+{
+  paste(strwrap(x, ...), collapse = "\n")
+}
+
+# Plots of reported worldwide incidence over time
+  # CRS
+crs <- ggplot(total_crs_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of congenital rubella syndrome from ", min(years_crs), "to ", max(years_crs)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Diptheria
+dip <- ggplot(total_dip_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of diptheria from ", min(years_dip), "to ", max(years_dip)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Japanese Encephalitis
+jap <- ggplot(total_japenc_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of japanese encephalitis from ", min(years_japenc), "to ", max(years_japenc)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Measles
+mea <- ggplot(total_measles_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of measles from ", min(years_measles), "to ", max(years_measles)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Mumps
+mum <- ggplot(total_mumps_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of mumps from ", min(years_mumps), "to ", max(years_mumps)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Neonatal Tetanus
+neo <- ggplot(total_ntet_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of neonatal tetanus from ", min(years_ntet), "to ", max(years_ntet)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Pertussis
+per <- ggplot(total_pertussis_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of pertussis from ", min(years_pertussis), "to ", max(years_pertussis)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Polio
+pol <- ggplot(total_polio_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of polio from ", min(years_polio), "to ", max(years_polio)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Rubella
+rub <- ggplot(total_rubella_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of rubella from ", min(years_rubella), "to ", max(years_rubella)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # TTetanus
+tte <- ggplot(total_ttet_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of tetanus toxoid from ", min(years_ttet), "to ", max(years_ttet)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+  # Yellow Fever
+yel <- ggplot(total_yfever_incidence_by_year, aes(Year, Incidence)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  geom_smooth() +
+  ggtitle(wrapper(paste("Reported worldwide incidence of yellow fever from ", min(years_yfever), "to ", max(years_yfever)), width = 35)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+
+figure1 <- ggarrange(per, dip, tte
+                    # labels = c("A", "B", "C"),
+                    # ncol = 1, nrow = 3
+                    )
+
+figure2 <- ggarrange(mea, pol, rub, neo
+                    # labels = c("A", "B", "C"),
+                    # ncol = 1, nrow = 3
+                    )
+
+figure3 <- ggarrange(mum, yel, crs, jap
+                    # labels = c("A", "B", "C"),
+                    # ncol = 1, nrow = 3
+                    )
+
+figure1; figure2; figure3;
+
+```
+
+For these line plots, I used smoothing to highlight overarching trends in reported cases. We can see clearly for the most part that reported worldwide incidence of each of the diseases included in this analysis has greatly decreased from the 1980s to present day. Examples include pertussis, tetanus toxoid, measles, and polio. Note, this trend is not as clear for mumps, congenital rubella syndrome, or yellow fever. In fact, the trend for congenital rubella syndrome is a net increase since reporting started, though this may be an artifact of inaccurate reporting. 
+
+We picked a handful of infectious diseases to take a particular look at (diphtheria, pertussis, measles, polio, and rubella), and looked at the number of countries that achieved the immunity threshold as defined by coverage of particular vaccines over time. The vaccines we chose for analysis are DTP3 for diphtheria and pertussis coverage, MCV1 for measles coverage, Pol3 for polio coverage, and RCV1 for rubella coverage. The number in the vaccine name refers to which dose of the vaccine it is (since vaccines are typically given over several doses for greatest efficacy), and we chose these to simply to maximize the data we had to work with. These diseases were also good to look at because they are more commonly known and as a result may be better reported.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Focus on coverage of DTP3 (for diphtheria, tetanus, and pertussis)
+# DTP1_coverage <- filter(coverage_series, Vaccine == "DTP1")
+DTP3_coverage <- filter(coverage_series, Vaccine == "DTP3")
+
+# Focus on coverage of MCV1 (for measles)
+MCV1_coverage <- filter(coverage_series, Vaccine == "MCV1")
+# MCV2_coverage <- filter(coverage_series, Vaccine == "MCV2")
+
+# Focus on coverage of Pol3 (for polio)
+Pol3_coverage <- filter(coverage_series, Vaccine == "Pol3")
+
+# Focus on coverage of RCV1 (for rubella)
+RCV1_coverage <- filter(coverage_series, Vaccine == "RCV1")
+
+```
+
+We can perform some reorganization of the data to get the sum of countries that are at threshold.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Number of countries (out of 194 total) that are at or above the immunity threshold percentage
+
+# Diphtheria
+counts_dip <- list()
+start_year <- min(DTP3_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(DTP3_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= diphtheria_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_dip[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Pertussis
+counts_per <- list()
+start_year <- min(DTP3_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(DTP3_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= pertussis_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_per[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Measles
+counts_mea <- list()
+start_year <- min(MCV1_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(MCV1_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= measles_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_mea[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Polio
+counts_pol <- list()
+start_year <- min(Pol3_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(Pol3_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= polio_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_pol[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+# Rubella
+counts_rub <- list()
+start_year <- min(RCV1_coverage$Year)
+i <- 1
+while (start_year != 2019) {
+  cur_year_counts <- filter(RCV1_coverage, Year == start_year)
+  coverages <- na.omit(cur_year_counts$Percent_coverage)
+  coverage_count <- 0
+  for (coverage in coverages) {
+    if (coverage >= rubella_threshold) {
+      coverage_count <- coverage_count + 1
+    }
+  }
+  counts_rub[[i]] <- coverage_count
+  i <- i + 1
+  start_year <- start_year + 1
+}
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for diphtheria over time
+covered_thresh_dip <- data.frame(
+  Year = min(DTP3_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_dip)
+)
+
+ggplot(covered_thresh_dip, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  geom_smooth() +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at DTP3 coverage threshold for diphtheria herd immunity from ", min(DTP3_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5) +
+  geom_text(data=data.frame(x = 1980, y = 194), aes(x, y), label = "Total countries", color = "red", vjust = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for pertussis over time
+covered_thresh_per <- data.frame(
+  Year = min(DTP3_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_per)
+)
+
+ggplot(covered_thresh_per, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  geom_smooth() +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at DTP3 coverage threshold for pertussis herd immunity from ", min(DTP3_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5) +
+  geom_text(data=data.frame(x = 1980, y = 194), aes(x, y), label = "Total countries", color = "red", vjust = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for measles over time
+covered_thresh_mea <- data.frame(
+  Year = min(MCV1_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_mea)
+)
+
+ggplot(covered_thresh_mea, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  geom_smooth() +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at MCV1 coverage threshold for measles herd immunity from ", min(MCV1_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5) +
+  geom_text(data=data.frame(x = 1980, y = 194), aes(x, y), label = "Total countries", color = "red", vjust = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for polio over time
+covered_thresh_pol <- data.frame(
+  Year = min(Pol3_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_pol)
+)
+
+ggplot(covered_thresh_pol, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  geom_smooth() +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at Pol3 coverage threshold for polio herd immunity from ", min(Pol3_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5) +
+  geom_text(data=data.frame(x = 1980, y = 194), aes(x, y), label = "Total countries", color = "red", vjust = 1.5)
+
+# Number of countries that reach the vaccine coverage threshold for herd immunity for rubella over time
+covered_thresh_rub <- data.frame(
+  Year = min(RCV1_coverage$Year):2018,
+  Num_countries_covered = unlist(counts_rub)
+)
+
+ggplot(covered_thresh_rub, aes(Year, Num_countries_covered)) +
+  geom_line(size = 1, linetype = 2) +
+  geom_point(shape = 4, size = 2) +
+  geom_smooth() +
+  scale_color_manual(values = c("black", "gray40")) +
+  theme_bw() +
+  ggtitle(wrapper(paste("Number of countries at RCV1 coverage threshold for rubella herd immunity from ", min(RCV1_coverage$Year), " to 2018"), width = 65)) +
+theme(plot.title = element_text(hjust = 0),
+      axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0)) +
+  geom_hline(yintercept = 194, linetype = "dashed", color = "red", size = 1.5) +
+  geom_text(data=data.frame(x = 1980, y = 194), aes(x, y), label = "Total countries", color = "red", vjust = 1.5)
+
+```
+
+As expected, we see that worldwide coverage for each of these vaccines has increased dramatically across time. Particularly significant is polio, where almost every country in the world has achieved the immunity threshold. For the rest of these vaccines however, there is still a significant number of countries that are not at threshold, and where those diseases still persist. Furthermore, we see that recently (within the past 5 years) there as been a stagnation in coverage. Other than polio, there are at least 50 countries (~25%) that are not at the coverage necessary for herd immunity for each of the analyzed diseases. 
+
+### Results
+Next, we use the regions defined by WHO to see incidence by year and by region to identify what areas are still observing high incidence and highlight the recent trends in the past 5 years regarding disease incidence. We also perform geospatial analysis to visually identify specific countries that either have a high number of reported cases or have not reached the threshold coverage specified in the above chart. 
+
+```{r, eval = TRUE, message = FALSE}
+
+# For ease of access
+regional_global_incidence <- read.csv(url("https://raw.githubusercontent.com/davemai/BMIN503_Final_Project/master/data/regional_global_incidence.csv"), header = TRUE)
+
+# Rename disease values in entries
+regional_global_incidence$Disease <- revalue(regional_global_incidence$Disease, c("CRS" = "congenital rubella syndrome", "JapEnc" = "japanese encephalitis", "ntetanus" = "neonatal tetanus", "Mumps" = "mumps", "Rubella" = "rubella", "ttetanus" = "tetanus toxoid", "yfever" = "yellow fever"))
+colnames(regional_global_incidence) <- str_remove(colnames(regional_global_incidence), "X")
+
+# Take only 2014 - 2018 (recent years) for analysis
+regional_global_incidence <- select(regional_global_incidence, "region", "Disease", "2014", "2015", "2016", "2017", "2018")
+
+# Filter dataframes
+regional_dip_incidence <- filter(regional_global_incidence, Disease == "diphtheria", region != "world")
+regional_per_incidence <- filter(regional_global_incidence, Disease == "pertussis", region != "world")
+regional_mea_incidence <- filter(regional_global_incidence, Disease == "measles", region != "world")
+regional_pol_incidence <- filter(regional_global_incidence, Disease == "polio", region != "world")
+regional_rub_incidence <- filter(regional_global_incidence, Disease == "rubella", region != "world")
+
+# Reformat dataframe with 'melt'
+regional_dip_incidence <- melt(regional_dip_incidence)
+regional_per_incidence <- melt(regional_per_incidence)
+regional_mea_incidence <- melt(regional_mea_incidence)
+regional_pol_incidence <- melt(regional_pol_incidence)
+regional_rub_incidence <- melt(regional_rub_incidence)
+
+dip_by_year <- ggplot(regional_dip_incidence, aes(region, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~variable, ncol = 5) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Diphtheria Incidence by Year (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+dip_by_region <- ggplot(regional_dip_incidence, aes(variable, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region, ncol = 6) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Diphtheria Incidence by Region (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+figure_dip <- ggarrange(dip_by_year, dip_by_region,
+                    ncol = 1, nrow = 2)
+figure_dip;
+
+per_by_year <- ggplot(regional_per_incidence, aes(region, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~variable, ncol = 5) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Pertussis Incidence by Year (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+per_by_region <- ggplot(regional_per_incidence, aes(variable, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region, ncol = 6) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Pertussis Incidence by Region (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+figure_per <- ggarrange(per_by_year, per_by_region,
+                    ncol = 1, nrow = 2)
+figure_per;
+
+mea_by_year <- ggplot(regional_mea_incidence, aes(region, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~variable, ncol = 5) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Measles Incidence by Year (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+mea_by_region <- ggplot(regional_mea_incidence, aes(variable, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region, ncol = 6) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Measles Incidence by Region (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+figure_mea <- ggarrange(mea_by_year, mea_by_region,
+                    ncol = 1, nrow = 2)
+figure_mea;
+
+pol_by_year <- ggplot(regional_pol_incidence, aes(region, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~variable, ncol = 5) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Polio Incidence by Year (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+pol_by_region <- ggplot(regional_pol_incidence, aes(variable, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region, ncol = 6) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Polio Incidence by Region (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+figure_pol <- ggarrange(pol_by_year, pol_by_region,
+                    ncol = 1, nrow = 2)
+figure_pol;
+
+rub_by_year <- ggplot(regional_rub_incidence, aes(region, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~variable, ncol = 5) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Rubella Incidence by Year (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+rub_by_region <- ggplot(regional_rub_incidence, aes(variable, value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region, ncol = 6) +
+  theme_bw() +
+  ylab("Incidence") +
+  ggtitle("Rubella Incidence by Region (2014 - 2018)") +
+  theme(plot.title = element_text(hjust = 0, size = 18)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(name = "")
+
+figure_rub <- ggarrange(rub_by_year, rub_by_region,
+                    ncol = 1, nrow = 2)
+figure_rub;
+
+```
+
+There are varied trends for each disease. For diphtheria, we see that overall reported cases have been increasing across all regions, but most significantly in the SEAR region with up the 10,000 reported cases in 2018. Pertussis has persisted relatively steadily across all regions, with particularly high reported cases (all ~20,000 or greater reported cases) in AMR, EUR, SEAR, and WPR. As a note, the decrease in cases in the AMR region in 2018 was due to the fact that there was no data available for the U.S. Measles has also persisted relatively steadily in the past 5 years, actually increasing in some regions. This recent increase was the case in AFR, which has the most reported cases of measles of over 100,000 a year in 2018, as well as EMR, AMR, and EUR. SEAR observed a relatively steady state of measles cases, while there has been some decreases in WPR. The polio landscape is much more promising, with all regions observing cases in the 100s in the past several years. There is still minor presence of polio in AFR, EMR, and WPR, but all of these regions have reported fewer than 100 cases in 2018. Finally, rubella persistence has remained steady in the past 5 years, with high prevalence areas in AFR, SEAR, and WPR. In fact, in AFR the highest number of cases occured most recently in 2018, during which over 10,000 cases were reported. EMR and EUR observe low but steady cases every year. 
+
+We can also take a look at the recent vaccination trends for the particular vaccines that cover these pathogens. We plot the average vaccination coverage over the same past 5 years and for each of the WHO regions. Note that this averaging still obscures country-level information, as there may be particular countries that suffer significantly more in terms of achieving necessary vaccine coverage for herd immunity. 
+
+```{r, eval = TRUE, message = FALSE}
+
+# Filter dataframe to get only relevant information
+recent_coverage <- coverage_series %>%
+  filter(Year %in% c(2014, 2015, 2016, 2017, 2018)) %>%
+  filter(Vaccine %in% c("DTP3", "MCV1", "Pol3", "RCV1"))
+
+# Calculate average coverages and standard deviations per vaccine over region and year
+averages <- list()
+sds <- list()
+iter <- 1
+for (vac in unique(recent_coverage$Vaccine)) {
+  for (region in levels(recent_coverage$WHO_REGION)) {
+    for (year in unique(recent_coverage$Year)) {
+      cur <- filter(recent_coverage, Vaccine == vac, WHO_REGION == region, Year == year)
+      averages[[iter]] <- mean(cur$Percent_coverage, na.rm = TRUE)
+      sds[[iter]] <- sd(cur$Percent_coverage, na.rm = TRUE)
+      iter <- iter + 1
+    }
+  }
+}
+
+# Create dataframe for average coverages and the standard deviation per region over time
+avg_coverages <- data.frame(
+  WHO_REGION = rep(c(rep("AFR", 5), rep("AMR", 5), rep("EMR", 5), rep("EUR", 5), rep("SEAR", 5), rep("WPR", 5)), 4),
+  Vaccine = c(rep("DTP3", 30), rep("MCV1", 30), rep("Pol3", 30), rep("RCV1", 30)),
+  Year = rep(c(2014, 2015, 2016, 2017, 2018), 24),
+  Avg_percent_coverage = unlist(averages),
+  Std = unlist(sds)
+)
+
+by_year <- list()
+iter <- 1
+for (vac in unique(avg_coverages$Vaccine)) {
+  cur <- ggplot(filter(avg_coverages, Vaccine == vac), aes(WHO_REGION, Avg_percent_coverage)) +
+    geom_bar(stat = "identity") +
+    geom_errorbar(aes(ymin = Avg_percent_coverage - Std, ymax = Avg_percent_coverage + Std), width = 0.3, position = position_dodge(.9)) +
+    facet_wrap(~Year, ncol = 5) +
+    theme_bw() +
+    ylab("Percent Coverage") +
+    ggtitle(paste("Average", vac,"Coverage by Year (2014-2018)")) +
+    theme(plot.title = element_text(hjust = 0, size = 18)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    scale_x_discrete(name = "")
+  
+  # Store plot in list
+  by_year[[iter]] <- cur
+  iter <- iter + 1
+}
+
+by_region <- list()
+iter <- 1
+for (vac in unique(avg_coverages$Vaccine)) {
+  cur <- ggplot(filter(avg_coverages, Vaccine == vac), aes(Year, Avg_percent_coverage)) +
+    geom_bar(stat = "identity") +
+    geom_errorbar(aes(ymin = Avg_percent_coverage - Std, ymax = Avg_percent_coverage + Std), width = 0.3, position = position_dodge(.9)) +
+    facet_wrap(~WHO_REGION, ncol = 6) +
+    theme_bw() +
+    ylab("Percent Coverage") +
+    ggtitle(paste("Average", vac,"Coverage by Region (2014-2018)")) +
+    theme(plot.title = element_text(hjust = 0, size = 18)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+  # Store plot in list
+  by_region[[iter]] <- cur
+  iter <- iter + 1
+}
+
+iter <- 1
+while (iter < 5) {
+  print(
+    ggarrange(by_year[[iter]], by_region[[iter]],
+                    ncol = 1, nrow = 2)
+  )
+  iter <- iter + 1
+}
+
+```
+
+We take a closer look at 4 particular vaccines evaluated against protecting 5 diseases. We use DTP3 for diphtheria and pertussis coverage, MCV1 for measles coverage, Pol3 for polio coverage, and RCV1 for rubella coverage. The average coverage for DTP3 by year does not shift much, only fluctating up and down by several percent. Between regions we can see some differences in coverage up to around 10%, but for the most part coverage is fairly similar across the board. If we look at the coverage grouped by region, it's evident that only several percent changes in coverage occur between years for all the regions. For this macroscopic analysis, this trend is similar for each of the vaccines we take a look at here. The most variability can be observed with RCV1 coverage, whereby AFR, SEAR, and WPR tend to fluctate more than for other vaccines, especially betwen 2016 and 2017.
+
+Now that we have a sense of which regions are more prone to those particular diseases in terms of both reported cases and vaccination coverage, we can try to visualize them geospatially. Particularly, we can visualize incidence by country as well as which countries are or aren't at the immunity threshold for each of our specified diseases from 2014 - 2018.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Add column to indicate whether a country is at threshold coverage for each year
+DTP3_coverage$Covered_dip <- ifelse(DTP3_coverage$Percent_coverage >= diphtheria_threshold, "Yes", "No")
+DTP3_coverage$Covered_per <- ifelse(DTP3_coverage$Percent_coverage >= pertussis_threshold, "Yes", "No")
+MCV1_coverage$Covered <- ifelse(MCV1_coverage$Percent_coverage >= measles_threshold, "Yes", "No")
+Pol3_coverage$Covered <- ifelse(Pol3_coverage$Percent_coverage >= polio_threshold, "Yes", "No")
+
+# Show which countries are at threshold coverage from 2014 - 2018
+data("World")
+colnames(World)[which(names(World) == "iso_a3")] <- "ISO_code"
+
+# Join datasets
+world_coverage_dip_per <- inner_join(World, DTP3_coverage, "ISO_code")
+world_coverage_measles <- inner_join(World, MCV1_coverage, "ISO_code")
+world_coverage_polio <- inner_join(World, Pol3_coverage, "ISO_code")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Plots: 2014 - 2018 for each disease
+years <- c(2014, 2015, 2016, 2017, 2018)
+
+  # Diphtheria
+dip_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_dip_per, Year == year)) +
+  tm_polygons("Covered_dip", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nDiphtheria Coverage\nThreshold in", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  dip_figures[[i]] <- fig
+  i <- i + 1
+}
+dip_coverage <- tmap_arrange(dip_figures[[1]], dip_figures[[2]], dip_figures[[3]], dip_figures[[4]], dip_figures[[5]])
+dip_coverage;
+
+  # Pertussis
+per_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_dip_per, Year == year)) +
+  tm_polygons("Covered_per", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nPertussis Coverage\nThreshold in", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  per_figures[[i]] <- fig
+  i <- i + 1
+}
+per_coverage <- tmap_arrange(per_figures[[1]], per_figures[[2]], per_figures[[3]], per_figures[[4]], per_figures[[5]])
+per_coverage;
+
+  # Measles
+mea_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_measles, Year == year)) +
+  tm_polygons("Covered", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nMeasles Coverage\nThreshold in", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  mea_figures[[i]] <- fig
+  i <- i + 1
+}
+mea_coverage <- tmap_arrange(mea_figures[[1]], mea_figures[[2]], mea_figures[[3]], mea_figures[[4]], mea_figures[[5]])
+mea_coverage;
+
+  # Polio
+pol_figures <- list()
+i <- 1
+for (year in years) {
+  fig <- tm_shape(filter(world_coverage_polio, Year == year)) +
+  tm_polygons("Covered", title = "At or above threshold",
+    # showNA = TRUE,
+    border.col = "black", border.alpha = .5,
+    style = "cont",
+    # breaks = c(0, 1),
+    palette = "RdYlGn") +
+  tm_layout(paste("Countries at\nPolio Coverage\nThreshold in", year),
+            legend.title.size = 1,
+            legend.text.size = 0.6,
+            legend.position = c("left","bottom"),
+            legend.bg.color = "white",
+            legend.bg.alpha = 1,
+            legend.outside = TRUE)   
+  
+  pol_figures[[i]] <- fig
+  i <- i + 1
+}
+pol_coverage <- tmap_arrange(pol_figures[[1]], pol_figures[[2]], pol_figures[[3]], pol_figures[[4]], pol_figures[[5]])
+pol_coverage;
+
+```
+
+As expected, worldwide incidence of each of these infectious diseases have declined to stably low levels as vaccination coverage has increased and maintained a steadily high coverage rate. However, upon taking a closer look at specific countries, we see that there are actually ones that have seen an increased incidence, owing to a coverage rate that may not be sufficiently high. For diphtheria, we see that fewer countries are at threshold coverage in 2018 than in 2014, mainly within central Africa and parts of the EMR and SEAR regions. However, we also see that South America (Brazil) has fallen in coverage in the past two years. Pertussis coverage follows a similar trend, with parts of central/west and south Africa, the Americas, and Southeast Asia lacking coverage. More recently many South American countries have dipped in coverage, leading to much of the region being at sub-threshold by 2018 compared to 2014. Measles coverage is an alarming issue in much of Africa, with only shifting regions of coverage between 2014 - 2018. A similar number of countries seem to be covered, except South America again observed decreases in coverage leading to sub-threshold level coverages. Polio coverage is the most consistent between 2014 - 2018, with only several countries at sub-threshold level in parts of Africa and Europe. Note that the threshold for coverage for polio was designated to be 50% and is quite low (easy to achieve).
+
+Now we move on to geospatial analysis of reported cases.
+
+```{r, eval = TRUE, message = FALSE}
+
+# Geographical analysis of recent incidence (diphtheria, pertussis, polio, measles, rubella) by country (2014 - 2018)
+
+data("World")
+colnames(World)[which(names(World) == "iso_a3")] <- "ISO_code"
+
+# Join datasets
+world_incidence_diphtheria <- inner_join(World, diptheria_incidence, "ISO_code")
+world_incidence_pertussis <- inner_join(World, pertussis_incidence, "ISO_code")
+world_incidence_polio <- inner_join(World, polio_incidence, "ISO_code")
+world_incidence_measles <- inner_join(World, measles_incidence, "ISO_code")
+world_incidence_rubella <- inner_join(World, rubella_incidence, "ISO_code")
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+
+# Diphtheria
+max_incidence <- max(max(na.omit(world_incidence_diphtheria$X2014)), max(na.omit(world_incidence_diphtheria$X2015)), max(na.omit(world_incidence_diphtheria$X2016)), max(na.omit(world_incidence_diphtheria$X2017)), max(na.omit(world_incidence_diphtheria$X2018)))
+
+mean_incidence <- mean(mean(na.omit(world_incidence_diphtheria$X2014)), mean(na.omit(world_incidence_diphtheria$X2015)), mean(na.omit(world_incidence_diphtheria$X2016)), mean(na.omit(world_incidence_diphtheria$X2017)), mean(na.omit(world_incidence_diphtheria$X2018)))
+
+sd_incidence <- sd(c(na.omit(world_incidence_diphtheria$X2014), na.omit(world_incidence_diphtheria$X2015), na.omit(world_incidence_diphtheria$X2016), na.omit(world_incidence_diphtheria$X2017), na.omit(world_incidence_diphtheria$X2018)))
+
+for (year in c("X2014", "X2015", "X2016", "X2017", "X2018")) {
+  print(
+    tm_shape(world_incidence_diphtheria) +
+    tm_polygons(year, title = paste(str_remove(year, "X"), "Diphtheria Incidence"),
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, sd_incidence, 2*sd_incidence, 3*sd_incidence, max_incidence),
+              palette = "YlOrRd")
+  )
+}
+
+# Pertussis
+max_incidence <- max(max(na.omit(world_incidence_pertussis$X2014)), max(na.omit(world_incidence_pertussis$X2015)), max(na.omit(world_incidence_pertussis$X2016)), max(na.omit(world_incidence_pertussis$X2017)), max(na.omit(world_incidence_pertussis$X2018)))
+
+mean_incidence <- mean(mean(na.omit(world_incidence_pertussis$X2014)), mean(na.omit(world_incidence_pertussis$X2015)), mean(na.omit(world_incidence_pertussis$X2016)), mean(na.omit(world_incidence_pertussis$X2017)), mean(na.omit(world_incidence_pertussis$X2018)))
+
+sd_incidence <- sd(c(na.omit(world_incidence_pertussis$X2014), na.omit(world_incidence_pertussis$X2015), na.omit(world_incidence_pertussis$X2016), na.omit(world_incidence_pertussis$X2017), na.omit(world_incidence_pertussis$X2018)))
+
+for (year in c("X2014", "X2015", "X2016", "X2017", "X2018")) {
+  print(
+    tm_shape(world_incidence_pertussis) +
+    tm_polygons(year, title = paste(str_remove(year, "X"), "Pertussis Incidence"),
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, sd_incidence, 2*sd_incidence, 3*sd_incidence, max_incidence),
+              palette = "YlOrRd")
+  )
+}
+
+# Measles
+max_incidence <- max(max(na.omit(world_incidence_measles$X2014)), max(na.omit(world_incidence_measles$X2015)), max(na.omit(world_incidence_measles$X2016)), max(na.omit(world_incidence_measles$X2017)), max(na.omit(world_incidence_measles$X2018)))
+
+mean_incidence <- mean(mean(na.omit(world_incidence_measles$X2014)), mean(na.omit(world_incidence_measles$X2015)), mean(na.omit(world_incidence_measles$X2016)), mean(na.omit(world_incidence_measles$X2017)), mean(na.omit(world_incidence_measles$X2018)))
+
+sd_incidence <- sd(c(na.omit(world_incidence_measles$X2014), na.omit(world_incidence_measles$X2015), na.omit(world_incidence_measles$X2016), na.omit(world_incidence_measles$X2017), na.omit(world_incidence_measles$X2018)))
+
+for (year in c("X2014", "X2015", "X2016", "X2017", "X2018")) {
+  print(
+    tm_shape(world_incidence_measles) +
+    tm_polygons(year, title = paste(str_remove(year, "X"), "Measles Incidence"),
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, sd_incidence, 2*sd_incidence, 3*sd_incidence, max_incidence),
+              palette = "YlOrRd")
+  )
+}
+
+# Polio
+max_incidence <- max(max(na.omit(world_incidence_polio$X2014)), max(na.omit(world_incidence_polio$X2015)), max(na.omit(world_incidence_polio$X2016)), max(na.omit(world_incidence_polio$X2017)), max(na.omit(world_incidence_polio$X2018)))
+
+mean_incidence <- mean(mean(na.omit(world_incidence_polio$X2014)), mean(na.omit(world_incidence_polio$X2015)), mean(na.omit(world_incidence_polio$X2016)), mean(na.omit(world_incidence_polio$X2017)), mean(na.omit(world_incidence_polio$X2018)))
+
+sd_incidence <- sd(c(na.omit(world_incidence_polio$X2014), na.omit(world_incidence_polio$X2015), na.omit(world_incidence_polio$X2016), na.omit(world_incidence_polio$X2017), na.omit(world_incidence_polio$X2018)))
+
+for (year in c("X2014", "X2015", "X2016", "X2017", "X2018")) {
+  print(
+    tm_shape(world_incidence_polio) +
+    tm_polygons(year, title = paste(str_remove(year, "X"), "Polio Incidence"),
+              # showNA = FALSE,
+              border.col = "black", border.alpha = .5,
+              style = "fixed",
+              breaks = c(0, sd_incidence, 2*sd_incidence, 3*sd_incidence, max_incidence),
+              palette = "YlOrRd")
+  )
+}
+
+
+```
+
+We observe some prevalence for diphtheria in parts of Africa and India, but there are many NAs. However, for those countries that have high reported cases, we see that the number of cases increased from 2014 to 2018. Pertussis incidence is markedly more widespread, with signficant prevalence in the US, Asia, Europe, and Australia. Notably, the US, a very developed country, has a particularly high number of reported cases, which may have been surprising. Between 2014 and 2018, there is an increase reported cases in Europe and the western Pacific region, which is consistent what we reported earlier. We see the most measles cases in India, eastern Europe, and several central African countries. It's also interesting to note that the regions in which measles persists shifts, and may have a trajectory that is not limited to just the originating country (with respect to 2014), cases in China dropped while cases in neighboring countries increased. Finally, the most polio is observed in Pakistan beginning 2014 but had fallen by 2018. In 2018, there are only a few localized countries with at most ~300 cases of polio in Africa or east Asia. 
+
+Below is a section for outdated code.
+
+```{r, eval = FALSE, message = FALSE}
+
+# Outdated Code
+
+# # Filter by region choosing diseases of interest
+# AFR_incidence <- filter(regional_global_incidence, region == "AFR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# AMR_incidence <- filter(regional_global_incidence, region == "AMR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# EMR_incidence <- filter(regional_global_incidence, region == "EMR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# EUR_incidence <- filter(regional_global_incidence, region == "EUR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# SEAR_incidence <- filter(regional_global_incidence, region == "SEAR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# WPR_incidence <- filter(regional_global_incidence, region == "WPR", Disease %in% c("diphtheria", "pertussis", "measles", "polio", "rubella"))
+# 
+# # Reshape dataframes
+# AFR_incidence <- melt(AFR_incidence)
+# AMR_incidence <- melt(AMR_incidence)
+# EMR_incidence <- melt(EMR_incidence)
+# EUR_incidence <- melt(EUR_incidence)
+# SEAR_incidence <- melt(SEAR_incidence)
+# WPR_incidence <- melt(WPR_incidence)
+# 
+# # Covert x-axis factor to numeric
+# AFR_incidence$variable <- as.numeric(as.character(AFR_incidence$variable))
+# AMR_incidence$variable <- as.numeric(as.character(AMR_incidence$variable))
+# EMR_incidence$variable <- as.numeric(as.character(EMR_incidence$variable))
+# EUR_incidence$variable <- as.numeric(as.character(EUR_incidence$variable))
+# SEAR_incidence$variable <- as.numeric(as.character(SEAR_incidence$variable))
+# WPR_incidence$variable <- as.numeric(as.character(WPR_incidence$variable))
+# 
+# for (disease in unique(AMR_incidence$Disease)) {
+#     print(
+#       ggplot(AMR_incidence[AMR_incidence$Disease == disease,], aes(variable, value)) +
+#         geom_point() +
+#         geom_line() +
+#         ggtitle(paste("AMR region incidence of", disease)) +
+#         xlab("Year") +
+#         ylab("Incidence")
+#     )
+# }
+# 
+# # DTP3 coverage per country over time
+# for (country in levels(DTP3_coverage$Cname)) {
+#   cur <- filter(DTP3_coverage, Cname == country)
+#   if (is_empty(cur$Year)) {
+#     next
+#   }
+#   # Plots of reported coverage by country over time
+#   print(
+#     ggplot(cur, aes(Year, Percent_coverage)) +
+#       geom_line(size = 1, linetype = 2) +
+#       geom_point(shape = 4, size = 2) +
+#       scale_color_manual(values = c("black", "gray40")) +
+#       theme_bw() +
+#       # geom_smooth() +
+#       ggtitle(wrapper(paste("Reported coverage of DTP3 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+#     theme(plot.title = element_text(hjust = 0),
+#           axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+#   )
+# }
+# 
+# # MCV1 coverage per country over time
+# for (country in levels(MCV1_coverage$Cname)) {
+#   cur <- filter(MCV1_coverage, Cname == country)
+#   if (is_empty(cur$Year)) {
+#     next
+#   }
+#   # Plots of reported coverage by country over time
+#   print(
+#     ggplot(cur, aes(Year, Percent_coverage)) +
+#       geom_line(size = 1, linetype = 2) +
+#       geom_point(shape = 4, size = 2) +
+#       scale_color_manual(values = c("black", "gray40")) +
+#       theme_bw() +
+#       # geom_smooth() +
+#       ggtitle(wrapper(paste("Reported coverage of MCV1 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+#     theme(plot.title = element_text(hjust = 0),
+#           axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+#   )
+# }
+# 
+# 
+# # Pol3 coverage per country over time
+# for (country in levels(Pol3_coverage$Cname)) {
+#   cur <- filter(Pol3_coverage, Cname == country)
+#   if (is_empty(cur$Year)) {
+#     next
+#   }
+#   # Plots of reported coverage by country over time
+#   print(
+#     ggplot(cur, aes(Year, Percent_coverage)) +
+#       geom_line(size = 1, linetype = 2) +
+#       geom_point(shape = 4, size = 2) +
+#       scale_color_manual(values = c("black", "gray40")) +
+#       theme_bw() +
+#       # geom_smooth() +
+#       ggtitle(wrapper(paste("Reported coverage of Pol3 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+#     theme(plot.title = element_text(hjust = 0),
+#           axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+#   )
+# }
+# 
+# # RCV1 coverage per country over time
+# for (country in levels(RCV1_coverage$Cname)) {
+#   cur <- filter(RCV1_coverage, Cname == country)
+#   if (is_empty(cur$Year)) {
+#     next
+#   }
+#   # Plots of reported coverage by country over time
+#   print(
+#     ggplot(cur, aes(Year, Percent_coverage)) +
+#       geom_line(size = 1, linetype = 2) +
+#       geom_point(shape = 4, size = 2) +
+#       scale_color_manual(values = c("black", "gray40")) +
+#       theme_bw() +
+#       # geom_smooth() +
+#       ggtitle(wrapper(paste("Reported coverage of RCV1 from ", min(cur$Year), "to ", max(cur$Year), "in ", country), width = 35)) +
+#     theme(plot.title = element_text(hjust = 0),
+#           axis.text.x = element_text(angle = -90, hjust = 0, vjust = 0))
+#   )
+# }
+
+
+```
+
+### Conclusion
+Overall, I performed an exploratory descriptive analysis about recent trends in the reported cases of several diseases, as well as rates of vaccine coverage on a per country basis. Recent years have observed a decrease in the number of countries at sufficient vaccine threshold coverage necessary for herd immunity for several diseases. In particular, parts of the Americas (usually South), Africa, and South East Asia lack sufficient vaccination for herd immunity, for various diseases and as a result may be prone to disease persistance and increasing rates of reported cases in the future. Polio still exists and measles is still a significant issue in other countries. Notably, the U.S. is observing increasing cases of pertussis, which may be significant as a very well-developed country. It would be interesting to perform this analysis with low or high incidence or reported cases as an outcome with country status (developing, developed, etc.) as a predictor, along with other factors such as total population, GDP, proximity to other countries (# of neighboring countries), whether it is landlocked or not, etc. All of these factors may play a role in the spread of disease and may be correlated to recent trends in the analyzed infectious diseases. Finally, it is important to not that these problems are not always due to inadequate vaccination coverage, and that having sufficient vaccination coverage is not an immediate indicator of disease elimination. Achieving and MAINTAINING herd immunity over time is essential to reducing disease burden because elimination of disease persistence takes place over time. 
