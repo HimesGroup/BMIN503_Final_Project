@@ -1,0 +1,233 @@
+/** Admissions **/
+IF OBJECT_ID('TEMPDB..#ADM') IS NOT NULL BEGIN DROP TABLE #ADM END
+select p.pat_id, peh.pat_enc_csn_id, peh.hosp_admsn_time, peh.inp_adm_date, peh.hosp_disch_time,
+	pc.name + ' [' + convert(varchar,pc.adt_pat_class_c) + ']' as patient_class, serv.name as service,
+	disp.name as disposition
+INTO #ADM
+from patient p
+join valid_patient vp
+on p.pat_id = vp.pat_id and vp.is_valid_pat_yn = 'Y'
+join pat_enc_hsp peh
+on p.pat_id = peh.pat_id
+left join clarity_dep dep
+on peh.department_id = dep.department_id
+left join zc_pat_class pc
+on peh.adt_pat_class_c = pc.adt_pat_class_c
+left join zc_pat_service serv
+on peh.hosp_serv_c = serv.hosp_serv_c
+left join zc_disch_disp disp
+on peh.disch_disp_c = disp.disch_disp_c
+where dep.rev_loc_id in (10101,10106,10107)
+and peh.hosp_admsn_time >= '2017-03-01'
+and peh.hosp_disch_time >= '2017-01-01'
+and peh.adt_patient_stat_c in (2,3)
+and peh.admit_conf_stat_c in (1,4)
+and peh.adt_pat_class_c = 101
+;
+/** Readmissions **/
+IF OBJECT_ID('TEMPDB..#READMIT') IS NOT NULL BEGIN DROP TABLE #READMIT END
+select pat_enc_csn_id, min(readmission_date) as admission_date
+INTO #READMIT
+from (
+select a.pat_enc_csn_id, peh.pat_enc_csn_id as readmit_csn, peh.hosp_admsn_time as readmission_date, 
+	pc.name as patient_class, dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department
+from #adm a
+join pat_enc_hsp peh
+on a.pat_id = peh.pat_id 
+	and peh.hosp_admsn_time between a.hosp_disch_time and dateadd(d,30,a.hosp_disch_time)
+left join zc_pat_class pc
+on peh.adt_pat_class_c = pc.adt_pat_class_c
+left join clarity_dep dep
+on peh.department_id = dep.department_id
+where peh.adt_patient_stat_c in (2,3)
+and peh.admit_conf_stat_c in (1,4)
+and peh.adt_pat_class_c = 101
+and peh.admit_source_c not in (3)
+) readmit
+group by pat_enc_csn_id
+;
+
+/** ED Visits **/
+IF OBJECT_ID('TEMPDB..#POSTED') IS NOT NULL BEGIN DROP TABLE #POSTED END
+select pat_enc_csn_id, min(ed_visit_date) as ed_visit_date, count(distinct ed_csn) as ed_visits_30_days
+INTO #POSTED
+from (
+select a.pat_enc_csn_id, fed.pat_enc_csn_id as ed_csn, fed.adt_arrival_dttm as ed_visit_date, 
+	ed_disp.name + ' [' + convert(varchar,ed_disp.ed_disposition_c) + ']' as ed_disposition, dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department
+from #adm a
+join f_ed_encounters fed
+on a.pat_id = fed.pat_id 
+	and fed.adt_arrival_dttm between a.hosp_disch_time and dateadd(d,30,a.hosp_disch_time)
+left join clarity_dep dep
+on fed.first_emergency_department_id = dep.department_id
+left join zc_ed_disposition ed_disp
+on fed.ed_disposition_c = ed_disp.ed_disposition_c
+where fed.ed_disposition_c not in (15)
+and fed.first_emergency_department_id not in (5802)
+) ed
+group by pat_enc_csn_id
+;
+
+/** Location **/
+IF OBJECT_ID('TEMPDB..#LOC') IS NOT NULL BEGIN DROP TABLE #LOC END
+select pat_enc_csn_id, max(case when department_id in (4009,4010) then 1 else 0 end) as fp12_14_yn,
+	max(case when rev_loc_id = 10106 then 1 else 0 end) as pah_yn,
+	max(case when rev_loc_id = 10101 then 1 else 0 end) as ppmc_yn,
+	min(case when first_ip_in_ip_yn = 'Y' then effective_time end) as first_inpatient_time
+INTO #LOC
+from (
+select a.pat_enc_csn_id, et.name + ' [' + convert(varchar,et.event_type_c) + ']' as event_type, adt.effective_time, 
+	dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department, dep.department_id, dep.rev_loc_id, adt.first_ip_in_ip_yn
+from #adm a
+join clarity_adt adt
+on a.pat_enc_csn_id = adt.pat_enc_csn_id
+join clarity_dep dep
+on adt.department_id = dep.department_id
+left join zc_event_type et
+on adt.event_type_c = et.event_type_c
+where adt.event_type_c in (1,2,3,4)
+) adt
+group by pat_enc_csn_id
+;
+
+/** Admit to Floor Time **/
+IF OBJECT_ID('TEMPDB..#TM') IS NOT NULL BEGIN DROP TABLE #TM END
+select pat_enc_csn_id, min(event_time) as admit_to_floor_time
+INTO #TM
+from ( 
+select a.pat_enc_csn_id, et.name + ' [' + convert(varchar,et.event_type_c) + ']' as event_type,
+	adt.event_time, pc.name as patient_class, dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department
+from #adm a
+left join clarity_adt adt
+on a.pat_enc_csn_id = adt.pat_enc_csn_id
+	and adt.event_type_c in (1,3)
+	and adt.department_id not in (5602,5412,4056,4140,5836)
+left join zc_event_type et
+on adt.event_type_c = et.event_type_c
+left join clarity_dep dep
+on adt.department_id = dep.department_id
+left join zc_pat_class pc
+on adt.pat_class_c = pc.adt_pat_class_c
+) floortime
+group by pat_enc_csn_id
+;
+
+/** Median LOS **/
+IF OBJECT_ID('TEMPDB..#MEDIAN') IS NOT NULL BEGIN DROP TABLE #MEDIAN END
+select distinct site, year(hosp_disch_time) as Year, month(hosp_disch_time) as Month, 
+	percentile_cont(0.5) within group (order by datediff(s,inp_adm_date,hosp_disch_time)/86400.0)
+		over (partition by site, year(hosp_disch_time), month(hosp_disch_time)) as median_inpatient_los,
+	percentile_cont(0.5) within group (order by datediff(s,coalesce(admit_to_floor_time,inp_adm_date),hosp_disch_time)/86400.0)
+		over (partition by site, year(hosp_disch_time), month(hosp_disch_time)) as median_floor_to_disch_time,
+	percentile_cont(0.05) within group (order by datediff(s,coalesce(admit_to_floor_time,inp_adm_date),hosp_disch_time)/86400.0)
+		over (partition by site, year(hosp_disch_time), month(hosp_disch_time)) as wins05_floor_to_disch_time,
+	percentile_cont(0.95) within group (order by datediff(s,coalesce(admit_to_floor_time,inp_adm_date),hosp_disch_time)/86400.0)
+		over (partition by site, year(hosp_disch_time), month(hosp_disch_time)) as wins95_floor_to_disch_time
+INTO #MEDIAN
+from (
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.inp_adm_date, tm.admit_to_floor_time, loc.first_inpatient_time, a.hosp_disch_time, 
+	a.patient_class, a.service, loc.fp12_14_yn,
+	case when fp12_14_yn = 1 and pah_yn = 0 and ppmc_yn = 0 then 'FP12-14' 
+		when fp12_14_yn = 0 and ppmc_yn = 0 and pah_yn = 0 then 'HUP' 
+		when pah_yn = 1 then 'PAH' 
+		when ppmc_yn = 1 then 'PPMC' end as site
+from #adm a
+left join #loc loc
+on a.pat_enc_csn_id = loc.pat_enc_csn_id
+left join #tm tm
+on a.pat_enc_csn_id = tm.pat_enc_csn_id
+where a.service in ('HOSPITALIST','MEDICINE')
+) med
+order by site, year(hosp_disch_time), month(hosp_disch_time)
+;
+
+/** Psych Diagnoses **/
+IF OBJECT_ID('TEMPDB..#DX') IS NOT NULL BEGIN DROP TABLE #DX END
+select distinct pat_enc_csn_id
+INTO #DX
+from (
+select a.pat_enc_csn_id, edg.dx_name, edg.current_icd10_list as icd10_code, gi.grouper_id, gi.grouper_name
+from #adm a
+join pat_enc_hosp_prob prob
+on a.pat_enc_csn_id = prob.pat_enc_csn_id
+join problem_list pl
+on prob.problem_list_id = pl.problem_list_id
+join clarity_edg edg
+on pl.dx_id = edg.dx_id
+join grouper_compiled_rec_list gcrl
+on edg.dx_id = gcrl.grouper_records_numeric_id
+join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+where gcrl.base_grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658','1750659',
+	'1750660','1750661','1750662','1750663','1750670')
+) dx
+;
+
+/** Merge Data **/
+select mean.*, med.Median_Floor_to_Disch_Time, med.Median_Inpatient_LOS
+from (
+select Site, Year, Month, Month_Name, Number_of_Encounters, Avg_Inpatient_LOS, Avg_Floor_Disch_Time, Avg_Winsorized_Floor_Disch_Time, Avg_Total_LOS, 
+	Proportion_ED_Visit_30d, Proportion_Readmission_30d, Proportion_Discharge_Home, Proportion_Discharge_IP_Psych, Proportion_Psych_Problem,
+	row_number() over (partition by site order by year, month) as Time
+from (
+select site, year(hosp_disch_time) as Year, month(hosp_disch_time) as Month, datename(month,hosp_disch_time) as month_name,
+	count(distinct pat_enc_csn_id) as Number_of_Encounters, avg(datediff(s,inp_adm_date,hosp_disch_time)/86400.0) as avg_inpatient_los,
+	avg(floor_to_disch_time) as avg_floor_disch_time,
+	avg(winsorized_floor_to_disch_time) as avg_winsorized_floor_disch_time,
+	avg(datediff(s,hosp_admsn_time,hosp_disch_time)/86400.0) as avg_total_los,
+	cast(cast(sum(ed_visit_30d_yn) as float)/cast(count(distinct pat_enc_csn_id) as float) as decimal(8,4)) as proportion_ed_visit_30d,
+	cast(cast(sum(readmission_30d_yn) as float)/cast(count(distinct pat_enc_csn_id) as float) as decimal(8,4)) as proportion_readmission_30d,
+	cast(cast(sum(discharge_to_home) as float)/cast(count(distinct pat_enc_csn_id) as float) as decimal(8,4)) as proportion_discharge_home,
+	cast(cast(sum(discharge_to_ip_psych) as float)/cast(count(distinct pat_enc_csn_id) as float) as decimal(8,4)) as proportion_discharge_ip_psych,
+	cast(cast(sum(psych_prob_yn) as float)/cast(count(distinct pat_enc_csn_id) as float) as decimal(8,4)) as proportion_psych_problem
+from (
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.inp_adm_date, tm.admit_to_floor_time, loc.first_inpatient_time, a.hosp_disch_time,
+	datediff(s,coalesce(tm.admit_to_floor_time,a.inp_adm_date),a.hosp_disch_time)/86400.0 as floor_to_disch_time,
+	case when datediff(s,coalesce(tm.admit_to_floor_time,a.inp_adm_date),a.hosp_disch_time)/86400.0 < wins05_floor_to_disch_time 
+		then wins05_floor_to_disch_time
+	when datediff(s,coalesce(tm.admit_to_floor_time,a.inp_adm_date),a.hosp_disch_time)/86400.0 > wins95_floor_to_disch_time then wins95_floor_to_disch_time
+	else datediff(s,coalesce(tm.admit_to_floor_time,a.inp_adm_date),a.hosp_disch_time)/86400.0 end as winsorized_floor_to_disch_time,
+	wins05_floor_to_disch_time, wins95_floor_to_disch_time,
+	a.disposition, case when r.pat_enc_csn_id is not null then 1 else 0 end as readmission_30d_yn,
+	case when ed.pat_enc_csn_id is not null then 1 else 0 end as ed_visit_30d_yn,
+	case when dx.pat_enc_csn_id is not null then 1 else 0 end as psych_prob_yn,
+	case when a.disposition in ('Inpatient Psychiatric Unit/Facility','Inpatient Psychiatric Unit/Facility with Planned Readmission')
+		then 1 else 0 end as discharge_to_ip_psych,
+	case when a.disposition in ('Home or Self Care (Routine)') then 1 else 0 end as discharge_to_home,
+	a.patient_class, a.service, loc.fp12_14_yn,
+	case when fp12_14_yn = 1 and pah_yn = 0 and ppmc_yn = 0 then 'FP12-14' 
+		when fp12_14_yn = 0 and pah_yn = 0 and ppmc_yn = 0 then 'HUP' 
+		when pah_yn = 1 then 'PAH'
+		when ppmc_yn = 1 then 'PPMC' end as site
+from #adm a
+left join #loc loc
+on a.pat_enc_csn_id = loc.pat_enc_csn_id
+left join #tm tm
+on a.pat_enc_csn_id = tm.pat_enc_csn_id
+left join #readmit r
+on a.pat_enc_csn_id = r.pat_enc_csn_id
+left join #posted ed
+on a.pat_enc_csn_id = ed.pat_enc_csn_id
+left join #dx dx
+on a.pat_enc_csn_id = dx.pat_enc_csn_id
+left join #median wins
+on year(a.hosp_disch_time) = wins.year
+	and month(a.hosp_disch_time) = wins.[month]
+	and ((fp12_14_yn = 1 and pah_yn = 0 and ppmc_yn = 0 and wins.site = 'FP12-14')
+		or (fp12_14_yn = 0 and pah_yn = 0 and ppmc_yn = 0 and wins.site = 'HUP')
+		or (pah_yn = 1 and wins.site = 'PAH')
+		or (pah_yn = 0 and ppmc_yn = 1 and wins.site = 'PPMC'))
+where a.service in ('HOSPITALIST','MEDICINE')
+and a.hosp_disch_time >= '2017-03-01'
+) summary
+where site is not null
+group by site, year(hosp_disch_time), month(hosp_disch_time), datename(month,hosp_disch_time)
+) itt
+) mean
+left join #median med
+on mean.site = med.site 
+	and mean.year = med.year
+	and mean.month = med.month
+order by mean.site, mean.year, mean.month
+;
+

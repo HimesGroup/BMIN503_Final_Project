@@ -1,0 +1,1241 @@
+/** Admissions **/
+IF OBJECT_ID('TEMPDB..#ADM') IS NOT NULL BEGIN DROP TABLE #ADM END
+select DISTINCT PAT_ID, MRN, AGE, GENDER, RACE, ETHNICITY, ZIP, PAT_ENC_CSN_ID, HSP_ACCOUNT_ID, PAYOR, FINANCIAL_CLASS,
+	PRIMARY_DIAGNOSIS, HOSP_ADMSN_TIME, ADMIT_FROM_ED_YN, ADMIT_SOURCE, PATIENT_CLASS,
+	HOSP_DISCH_TIME, DEPARTMENT, PCP_LISTED, PCP_INSYSTEM_YN, PRIMARY_TEAM, DISCH_DISPOSITION, LEFT_AMA_YN, LOS_Days, AGENT_YN
+INTO #ADM
+from (
+select p.pat_id, p.pat_mrn_id as mrn, floor(datediff(d,p.birth_date,peh.hosp_admsn_time)/365.25) as age, sex.name as gender, 
+	zpr.name as race, eg.name as ethnicity, p.zip, peh.pat_enc_csn_id, peh.hsp_account_id, cov.payor_name as Payor, cov.fin_class_name as Financial_Class, 
+	peh.hosp_admsn_time, peh.inp_adm_date, peh.hosp_disch_time, cast(datediff(s,peh.hosp_admsn_time,peh.hosp_disch_time)/86400.0 as decimal(8,2)) as los_days,
+	dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department,
+	case when fed.pat_enc_csn_id is not null then 1 else 0 end as admit_from_ed_yn, 
+	admsrc.name as admit_source, pc.name as patient_class,
+	disp.name + ' [' + convert(varchar,disp.disch_disp_c) + ']' as disch_disposition, 
+	case when peh.disch_disp_c in (13) then 1 else 0 end as Left_AMA_YN,
+	coalesce(edg.dx_name,edg1.dx_name) + ' [' + coalesce(edg.current_icd10_list,edg1.current_icd10_list) + ']' as primary_diagnosis,
+	ser.prov_name + ' [' + ser.prov_id + ']' as pcp_listed, case when ref_type.ref_source_type_c = 1 then 1 else 0 end as pcp_insystem_yn, 
+	ref_type.name + ' [' + convert(varchar,ref_type.ref_source_type_c) + ']' as ref_type, 
+	tm.record_name as primary_team, 1 AS AGENT_YN
+from patient p
+join valid_patient vp
+on p.pat_id = vp.pat_id and vp.is_valid_pat_yn = 'Y'
+join pat_enc_hsp peh
+on p.pat_id = peh.pat_id
+join clarity_dep dep
+on peh.department_id = dep.department_id
+join clarity_adt adt
+on peh.pat_enc_csn_id = adt.pat_enc_csn_id
+	and adt.department_id in (4009,4010)
+left join zc_disch_disp disp
+on peh.disch_disp_c = disp.disch_disp_c
+left join f_ed_encounters fed
+on peh.pat_enc_csn_id = fed.pat_enc_csn_id
+left join hsp_account ha
+on peh.hsp_account_id = ha.hsp_account_id
+left join v_coverage_payor_plan cov
+on ha.coverage_id = cov.coverage_id
+left join zc_sex sex
+on p.sex_c = sex.rcpt_mem_sex_c
+left join patient_race pr
+on p.pat_id = pr.pat_id
+	and pr.line = 1
+left join zc_patient_race zpr
+on pr.patient_race_c = zpr.patient_race_c
+left join zc_ethnic_group eg
+on p.ethnic_group_c = eg.ethnic_group_c
+left join pat_enc_hosp_prob prob
+on peh.pat_enc_csn_id = prob.pat_enc_csn_id
+	and prob.principal_prob_yn = 'Y'
+left join problem_list pl
+on prob.problem_list_id = pl.problem_list_id
+left join clarity_edg edg
+on pl.dx_id = edg.dx_id
+left join pat_enc_hosp_prob prob1
+on peh.pat_enc_csn_id = prob1.pat_enc_csn_id
+	and prob1.line = 1
+left join problem_list pl1
+on prob1.problem_list_id = pl1.problem_list_id
+left join clarity_edg edg1
+on pl1.dx_id = edg1.dx_id
+left join pat_enc pe
+on peh.pat_enc_csn_id = pe.pat_enc_csn_id
+left join clarity_ser ser
+on pe.pcp_prov_id = ser.prov_id
+left join zc_ref_source_type ref_type
+on ser.referral_source_type_c = ref_type.ref_source_type_c
+left join pat_enc_2 pe2
+on peh.pat_enc_csn_id = pe2.pat_enc_csn_id
+left join provteam_rec_info tm
+on pe2.primary_team_id = tm.id
+left join zc_pat_class pc
+on peh.adt_pat_class_c = pc.adt_pat_class_c
+left join zc_adm_source admsrc
+on peh.admit_source_c = admsrc.admit_source_c
+where dep.rev_loc_id = 10107
+and peh.hosp_admsn_time >= '2017-03-05'
+and (peh.hosp_disch_time >= '2019-01-08' or peh.hosp_disch_time is null)
+) adm
+;
+
+/** FP12/FP14 Time **/
+IF OBJECT_ID('TEMPDB..#FP1214') IS NOT NULL BEGIN DROP TABLE #FP1214 END
+select pat_enc_csn_id, min(case when event_type in ('Admission [1]','Transfer In [3]') then effective_time end) as FIRST_TIME_IN_FP12_FP14, 
+	min(case when event_type in ('Discharge [2]','Transfer Out [4]') then effective_time end) as FIRST_TIME_OUT_FP12_FP14
+INTO #FP1214
+from (
+select a.pat_enc_csn_id, department_name + ' [' + convert(varchar,dep.department_id) + ']' as department, adt.effective_time,
+	adt.first_ip_in_ip_yn, et.name + ' [' + convert(varchar,et.event_type_c) + ']' as event_type,
+	row_number() over (partition by a.pat_enc_csn_id order by adt.effective_time) as row_num
+from #adm a
+left join clarity_adt adt
+on a.pat_enc_csn_id = adt.pat_enc_csn_id
+	and adt.department_id in (4009,4010)
+left join clarity_dep dep
+on adt.department_id = dep.department_id
+left join zc_event_type et
+on adt.event_type_c = et.event_type_c
+) admit
+group by pat_enc_csn_id
+;
+
+/** Arrival to Floor **/
+IF OBJECT_ID('TEMPDB..#FLR') IS NOT NULL BEGIN DROP TABLE #FLR END
+select pat_enc_csn_id, effective_time as admit_to_floor_time
+INTO #FLR
+from (
+select a.pat_enc_csn_id, department_name + ' [' + convert(varchar,dep.department_id) + ']' as department, adt.effective_time,
+	adt.first_ip_in_ip_yn, et.name + ' [' + convert(varchar,et.event_type_c) + ']' as event_type,
+	row_number() over (partition by a.pat_enc_csn_id order by adt.effective_time) as row_num
+from #adm a
+left join clarity_adt adt
+on a.pat_enc_csn_id = adt.pat_enc_csn_id
+	and adt.first_ip_in_ip_yn = 'Y'
+left join clarity_dep dep
+on adt.department_id = dep.department_id
+left join zc_event_type et
+on adt.event_type_c = et.event_type_c
+) admit
+where row_num = 1
+;
+
+/** PATIENT LOCATION **/
+IF OBJECT_ID('TEMPDB..#LOC') IS NOT NULL BEGIN DROP TABLE #LOC END
+select pat_enc_csn_id, department as last_department, bed as last_bed
+INTO #LOC
+from (
+select a.pat_enc_csn_id, et.name + ' [' + convert(varchar,et.event_type_c) + ']' as event_type, adt.effective_time,
+	dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department, bed.bed_label as bed,
+	row_number() over (partition by a.pat_enc_csn_id order by adt.effective_time desc) as row_num
+from #adm a
+join clarity_adt adt
+on a.pat_enc_csn_id = adt.pat_enc_csn_id
+join clarity_dep dep
+on adt.department_id = dep.department_id
+left join clarity_bed bed
+on adt.bed_csn_id = bed.bed_csn_id
+left join zc_event_type et
+on adt.event_type_c = et.event_type_c
+where adt.department_id is not null
+and adt.event_type_c in (1,2,3,4,5)
+) loc
+where row_num = 1
+;
+
+/** Problem List **/
+IF OBJECT_ID('TEMPDB..#PL') IS NOT NULL BEGIN DROP TABLE #PL END
+select PAT_ENC_CSN_ID, 
+	MAX(PL_CCS_650_ADJUSTMENT_DISORDERS) AS PL_CCS_650_ADJUSTMENT_DISORDERS,
+	MAX(PL_CCS_651_ANXIETY_DISORDERS) AS PL_CCS_651_ANXIETY_DISORDERS,
+	MAX(PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS) AS PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	MAX(PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS) AS PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	MAX(PL_CCS_654_DEVELOPMENTAL_DISORDERS) AS PL_CCS_654_DEVELOPMENTAL_DISORDERS,
+	MAX(PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL) AS PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	MAX(PL_CCS_656_IMPULSE_CONTROL_DISORDERS) AS PL_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	MAX(PL_CCS_657_MOOD_DISORDERS) AS PL_CCS_657_MOOD_DISORDERS,
+	MAX(PL_CCS_658_PERSONALITY_DISORDERS) AS PL_CCS_658_PERSONALITY_DISORDERS,
+	MAX(PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS) AS PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	MAX(PL_CCS_660_ALCOHOL_RELATED_DISORDERS) AS PL_CCS_660_ALCOHOL_RELATED_DISORDERS, 
+	MAX(PL_CCS_661_SUBSTANCE_RELATED_DISORDERS) AS PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	MAX(PL_CCS_662_SUICIDE_INTENTIONAL_INJURY) AS PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	MAX(PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE) AS PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	MAX(PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS) AS PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS
+INTO #PL
+from (
+select pat_enc_csn_id, diagnosis, grouper_name, grouper_id, problem_status, PL_CCS_650_ADJUSTMENT_DISORDERS, PL_CCS_651_ANXIETY_DISORDERS, 
+	PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,	PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS, PL_CCS_654_DEVELOPMENTAL_DISORDERS, 
+	PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL, PL_CCS_656_IMPULSE_CONTROL_DISORDERS, PL_CCS_657_MOOD_DISORDERS, PL_CCS_658_PERSONALITY_DISORDERS, 
+	PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,	PL_CCS_660_ALCOHOL_RELATED_DISORDERS, PL_CCS_661_SUBSTANCE_RELATED_DISORDERS, PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE, PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS
+from (
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.hosp_disch_time, pl.noted_date, pl.resolved_date, ps.name as problem_status,
+	edg.dx_name + ' [' + edg.current_icd10_list + ']' as diagnosis, gi.grouper_name, gi.grouper_id,
+	case when gi.grouper_id = '1750650' then 1 else 0 end as PL_CCS_650_ADJUSTMENT_DISORDERS,
+	case when gi.grouper_id = '1750651' then 1 else 0 end as PL_CCS_651_ANXIETY_DISORDERS,
+	case when gi.grouper_id = '1750652' then 1 else 0 end as PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	case when gi.grouper_id = '1750653' then 1 else 0 end as PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	case when gi.grouper_id = '1750654' then 1 else 0 end as PL_CCS_654_DEVELOPMENTAL_DISORDERS,
+	case when gi.grouper_id = '1750655' then 1 else 0 end as PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	case when gi.grouper_id = '1750656' then 1 else 0 end as PL_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	case when gi.grouper_id = '1750657' then 1 else 0 end as PL_CCS_657_MOOD_DISORDERS,
+	case when gi.grouper_id = '1750658' then 1 else 0 end as PL_CCS_658_PERSONALITY_DISORDERS,
+	case when gi.grouper_id = '1750659' then 1 else 0 end as PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	case when gi.grouper_id = '1750660' then 1 else 0 end as PL_CCS_660_ALCOHOL_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750661' then 1 else 0 end as PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750662' then 1 else 0 end as PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	case when gi.grouper_id = '1750663' then 1 else 0 end as PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	case when gi.grouper_id = '1750670' then 1 else 0 end as PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,
+	row_number() over (partition by a.pat_id, pl.problem_list_id order by plhx.hx_entry_inst desc) as row_num
+from #adm a
+join problem_list pl
+on a.pat_id = pl.pat_id
+join problem_list_hx plhx
+on pl.problem_list_id = plhx.problem_list_id
+join zc_problem_status ps
+on plhx.hx_status_c = ps.problem_status_c
+join clarity_edg edg
+on pl.dx_id = edg.dx_id
+left join grouper_compiled_rec_list gcrl 
+on edg.dx_id = gcrl.grouper_records_numeric_id
+	and gcrl.compiled_context = 'EDG'
+	and gcrl.base_grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658',
+		'1750659','1750660','1750661','1750662','1750663','1750670')
+left join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+where (edg.current_icd10_list like '%F%' or gi.grouper_id in ('111855','111620','111644','111459','112447','111979')
+or gi.grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658','1750659',
+	'1750660','1750661','1750662','1750663','1750670'))
+and plhx.hx_date_of_entry <= convert(date,a.hosp_admsn_time)
+) PL
+where row_num = 1
+and problem_status = 'Active'
+) HX
+GROUP BY PAT_ENC_CSN_ID
+;
+
+/** Previous Encounter Diagnoses **/
+IF OBJECT_ID('TEMPDB..#ENCDX') IS NOT NULL BEGIN DROP TABLE #ENCDX END
+select PAT_ENC_CSN_ID, 
+	MAX(ENC_DX_CCS_650_ADJUSTMENT_DISORDERS) AS ENC_DX_CCS_650_ADJUSTMENT_DISORDERS,
+	MAX(ENC_DX_CCS_651_ANXIETY_DISORDERS) AS ENC_DX_CCS_651_ANXIETY_DISORDERS,
+	MAX(ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS) AS ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	MAX(ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS) AS ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	MAX(ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS) AS ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS,
+	MAX(ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL) AS ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	MAX(ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS) AS ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	MAX(ENC_DX_CCS_657_MOOD_DISORDERS) AS ENC_DX_CCS_657_MOOD_DISORDERS,
+	MAX(ENC_DX_CCS_658_PERSONALITY_DISORDERS) AS ENC_DX_CCS_658_PERSONALITY_DISORDERS,
+	MAX(ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS) AS ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	MAX(ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS) AS ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS, 
+	MAX(ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS) AS ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	MAX(ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY) AS ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	MAX(ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE) AS ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	MAX(ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS) AS ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS
+INTO #ENCDX
+from (
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.hosp_disch_time, pdx.contact_date, 
+	edg.dx_name + ' [' + edg.current_icd10_list + ']' as diagnosis, gi.grouper_name, gi.grouper_id,
+	case when gi.grouper_id = '1750650' then 1 else 0 end as ENC_DX_CCS_650_ADJUSTMENT_DISORDERS,
+	case when gi.grouper_id = '1750651' then 1 else 0 end as ENC_DX_CCS_651_ANXIETY_DISORDERS,
+	case when gi.grouper_id = '1750652' then 1 else 0 end as ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	case when gi.grouper_id = '1750653' then 1 else 0 end as ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	case when gi.grouper_id = '1750654' then 1 else 0 end as ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS,
+	case when gi.grouper_id = '1750655' then 1 else 0 end as ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	case when gi.grouper_id = '1750656' then 1 else 0 end as ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	case when gi.grouper_id = '1750657' then 1 else 0 end as ENC_DX_CCS_657_MOOD_DISORDERS,
+	case when gi.grouper_id = '1750658' then 1 else 0 end as ENC_DX_CCS_658_PERSONALITY_DISORDERS,
+	case when gi.grouper_id = '1750659' then 1 else 0 end as ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	case when gi.grouper_id = '1750660' then 1 else 0 end as ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750661' then 1 else 0 end as ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750662' then 1 else 0 end as ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	case when gi.grouper_id = '1750663' then 1 else 0 end as ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	case when gi.grouper_id = '1750670' then 1 else 0 end as ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS
+from #adm a
+join pat_enc_dx pdx
+on a.pat_id = pdx.pat_id
+	and pdx.contact_date >= dateadd(d,-365,convert(date,a.hosp_disch_time))
+	and pdx.contact_date <= convert(date,a.hosp_admsn_time)
+join clarity_edg edg
+on pdx.dx_id = edg.dx_id
+left join grouper_compiled_rec_list gcrl 
+on edg.dx_id = gcrl.grouper_records_numeric_id
+	and gcrl.compiled_context = 'EDG'
+	and gcrl.base_grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658',
+		'1750659','1750660','1750661','1750662','1750663','1750670')
+left join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+where (edg.current_icd10_list like '%F%' or gi.grouper_id in ('111855','111620','111644','111459','112447','111979')
+or gi.grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658','1750659',
+	'1750660','1750661','1750662','1750663','1750670'))
+UNION
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.hosp_disch_time, prob.contact_date,
+	edg.dx_name + ' [' + edg.current_icd10_list + ']' as diagnosis, gi.grouper_name, gi.grouper_id,
+	case when gi.grouper_id = '1750650' then 1 else 0 end as HP_CCS_650_ADJUSTMENT_DISORDERS,
+	case when gi.grouper_id = '1750651' then 1 else 0 end as HP_CCS_651_ANXIETY_DISORDERS,
+	case when gi.grouper_id = '1750652' then 1 else 0 end as HP_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	case when gi.grouper_id = '1750653' then 1 else 0 end as HP_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	case when gi.grouper_id = '1750654' then 1 else 0 end as HP_CCS_654_DEVELOPMENTAL_DISORDERS,
+	case when gi.grouper_id = '1750655' then 1 else 0 end as HP_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	case when gi.grouper_id = '1750656' then 1 else 0 end as HP_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	case when gi.grouper_id = '1750657' then 1 else 0 end as HP_CCS_657_MOOD_DISORDERS,
+	case when gi.grouper_id = '1750658' then 1 else 0 end as HP_CCS_658_PERSONALITY_DISORDERS,
+	case when gi.grouper_id = '1750659' then 1 else 0 end as HP_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	case when gi.grouper_id = '1750660' then 1 else 0 end as HP_CCS_660_ALCOHOL_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750661' then 1 else 0 end as HP_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	case when gi.grouper_id = '1750662' then 1 else 0 end as HP_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	case when gi.grouper_id = '1750663' then 1 else 0 end as HP_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	case when gi.grouper_id = '1750670' then 1 else 0 end as HP_CCS_670_MISC_MENTAL_HEALTH_DISORDERS
+from #adm a
+join pat_enc_hosp_prob prob
+on a.pat_id = prob.pat_id
+join problem_list pl
+on prob.problem_list_id = pl.problem_list_id
+join clarity_edg edg
+on pl.dx_id = edg.dx_id
+left join grouper_compiled_rec_list gcrl 
+on edg.dx_id = gcrl.grouper_records_numeric_id
+	and gcrl.compiled_context = 'EDG'
+	and gcrl.base_grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658',
+		'1750659','1750660','1750661','1750662','1750663','1750670')
+left join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+where (edg.current_icd10_list like '%F%' or gi.grouper_id in ('111855','111620','111644','111459','112447','111979')
+or gi.grouper_id in ('1750650','1750651','1750652','1750653','1750654','1750655','1750656','1750657','1750658','1750659',
+	'1750660','1750661','1750662','1750663','1750670'))
+and convert(date,prob.contact_date) < convert(date,a.hosp_admsn_time)
+) ENCDX
+GROUP BY PAT_ENC_CSN_ID
+;
+
+/** ED Chief Complaints **/
+IF OBJECT_ID('TEMPDB..#edcc') IS NOT NULL BEGIN DROP TABLE #edcc END
+select pat_enc_csn_id, count(distinct ed_csn) as num_ed_vis_past_year,
+	count(distinct case when chief_complaint in ('ALTERED MENTAL STATUS','ALCOHOL INTOXICATION','SUICIDAL','PSYCHIATRIC EVALUATION','ALCOHOL PROBLEM',
+		'WITHDRAWAL','DETOX','DRUG OVERDOSE','ADDICTION PROBLEM','NEUROLOGIC PROBLEM','ANXIETY','HOMICIDAL','DRUG PROBLEM','SUICIDE ATTEMPT',
+		'MANIC BEHAVIOR','PARANOIA','PANIC ATTACK',	'ANOREXIA','DELUSIONAL','MENTAL HEALTH PROBLEM') 
+		then ed_csn end) as ed_visits_any_mental_health_chief_complaints,
+	count(distinct case when chief_complaint = 'ALTERED MENTAL STATUS' then ed_csn end) as ed_visits_altered_mental_status_chief_complaints,
+	count(distinct case when chief_complaint = 'ALCOHOL INTOXICATION' then ed_csn end) as ed_visits_alcohol_intoxication_chief_complaints,
+	count(distinct case when chief_complaint = 'SUICIDAL' then ed_csn end) as ed_visits_suicidal_chief_complaints,
+	count(distinct case when chief_complaint = 'PSYCHIATRIC EVALUATION' then ed_csn end) as ed_visits_psych_eval_chief_complaints,
+	count(distinct case when chief_complaint = 'ALCOHOL PROBLEM' then ed_csn end) as ed_visits_alcohol_problem_chief_complaints,
+	count(distinct case when chief_complaint = 'WITHDRAWAL' then ed_csn end) as ed_visits_withdrawal_chief_complaints,
+	count(distinct case when chief_complaint = 'DETOX' then ed_csn end) as ed_visits_detox_chief_complaints,
+	count(distinct case when chief_complaint = 'DRUG OVERDOSE' then ed_csn end) as ed_visits_drug_overdose_chief_complaints,
+	count(distinct case when chief_complaint = 'ADDICTION PROBLEM' then ed_csn end) as ed_visits_addiction_problem_chief_complaints,
+	count(distinct case when chief_complaint = 'NEUROLOGIC PROBLEM' then ed_csn end) as ed_visits_neurologic_problem_chief_complaints,
+	count(distinct case when chief_complaint = 'ANXIETY' then ed_csn end) as ed_visits_anxiety_chief_complaints,
+	count(distinct case when chief_complaint = 'HOMICIDAL' then ed_csn end) as ed_visits_homicidal_chief_complaints,
+	count(distinct case when chief_complaint = 'DRUG PROBLEM' then ed_csn end) as ed_visits_drug_problem_chief_complaints,
+	count(distinct case when chief_complaint = 'SUICIDE ATTEMPT' then ed_csn end) as ed_visits_suicide_attempt_chief_complaints,
+	count(distinct case when chief_complaint = 'MANIC BEHAVIOR' then ed_csn end) as ed_visits_manic_behavior_chief_complaints,
+	count(distinct case when chief_complaint = 'PARANOIA' then ed_csn end) as ed_visits_paranoia_chief_complaints,
+	count(distinct case when chief_complaint = 'PANIC ATTACK' then ed_csn end) as ed_visits_panic_attack_chief_complaints,
+	count(distinct case when chief_complaint = 'ANOREXIA' then ed_csn end) as ed_visits_anorexia_chief_complaints,
+	count(distinct case when chief_complaint = 'DELUSIONAL' then ed_csn end) as ed_visits_delusional_chief_complaints,
+	count(distinct case when chief_complaint = 'MENTAL HEALTH PROBLEM' then ed_csn end) as ed_visits_mental_health_problem_chief_complaints
+INTO #EDCC
+from (
+select a.pat_enc_csn_id, fed.pat_enc_csn_id as ed_csn, rv.line as cc_line, clrv.reason_visit_name as chief_complaint
+from #adm a
+left join f_ed_encounters fed
+on a.pat_id = fed.pat_id
+	and fed.adt_arrival_dttm between dateadd(d,-365,a.hosp_admsn_time) and a.hosp_admsn_time
+left join pat_enc_rsn_visit rv
+on fed.pat_enc_csn_id = rv.pat_enc_csn_id
+left join cl_rsn_for_visit clrv
+on rv.enc_reason_id = clrv.reason_visit_id
+) edcc
+group by pat_enc_csn_id
+;
+
+/** Last Primary Care Visit **/
+IF OBJECT_ID('TEMPDB..#pcp') IS NOT NULL BEGIN DROP TABLE #pcp END
+select pat_enc_csn_id, appt_dttm as last_pcp_date, prov_name_wid as last_pcp_visit_provider, department as last_pcp_department
+INTO #pcp
+from (
+select a.pat_enc_csn_id, appt.appt_dttm, appt.prov_name_wid, appt.department_name + ' [' + convert(varchar,appt.department_id) + ']' as department,
+	et.name + ' [' + convert(varchar,et.disp_enc_type_c) + ']' as enc_type, appt.prc_name + ' [' + convert(varchar,appt.prc_id) + ']' as prc,
+	row_number() over (partition by a.pat_enc_csn_id order by appt.appt_dttm desc) as row_num
+from #adm a
+join v_sched_appt appt
+on a.pat_id = appt.pat_id
+	and appt.appt_dttm between dateadd(d,-1095,a.hosp_admsn_time) and a.hosp_admsn_time
+join pat_enc pe
+on appt.pat_enc_csn_id = pe.pat_enc_csn_id
+join zc_disp_enc_type et
+on pe.enc_type_c = et.disp_enc_type_c
+where appt.appt_status_c = 2
+and pe.enc_type_c in ('69','101','200','1003','32012','32013','216','438','452','1200','1201','2501')
+and appt.prc_id not in ('1007')
+and appt.dept_specialty_c in (9,17)
+) lastpcp
+where row_num = 1
+;
+
+/** Last Outpatient Visit **/
+IF OBJECT_ID('TEMPDB..#lastop') IS NOT NULL BEGIN DROP TABLE #lastop END
+select pat_enc_csn_id, appt_dttm as last_outpatient_date, prov_name_wid as last_outpatient_visit_provider, department as last_outpatient_department,
+	specialty as last_outpatient_specialty
+INTO #lastop
+from (
+select a.pat_enc_csn_id, appt.appt_dttm, appt.prov_name_wid, appt.department_name + ' [' + convert(varchar,appt.department_id) + ']' as department,
+	appt.dept_specialty_name + ' [' + convert(varchar,appt.dept_specialty_c) + ']' as specialty,
+	et.name + ' [' + convert(varchar,et.disp_enc_type_c) + ']' as enc_type, appt.prc_name + ' [' + convert(varchar,appt.prc_id) + ']' as prc,
+	row_number() over (partition by a.pat_enc_csn_id order by appt.appt_dttm desc) as row_num
+from #adm a
+join v_sched_appt appt
+on a.pat_id = appt.pat_id
+	and appt.appt_dttm between dateadd(d,-1095,a.hosp_admsn_time) and a.hosp_admsn_time
+join pat_enc pe
+on appt.pat_enc_csn_id = pe.pat_enc_csn_id
+join zc_disp_enc_type et
+on pe.enc_type_c = et.disp_enc_type_c
+where appt.appt_status_c = 2
+--and pe.enc_type_c in ('69','101','200','1003','32012','32013','216','438','452','1200','1201','2501')
+and pe.enc_type_c in (11,101,120,200,604,610,32002,32006,32008,32009,32012,32013,32017,32031,304114)
+and appt.prc_id not in ('1007','1139','1382')
+) lastop
+where row_num = 1
+;
+
+/** Restraint **/
+IF OBJECT_ID('TEMPDB..#restraint') IS NOT NULL BEGIN DROP TABLE #restraint END
+select pat_enc_csn_id, order_time as last_restraint_order_time
+INTO #restraint
+from (
+select a.mrn, a.pat_enc_csn_id, case when op.order_proc_id is not null then 1 else 0 end as order_yn, 
+	op.order_proc_id, op.proc_id, op.proc_code, op.description, op.ordering_date, op.order_time, 
+	case when os.instant_of_entry is not null and (os.instant_of_entry <= lead(op.order_time,1) over (partition by a.pat_enc_csn_id order by op.order_time)
+		or lead(op.order_time,1) over (partition by a.pat_enc_csn_id order by op.order_time) is null) then os.instant_of_entry 
+	when lead(op.order_time,1) over (partition by a.pat_enc_csn_id order by op.order_time) is not null 
+		then lead(op.order_time,1) over (partition by a.pat_enc_csn_id order by op.order_time)
+	else a.hosp_disch_time end as ending_time,
+	datediff(s,op.order_time,coalesce(os.instant_of_entry,a.hosp_disch_time))/3600.0 as duration_hrs,
+	datediff(s,op.order_time,a.hosp_disch_time)/3600.0 as max_hrs,
+	zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status, zct.name + ' [' + convert(varchar,zct.contact_type_c) + ']' as contact_type,
+	op.is_pending_ord_yn,
+	row_number() over (partition by a.pat_enc_csn_id order by op.order_time desc) as row_num
+from #adm a
+join order_proc op
+on a.pat_id = op.pat_id
+left join zc_order_status zos
+on op.order_status_c = zos.order_status_c
+left join order_status os
+on op.order_proc_id = os.order_id
+	and os.contact_type_c = 3
+	and os.instant_of_entry <= a.hosp_disch_time
+left join zc_ord_cntct_type zct
+on os.contact_type_c = zct.contact_type_c
+where op.description like '%restraint%'
+and (op.future_or_stand is not null or op.instantiated_time is null)
+and convert(date,op.order_time) <= convert(date,a.hosp_admsn_time)
+) op
+where row_num = 1
+;
+
+/** One to One Observation **/
+IF OBJECT_ID('TEMPDB..#observ') IS NOT NULL BEGIN DROP TABLE #observ END
+select pat_enc_csn_id, order_time as last_one_to_one_observation_order_time
+INTO #observ
+from (
+select a.mrn, a.pat_enc_csn_id, case when op.order_proc_id is not null then 1 else 0 end as order_yn, 
+	op.order_proc_id, op.proc_id, op.proc_code, op.description, op.ordering_date, op.order_time, 
+	zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status, zct.name + ' [' + convert(varchar,zct.contact_type_c) + ']' as contact_type,
+	op.is_pending_ord_yn,
+	row_number() over (partition by a.pat_enc_csn_id order by op.order_time desc) as row_num
+from #adm a
+join order_proc op
+on a.pat_id = op.pat_id
+left join zc_order_status zos
+on op.order_status_c = zos.order_status_c
+left join order_status os
+on op.order_proc_id = os.order_id
+	and os.contact_type_c = 3
+	and os.instant_of_entry <= a.hosp_disch_time
+left join zc_ord_cntct_type zct
+on os.contact_type_c = zct.contact_type_c
+where op.description in ('ONE TO ONE OBSERVATION-SUICIDAL IDEATION','ONE TO ONE OBSERVATION')
+and (op.future_or_stand is not null or op.instantiated_time is null)
+and convert(date,op.order_time) <= convert(date,a.hosp_admsn_time)
+) obs
+where row_num = 1
+;
+
+/** Any Observation **/
+IF OBJECT_ID('TEMPDB..#anyobserv') IS NOT NULL BEGIN DROP TABLE #anyobserv END
+select pat_enc_csn_id, order_time as last_observation_order_time
+INTO #anyobserv
+from (
+select a.mrn, a.pat_enc_csn_id, case when op.order_proc_id is not null then 1 else 0 end as order_yn, 
+	op.order_proc_id, op.proc_id, op.proc_code, op.description, op.ordering_date, op.order_time, 
+	zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status, zct.name + ' [' + convert(varchar,zct.contact_type_c) + ']' as contact_type,
+	op.is_pending_ord_yn,
+	row_number() over (partition by a.pat_enc_csn_id order by op.order_time desc) as row_num
+from #adm a
+join order_proc op
+on a.pat_id = op.pat_id
+left join zc_order_status zos
+on op.order_status_c = zos.order_status_c
+left join order_status os
+on op.order_proc_id = os.order_id
+	and os.contact_type_c = 3
+	and os.instant_of_entry <= a.hosp_disch_time
+left join zc_ord_cntct_type zct
+on os.contact_type_c = zct.contact_type_c
+where op.description in ('ONE TO ONE OBSERVATION','ONE TO ONE OBSERVATION-SUICIDAL IDEATION','CONTINUOUS OBSERVATION - SAFETY')
+and (op.future_or_stand is not null or op.instantiated_time is null)
+and convert(date,op.order_time) <= convert(date,a.hosp_admsn_time)
+) anyobs
+where row_num = 1
+;
+
+/** Psych Department Visit **/
+IF OBJECT_ID('TEMPDB..#vis') IS NOT NULL BEGIN DROP TABLE #vis END
+select pat_enc_csn_id, appt_dttm as last_psychiatry_visit_date, department as last_psychiatry_visit_department
+INTO #vis
+from (
+select a.pat_enc_csn_id, appt.pat_enc_csn_id as appt_csn, appt.appt_dttm, appt.department_name + ' [' + convert(varchar,appt.department_id) + ']' as department,
+	appt.dept_specialty_name + ' [' + convert(varchar,appt.dept_specialty_c) + ']' as specialty, 
+	row_number() over (partition by a.pat_enc_csn_id order by appt.appt_dttm desc) as row_num
+from #adm a
+join v_sched_appt appt
+on a.pat_id = appt.pat_id
+where appt.appt_dttm <= a.hosp_admsn_time
+and appt.appt_status_c = 2
+and appt.dept_specialty_c in (37,38)
+) appt
+where row_num = 1
+;
+
+/** Psych Consult Before Admission **/
+IF OBJECT_ID('TEMPDB..#ipconsult') IS NOT NULL BEGIN DROP TABLE #ipconsult END
+select pat_enc_csn_id, order_time as last_ip_consult_order_time
+INTO #ipconsult
+from (
+select a.pat_enc_csn_id, op.order_proc_id, op.proc_id, op.description, op.order_time, 
+	coalesce(zos.name,czos.name) + ' [' + convert(varchar,coalesce(zos.order_status_c,czos.order_status_c)) + ']' as order_status,
+	dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as order_department,
+	row_number() over (partition by a.pat_enc_csn_id order by op.order_time desc) as row_num
+from #adm a
+join order_proc op
+on a.pat_id = op.pat_id
+left join zc_order_status zos
+on op.order_status_c = zos.order_status_c
+left join order_instantiated oinst
+on op.order_proc_id = oinst.order_id
+left join order_proc opc
+on oinst.instntd_order_id = opc.order_proc_id
+left join zc_order_status czos
+on opc.order_status_c = czos.order_status_c
+left join order_proc_2 op2
+on op.order_proc_id = op2.order_proc_id
+left join clarity_dep dep
+on op2.pat_loc_id = dep.department_id
+where op.description in ('IP CONSULT TO PSYCHIATRY','IP CONSULT TO MEND (PSYCHIATRY)')
+and (op.future_or_stand is not null or op.instantiated_time is null)
+and convert(date,op.order_time) <= convert(date,a.hosp_admsn_time)
+) consult
+where row_num = 1
+;
+
+/** Consults Orders **/
+IF OBJECT_ID('TEMPDB..#consult') IS NOT NULL BEGIN DROP TABLE #consult END
+select pat_enc_csn_id, max(behavioral_health_consult_yn) as behavioral_health_consult_yn,
+	max(case when behavioral_health_consult_yn = 1 then ordering_date end) as behavioral_health_consult_date,
+	max(psychiatry_consult_yn) as psychiatry_consult_yn,
+	max(case when psychiatry_consult_yn = 1 then ordering_date end) as psychiatry_consult_date,
+	max(psychology_consult_yn) as psychology_consult_yn,
+	max(case when psychology_consult_yn = 1 then ordering_date end) as psychology_consult_date
+INTO #consult
+from (
+select a.pat_enc_csn_id, op.order_proc_id, op.proc_id, op.description, op.ordering_date, 
+zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status,
+case when op.description in ('CONSULT TO BEHAVIORAL HEALTH','CONSULT BEHAVIORAL HEALTH (CCBH PROGRAM ONLY)',
+'CONSULT TO BEHAVIORAL HEALTH (CCBH PROGRAM ONLY)','CONSULT TO PENN BEHAVIORAL HEALTH','BEHAVIORAL HEALTH CONSULT') 
+	then 1 else 0 end as behavioral_health_consult_yn,
+case when op.description in ('CONSULT TO PSYCHIATRY','IP CONSULT TO PSYCHIATRY') then 1 else 0 end as psychiatry_consult_yn,
+case when op.description in ('CONSULT TO PSYCHOLOGY','IP CONSULT TO PSYCHOLOGY') then 1 else 0 end as psychology_consult_yn
+from #adm a
+join order_proc op
+on a.pat_id = op.pat_id
+left join zc_order_status zos
+on op.order_status_c = zos.order_status_c
+where op.description in ('CONSULT TO BEHAVIORAL HEALTH','CONSULT BEHAVIORAL HEALTH (CCBH PROGRAM ONLY)',
+'CONSULT TO BEHAVIORAL HEALTH (CCBH PROGRAM ONLY)','CONSULT TO PENN BEHAVIORAL HEALTH','BEHAVIORAL HEALTH CONSULT',
+'CONSULT TO PSYCHIATRY','IP CONSULT TO PSYCHIATRY','CONSULT TO PSYCHOLOGY','IP CONSULT TO PSYCHOLOGY')
+and op.order_status_c not in (4)
+and op.ordering_date <= convert(date,a.hosp_admsn_time)
+) consult
+group by pat_enc_csn_id
+;
+
+/** ED Visits - Past Year **/
+IF OBJECT_ID('TEMPDB..#edvisct') IS NOT NULL BEGIN DROP TABLE #edvisct END
+select pat_enc_csn_id, count(distinct case when pat_enc_csn_id != ed_csn and adt_arrival_dttm >= dateadd(d,-366,hosp_admsn_time) then ed_csn end) as num_ed_visits_past_year,
+	max(case when pat_enc_csn_id != ed_csn then 1 else 0 end) as previous_ed_visit_yn
+INTO #EDVISCT
+from (
+select a.pat_enc_csn_id, a.hosp_admsn_time, fed.pat_enc_csn_id as ed_csn, fed.adt_arrival_dttm, 
+	ed_disp.name + ' [' + convert(varchar,ed_disp.ed_disposition_c) + ']' as ed_disposition
+from #adm a
+join f_ed_encounters fed
+on a.pat_id = fed.pat_id
+	and fed.adt_arrival_dttm >= dateadd(d,-1095,a.hosp_admsn_time)
+	and fed.adt_arrival_dttm < a.hosp_admsn_time
+left join zc_ed_disposition ed_disp
+on fed.ed_disposition_c = ed_disp.ed_disposition_c
+where fed.ed_disposition_c not in (15)
+) edvis
+group by pat_enc_csn_id
+;
+
+/** Hospital Admissions Past Year **/
+IF OBJECT_ID('TEMPDB..#admct') IS NOT NULL BEGIN DROP TABLE #admct END
+select pat_enc_csn_id, count(distinct case when prev_admsn_time >= dateadd(d,-366,hosp_admsn_time) then adm_csn end) as num_admissions_past_year,
+	max(case when adm_csn is not null then 1 else 0 end) as previous_admission_yn
+INTO #ADMCT
+from (
+select a.pat_enc_csn_id, a.hosp_admsn_time, peh.hosp_admsn_time as prev_admsn_time, peh.pat_enc_csn_id as adm_csn, 
+	dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department
+from #adm a
+join pat_enc_hsp peh
+on a.pat_id = peh.pat_id
+	and peh.inp_adm_date is not null
+	and peh.admit_conf_stat_c in (1,4)
+	and peh.adt_patient_stat_c in (2,3)
+	and peh.department_id not in (77,978,4287,4288,5714,5715,5716)
+	and peh.hosp_admsn_time >= dateadd(d,-1095,a.hosp_admsn_time)
+	and peh.hosp_admsn_time < a.hosp_admsn_time
+left join clarity_dep dep
+on peh.department_id = dep.department_id
+) adm
+group by pat_enc_csn_id
+;
+
+/** ED Visit within 30/90 Days **/
+IF OBJECT_ID('TEMPDB..#ED') IS NOT NULL BEGIN DROP TABLE #ED END
+select pat_enc_csn_id, Days_to_ED_Visit, case when days_to_ed_visit <= 30 then 1 else 0 end as ED_Visit_30Day_YN,
+	case when days_to_ed_visit <= 90 then 1 else 0 end as ED_Visit_90Day_YN
+INTO #ED
+from (
+select a.pat_id, a.pat_enc_csn_id, fed.pat_enc_csn_id as ed_csn, a.hosp_disch_time, fed.adt_arrival_dttm, 
+cast(datediff(s,a.hosp_disch_time,fed.adt_arrival_dttm)/86400.0 as decimal(8,0)) as days_to_ed_visit,
+	row_number() over (partition by a.pat_enc_csn_id order by fed.adt_arrival_dttm) as row_num
+from #adm a
+join f_ed_encounters fed
+on a.pat_id = fed.pat_id
+	and fed.adt_arrival_dttm between a.hosp_disch_time and dateadd(d,90,a.hosp_disch_time)
+) edvis
+where row_num = 1
+;
+
+/** Readmission within 30/90 Days **/
+IF OBJECT_ID('TEMPDB..#RDM') IS NOT NULL BEGIN DROP TABLE #RDM END
+select pat_enc_csn_id, Days_to_Readmission, case when days_to_readmission <= 30 then 1 else 0 end as Readmit_30Day_YN,
+	case when days_to_readmission <= 90 then 1 else 0 end as Readmit_90Day_YN
+INTO #RDM
+from (
+select a.pat_id, a.pat_enc_csn_id, peh.pat_enc_csn_id as readmit_csn, a.hosp_disch_time, peh.hosp_admsn_time, 
+cast(datediff(s,a.hosp_disch_time,peh.hosp_admsn_time)/86400.0 as decimal(8,0)) as days_to_readmission,
+	row_number() over (partition by a.pat_enc_csn_id order by peh.hosp_admsn_time) as row_num
+from #adm a
+join pat_enc_hsp peh
+on a.pat_id = peh.pat_id
+	and peh.hosp_admsn_time between a.hosp_disch_time and dateadd(d,90,a.hosp_disch_time)
+	and peh.inp_adm_date is not null
+	and peh.admit_conf_stat_c in (1,4)
+	and peh.adt_patient_stat_c in (2,3)
+	and peh.department_id not in (77,978,4287,4288,5714,5715,5716)
+) readmit
+where row_num = 1
+;
+
+/** Add Insurance Data **/
+IF OBJECT_ID('TEMPDB..#COV') IS NOT NULL BEGIN DROP TABLE #COV END
+select PAT_ENC_CSN_ID, coalesce(Payor,Payor_2) as Payor_2, coalesce(Financial_Class,Financial_Class_2) as Financial_Class_2
+INTO #cov
+from (
+select a.PAT_ENC_CSN_ID, cov.Payor_Name as Payor, cov2.Payor_Name as Payor_2, cov.fin_class_name as Financial_Class, cov2.fin_class_name as Financial_Class_2,
+row_number() over (partition by a.pat_enc_csn_id 
+	order by mem.mem_covered_yn desc, case when mem.mem_eff_to_date is null then 1 else 0 end desc) as row_num
+from #adm a
+left join pat_cvg_file_order pcfo
+on a.pat_id = pcfo.pat_id
+	and pcfo.filing_order = 1
+left join pat_acct_cvg cvg
+on pcfo.coverage_id = cvg.coverage_id
+left join v_coverage_payor_plan cov
+on cvg.coverage_id = cov.coverage_id
+left join coverage_mem_list mem
+on a.pat_id = mem.pat_id
+left join v_coverage_payor_plan cov2
+on mem.coverage_id = cov2.coverage_id
+) cov
+where row_num = 1
+;
+
+/** Psychotropic Medications **/
+IF OBJECT_ID('TEMPDB..#MED') IS NOT NULL BEGIN DROP TABLE #MED END
+select pat_enc_csn_id, description as psychotherapeutic_medication, ordering_date as psychotherapeutic_medication_order_date
+INTO #MED
+from (
+select medrev.PAT_ENC_CSN_ID, medrev.contact_serial_num, om.order_med_id, om.description, om.ordering_date, zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status,
+	zoc.name + ' [' + convert(varchar,zoc.order_class_c) + ']' as order_class, medlist.taking_yn,
+	tc.name + ' [' + convert(varchar,tc.thera_class_c) + ']' as therapeutic_class,
+	pc.name + ' [' + convert(varchar,pc.pharm_class_c) + ']' as pharm_class, 
+	ps.name + ' [' + convert(varchar,ps.pharm_subclass_c) + ']' as pharm_subclass,
+	gi.grouper_name + ' [' + gi.grouper_id + ']' as med_grouper,
+	row_number() over (partition by medrev.pat_enc_csn_id order by om.ordering_date desc) as row_num
+from (
+select a.pat_enc_csn_id, medlist.contact_serial_num, medlist.line_count,
+	row_number() over (partition by a.pat_enc_csn_id order by pe.pat_enc_date_real desc, medlist.line_count desc) as row_num
+from #adm a
+join pat_enc pe1
+on a.pat_enc_csn_id = pe1.pat_enc_csn_id
+join meds_rev_hx_list medlist
+on a.pat_id = medlist.pat_id
+join pat_enc pe
+on medlist.contact_serial_num = pe.pat_enc_csn_id
+	and pe.pat_enc_date_real <= pe1.pat_enc_date_real
+) medrev
+join meds_rev_hx_list medlist
+on medrev.contact_serial_num = medlist.contact_serial_num
+	and medrev.line_count = medlist.line_count
+	and medrev.row_num = 1
+left join order_med om
+on medlist.medication_order_id = om.order_med_id
+left join clarity_medication cm
+on om.medication_id = cm.medication_id
+left join zc_thera_class tc
+on cm.thera_class_c = tc.thera_class_c
+left join zc_pharm_class pc
+on cm.pharm_class_c = pc.pharm_class_c
+left join zc_pharm_subclass ps
+on cm.pharm_subclass_c = ps.pharm_subclass_c
+left join zc_order_status zos
+on om.order_status_c = zos.order_status_c
+left join zc_order_class zoc
+on om.order_class_c = zoc.order_class_c
+left join grouper_compiled_rec_list gcrl
+on om.medication_id = gcrl.grouper_records_numeric_id
+	and gcrl.compiled_context = 'ERX'
+	and gcrl.base_grouper_id = '112701'
+left join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+where gi.grouper_id = '112701'
+) med
+where row_num = 1
+;
+
+/** Medications - Past Year **/
+IF OBJECT_ID('TEMPDB..#MEDORD') IS NOT NULL BEGIN DROP TABLE #MEDORD END
+select pat_enc_csn_id, max(case when row_num = 1 then psychotherapeutic_medication end) as last_psychotherapeutic_medication, 
+	max(case when row_num = 1 then psychotherapeutic_medication_order_date end) as last_psychotherapeutic_order_date,
+	max(case when pharm_class = 'Antianxiety agents [57]' then 1 else 0 end) as antianxiety_yn,
+	max(case when pharm_class = 'Antidepressants [58]' then 1 else 0 end) as antidepressant_yn,
+	max(case when pharm_class = 'Antipsychotics [59]' then 1 else 0 end) as antipsychotic_yn
+INTO #MEDORD
+from (
+select a.pat_id, a.pat_enc_csn_id, om.description as psychotherapeutic_medication, om.order_inst as psychotherapeutic_medication_order_date,
+	zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status,
+	zom.name + ' [' + convert(varchar,zom.ordering_mode_c) + ']' as ordering_mode,
+	tc.name + ' [' + convert(varchar,tc.thera_class_c) + ']' as therapeutic_class,
+	pc.name + ' [' + convert(varchar,pc.pharm_class_c) + ']' as pharm_class, 
+	ps.name + ' [' + convert(varchar,ps.pharm_subclass_c) + ']' as pharm_subclass,
+	zsg.name as simple_generic_name,
+	gi.grouper_id, gi.grouper_name,
+	row_number() over (partition by a.pat_enc_csn_id order by om.order_inst desc) as row_num
+from #adm a
+join order_med om
+on a.pat_id = om.pat_id
+left join clarity_medication cm
+on om.medication_id = cm.medication_id
+left join zc_thera_class tc
+on cm.thera_class_c = tc.thera_class_c
+left join zc_pharm_class pc
+on cm.pharm_class_c = pc.pharm_class_c
+left join zc_pharm_subclass ps
+on cm.pharm_subclass_c = ps.pharm_subclass_c
+left join zc_order_status zos
+on om.order_status_c = zos.order_status_c
+left join zc_order_class zoc
+on om.order_class_c = zoc.order_class_c
+left join grouper_compiled_rec_list gcrl
+on om.medication_id = gcrl.grouper_records_numeric_id
+	and gcrl.compiled_context = 'ERX'
+	and gcrl.base_grouper_id = '112701'
+left join grouper_items gi
+on gcrl.base_grouper_id = gi.grouper_id
+left join zc_ordering_mode zom
+on om.ordering_mode_c = zom.ordering_mode_c
+left join zc_simple_generic zsg
+on cm.simple_generic_c = zsg.simple_generic_c
+where (gi.grouper_id = '112701' or pc.pharm_class_c in (57,58,59))
+and om.ordering_mode_c = 1
+--and om.order_class_c not in (3)
+and (om.order_status_c not in (4) or om.order_status_c is null)
+and om.order_inst <= convert(date,a.hosp_admsn_time)
+and om.order_inst >= dateadd(d,-366,a.hosp_admsn_time)
+) med
+--group by therapeutic_class, pharm_class, pharm_subclass, simple_generic_name
+--order by count(distinct pat_enc_csn_id) desc, count(distinct pat_id) desc
+--) med
+group by pat_enc_csn_id
+;
+
+IF OBJECT_ID('TEMPDB..#ANYMEDORD') IS NOT NULL BEGIN DROP TABLE #ANYMEDORD END
+select pat_enc_csn_id, max(case when order_med_id is not null then 1 else 0 end) as any_medication_order_yn
+INTO #ANYMEDORD
+from (
+select a.pat_id, a.pat_enc_csn_id, om.description as medication, om.order_med_id,
+	zos.name + ' [' + convert(varchar,zos.order_status_c) + ']' as order_status,
+	zom.name + ' [' + convert(varchar,zom.ordering_mode_c) + ']' as ordering_mode,
+	tc.name + ' [' + convert(varchar,tc.thera_class_c) + ']' as therapeutic_class,
+	pc.name + ' [' + convert(varchar,pc.pharm_class_c) + ']' as pharm_class, 
+	ps.name + ' [' + convert(varchar,ps.pharm_subclass_c) + ']' as pharm_subclass,
+	row_number() over (partition by a.pat_enc_csn_id order by om.order_inst desc) as row_num
+from #adm a
+join order_med om
+on a.pat_id = om.pat_id
+left join clarity_medication cm
+on om.medication_id = cm.medication_id
+left join zc_thera_class tc
+on cm.thera_class_c = tc.thera_class_c
+left join zc_pharm_class pc
+on cm.pharm_class_c = pc.pharm_class_c
+left join zc_pharm_subclass ps
+on cm.pharm_subclass_c = ps.pharm_subclass_c
+left join zc_order_status zos
+on om.order_status_c = zos.order_status_c
+left join zc_order_class zoc
+on om.order_class_c = zoc.order_class_c
+left join zc_ordering_mode zom
+on om.ordering_mode_c = zom.ordering_mode_c
+where (om.order_status_c not in (4) or om.order_status_c is null)
+and om.order_inst <= convert(date,a.hosp_admsn_time)
+and om.order_inst >= dateadd(d,-366,a.hosp_admsn_time)
+) med
+group by pat_enc_csn_id
+;
+
+/** PHQ-2 **/
+IF OBJECT_ID('TEMPDB..#PHQ2') IS NOT NULL BEGIN DROP TABLE #PHQ2 END
+select pat_enc_csn_id, meas_value as LAST_PHQ2_SCORE, recorded_time as PHQ2_TIME
+INTO #PHQ2
+from (
+select a.pat_enc_csn_id, gp.flo_meas_name, gp.flo_meas_id, gp.disp_name, flt.display_name as template_name, meas.meas_value, meas.recorded_time,
+	row_number() over (partition by a.pat_enc_csn_id order by meas.recorded_time desc) as row_num
+from #adm a
+join pat_enc_hsp peh
+on a.pat_id = peh.pat_id
+join ip_flwsht_rec rec
+on peh.inpatient_data_id = rec.inpatient_data_id
+join ip_flwsht_meas meas
+on rec.fsd_id = meas.fsd_id
+join ip_flo_gp_data gp
+on meas.flo_meas_id = gp.flo_meas_id
+join ip_flt_data flt
+on meas.flt_id = flt.template_id
+where meas.flo_meas_id in ('3040403926','13082','21000061918')
+and meas.recorded_time >= dateadd(d,-366,peh.hosp_admsn_time)
+and (convert(date,meas.recorded_time) <= convert(date,a.hosp_admsn_time))
+) phq2
+where row_num = 1
+;
+
+/** PHQ-9 **/
+IF OBJECT_ID('TEMPDB..#PHQ9') IS NOT NULL BEGIN DROP TABLE #PHQ9 END
+select pat_enc_csn_id, meas_value as LAST_PHQ9_SCORE, recorded_time as PHQ9_TIME
+INTO #PHQ9
+from (
+select a.pat_enc_csn_id, gp.flo_meas_name, gp.flo_meas_id, gp.disp_name, flt.display_name as template_name, meas.meas_value, meas.recorded_time,
+	row_number() over (partition by a.pat_enc_csn_id order by meas.recorded_time desc) as row_num
+from #adm a
+join pat_enc pe
+on a.pat_id = pe.pat_id
+join ip_flwsht_rec rec
+on pe.inpatient_data_id = rec.inpatient_data_id
+join ip_flwsht_meas meas
+on rec.fsd_id = meas.fsd_id
+join ip_flo_gp_data gp
+on meas.flo_meas_id = gp.flo_meas_id
+join ip_flt_data flt
+on meas.flt_id = flt.template_id
+where meas.flo_meas_id in ('2100100060')
+and meas.recorded_time >= dateadd(d,-366,a.hosp_admsn_time)
+and (convert(date,meas.recorded_time) <= convert(date,a.hosp_admsn_time))
+) phq9
+where row_num = 1
+;
+
+/** GAD-7 Score **/
+IF OBJECT_ID('TEMPDB..#GAD7') IS NOT NULL BEGIN DROP TABLE #GAD7 END
+select pat_enc_csn_id, meas_value as LAST_GAD_7_SCORE, recorded_time as GAD_7_TIME
+INTO #gad7
+from (
+select a.pat_id, a.pat_enc_csn_id, a.hosp_admsn_time, a.hosp_disch_time, gp.flo_meas_name, gp.flo_meas_id, gp.disp_name, 
+	meas.meas_value, meas.recorded_time, dep.department_name + ' [' + convert(varchar,dep.department_id) + ']' as department,
+	et.name + ' [' + convert(varchar,et.disp_enc_type_c) + ']' as enc_type,
+	row_number() over (partition by a.pat_enc_csn_id order by meas.recorded_time desc) as row_num
+from #adm a
+join pat_enc pe
+on a.pat_id = pe.pat_id
+join ip_flwsht_rec rec
+on pe.inpatient_data_id = rec.inpatient_data_id
+join ip_flwsht_meas meas 
+on rec.fsd_id = meas.fsd_id
+join ip_flo_gp_data gp
+on meas.flo_meas_id = gp.flo_meas_id
+left join clarity_dep dep
+on pe.department_id = dep.department_id
+left join zc_disp_enc_type et
+on pe.enc_type_c = et.disp_enc_type_c
+where meas.flo_meas_id in ('21000002007','12830')
+and meas.recorded_time >= dateadd(d,-366,a.hosp_admsn_time)
+and (convert(date,meas.recorded_time) <= convert(date,a.hosp_admsn_time))
+) gad7
+where row_num = 1
+;
+
+/** Lace Score **/
+IF OBJECT_ID('TEMPDB..#lace') IS NOT NULL BEGIN DROP TABLE #lace END
+select pat_enc_csn_id, lace_score, lace_recorded_time
+INTO #lace
+from (
+select a.pat_enc_csn_id, meas.meas_value as lace_score, meas.recorded_time as lace_recorded_time, row_number() over (partition by a.pat_enc_csn_id order by meas.recorded_time desc) as row_num
+from #adm a
+join pat_enc_hsp pe
+on a.pat_enc_csn_id = pe.pat_enc_csn_id
+/** Add LACE Score **/
+left join ip_flwsht_rec rec
+on pe.inpatient_data_id = rec.inpatient_data_id
+left join ip_flwsht_meas meas
+on rec.fsd_id = meas.fsd_id
+	and meas.flo_meas_id = '3040504900'
+) lace
+where row_num = 1
+;
+
+/** Risk Scores **/
+IF OBJECT_ID('TEMPDB..#score') IS NOT NULL BEGIN DROP TABLE #score END
+select pat_enc_csn_id, uphs_risk_score
+INTO #score
+from (
+select a.pat_enc_csn_id, uphs.hx_met_last_upd_dttm as uphs_risk_score_dttm, uphs.hx_met_string_val as uphs_risk_score, dwa.x_uphs_adult_score, 
+	row_number() over (partition by a.pat_enc_csn_id order by uphs.hx_met_last_upd_dttm desc) as row_num
+from #adm a
+left join registry_data_info rdi
+on a.pat_id = rdi.networked_id
+left join dm_wll_all dwa
+on a.pat_id = dwa.pat_id
+left join reg_data_hx_metrics uphs
+on rdi.record_id = uphs.rdt_id
+	and uphs.hx_met_id = '1355891'
+	and uphs.hx_met_last_upd_dttm < a.hosp_admsn_time
+	and uphs.hx_met_string_val is not null
+) rs
+where row_num = 1
+;
+
+/** Next Psych Visit **/
+IF OBJECT_ID('TEMPDB..#psappt') IS NOT NULL BEGIN DROP TABLE #psappt END
+select pat_enc_csn_id, max(case when row_num = 1 then appt_dttm end) as next_psych_appt_dttm, 
+	max(case when row_num = 1 then appt_status end) as next_psych_appt_status, 
+	max(case when row_num = 1 then appt_provider end) as next_psych_appt_provider, 
+	max(case when row_num = 1 then appt_department end) as next_psych_appt_department, 
+	max(case when row_num = 1 then appt_specialty end) as next_psych_appt_specialty,
+	max(case when row_num = 2 then appt_dttm end) as next_2_psych_appt_dttm, 
+	max(case when row_num = 2 then appt_status end) as next_2_psych_appt_status, 
+	max(case when row_num = 2 then appt_department end) as next_2_psych_appt_department, 
+	max(case when row_num = 2 then appt_provider end) as next_2_psych_appt_provider, 
+	max(case when row_num = 2 then appt_specialty end) as next_2_psych_appt_specialty,
+	max(case when row_num = 3 then appt_dttm end) as next_3_psych_appt_dttm, 
+	max(case when row_num = 3 then appt_status end) as next_3_psych_appt_status, 
+	max(case when row_num = 3 then appt_provider end) as next_3_psych_appt_provider, 
+	max(case when row_num = 3 then appt_department end) as next_3_psych_appt_department, 
+	max(case when row_num = 3 then appt_specialty end) as next_3_psych_appt_specialty
+INTO #psappt
+from (
+select a.pat_enc_csn_id, convert(date,appt_dttm) as appt_date, appt.appt_dttm, 
+	appt.appt_status_name + ' [' + convert(varchar,appt.appt_status_c) + ']' as appt_status, appt.prc_name + ' [' + convert(varchar,appt.prc_id) + ']' as prc, 
+	et.name + ' [' + convert(varchar,et.disp_enc_type_c) + ']' as enc_type,	appt.prov_name_wid as appt_provider,
+	appt.department_name + ' [' + convert(varchar,appt.department_id) + ']' as appt_department, dep.restricted_dept_yn,
+	appt.dept_specialty_name + ' [' + convert(varchar,appt.dept_specialty_c) + ']' as appt_specialty,
+	row_number() over (partition by a.pat_enc_csn_id order by appt.appt_dttm) as row_num
+from #adm a
+join v_sched_appt appt
+on a.pat_id = appt.pat_id
+	and appt.appt_dttm between a.hosp_disch_time and dateadd(d,60,a.hosp_disch_time)
+left join pat_enc pe
+on appt.pat_enc_csn_id = pe.pat_enc_csn_id
+left join zc_disp_enc_type et
+on pe.enc_type_c = et.disp_enc_type_c
+left join clarity_dep dep
+on appt.department_id = dep.department_id
+where (dep.specialty_dep_c in (37))
+) appt
+group by pat_enc_csn_id
+;
+
+/** SOI/ROM **/
+IF OBJECT_ID('TEMPDB..#DRG') IS NOT NULL BEGIN DROP TABLE #DRG END
+select pat_enc_csn_id, financial_class, drg_code, drg_name, soi_score, rom_score
+INTO #DRG
+from (
+select a.pat_enc_csn_id, cov.fin_class_name as financial_class, drg.drg_name, soi.name as soi_name, 
+	soi.abbr as soi_score, rom.name as rom_name, rom.abbr as rom_score, cdmi.mpi_id as drg_code, idt.id_type_name as drg_type,
+	row_number() over (partition by a.pat_enc_csn_id order by case when soi.name is not null then 1 else 0 end desc) as row_num
+from #adm a
+join pat_enc_hsp peh
+on a.pat_enc_csn_id = peh.pat_enc_csn_id
+left join hsp_account ha
+on peh.hsp_account_id = ha.hsp_account_id
+left join v_coverage_payor_plan cov
+on ha.coverage_id = cov.coverage_id
+left join clarity_drg drg
+on ha.final_drg_id = drg.drg_id
+left join hsp_acct_mult_drgs mdrg
+on ha.hsp_account_id = mdrg.hsp_account_id
+left join zc_soi_rom soi
+on mdrg.drg_ps = soi.soi_rom_c 
+left join zc_soi_rom rom
+on mdrg.drg_rom = rom.soi_rom_c
+left outer join CLARITY_DRG_MPI_ID cdmi
+on ha.final_drg_id = cdmi.drg_id
+	and ha.bill_drg_idtype_id = cdmi.mpi_id_type
+left join identity_id_type idt
+on cdmi.mpi_id_type = idt.id_type
+) drg
+where row_num = 1
+;
+
+/** Zip Code **/
+IF OBJECT_ID('TEMPDB..#ZIP') IS NOT NULL BEGIN DROP TABLE #ZIP END
+SELECT PAT_ENC_CSN_ID, COALESCE(PREV_COUNTY,CURR_COUNTY) AS COUNTY, COALESCE(PREV_STATE,CURRENT_STATE) AS STATE, COALESCE(PREV_ZIP,CURR_ZIP) AS ZIP
+INTO #ZIP
+FROM (
+SELECT A.PAT_ID, A.PAT_ENC_CSN_ID, SUBSTRING(P.ZIP,1,5) AS CURR_ZIP, SUBSTRING(PACH.ZIP_HX,1,5) AS PREV_ZIP, 
+	CCOUNTY.NAME AS CURR_COUNTY, HCOUNTY.NAME AS PREV_COUNTY, CST.ABBR AS CURRENT_STATE, HST.ABBR AS PREV_STATE,
+	PACH.EFF_START_DATE, PACH.EFF_END_DATE, 
+	ROW_NUMBER() OVER (PARTITION BY A.PAT_ENC_CSN_ID ORDER BY PACH.EFF_START_DATE) AS ROW_NUM
+FROM #ADM A
+JOIN PATIENT P
+ON A.PAT_ID = P.PAT_ID
+LEFT JOIN PAT_ADDR_CHNG_HX PACH
+ON A.PAT_ID = PACH.PAT_ID
+	AND PACH.EFF_START_DATE <= CONVERT(DATE,A.HOSP_ADMSN_TIME) 
+	AND (PACH.EFF_END_DATE >= CONVERT(DATE,A.HOSP_ADMSN_TIME) OR PACH.EFF_END_DATE IS NULL)
+LEFT JOIN ZC_STATE CST
+ON P.STATE_C = CST.STATE_C
+LEFT JOIN ZC_STATE HST
+ON PACH.STATE_HX_C = HST.STATE_C
+LEFT JOIN ZC_COUNTY CCOUNTY
+ON P.COUNTY_C = CCOUNTY.COUNTY_C
+LEFT JOIN ZC_COUNTY HCOUNTY
+ON PACH.COUNTY_HX_C = HCOUNTY.COUNTY_C
+) ZIP
+WHERE ROW_NUM = 1
+;
+
+/** Previous Notes **/
+IF OBJECT_ID('TEMPDB..#NOTE') IS NOT NULL BEGIN DROP TABLE #NOTE END
+select pat_enc_csn_id, count(distinct note_id) as total_notes,
+	count(distinct case when note_type = 'Progress Notes [1]' and amb_note_yn = 'Y' then note_id end) as ambulatory_progress_notes,
+	count(distinct case when note_type = 'Progress Notes [1]' and amb_note_yn = 'N' then note_id end) as inpatient_progress_notes,
+	count(distinct case when note_type in ('ED Notes [6]','ED Triage Notes [8]','ED Provider Notes [19]','ED Attestation Note [160002]',
+		'ED Observation Note [16000001]','EDOU Notes [16000006]','EDOU Attestation Note [16000007]') then note_id end) as ed_obs_notes,
+	sum(len(note_text)) as total_character_length
+INTO #NOTE
+from (
+select n.pat_id, n.pat_enc_csn_id, n.note_id, n.filed_date, n.amb_note_yn, n.note_type, tex.line, tex.note_text
+from (
+select a.pat_id, a.pat_enc_csn_id, hno.note_id, nei.contact_serial_num, hno.lst_filed_inst_dttm as filed_date, hno.amb_note_yn, nt.name + ' [' + convert(varchar,nt.type_ip_c) + ']' as note_type,
+	row_number() over (partition by a.pat_enc_csn_id, hno.note_id order by nei.contact_date_real desc) as row_num
+from #adm a
+join hno_info hno
+on a.pat_id = hno.pat_id
+left join zc_note_type_ip nt
+on hno.ip_note_type_c = nt.type_ip_c
+left join note_enc_info nei
+on hno.note_id = nei.note_id
+where hno.lst_filed_inst_dttm between dateadd(d,-366,a.hosp_admsn_time) and a.hosp_admsn_time
+and hno.ip_note_type_c in (1,4,6,8,19,26,27,70,160002,160007,16000001,16000006,16000007)
+) n
+left join hno_note_text tex
+on n.contact_serial_num = tex.note_csn_id
+where n.row_num = 1
+) summary
+group by pat_enc_csn_id
+;
+
+/** Randomize Patient ID **/
+IF OBJECT_ID('TEMPDB..#randid') IS NOT NULL BEGIN DROP TABLE #randid END
+select distinct pat_id, /**CHECKSUM(NEWID()) as randm,**/ row_number() over (order by CAST(CHECKSUM(NEWID()) as bigint)) as random_id
+INTO #randid
+from (select distinct pat_id from #adm) adm
+;
+
+/** Randomize Encounter ID **/
+IF OBJECT_ID('TEMPDB..#randenc') IS NOT NULL BEGIN DROP TABLE #randenc END
+select distinct pat_enc_csn_id, /**CHECKSUM(NEWID()) as randm,**/ row_number() over (order by CAST(CHECKSUM(NEWID()) as bigint)) as random_enc_id
+INTO #randenc
+from (select distinct pat_enc_csn_id from #adm) adm
+;
+
+/** Merge Data **/
+SELECT RID.RANDOM_ID, RENC.RANDOM_ENC_ID, A.PAT_ID, A.MRN, A.AGE, A.GENDER, A.RACE, A.ETHNICITY, SUBSTRING(COALESCE(ZIP.ZIP,A.ZIP),1,5) AS ZIP, ZIP.COUNTY, ZIP.STATE,
+	A.PAT_ENC_CSN_ID, A.HSP_ACCOUNT_ID, A.AGENT_YN, COALESCE(A.PAYOR,COV.PAYOR_2) AS PAYOR, 
+	COALESCE(A.FINANCIAL_CLASS,COV.FINANCIAL_CLASS_2) AS FINANCIAL_CLASS, A.PRIMARY_DIAGNOSIS,
+	DRG_CODE, DRG_NAME, SOI_SCORE, ROM_SCORE, 
+	A.HOSP_ADMSN_TIME, FLR.ADMIT_TO_FLOOR_TIME, FP.FIRST_TIME_IN_FP12_FP14, FP.FIRST_TIME_OUT_FP12_FP14, 
+	CASE WHEN FP.FIRST_TIME_IN_FP12_FP14 is not null then 1 else 0 end as FP12_FP14_YN,
+	A.HOSP_DISCH_TIME, LOC.LAST_DEPARTMENT, LOC.LAST_BED, A.ADMIT_SOURCE, A.PATIENT_CLASS,
+	A.PCP_LISTED, A.PCP_INSYSTEM_YN, PCP.LAST_PCP_DATE, PCP.LAST_PCP_VISIT_PROVIDER, PCP.LAST_PCP_DEPARTMENT, LASTOP.LAST_OUTPATIENT_DATE, LASTOP.LAST_OUTPATIENT_VISIT_PROVIDER, 
+	LASTOP.LAST_OUTPATIENT_DEPARTMENT, LASTOP.LAST_OUTPATIENT_SPECIALTY, CASE WHEN LASTOP.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS PREVIOUS_OUTPATIENT_VISIT_YN,
+	A.PRIMARY_TEAM, A.DISCH_DISPOSITION, A.LEFT_AMA_YN,	A.LOS_Days, CASE WHEN REST.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS RESTRAINTS_ORDERED_YN,
+	REST.LAST_RESTRAINT_ORDER_TIME, CASE WHEN OBS.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS ONE_TO_ONE_OBSERVATION_ORDERED_YN, 
+	OBS.LAST_ONE_TO_ONE_OBSERVATION_ORDER_TIME, CASE WHEN ANYOBS.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS ANY_OBSERVATION_ORDERED_YN, ANYOBS.LAST_OBSERVATION_ORDER_TIME,
+	CASE WHEN IPCONSULT.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS INPATIENT_PSYCH_CONSULT_YN, IPCONSULT.LAST_IP_CONSULT_ORDER_TIME,
+	CASE WHEN MED.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS MEDLIST_PSYCHOTHERAPEUTIC_MEDICATION_YN,
+	MED.PSYCHOTHERAPEUTIC_MEDICATION AS MEDLIST_PSYCHOTHERAPEUTIC_MEDICATION, 
+	MED.PSYCHOTHERAPEUTIC_MEDICATION_ORDER_DATE AS MEDLIST_PSYCHOTHERAPEUTIC_MEDICATION_ORDER_DATE,
+	MEDORD.LAST_PSYCHOTHERAPEUTIC_MEDICATION, MEDORD.LAST_PSYCHOTHERAPEUTIC_ORDER_DATE, 
+	COALESCE(MEDORD.ANTIANXIETY_YN,0) AS ANTIANXIETY_YN, COALESCE(MEDORD.ANTIDEPRESSANT_YN,0) AS ANTIDEPRESSANT_YN, COALESCE(MEDORD.ANTIPSYCHOTIC_YN,0) AS ANTIPSYCHOTIC_YN,
+	COALESCE(ANYMEDORD.ANY_MEDICATION_ORDER_YN,0) AS ANY_MEDICATION_ORDER_YN,
+	COALESCE(CONSULT.BEHAVIORAL_HEALTH_CONSULT_YN,0) AS BEHAVIORAL_HEALTH_CONSULT_YN, CONSULT.BEHAVIORAL_HEALTH_CONSULT_DATE,
+	COALESCE(CONSULT.PSYCHIATRY_CONSULT_YN,0) AS PSYCHIATRY_CONSULT_YN, CONSULT.PSYCHIATRY_CONSULT_DATE,
+	COALESCE(CONSULT.PSYCHOLOGY_CONSULT_YN,0) AS PSYCHOLOGY_CONSULT_YN, CONSULT.PSYCHOLOGY_CONSULT_DATE,
+	CASE WHEN VIS.PAT_ENC_CSN_ID IS NOT NULL THEN 1 ELSE 0 END AS PREVIOUS_PSYCHIATRY_VISIT_YN,
+	VIS.LAST_PSYCHIATRY_VISIT_DATE, VIS.LAST_PSYCHIATRY_VISIT_DEPARTMENT,
+	COALESCE(PL_CCS_650_ADJUSTMENT_DISORDERS,0) AS PL_CCS_650_ADJUSTMENT_DISORDERS,
+	COALESCE(PL_CCS_651_ANXIETY_DISORDERS,0) AS PL_CCS_651_ANXIETY_DISORDERS,
+	COALESCE(PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,0) AS PL_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	COALESCE(PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,0) AS PL_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	COALESCE(PL_CCS_654_DEVELOPMENTAL_DISORDERS,0) AS PL_CCS_654_DEVELOPMENTAL_DISORDERS,
+	COALESCE(PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,0) AS PL_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	COALESCE(PL_CCS_656_IMPULSE_CONTROL_DISORDERS,0) AS PL_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	COALESCE(PL_CCS_657_MOOD_DISORDERS,0) AS PL_CCS_657_MOOD_DISORDERS,
+	COALESCE(PL_CCS_658_PERSONALITY_DISORDERS,0) AS PL_CCS_658_PERSONALITY_DISORDERS,
+	COALESCE(PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,0) AS PL_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	COALESCE(PL_CCS_660_ALCOHOL_RELATED_DISORDERS,0) AS PL_CCS_660_ALCOHOL_RELATED_DISORDERS, 
+	COALESCE(PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,0) AS PL_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	COALESCE(PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,0) AS PL_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	COALESCE(PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,0) AS PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	COALESCE(PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,0) AS PL_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,
+	COALESCE(ENC_DX_CCS_650_ADJUSTMENT_DISORDERS,0) AS ENC_DX_CCS_650_ADJUSTMENT_DISORDERS,
+	COALESCE(ENC_DX_CCS_651_ANXIETY_DISORDERS,0) AS ENC_DX_CCS_651_ANXIETY_DISORDERS,
+	COALESCE(ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,0) AS ENC_DX_CCS_652_ATTENTION_DEFICIT_CONDUCT_DISRUPTIVE_BEHAVIOR_DISORDERS,
+	COALESCE(ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,0) AS ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
+	COALESCE(ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS,0) AS ENC_DX_CCS_654_DEVELOPMENTAL_DISORDERS,
+	COALESCE(ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,0) AS ENC_DX_CCS_655_DISORDERS_USUALLY_DIAGNOSED_INF_CHILD_ADOL,
+	COALESCE(ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS,0) AS ENC_DX_CCS_656_IMPULSE_CONTROL_DISORDERS,
+	COALESCE(ENC_DX_CCS_657_MOOD_DISORDERS,0) AS ENC_DX_CCS_657_MOOD_DISORDERS,
+	COALESCE(ENC_DX_CCS_658_PERSONALITY_DISORDERS,0) AS ENC_DX_CCS_658_PERSONALITY_DISORDERS,
+	COALESCE(ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,0) AS ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
+	COALESCE(ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,0) AS ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS, 
+	COALESCE(ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,0) AS ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
+	COALESCE(ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY,0) AS ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY,
+	COALESCE(ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,0) AS ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,
+	COALESCE(ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,0) AS ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,
+	COALESCE(PREVIOUS_ED_VISIT_YN,0) AS PREVIOUS_ED_VISIT_YN, COALESCE(EDVISCT.NUM_ED_VISITS_PAST_YEAR,0) AS NUM_ED_VISITS_PAST_YEAR, 
+	ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,
+	ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
+	ED_VISITS_ALCOHOL_INTOXICATION_CHIEF_COMPLAINTS,
+	ED_VISITS_SUICIDAL_CHIEF_COMPLAINTS,
+	ED_VISITS_PSYCH_EVAL_CHIEF_COMPLAINTS,
+	ED_VISITS_ALCOHOL_PROBLEM_CHIEF_COMPLAINTS,
+	ED_VISITS_WITHDRAWAL_CHIEF_COMPLAINTS,
+	ED_VISITS_DETOX_CHIEF_COMPLAINTS,
+	ED_VISITS_DRUG_OVERDOSE_CHIEF_COMPLAINTS,
+	ED_VISITS_ADDICTION_PROBLEM_CHIEF_COMPLAINTS,
+	ED_VISITS_NEUROLOGIC_PROBLEM_CHIEF_COMPLAINTS,
+	ED_VISITS_ANXIETY_CHIEF_COMPLAINTS,
+	ED_VISITS_HOMICIDAL_CHIEF_COMPLAINTS,
+	ED_VISITS_DRUG_PROBLEM_CHIEF_COMPLAINTS,
+	ED_VISITS_SUICIDE_ATTEMPT_CHIEF_COMPLAINTS,
+	ED_VISITS_MANIC_BEHAVIOR_CHIEF_COMPLAINTS,
+	ED_VISITS_PARANOIA_CHIEF_COMPLAINTS,
+	ED_VISITS_PANIC_ATTACK_CHIEF_COMPLAINTS,
+	ED_VISITS_ANOREXIA_CHIEF_COMPLAINTS,
+	ED_VISITS_DELUSIONAL_CHIEF_COMPLAINTS,
+	ED_VISITS_MENTAL_HEALTH_PROBLEM_CHIEF_COMPLAINTS, COALESCE(PREVIOUS_ADMISSION_YN,0) AS PREVIOUS_ADMISSION_YN,
+	COALESCE(ADMCT.NUM_ADMISSIONS_PAST_YEAR,0) AS NUM_ADMISSIONS_PAST_YEAR,
+	PHQ2.LAST_PHQ2_SCORE, PHQ2.PHQ2_TIME, PHQ9.LAST_PHQ9_SCORE, PHQ9.PHQ9_TIME,
+	GAD7.LAST_GAD_7_SCORE, GAD7.GAD_7_TIME, LACE.LACE_SCORE, LACE.LACE_RECORDED_TIME, SCORE.UPHS_RISK_SCORE,
+	COALESCE(NOTE.TOTAL_NOTES,0) AS TOTAL_NOTES, COALESCE(NOTE.AMBULATORY_PROGRESS_NOTES,0) AS AMBULATORY_PROGRESS_NOTES, COALESCE(NOTE.INPATIENT_PROGRESS_NOTES,0) AS INPATIENT_PROGRESS_NOTES,
+	COALESCE(NOTE.ED_OBS_NOTES,0) AS ED_OBS_NOTES, NOTE.TOTAL_CHARACTER_LENGTH,
+	PSAPPT.NEXT_PSYCH_APPT_DTTM, PSAPPT.NEXT_PSYCH_APPT_STATUS, PSAPPT.NEXT_PSYCH_APPT_PROVIDER, PSAPPT.NEXT_PSYCH_APPT_DEPARTMENT, PSAPPT.NEXT_PSYCH_APPT_SPECIALTY,
+	PSAPPT.NEXT_2_PSYCH_APPT_DTTM, PSAPPT.NEXT_2_PSYCH_APPT_STATUS, PSAPPT.NEXT_2_PSYCH_APPT_PROVIDER, PSAPPT.NEXT_2_PSYCH_APPT_DEPARTMENT, PSAPPT.NEXT_2_PSYCH_APPT_SPECIALTY,
+	PSAPPT.NEXT_3_PSYCH_APPT_DTTM, PSAPPT.NEXT_3_PSYCH_APPT_STATUS, PSAPPT.NEXT_3_PSYCH_APPT_PROVIDER, PSAPPT.NEXT_3_PSYCH_APPT_DEPARTMENT, PSAPPT.NEXT_3_PSYCH_APPT_SPECIALTY,
+	ED.DAYS_TO_ED_VISIT, COALESCE(ED_VISIT_30DAY_YN,0) AS ED_VISIT_30DAY_YN, COALESCE(ED_VISIT_90DAY_YN,0) AS ED_VISIT_90DAY_YN,
+	DAYS_TO_READMISSION, COALESCE(READMIT_30DAY_YN,0) AS READMIT_30DAY_YN, COALESCE(READMIT_90DAY_YN,0) AS READMIT_90DAY_YN
+FROM #ADM A
+LEFT JOIN #LOC LOC
+ON A.PAT_ENC_CSN_ID = LOC.PAT_ENC_CSN_ID
+LEFT JOIN #IPCONSULT IPCONSULT
+ON A.PAT_ENC_CSN_ID = IPCONSULT.PAT_ENC_CSN_ID
+LEFT JOIN #CONSULT CONSULT
+ON A.PAT_ENC_CSN_ID = CONSULT.PAT_ENC_CSN_ID
+LEFT JOIN #DRG DRG
+ON A.PAT_ENC_CSN_ID = DRG.PAT_ENC_CSN_ID
+LEFT JOIN #VIS VIS
+ON A.PAT_ENC_CSN_ID = VIS.PAT_ENC_CSN_ID
+LEFT JOIN #ED ED
+ON A.PAT_ENC_CSN_ID = ED.PAT_ENC_CSN_ID
+LEFT JOIN #RDM RDM
+ON A.PAT_ENC_CSN_ID = RDM.PAT_ENC_CSN_ID
+LEFT JOIN #RESTRAINT REST
+ON A.PAT_ENC_CSN_ID = REST.PAT_ENC_CSN_ID
+LEFT JOIN #COV COV
+ON A.PAT_ENC_CSN_ID = COV.PAT_ENC_CSN_ID
+LEFT JOIN #MED MED
+ON A.PAT_ENC_CSN_ID = MED.PAT_ENC_CSN_ID
+LEFT JOIN #MEDORD MEDORD
+ON A.PAT_ENC_CSN_ID = MEDORD.PAT_ENC_CSN_ID
+LEFT JOIN #ANYMEDORD ANYMEDORD
+ON A.PAT_ENC_CSN_ID = ANYMEDORD.PAT_ENC_CSN_ID
+LEFT JOIN #PL PL
+ON A.PAT_ENC_CSN_ID = PL.PAT_ENC_CSN_ID
+LEFT JOIN #ENCDX ENCDX
+ON A.PAT_ENC_CSN_ID = ENCDX.PAT_ENC_CSN_ID
+LEFT JOIN #EDCC EDCC
+ON A.PAT_ENC_CSN_ID = EDCC.PAT_ENC_CSN_ID
+LEFT JOIN #PHQ2 PHQ2
+ON A.PAT_ENC_CSN_ID = PHQ2.PAT_ENC_CSN_ID
+LEFT JOIN #PHQ9 PHQ9
+ON A.PAT_ENC_CSN_ID = PHQ9.PAT_ENC_CSN_ID
+LEFT JOIN #LACE LACE 
+ON A.PAT_ENC_CSN_ID = LACE.PAT_ENC_CSN_ID
+LEFT JOIN #SCORE SCORE
+ON A.PAT_ENC_CSN_ID = SCORE.PAT_ENC_CSN_ID
+LEFT JOIN #OBSERV OBS
+ON A.PAT_ENC_CSN_ID = OBS.PAT_ENC_CSN_ID
+LEFT JOIN #ANYOBSERV ANYOBS
+ON A.PAT_ENC_CSN_ID = ANYOBS.PAT_ENC_CSN_ID
+LEFT JOIN #PCP PCP
+ON A.PAT_ENC_CSN_ID = PCP.PAT_ENC_CSN_ID
+LEFT JOIN #LASTOP LASTOP
+ON A.PAT_ENC_CSN_ID = LASTOP.PAT_ENC_CSN_ID
+LEFT JOIN #PSAPPT PSAPPT
+ON A.PAT_ENC_CSN_ID = PSAPPT.PAT_ENC_CSN_ID
+LEFT JOIN #EDVISCT EDVISCT
+ON A.PAT_ENC_CSN_ID = EDVISCT.PAT_ENC_CSN_ID
+LEFT JOIN #ADMCT ADMCT
+ON A.PAT_ENC_CSN_ID = ADMCT.PAT_ENC_CSN_ID
+LEFT JOIN #GAD7 GAD7
+ON A.PAT_ENC_CSN_ID = GAD7.PAT_ENC_CSN_ID
+LEFT JOIN #FLR FLR
+ON A.PAT_ENC_CSN_ID = FLR.PAT_ENC_CSN_ID
+LEFT JOIN #RANDID RID
+ON A.PAT_ID = RID.PAT_ID
+LEFT JOIN #RANDENC RENC
+ON A.PAT_ENC_CSN_ID = RENC.PAT_ENC_CSN_ID
+LEFT JOIN #FP1214 FP
+ON A.PAT_ENC_CSN_ID = FP.PAT_ENC_CSN_ID
+LEFT JOIN #ZIP ZIP
+ON A.PAT_ENC_CSN_ID = ZIP.PAT_ENC_CSN_ID
+LEFT JOIN #NOTE NOTE
+ON A.PAT_ENC_CSN_ID = NOTE.PAT_ENC_CSN_ID
+ORDER BY A.AGENT_YN DESC, A.PAT_ENC_CSN_ID
+;
