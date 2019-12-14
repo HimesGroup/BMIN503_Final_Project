@@ -9,13 +9,10 @@ output:
     highlight: tango
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
-options(width = 400)
+options(width = 650)
 ```  
-***
-Use this template to complete your project throughout the course. Your Final Project presentation in class will be based on the contents of this document. Replace the title/name and text below with your own, but keep the headers.
-
 ### Overview
-Use of regional anesthesia is expanding at PennMedicine but there have been few analyses quantifying the nature and extent off this growth. This project aims to clarify trends in regional anesthesia use at the University of Pennsylvania Health System from 2016 - 2019.
+Use of regional anesthesia is expanding at PennMedicine but there have been few analyses quantifying the nature and extent off this growth. This project aims to clarify trends in regional anesthesia use at the University of Pennsylvania Health System from 2018-2019
 
 
 ### Introduction 
@@ -25,32 +22,426 @@ Assessing the growth of regional anesthesia is an interdisciplinary endeavor in 
 
 
 ### Methods
-We retreived patient-level data on all peripheral nerve blocks (PNBs) performed at two core PennMedicine clinical sites (Penn Presbyterian Medical Center and the Hospital of the University of Pennsylvania) during the period July 2016 to July 2019. Included in this data were details on the type of nerve block, staff involved, and associated surgical procedure. We also obtained data to match staff with their role (resident / attending / etc.) and clinical service (Orthopedics / vascular surgery / etc.) to allow for grouping by key workforce characteristics. 
+We retreived patient-level data on all peripheral nerve blocks (PNBs) performed at two core PennMedicine clinical sites (Penn Presbyterian Medical Center and the Hospital of the University of Pennsylvania) during the period Oct 2018 to Oct 2019. Included in this data were details on the type of nerve block, staff involved, and associated surgical procedure. We also obtained data to match staff with their role (resident / attending / etc.) and clinical service (Orthopedics / vascular surgery / etc.) to allow for grouping by key workforce characteristics. 
 
 
-```{r global options, echo = TRUE}
+```{r include=FALSE}
 library(dplyr)
 library(tidyverse)
 library(ggplot2)
+library(readxl)
+library(scales)
+library(lubridate)
+library(magrittr)
+library(RColorBrewer)
+library(flexdashboard)
+library(knitr)
+library(plotly)
 ```
 
 
-```{r}
-# Import PNB data
+> Import raw data from Excel
 
-# Import table to map staff name to clinical role (resident/attending)
-
-# Import table to map attending surgeon to clinical department
-
-# Reformat date, create new column for "day of week"
-
-# Process PNB text note to extract key information: performing staff, supervising staff, location, block type (including approach or NA), single vs. continuous, gooal post-op analgesia vs. primary anesthetic
-
-# Map staff names to clinical role, create new column
-
-# Map attending surgeon to clinical department, create new column
-
+```{r import_raw_data}
+# Import raw data (Excel file)
+dat <- read_excel("RAAPS 2018-19 v2.xlsx")
 ```
+
+> Clean and process data for analysis
+
+```{r clean_process}
+# Drop BIRTH_YEAR and ANES_TYPE fields
+rm_col <- c("BIRTH_YEAR","ANES_TYPE")
+dat <- dat[, !(colnames(dat) %in% rm_col), drop = FALSE]
+
+# Create new variable to track day of week (Mon, Tue, etc.) of procedure called dow_surgery_date
+dat$dow_surgery_date <- weekdays(dat$SURGERY_DATE)
+
+# Extract procedure time of day (24hr clock) AN_START_DATE and AN_STOP_DATE
+dat$an_start_time <-format(strptime(dat$AN_START_DATE, "%Y-%m-%d %H:%M:%S"), "%H:%M:%S")
+dat$an_stop_time <- format(strptime(dat$AN_STOP_DATE, "%Y-%m-%d %H:%M:%S"), "%H:%M:%S")
+
+# Convert procedure, surgeon, and anesthesiologist names from ALL CAPS to Sentence Case
+proper = function(x)
+  paste0(toupper(substr(x, 1, 1)), tolower(substring(x, 2)))
+dat$AN_PROC_NAME <- proper(dat$AN_PROC_NAME)
+dat$PRIMARY_PROC_NAME <- proper(dat$PRIMARY_PROC_NAME)
+dat$RESPONSIBLE_ANESTHEOLOGIST <- tools::toTitleCase(tolower(dat$RESPONSIBLE_ANESTHEOLOGIST))
+dat$PRIM_PROVIDER <- tools::toTitleCase(tolower(dat$PRIM_PROVIDER))
+
+# Rename DEPT_ABBREVIATION to "Facility" and recode to sensible categories. Collapse less-relevant sites into "Other" category.
+colnames(dat)[colnames(dat)=="DEPT_ABBREVIATION"] <- "Facility"
+dat$Facility <- 
+  ifelse(dat$Facility=="2NLD","Other",
+  ifelse(dat$Facility=="CCHOR","Chester Co",
+  ifelse(dat$Facility=="CCPPT","Other",
+  ifelse(dat$Facility=="DEL","Other",
+  ifelse(dat$Facility=="HUPEP","HUP",
+  ifelse(dat$Facility=="HUPOR","HUP",
+  ifelse(dat$Facility=="LD","HUP",
+  ifelse(dat$Facility=="LDMCP","Other",
+  ifelse(dat$Facility=="MAPSC","Other",
+  ifelse(dat$Facility=="MCPOR","Other",
+  ifelse(dat$Facility=="MONSC","Other",
+  ifelse(dat$Facility=="PAHOR","Other",
+  ifelse(dat$Facility=="PAHTUTT","Other",
+  ifelse(dat$Facility=="PCAMSC","PCAM",
+  ifelse(dat$Facility=="PMCXRAY","Other",
+  ifelse(dat$Facility=="PPMCEP","Presby",
+  ifelse(dat$Facility=="PPMCOR","Presby",
+  ifelse(dat$Facility=="PPMCPMUC","PMUC",
+  ifelse(dat$Facility=="UPHSREF","Other",
+  "N/A"
+  )))))))))))))))))))
+
+# Rename SERVICE to "Surgical_service" and recode to sensible categories. Collapse GI and GIS to single service.
+colnames(dat)[colnames(dat)=="SERVICE"] <- "Surgical_service"
+
+dat$Surgical_service <- 
+  ifelse(dat$Surgical_service=="CARDSURG","Cardiac",
+  ifelse(dat$Surgical_service=="CARDVASC","Cardiology",
+  ifelse(dat$Surgical_service=="CRS","Colorectal",
+  ifelse(dat$Surgical_service=="EOS","Endocrine",
+  ifelse(dat$Surgical_service=="GENERAL","General",
+  ifelse(dat$Surgical_service=="GI","GI",
+  ifelse(dat$Surgical_service=="GIS","GI",
+  ifelse(dat$Surgical_service=="GYN","Ob-Gyn",
+  ifelse(dat$Surgical_service=="NEUROSURG","Neurosurgery",
+  ifelse(dat$Surgical_service=="ORL","ENT-oral",
+  ifelse(dat$Surgical_service=="ORTHO","Orthopedic",
+  ifelse(dat$Surgical_service=="PLASSURG","Plastic",
+  ifelse(dat$Surgical_service=="PODIATRY","Podiatry",
+  ifelse(dat$Surgical_service=="THORSURG","Thoracic",
+  ifelse(dat$Surgical_service=="TRANSPLANT","Transplant",
+  ifelse(dat$Surgical_service=="TRAUMA","Trauma",
+  ifelse(dat$Surgical_service=="UROLOGY","Urology",
+  ifelse(dat$Surgical_service=="VASCSURG","Vascular",
+  ifelse(dat$Surgical_service=="(blank)","",
+  "N/A"
+)))))))))))))))))))
+```
+
+> Use regular expressions to extract several variables from the NOTE_TEXT structured text field
+
+```{r regex_extraction}
+# Extract name of provider who performed block (Performed_by)
+dat$Performed_by <- tools::toTitleCase(sub(".*performed by *(.*?) *attending supervisor.*", "\\1", tolower(dat$NOTE_TEXT)))
+dat$Performed_by <- tools::toTitleCase(sub(".*performed by *(.*?) *procedure.*", "\\1", tolower(dat$Performed_by)))
+
+# Extract attending supervisor for block (Attending_supervisor)
+dat$Attending_supervisor <- ifelse(grepl('attending supervisor',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Attending_supervisor <- gsub(".*attending supervisor\\s*(.*?)", "\\1", tolower(dat$Attending_supervisor))
+dat$Attending_supervisor <- gsub("(.*?) *procedure\\s.*", "\\1", tolower(dat$Attending_supervisor))
+dat$Attending_supervisor <- gsub("(.*?) *patient\\s.*", "\\1", tolower(dat$Attending_supervisor))
+dat$Attending_supervisor <- gsub("(.*?) *complete\\s.*", "\\1", tolower(dat$Attending_supervisor))
+dat$Attending_supervisor <- gsub("(.*?) *indication.*", "\\1", tolower(dat$Attending_supervisor))
+dat$Attending_supervisor <- tools::toTitleCase(dat$Attending_supervisor)
+
+# Extract patient location during block: pre-op, OR, etc. (Block_performed_location)
+dat$Block_performed_location <- ifelse(grepl('patient location',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_performed_location <- gsub(".*patient location\\s*(.*?) *\\.\\sindication.*","\\1",tolower(dat$Block_performed_location))
+dat$Block_performed_location <- gsub("(.*?) *\\.complete\\s.*", "\\1", tolower(dat$Block_performed_location))
+dat$Block_performed_location <- gsub("(.*?) *\\.\\s\\scomplete\\s.*", "\\1", tolower(dat$Block_performed_location))
+dat$Block_performed_location <- gsub(".*patient location\\s*(.*?).*","",tolower(dat$Block_performed_location))
+dat$Block_performed_location <- tools::toTitleCase(dat$Block_performed_location)
+
+# Extract 1st clinical indication for block (Block_indication_1)
+dat$Block_indication_1 <- ifelse(grepl('indication(s):',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_indication_1 <- gsub(".*indication\\(s\\):\\s*(.*?) *and.*","\\1",tolower(dat$Block_indication_1))
+dat$Block_indication_1 <- gsub("(.*?) *complete.*","\\1",tolower(dat$Block_indication_1))
+dat$Block_indication_1 <- gsub("(.*?) *,.*","\\1",tolower(dat$Block_indication_1))
+dat$Block_indication_1 <- tools::toTitleCase(dat$Block_indication_1)
+
+# Extract 2nd clinical indication for block (Block_indication_2)
+dat$Block_indication_2 <- ifelse(grepl('indication(s):',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_indication_2 <- gsub(".*indication\\(s\\):\\s*(.*?) *complete.*","\\1",tolower(dat$Block_indication_2))
+dat$Block_indication_2 <- ifelse(grepl(',',dat$Block_indication_2,fixed=TRUE),
+                                 gsub(".*,\\s*(.*?) *\\sand.*","\\1",tolower(dat$Block_indication_2)),
+                                 gsub(".*and\\s*(.*?) *\\..*","\\1",tolower(dat$Block_indication_2)))
+dat$Block_indication_2 <- tools::toTitleCase(dat$Block_indication_2)
+
+# Extract 3rd clinical indication for block (Block_indication_3)		
+dat$Block_indication_3 <- ifelse(grepl('indication(s):',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_indication_3 <- gsub(".*indication\\(s\\):\\s*(.*?) *complete.*","\\1",tolower(dat$Block_indication_3))
+dat$Block_indication_3 <- ifelse(grepl(',',dat$Block_indication_3,fixed=TRUE),dat$Block_indication_3,'')
+dat$Block_indication_3 <- sub(".*and\\s*(.*?) *\\..*","\\1",tolower(dat$Block_indication_3))
+dat$Block_indication_3 <- tools::toTitleCase(dat$Block_indication_3)
+
+# Extract Primary_block_type
+dat$Primary_block_type <- ifelse(grepl('primary block: ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Primary_block_type <- gsub(".*primary block:\\s*(.*?) *\\sblock.*","\\1",tolower(dat$Primary_block_type))
+dat$Primary_block_type <- gsub(".*primary block:\\s*(.*?) *.*","\\1",tolower(dat$Primary_block_type))
+dat$Primary_block_type <- gsub("(.*?) *\\.\\s\\spreprocedure check.*","\\1",dat$Primary_block_type)
+dat$Primary_block_type <- tools::toTitleCase(dat$Primary_block_type)
+
+# Extract Primary_block_subtype_approach if present	
+dat$Primary_block_subtype_approach <- ifelse(grepl('brachial plexus approach: ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Primary_block_subtype_approach <- gsub(".*\\sbrachial plexus approach:\\s*(.*?) *\\sapproach.*","\\1",tolower(dat$Primary_block_subtype_approach))
+dat$Primary_block_subtype_approach <- tools::toTitleCase(dat$Primary_block_subtype_approach)
+
+# Extract whether local anesthetic injected prior to block (Skin_local_used)			
+dat$Skin_local_used <- ifelse(grepl('local skin infiltration: ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Skin_local_used <- gsub(".*\\slocal skin infiltration:\\s*(.*?) *\\..*","\\1",tolower(dat$Skin_local_used))
+dat$Skin_local_used <- tools::toTitleCase(dat$Skin_local_used)
+
+# Extract whether cather was left in place (Catheter_used)
+dat$Catheter_used <- ifelse(grepl('catheter: ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Catheter_used <- gsub(".*\\scatheter:\\s*(.*?) *\\..*","\\1",tolower(dat$Catheter_used))
+dat$Catheter_used <- tools::toTitleCase(dat$Catheter_used)
+dat$Catheter_Y_N <- ifelse(dat$Catheter_used=='None' | dat$Catheter_used=='','No','Yes')
+
+# Extract medications injected during block (Block_med_anesthetic)
+dat$Block_med_anesthetic <- ifelse(grepl('at each site): ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_med_anesthetic <- gsub(".*\\sat each site\\):\\s*(.*?) *\\sml,.*","\\1",tolower(dat$Block_med_anesthetic))
+dat$Block_med_anesthetic <- gsub(".*\\sat each site\\):\\s*(.*?) *\\sml\\s.*","\\1",tolower(dat$Block_med_anesthetic))
+dat$Block_med_anesthetic <- ifelse(grepl('with ',tolower(dat$Block_med_anesthetic),fixed=TRUE),'',dat$Block_med_anesthetic)
+dat$Block_med_anesthetic <- ifelse(dat$Block_med_anesthetic=='',dat$Block_med_anesthetic,paste(tools::toTitleCase(dat$Block_med_anesthetic),'mL'))
+
+# Extract dose of steroid in Mg added to injectate (Block_med_dexamethasoneMG)	
+dat$Block_med_dexamethasoneMG <- ifelse(grepl('dexamethasone ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_med_dexamethasoneMG <- gsub(".*\\sdexamethasone\\s*(.*?) *\\smg.*","\\1",tolower(dat$Block_med_dexamethasoneMG))
+dat$Block_med_dexamethasoneMG <- tools::toTitleCase(dat$Block_med_dexamethasoneMG)
+
+# Extract dose of adrenergic if added (Block_med_adrenergic)		
+dat$Block_med_adrenergic <- ifelse(grepl('adrenergic',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_med_adrenergic <- tools::toTitleCase(ifelse(grepl('no adrenergic',tolower(dat$Block_med_adrenergic),fixed=TRUE),'no adrenergic',''))
+dat$Block_med_adrenergic <- tools::toTitleCase(dat$Block_med_adrenergic)
+
+# Extract any other meds added to injectate (Block_med_other)
+dat$Block_med_other <- ifelse(grepl('at each site): ',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_med_other <- gsub(".*at each site\\):\\s*(.*?) *events:.*","\\1",tolower(dat$Block_med_other))
+dat$Block_med_other <- gsub(".*at each site\\):\\s*(.*?) *with\\.comments:.*","\\1",tolower(dat$Block_med_other))
+dat$Block_med_other <- gsub(".*at each site\\):\\s*(.*?)","\\1",tolower(dat$Block_med_other))
+dat$Block_med_other <- tools::toTitleCase(dat$Block_med_other)
+
+# Extract any complications or other notable events recorded (Block_otherevents)			
+dat$Block_otherevents <- ifelse(grepl('events:',tolower(dat$NOTE_TEXT),fixed=TRUE),dat$NOTE_TEXT,'')
+dat$Block_otherevents <- gsub(".*events:\\s\\s*(.*?)","\\1",tolower(dat$Block_otherevents))
+dat$Block_otherevents <- tools::toTitleCase(dat$Block_otherevents)
+```
+
+> Generate clean data sets to further process into charts
+
+```{r clean_output}
+dat.new_2 <- dat
+dat.new_2 <- dat.new_2 %<>%
+  mutate(Hour =
+           strsplit(an_start_time, ":") %>%
+           sapply(function(x){
+             x <- as.numeric(x)
+             x[1] + x[2]/60 + x[3]/(60*60)
+           })
+         , roundTime = floor(Hour * 2)/2
+  ) %>% group_by(Hour) %>% summarise(Count=n())
+
+dat.new_3 <- dat
+dat.new_3 <- dat.new_3 %<>%
+  mutate(Hour =
+           strsplit(an_start_time, ":") %>%
+           sapply(function(x){
+             x <- as.numeric(x)
+             x[1] + x[2]/60 + x[3]/(60*60)
+           })
+         , roundTime = floor(Hour * 2)/2
+  ) %>% group_by(Hour,dow_surgery_date) %>% summarise(Count=n())
+dat.new_3$dow_surgery_date <- factor(dat.new_3$dow_surgery_date, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+
+write.csv(dat,"RAAPS_clean.csv")
+write.csv(dat.new_2,"RAAPS_clean_2.csv")
+write.csv(dat.new_3,"RAAPS_clean_3.csv")
+```
+
 
 ### Results
-In progress
+
+```{r read_cleaned_data}
+# import cleaned data from above methods section
+dat <- read.csv("New_Dataset.csv", header=TRUE)
+dat_2 <- read.csv("New_Dataset_2.csv", header=TRUE)
+dat_3 <- read.csv("New_Dataset_3.csv", header=TRUE)
+```
+
+> We first look at nerve block volume by hospital facility and see that Presby and the "Other" category account for the vast majority it procedures. Interestingly, despite having the largest operating case volume, HUP performs relatively few nerve blocks.
+
+```{r volume_by_facility}
+# Nerve block volume by facility
+theTable <- within(dat, Position <- factor(Facility, levels=names(sort(table(Facility), decreasing=TRUE))))
+pFACILITY <- ggplot(theTable,aes(x=Position)) +
+  geom_bar(fill="#6666ff", aes(key1 = Facility, key2 = comma(..count..))) +
+  ggtitle("Nerve block volume by facility") +
+  xlab("Facility") +
+  ylab ("Nerve blocks (#)") +
+  scale_y_continuous(labels = comma) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) 
+
+ggplotly(pFACILITY, dynamicTicks=c("x"),source="select", tooltip=c("key1","key2"))
+```
+
+> If we assess block volume by day of the week, we see that procedures are spread relatively evenly across weekdays. Unsurpringly, weekends have little block activity, since most operating rooms are closed on these days.
+
+```{r volume_by_day_of_week}
+# Nerve block volume by day of week
+
+dat$dow_surgery_date <- factor(dat$dow_surgery_date, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+pDOW <- ggplot(dat,aes(x = dow_surgery_date)) +
+  geom_bar(fill="#6666ff", aes(key1 = dow_surgery_date, key2 = comma(..count..))) +
+  #geom_text(stat='count',aes(label = comma(..count..), vjust = 3)) +
+  ggtitle("Nerve block volume by day of week") +
+  xlab("Day of Week") +
+  ylab ("Nerve blocks (#)") +
+  scale_y_continuous(labels = comma) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) 
+
+ggplotly(pDOW, dynamicTicks=c("x"),source="select", tooltip=c("key1","key2"))
+```
+
+> If we cut the data by both day of week and facility, some interesting patterns emerge. Nearly half of the blocks performed at PCAM occur on Mondays, while relatively few are done on Thursdays. Other facilities (e.g., PMUC) show the opposite pattern. Better aligning anesthesia staff with these volumes by day, or shifting surgical cases to different facilties, may help optimize workflows. 
+
+```{r volume_by_facility_AND_day_of_week}
+# Nerve block volume by facility AND day of week
+
+pFACILITY_DOW_2 <- ggplot(data = dat, aes(x = Facility)) +
+  geom_bar(aes(fill = dat$dow_surgery_date), position = "fill")
+
+pFACILITY_DOW_2 + 
+  ggtitle("Nerve block volume by day of week and facility") +
+  xlab("Day of Week") +
+  ylab ("Nerve blocks (% total for facility)") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    legend.title = element_blank()
+  ) 
+```
+
+> Looking at nerve block volume by surgical service highlights the extent to which Orthopedic Surgery drives the majority of nerve block volume.
+
+```{r volume_by_surgical_service}
+# Nerve block volume by surgical service
+
+theTable <- within(dat, Position <- factor(Surgical_service, levels=names(sort(table(Surgical_service), decreasing=TRUE))))
+pSERVICE <- ggplot(theTable,aes(x=Position)) +
+  geom_bar(fill="#6666ff", aes(key1 = Surgical_service, key2 = comma(..count..))) +
+  ggtitle("Nerve block volume by surgical service") +
+  xlab("Surgical Service") +
+  ylab ("Nerve blocks (#)") +
+  scale_y_continuous(labels = comma) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) 
+
+ggplotly(pSERVICE, dynamicTicks=c("x"),source="select", tooltip=c("key1","key2"))
+```
+
+> Interestingly, if we break down volume by surgical service across each facility, we see different patterns. Some facilities, such as Presby, continue to show most blocks being done for Orthopedics. At HUP, however, there is a much more heterogenous spread, with multiple services having equal or more blocks performed compared to Orthopedics.
+
+```{r volume_by_surgical_service_FACET_by_facility}
+# Nerve block volume by surgical service and facet by facility
+
+pSERVICE + 
+  ggtitle("Nerve block volume by surgical service and facility") +
+  theme(axis.text.x = element_text(size = 6)) + 
+  facet_wrap(~dat$Facility, scales = "free_y")
+```
+
+> The dataset also allows us to look at characteristics of the nerve blocks themselves. Here, for example, we see the relative share of overall blocks performed at each facility that included placement of a catheter (for >24 pain control). This variation partly reflects differences in the types of cases being performed at each facility but may also suggest practice variation among Anesthesiologists (who ultimately decide on whether to use a catheter or not) that could be worth furhter investigation.
+
+```{r cathether_placed_by_facility}
+# Nerve block share with catheter by facility
+pCATH_2 <- ggplot(data = dat, aes(x = Facility)) +
+  geom_bar(aes(fill = dat$Catheter_Y_N), position = "fill")
+
+pCATH_2 + 
+  ggtitle("Share of Nerve Blocks with Catheter by Facility") +
+  xlab("Day of Week") +
+  ylab ("Nerve blocks with catheter (% Yes vs. No)") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    legend.title = element_blank()
+  ) 
+```
+
+> Anecdotally, there are certain "crunch times" during the day when it seems that many nerve blocks need to be performed in rapid succession to avoid interrupting operating room flow. The chart below quantifies this phenomenon, with clear peaks occuring around 7am and 9am, which line up with the "first start" case times when multiple operating rooms are beginning cases at the same time. Rearranging cases so fewer "first starts" require nerve blocks could help address workflow bottlenecks.
+
+```{r volume_by_start_time}
+# Nerve block volume by case start time
+attach(dat_2)
+
+pTIME <- ggplot(dat_2,aes(x=Hour,y=Count)) +
+  geom_line(color='#6666ff', size=0.4, aes(key1 = Hour, key2 = Count)) +
+  ggtitle("Nerve block volume by time of day") +
+  xlab("Time (24 hr)") +
+  ylab ("Nerve blocks (#)") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+ggplotly(pTIME, dynamicTicks=c("x"),source="select", tooltip=c("key1","key2"))
+```
+
+> As noted above, peak nerve block volumes appear around 7am and 9am. When we slice the data by day of the week, we can see that the 9am peak is largely concentrated on Thursdays. This makes sense, since most departments at Penn have Grand Rounds lectures on Thursdays and the operating room first start cases are delayed on these days.
+
+```{r volume_by_start_time_FACET_by_day_of_week}
+# Nerve block volume by case start time and and facet by day of week
+attach(dat_3)
+dat_3$dow_surgery_date <- factor(dat_3$dow_surgery_date, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday","Friday", "Saturday"))
+pTIME_DOW <- ggplot(dat_3,aes(x=Hour,y=Count)) + 
+  geom_line(color='#6666ff', size=0.4, aes(key1 = Hour, key2 = Count)) +
+  facet_wrap(~dow_surgery_date,ncol=1) +
+  ggtitle("Nerve block volume by time of day and day of week") +
+  xlab("Time (24 hr)") +
+  ylab ("Nerve blocks (#)") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+
+ggplotly(pTIME_DOW, dynamicTicks = c("x"), source = "select", tooltip = c("key1","key2"))
+```
+
+> Another way to represent how nerve block volume varies over time is with a heat map. The chart below shows that Tuesdays at 7am represent the highest volume period. This could perhapss be a good point of time to focus on if considering interventions to address the bottleneck. 
+
+```{r heatmap_by_time_AND_day_of_week}
+# Nerve block volume by case start time AND day of week
+
+attach(dat)
+
+dat$date <- as.POSIXct(dat$AN_START_DATE,format="%Y-%m-%d %H:%M:%S")
+dat$dow_surgery_date <- wday(dat$date)
+dat$cdow <- wday(dat$date,label=T)
+dat$tod  <- as.numeric(dat$date - as.POSIXct(strftime(dat$date,format="%Y-%m-%d")))/60
+dat$Hour <- cut(dat$tod,breaks=1:24,labels=F)
+dat$ID <- seq.int(nrow(dat))
+counts <- aggregate(ID~Hour+dow_surgery_date,dat,length)
+colnames(counts)[ncol(counts)] <- "Count"
+
+#pHEATMAP <- 
+  ggplot(counts, aes(x=Hour,y=8-dow_surgery_date))+
+  geom_tile(aes(fill=Count))+
+  scale_fill_gradientn(colours=brewer.pal(9,"YlOrRd"),
+                       breaks=seq(0,max(counts$Count),by=50))+
+  scale_y_continuous(breaks=7:1,labels=c("Sun","Mon","Tues","Wed","Thurs","Fri","Sat"))+
+  labs(x="Time of day (24hr)", y="Day of Week")+
+  coord_fixed()+
+  ggtitle("Nerve block volume heatmap by time of day and day of week")
+```
+
+### Conclusions
+Exploratory analyses identified some interesting patterns in use of regional anesthesia by facility, day of week, and surgical service
+
+Further investigating practice variations may identify opportunities to better match staff with surgical needs & improve the quality/efficiency of regional anesthesia services across the PennMed system.
+
+Thanks to project advisors:
+Nabil Elkassabany, MD
+Mark Pizzini, MD
+Gurmukh Sahota, MD, PhD
+
