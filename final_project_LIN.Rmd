@@ -1,0 +1,560 @@
+---
+title: "Potential Factors Affecting Alcohol Consumption Prevalence in the United States"
+author: "Shufan Lin"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+
+### Overview
+
+Alcohol consumption causes health loss and economic cost in the United States. My project analyze the impact of geography and median household income on drinking prevalence. While it is impossible to fully stop populational alcohol use, analyzing factors which can potentially affect alcohol consumption helps develop preventive strategies. The goal of my project is to explore the potential relationship between alcohol use prevalence vs. geography and median household income. I use the dataset from GHDx named [United States Alcohol Use Prevalence by County 2002-2012](http://ghdx.healthdata.org/record/ihme-data/united-states-alcohol-use-prevalence-county-2002-2012) to get information of the alcohol pattern across the U.S. (by year and sex). Additionally, I use a map shapefile and median household income data from the American Community Survey (ACS). In addition to the shapefile, I also get the coordinates for the center of each states from [Google Developer](https://developers.google.com/public-data/docs/canonical/states_csv).
+
+[My Github Repository](https://github.com/Slin94/BMIN503_Final_Project)
+
+Faculty/Staff:
+Dr. Bomyi Lim, Sherrie Xie (Graduate student), Dr. Blanca Himes
+
+Dr. Bomyi Lim helped shape my idea.
+Sherrie Xie (Ph.D. student) helped with maps and the correlation test
+Dr. Blanca Himes helped with maps and notified some limitations of my study.
+
+
+### Introduction
+
+There are globally 39% males and 25% females who are current drinkers. These percentages correspond to 1.5 billion males and 0.9 billion females. The alcohol consumption has a complex association with health outcomes. It has been linked to 60 acute and chronic diseases, such as liver cancers, alcohol use disorders, and hypertension. Although several previous research suggests that moderate level of alcohol consumption brings benefit to humans, this finding has resently been questioned. As a matter of fact, a new study published in 2018 (GBD 2016 Alcohol Collaborators, 2018) states that the level of alcohol consumption which minimize harm on human health is zero. Negative effect of alcohol on health outcomes raise with the increase in the level of consumption. Additionally, alcohol consumption is the 7th leading risk factor for both death and disability all over the world. It led to 2.8 million deaths in 2016. In addition to health loss, the alcohol use also has an impact on the economy. The cost of excessive alcohol use in the United States reached 249 billion dollars in 2010, which can be counted as 2.05 dollars per drink on average, or $807 per person annually. 77% of these costs were due to binge drinking. In addition to that, 2 of every 5 dollars were paid by federal, state, and local governments toward losses in workplace productivity, health care, criminal justice, and motor vehicle crashes. 
+
+While many research focus on the cause of alcohol consumption, few of them address the factors that affect alcohol consumption behavior. Therefore, while it is impossible to fully stop populational alcohol use, analyzing factors which can potentially affect alcohol consumption helps develop preventive strategies such as changing public health policies, increase resources for addiction services, and implementing pricing strategies to increase the price of alcohol to limit alcohol consumption. In this project, I specifically focus on whether geographic location and median household income have impact on the drinking prevalence.
+
+### Methods
+I use the dataset from GHDx named [United States Alcohol Use Prevalence by County 2002-2012](http://ghdx.healthdata.org/record/ihme-data/united-states-alcohol-use-prevalence-county-2002-2012) to get information of the alcohol pattern across the United States. The dataset provides alcohol use prevalence estimates by year and sex form 2002 to 2012. It also divides alcohol consumption degree into three levels: any drinking means at least one drink of any alcoholic beverage in the past 30 days; heavy drinking is more than one drink per day for women or two drinks per day for men; and binge drinking stands for more than four drinks for women or five drinks for men on a single occasion at least once. I use map shapefiles and median household income census from the American Community Survey (ACS). Additionally, I get the coordinates for the center of each states from [Google Developer](https://developers.google.com/public-data/docs/canonical/states_csv) for the purpose of drawing dots on maps. My project uses t-tests to verify the difference in drinking prevalence change between males and females. Static maps are utilized to visualize geographic information as well as the combination of geographic information and median household income. In addition, Spearman's rank correlation tests are used to verify the relationship between median household income and drinking prevalence.
+
+
+```{r, eval=TRUE}
+install.packages("readxl", repos = "http://cran.us.r-project.org")
+install.packages("tmap", repos = "http://cran.us.r-project.org")
+
+library(ggplot2)
+library(tidycensus)
+library(dplyr)
+library(RColorBrewer)
+library(tidyverse)
+library(sf)
+library(reshape2)
+library("readxl")
+```
+Data is imported and cleaned up preliminarily.
+```{r, eval=TRUE}
+#load data
+alcohol_any <- read_excel("alcohol_2002_2012.xlsx", sheet = "Any")
+alcohol_heavy <- read_excel("alcohol_2002_2012.xlsx", sheet = "Heavy")
+alcohol_binge <- read_excel("alcohol_2002_2012.xlsx", sheet = "Binge")
+
+#merge dataframe (alcohol_heavy lack the data from 2002-2004)
+alcohol_any <- mutate(alcohol_any, Degree = "Any")
+alcohol_binge <- mutate(alcohol_binge, Degree = "Binge")
+alcohol_heavy <- mutate(alcohol_heavy, Degree = "Heavy", "2002 Both Sexes" = NA, "2003 Both Sexes" = NA, "2004 Both Sexes" = NA, "2002 Males" = NA, "2003 Males" = NA, "2004 Males" = NA, "2002 Females" = NA, "2003 Females" = NA, "2004 Females" = NA, "Percent Change 2002-2012, Both Sexes" = NA, "Percent Change 2002-2012, Females" = NA, "Percent Change 2002-2012, Males" = NA)
+combine_alcohol <- rbind(alcohol_any, alcohol_heavy, alcohol_binge)
+```
+First, I compare national change of alcohol use (by sex)
+```{r, eval=TRUE}
+#compare national change of alcohol consumption by sexes (2002 vs. 2012, any vs. binge (2002-2004 heavy data is missing))
+#extract data
+ten_years <- combine_alcohol%>%
+  filter(State == "National")%>%
+  filter(Degree == "Any"|Degree =="Binge")
+
+#clean up
+ten_years <- ten_years%>%
+  rename(b_2012 = "2012 Both Sexes", b_2002 = "2002 Both Sexes", m_2012 = "2012 Males", m_2002 = "2002 Males", f_2012 = "2012 Females", f_2002 = "2002 Females")
+
+ten_years$Both <-ten_years$b_2012-ten_years$b_2002
+ten_years$Males <-ten_years$m_2012-ten_years$m_2002
+ten_years$Females <-ten_years$f_2012-ten_years$f_2002
+ten_years <- ten_years%>%
+  select(Both, Males, Females, Degree)
+ten_years<-melt(ten_years, id.vars = "Degree")
+
+#bar plot:National Change from 2005 to 2012 by sex
+ggplot(ten_years, aes(x = Degree, y = value, fill = variable)) +
+  geom_col(stat = "identity", position = "dodge") +
+  scale_fill_manual("Sexes", values = c("Both" = "green3", "Females" = "coral1", "Males" = "cornflowerblue")) +
+  ylab("Prevalence between 2002 and 2012 (%)")+
+  ggtitle("National Change from 2002 to 2012 by sex")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#compare national change of alcohol consumption by sexes (2005 vs. 2012, any vs. heavy vs. binge)
+#extract data
+eight_years <- combine_alcohol%>%
+  filter(State == "National")
+
+#clean up
+eight_years <- eight_years%>%
+  rename(b_2012 = "2012 Both Sexes", b_2005 = "2005 Both Sexes", m_2012 = "2012 Males", m_2005 = "2005 Males", f_2012 = "2012 Females", f_2005 = "2005 Females")
+
+eight_years$Both <-eight_years$b_2012-eight_years$b_2005
+eight_years$Males <-eight_years$m_2012-eight_years$m_2005
+eight_years$Females <-eight_years$f_2012-eight_years$f_2005
+eight_years <- eight_years%>%
+  select(Both, Males, Females, Degree)
+eight_years<-melt(eight_years, id.vars = "Degree")
+
+#bar plot:National Change from 2005 to 2012 by sex
+ggplot(eight_years, aes(x = Degree, y = value, fill = variable)) +
+  geom_col(stat = "identity", position = "dodge") +
+  scale_fill_manual("Sexes", values = c("Both" = "green3", "Females" = "coral1", "Males" = "cornflowerblue")) +
+  ylab("Prevalence change between 2005 and 2012 (%)")+
+  ggtitle("National Change from 2005 to 2012 by sex")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The data for heavy drinking from 2002 to 2004 is not available. Therefore, I perform all my later study from 2005 to 2012. The plot shows that the prevalence of any drinking did not change over the 8 years. There is a decrease in males but increase in females in any drinking. In addition to that, the prevalence of both heavy and binge drinking increased. The change in binge drinking is larger than the change in heavy drinking, while the increase in female drinking prevalence in both heavy and binge drinking are higher than the male drinking prevalence. Then, I used box plots and t-tests to verify this difference between male and female.
+
+```{r, eval=TRUE}
+#clean up data: heavy drinking prevalence change (2005 vs. 2012) at state level
+alcohol_heavy_state_change <- alcohol_heavy%>%
+  filter(State == Location)%>%
+  rename(b_2012 = "2012 Both Sexes", b_2005 = "2005 Both Sexes", m_2012 = "2012 Males", m_2005 = "2005 Males", f_2012 = "2012 Females", f_2005 = "2005 Females")
+
+alcohol_heavy_state_change$Both <-alcohol_heavy_state_change$b_2012-alcohol_heavy_state_change$b_2005
+alcohol_heavy_state_change$Males <-alcohol_heavy_state_change$m_2012-alcohol_heavy_state_change$m_2005
+alcohol_heavy_state_change$Females <-alcohol_heavy_state_change$f_2012-alcohol_heavy_state_change$f_2005
+
+alcohol_heavy_state_change <- alcohol_heavy_state_change%>%
+  select(State, Both, Males, Females)
+
+#transform dataframe for box plot
+box_heavy_state_change <- alcohol_heavy_state_change%>%
+  select(Males, Females)
+box_heavy_state_change <- melt(box_heavy_state_change)%>%
+  rename(Sexes = "variable", Prevalence = "value")
+
+
+#clean up data: binge drinking prevalence change (2005 vs. 2012) at state level
+alcohol_binge_state_change <- alcohol_binge%>%
+  filter(State == Location)%>%
+  rename(b_2012 = "2012 Both Sexes", b_2005 = "2005 Both Sexes", m_2012 = "2012 Males", m_2005 = "2005 Males", f_2012 = "2012 Females", f_2005 = "2005 Females")
+
+alcohol_binge_state_change$Both <-alcohol_binge_state_change$b_2012-alcohol_binge_state_change$b_2005
+alcohol_binge_state_change$Males <-alcohol_binge_state_change$m_2012-alcohol_binge_state_change$m_2005
+alcohol_binge_state_change$Females <-alcohol_binge_state_change$f_2012-alcohol_binge_state_change$f_2005
+
+alcohol_binge_state_change <- alcohol_binge_state_change%>%
+  select(State, Both, Males, Females)
+
+#transform dataframe for box plot
+box_binge_state_change <- alcohol_binge_state_change%>%
+  select(Males, Females)
+box_binge_state_change <- melt(box_binge_state_change)%>%
+  rename(Sexes = "variable", Prevalence = "value")
+
+#boxplot: Heavy Drinking Prevalence Change, Male vs. Female
+ggplot(data = box_heavy_state_change, aes(x= Sexes, y=Prevalence)) +
+  geom_boxplot(fill = c("cornflowerblue", "coral1")) +
+  ylab("Prevalence Change (%)") +
+  xlab("Gender") +
+  ggtitle("Heavy Drinking Prevalence Change, Male vs. Female") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#boxplot: Heavy Drinking Prevalence Change, Male vs. Female 
+ggplot(data = box_binge_state_change, aes(x= Sexes, y=Prevalence)) +
+  geom_boxplot(fill = c("cornflowerblue", "coral1")) +
+  ylab("Prevalence Change (%)") +
+  xlab("Gender") +
+  ggtitle("Binge Drinking Prevalence Change, Male vs. Female") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#run t-tests for sex vs. drinking prevalence (heavy/binge)
+t.test(box_heavy_state_change$Prevalence~box_heavy_state_change$Sexes)
+t.test(box_binge_state_change$Prevalence~box_binge_state_change$Sexes)
+```
+
+Female drinking prevalence increased sinificently higher than male drinking prevalence in both heavy and binge drinking prevalence (heavy: p-value = 0.04292, binge: p-value = 0.04028). Because of this difference, I analyze whether the drinking prevalence differ by sex in the context of geographic locations.
+
+
+### Results
+
+To analyze whether geographic location (different states) affect alcohol consumption level, I make 2X3 (heavy/binge vs. both/females/males) maps to visualize geographic impact.
+
+```{r, eval=TRUE}
+#import US map shapefile, use GEOID for counties to create a column of code for states
+US_sf <- st_read("acs_2012_2016_county_us_B27001/acs_2012_2016_county_us_B27001.shp",
+               stringsAsFactors = FALSE) %>%
+  select(GEOID, geometry)%>%
+  mutate(Code = stringr::str_sub(GEOID, 1, 2))
+
+#See the changes at state level
+#import state code, clean up
+State_code <- read_excel("State Code.xlsx")
+Code.update <- State_code$Code
+Code.new <- str_pad(Code.update, 2, pad = "0")
+State_code <- State_code%>%
+  mutate(Code = as.character(Code.new))
+
+#join state code to alcohol_heavy_state_change
+alcohol_heavy_state_change <- inner_join(alcohol_heavy_state_change, State_code, by = "State")
+
+#join state code to alcohol_binge_state_change
+alcohol_binge_state_change <- inner_join(alcohol_binge_state_change, State_code, by = "State")
+
+#aggregate map information by state, join to cleaned heavy/binge data
+US_states <- US_sf%>%
+  dplyr::select(geometry)%>%
+  aggregate(by = list(US_sf$Code), FUN = mean)%>%
+  rename(Code = "Group.1")%>%
+  mutate(Code = as.character(Code))
+US_states_heavy <- inner_join(US_states, alcohol_heavy_state_change, by = "Code")
+US_states_binge <- inner_join(US_states, alcohol_binge_state_change, by = "Code")
+
+#plot
+#set min&max for heavy
+prev_h_both_min <- sort(US_states_heavy$Both)[1]
+prev_h_both_max <- sort(US_states_heavy$Both, decreasing = TRUE)[1]
+prev_h_male_min <- sort(US_states_heavy$Males)[1]
+prev_h_male_max <- sort(US_states_heavy$Males, decreasing = TRUE)[1]
+prev_h_female_min <- sort(US_states_heavy$Females)[1]
+prev_h_female_max <- sort(US_states_heavy$Females, decreasing = TRUE)[1]
+
+#set min&max for binge
+prev_b_both_min <- sort(US_states_binge$Both)[1]
+prev_b_both_max <- sort(US_states_binge$Both, decreasing = TRUE)[1]
+prev_b_male_min <- sort(US_states_binge$Males)[1]
+prev_b_male_max <- sort(US_states_binge$Males, decreasing = TRUE)[1]
+prev_b_female_min <- sort(US_states_binge$Females)[1]
+prev_b_female_max <- sort(US_states_binge$Females, decreasing = TRUE)[1]
+
+#set theme
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.6, "cm"),          
+        legend.text = element_text(size = 12),       
+        legend.title = element_text(size = 12),
+        plot.title = element_text(size = 16))      
+}
+
+#set color for both, males, and females
+myPalette_both <- colorRampPalette(brewer.pal(9, "Greens"))
+myPalette_male <- colorRampPalette(brewer.pal(9, "Blues"))
+myPalette_female <- colorRampPalette(brewer.pal(9, "Reds"))
+
+#map plot:heavy, both
+ggplot() + 
+  geom_sf(data = US_states_heavy, aes(fill = Both), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Heavy Drinking\n 2005 to 2012, Both Sexes") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_both(100),
+                       limit = range(prev_h_both_min, prev_h_both_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#map plot:binge, both
+ggplot() + 
+  geom_sf(data = US_states_binge, aes(fill = Both), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Binge Drinking\n 2005 to 2012, Both Sexes") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_both(100),
+                       limit = range(prev_b_both_min, prev_b_both_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+When sex is not taken into account, the alcohol use prevalence increased the most in the West North Central states, North East (binge drinking), Montana and Kentucky. And there is a drop in prevalence in Nevada in the binge drinking condition.
+
+```{r, eval=TRUE}
+#plot maps by gender
+#map plot:heavy, males
+ggplot() + 
+  geom_sf(data = US_states_heavy, aes(fill = Males), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Heavy Drinking\n 2005 to 2012, Males") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_male(100),
+                       limit = range(prev_h_male_min, prev_h_male_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#map plot:binge, males
+ggplot() + 
+  geom_sf(data = US_states_binge, aes(fill = Males), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Binge Drinking\n 2005 to 2012, Males") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_male(100),
+                       limit = range(prev_b_male_min, prev_b_male_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#plot:heavy, females
+ggplot() + 
+  geom_sf(data = US_states_heavy, aes(fill = Females), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Heavy Drinking\n 2005 to 2012, Females") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_female(100),
+                       limit = range(prev_h_female_min, prev_h_female_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#plot:binge, females
+ggplot() + 
+  geom_sf(data = US_states_binge, aes(fill = Females), lwd = 0) +
+  my_theme() +
+  ggtitle("Change in Age-standardized Prevalence of Binge Drinking\n 2005 to 2012, Females") +
+  scale_fill_gradientn(name = "Prevalence\nChange (%)", colours = myPalette_female(100),
+                       limit = range(prev_b_female_min, prev_b_female_max)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The increase in male drinking prevalence concentrates in the West North Central states, Kentucky, and Louisiana. Females contributes a lot in Montana for both heavy and binge drinking and in the Great Lakes region for the binge drinking. Additionally, both males and females drinking prevalence largely increased in the North East in the context of binge drinking.
+
+I also check how the drinking prevalence changed over the ten years given that there is a large gap between 2002/2005 vs. 2012 alcohol consomption in heavy & binge drinking conditions.
+
+```{r, eval=TRUE}
+#get national alcohol use values (2002-2012)
+changes_national <- combine_alcohol%>%
+  filter(State == "National")
+changes_national <- changes_national[3:35]
+
+#clean up
+any_changes <- as.data.frame(matrix(as.numeric(changes_national[1,]), nrow = 3, ncol = 11))
+heavy_changes <- as.data.frame(matrix(as.numeric(changes_national[2,]), nrow = 3, ncol = 11))
+binge_changes <- as.data.frame(matrix(as.numeric(changes_national[3,]), nrow = 3, ncol = 11))
+combine_changes_national <- rbind(any_changes, heavy_changes, binge_changes)
+combine_changes_national$Degree <-c(rep("Any", 3), rep("Heavy", 3), rep("Binge",3))
+combine_changes_national <- combine_changes_national%>%
+  rename("2002" = "V1", "2003" = "V2", "2004" = "V3", "2005" = "V4", "2006" = "V5", "2007" = "V6", "2008" = "V7", "2009" = "V8", "2010" = "V9", "2011" = "V10", "2012" = "V11")
+
+#Plot change in heavy alcohol use from 2002 to 2012
+#clean up
+combine_changes_national <- melt(combine_changes_national, id.vars = "Degree")%>%
+  rename("Year" = "variable")
+combine_changes_national$Sexes <- rep(c("Both", "Females", "Males"), 33)
+combine_changes_national_heavy <- combine_changes_national%>%
+  filter(Degree == "Heavy")
+  #can use drop_na() to drop N/A data from 2002-2005
+
+#plot: heavy prevalence, 2002-2012
+ggplot(combine_changes_national_heavy, aes(x = Year, y = value, colour = Sexes)) + 
+  geom_line(aes(x = Year, y = value, group = Sexes)) +
+  scale_color_manual("Sexes", values = c("Both" = "green3", "Females" = "coral1", "Males" = "cornflowerblue")) +
+  ylab("Change in heavy alcohol use from 2002 to 2012 (%)")+
+  ggtitle("Prevalence Change from 2002 to 2012")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#Change in binge alcohol use from 2002 to 2012 (%)
+#clean up
+combine_changes_national_binge <- combine_changes_national%>%
+  filter(Degree == "Binge")
+
+#plot: binge prevalence, 2002-2012
+ggplot(combine_changes_national_binge, aes(x = Year, y = value, colour = Sexes)) + 
+  geom_line(aes(x = Year, y = value, group = Sexes)) +
+  scale_color_manual("Sexes", values = c("Both" = "green3", "Females" = "coral1", "Males" = "cornflowerblue")) +
+  ylab("Change in binge alcohol use from 2002 to 2012 (%)")+
+  ggtitle("Prevalence Change from 2002 to 2012")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The overall prevalence in binge drinking is higher than heavy drinking by looking at the scale of the y axis. The increase patterns are similar between males and females. In addition to that, I expected to see a large increase around 2009 because of the financial crisis in 2008. But the alcohol use prevalence largely increased from 2010 to 2011. Therefore, I hypothesize that people try to saving money from alcohol when their income is affected.
+
+To verify my hypothesis, I further analyze the drinking prevalence from 2010 and 2011 when an ecomonic factor, median household income, is included. To visualize the comparison between median household income and drinking prevalence, I create maps that whith background showing the median household income and the dots on the maps representing drinking prevalence. 
+
+```{r, eval=TRUE}
+#aquire census access
+census_api_key("d38c26d19748e1f9eaaa8bde2d2fe0c6b6b0d606", install=TRUE, overwrite = TRUE)
+
+#import state longitudes and latitudes file
+states <- read.csv("States.csv") 
+
+#change the coordinates of AK and HI to following: AK:27.4,-111.9; HI:25.4,-103.3
+#(for the purpose to plot maps with translocated AK and HI)
+states[1,2]<-27.4
+states[1,3]<--111.9
+states[12,2]<-25.4
+states[12,3]<--103.3
+states <- states%>%
+  rename(State = "name")
+
+#find the code for median household income in the past 12 months: B19013_001
+variables <- load_variables(2011, "acs5", cache = TRUE)
+
+#2010 median household income
+acs.data.2010 <- get_acs(geography = "state", 
+                   year = 2010,                
+                   variables = c("B19013_001"))
+
+#2011 median household income
+acs.data.2011 <- get_acs(geography = "state",
+                   year = 2011,                
+                   variables = c("B19013_001"))
+
+#clean up median household income data in 2010 & 2011
+acs.data.2010 <- acs.data.2010%>%
+  rename(Code = "GEOID")%>%
+  select(-c(variable, moe))
+
+acs.data.2011 <- acs.data.2011%>%
+  rename(Code = "GEOID")%>%
+  select(-c(variable, moe))
+
+
+#clean up data of alcohol consumption in 2010 & 2011
+#2010
+heavy.2010 <- alcohol_heavy%>%
+  filter(State == Location)%>%
+  rename(Heavy = "2010 Both Sexes")%>%
+  select(State, Heavy)
+
+binge.2010 <- alcohol_binge%>%
+  filter(State == Location)%>%
+  rename(Binge = "2010 Both Sexes")%>%
+  select(State, Binge)
+
+heavy.binge.2010 <- inner_join(heavy.2010, binge.2010, by = "State")
+heavy.binge.2010 <- inner_join(heavy.binge.2010, State_code, by = "State")
+heavy.binge.2010 <- inner_join(heavy.binge.2010, states, by = "State")
+heavy.binge.2010 <- st_as_sf(heavy.binge.2010, coords = c("longitude", "latitude"), crs = 4267)
+estimate.2010 <- inner_join(US_states, acs.data.2010, by = "Code")
+
+#2011
+heavy.2011 <- alcohol_heavy%>%
+  filter(State == Location)%>%
+  rename(Heavy = "2011 Both Sexes")%>%
+  select(State, Heavy)
+
+binge.2011 <- alcohol_binge%>%
+  filter(State == Location)%>%
+  rename(Binge = "2011 Both Sexes")%>%
+  select(State, Binge)
+
+heavy.binge.2011 <- inner_join(heavy.2011, binge.2011, by = "State")
+heavy.binge.2011 <- inner_join(heavy.binge.2011, State_code, by = "State")
+heavy.binge.2011 <- inner_join(heavy.binge.2011, states, by = "State")
+heavy.binge.2011 <- st_as_sf(heavy.binge.2011, coords = c("longitude", "latitude"), crs = 4267)
+estimate.2011 <- inner_join(US_states, acs.data.2011, by = "Code")
+
+#plot maps for comparison between median household income (2010, 2011) and drinking prevalence (heavy, binge)
+#map plot: 2010, median household income + heavy
+ggplot() + 
+  geom_sf(data = estimate.2010, aes(fill = estimate, geometry=geometry), lwd = 0) +
+  scale_fill_gradientn(name = "Median\nHousehold\nIncome($)",      # change legend title
+                    colours = myPalette_both(100), limit = range(35000, 75000))+
+  geom_sf(data = heavy.binge.2010, aes(size = Heavy), color = "orange", alpha = 0.6, show.legend = "point") +
+  scale_size(range = c(1, 5)) +
+  my_theme() +
+  ggtitle("Comparison between Median Household Income and\n Heavy Drinking, 2010")+
+  labs(size = "Heavy\nDrinking\nPrevalence(%)")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#map plot: 2010, median household income + binge
+ggplot() + 
+  geom_sf(data = estimate.2010, aes(fill = estimate, geometry=geometry), lwd = 0) +
+  scale_fill_gradientn(name = "Median\nHousehold\nIncome($)",      # change legend title
+                    colours = myPalette_both(100), limit = range(35000, 75000))+
+  geom_sf(data = heavy.binge.2010, aes(size = Binge), color = "orange", alpha = 0.6, show.legend = "point") +
+  scale_size(range = c(1, 5)) +
+  my_theme() +
+  ggtitle("Comparison between Median Household Income and\n Binge Drinking, 2010")+
+  labs(size = "Binge\nDrinking\nPrevalence(%)")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#map plot: 2011, median household income + heavy
+ggplot() + 
+  geom_sf(data = estimate.2011, aes(fill = estimate, geometry=geometry), lwd = 0) +
+  scale_fill_gradientn(name = "Median\nHousehold\nIncome($)",      # change legend title
+                    colours = myPalette_both(100), limit = range(35000, 75000))+
+  geom_sf(data = heavy.binge.2011, aes(size = Heavy), color = "orange", alpha = 0.6, show.legend = "point") +
+  scale_size(range = c(1, 5)) +
+  my_theme() +
+  ggtitle("Comparison between Median Household Income and\n Heavy Drinking, 2011")+
+  labs(size = "Heavy\nDrinking\nPrevalence(%)")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#map plot: 2011, median household income + binge
+ggplot() + 
+  geom_sf(data = estimate.2011, aes(fill = estimate, geometry=geometry), lwd = 0) +
+  scale_fill_gradientn(name = "Median\nHousehold\nIncome($)",      # change legend title
+                    colours = myPalette_both(100), limit = range(35000, 75000))+
+  geom_sf(data = heavy.binge.2011, aes(size = Binge), color = "orange", alpha = 0.6, show.legend = "point") +
+  scale_size(range = c(1, 5)) +
+  my_theme() +
+  ggtitle("Comparison between Median Household Income and\n Binge Drinking, 2011")+
+  labs(size = "Binge\nDrinking\nPrevalence(%)")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The background is the median household income, which increased from 2010 to 2011 while both of them are in the range from 35,000 to 75,000 dollars. The dots on the maps represent the drinking prevalence for each states. The states in the Northern East Coast, the West Coast, Alaska and Hawaii have higher drinking prevalence as well as higher median household income. However, for the states in the North West, the drinking prevalences are high even though the median household income is not as high as the Northern East Coast and the West Coast. In addition, the prevalence patterns are similar to each other across the two years and between heavy and binge drinking degrees.
+
+To quantitatively analyze the correlation between median household income and drinking prevalence, I first made scatter plots to compare the distribution of data points and differences in median houshold incomes, drinking prevalences, and trend lines. Then, I used Spearman's rank correlation test to test whether correlation exist between the median household income and the drinking prevalence. 
+
+```{r, eval=TRUE}
+#clean up data for the preparation for scatter plots and correlation tests
+#2010
+corr.drink.income.2010 <- inner_join(heavy.binge.2010, acs.data.2010, by = "Code")
+corr.h.2010 <- corr.drink.income.2010$Heavy
+corr.b.2010 <- corr.drink.income.2010$Binge
+corr.i.2010 <-corr.drink.income.2010$estimate
+
+#2011
+corr.drink.income.2011 <- inner_join(heavy.binge.2011, acs.data.2011, by = "Code")
+corr.h.2011 <- corr.drink.income.2011$Heavy
+corr.b.2011 <- corr.drink.income.2011$Binge
+corr.i.2011 <-corr.drink.income.2011$estimate
+
+#combine cleaned data
+corr.drink.income.2010 <- corr.drink.income.2010%>%
+  mutate(Year = "2010")
+corr.drink.income.2011 <- corr.drink.income.2011%>%
+  mutate(Year = "2011")
+alcohol.estimate.combine <- rbind(corr.drink.income.2010, corr.drink.income.2011)
+
+
+#make scatter plot corresponding to the double-layer maps, for the purpose of comparing the distribution of data points and differences in median houshold incomes, drinking prevalences, and trend lines
+
+#scatter plot: heavy drinking, 2010 vs. 2011
+alcohol.estimate.combine %>%
+  group_by(Year) %>%
+  ggplot(aes(estimate, Heavy, color = Year)) +
+  geom_point()+
+  xlab("Median Household Income ($)")+
+  ylab("Heavy Drinking Prevalence (%)")+
+  geom_smooth(method = "lm")+
+  ggtitle("Median Household Income vs. Heavy Drinking Prevalence")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#scatter plot: binge drinking, 2010 vs. 2011
+alcohol.estimate.combine %>%
+  group_by(Year) %>%
+  ggplot(aes(estimate, Binge, color = Year)) +
+  geom_point()+
+  xlab("Median Household Income ($)")+
+  ylab("Binge Drinking Prevalence (%)")+
+  geom_smooth(method = "lm")+
+  ggtitle("Median Household Income vs. Binge Drinking Prevalence")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From these plots I can tell that the median household incomes are higher in 2011 by looking at the x-axis. The prevalence are also higher while the trend lines are similar within heavy drinking and binge drinking.
+
+```{r, eval=TRUE}
+#Spearman's rank correlation tests for all four conditions (year (2010,2011) x degree (heavy, binge))
+#2010, heavy vs. median household income
+cor.test(x = corr.h.2010, y = corr.i.2010, method = "spearman", exact = FALSE)
+#2010, binge vs. median household income
+cor.test(x = corr.b.2010, y = corr.i.2010, method = "spearman", exact = FALSE)
+#2011, heavy vs. median household income
+cor.test(x = corr.h.2011, y = corr.i.2011, method = "spearman", exact = FALSE)
+#2011, binge vs. median household income
+cor.test(x = corr.b.2011, y = corr.i.2011, method = "spearman", exact = FALSE)
+```
+
+The p-values are positive for all four conditions  with the rho coefficient ranged from 0.33 to 0.43 (Heavy 2010: p-value = 0.009049, rho = 0.365515; Binge 2010: p-value = 0.006451, rho = 0.3802523; Heavy 2011: p-value = 0.0186, rho = 0.3317397; Binge 2011: p-value = 0.001792, rho = 0.4307471). This means that the median household income has a positive correlation with excessive drinking prevalence: the increase in the household income means an increase in alcohol consumption. However, whether median household income can be a causation of the drinking prevalence needs further investigation and/or experiments.
+
+### Conclusion, Limitation, and Future Direction
+Through my project I found that the increase in the female alcohol consumption prevalence is higher than in males (2005-2012). From the pespective of geography, most of the increases happen in the West North Central states, North East, Montana, and Kentucky. The increase of male drinking prevalence concentrates in the West North Central states and Kentucky, while Louisiana also stands out. On the other hand, females contributes a lot to the increase of drinking prevalence in Montana for both heavy and binge drinking and in the Great Lakes region for the binge drinking. This project also verified my hypothesis that the median household income has a positive correlation with heavy and binge drinking prevalence. While whether the median household income is a causation of the drinking prevalence remains unknown, states with higher median household income could potentially put more effort into limiting alcohol consumption.
+
+One limitation of my project is that the median household income is not adjusted by local prices. Additionally, the raw data shows the prevalence instead of population of drinking, which could bring potential bias. In this project, I have not looked into specific states such as Montana and Kentucky. One of the future directions could focus on finding out why states like Montana and Kentucky have higher drinking prevalence. Another direction of my project could be including other factors such as unemployment level and social cohesion, as both of these factors had been suggested to affect the drinking prevalence in a previous study (Blomgren, et. al, 2004).
