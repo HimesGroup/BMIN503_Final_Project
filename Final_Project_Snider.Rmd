@@ -3,7 +3,7 @@ title: "Identifying Patients in the Hospital with Mental Health Conditions"
 author: "Christopher Snider"
 output: 
   html_document:
-    toc: false 
+    toc: TRUE
     depth: 3 
     theme: paper 
     highlight: tango
@@ -12,26 +12,28 @@ output:
 options(width = 400)
 ```  
 
-### Overview
+# Overview
 
-> Mental health conditions are prevalent among patients admitted the hospital, but recognizing the symptoms can be challenging for members of the care team (Hansen et al., 2001). Undiagnosed mental health conditions can lead to disruptions in a patient's care and worse outcomes. This project intends to provide support to an ongoing program, Mental Health Engagement, Navigation, and Delivery (MEND), by using data from the electronic health records to better identify patients who could benefit from the intervention and enable them to begin receiving treatment earlier in their stay.
+> Mental health conditions are prevalent among patients admitted to the hospital, but recognizing the symptoms can be challenging for members of the care team (Hansen et al., 2001). Undiagnosed mental health conditions can lead to disruptions in a patient's care and worse outcomes. This project intends to provide support to an ongoing program, Mental Health Engagement, Navigation, and Delivery (MEND), by using data from the electronic health records to better identify patients who could benefit from the intervention and enable them to begin receiving treatment earlier in their stay.
 
 
-### Introduction 
+# Introduction 
 
-> Mental health disorders account for substantial social and economic costs, representing 30% of the non-fatal disease burden and 10% of the overall disease burden, globally (Marquez & Saxena, 2016). In the United States, approximately 18% of adults experienced mental illness in the previous year (NIMH, 2016). An analysis by Greenberg et al. (2015) calculated that the economic burden of individuals with Major Depressive Disorder in the United States in 2010 was over $210 billion, with 47% attributed to direct medical and pharmaceutical costs and 48% attributed to workplace costs including absenteeism and reduced productivity at work.
-The prevalence of depression, anxiety, and other mental health disorders is higher among those with chronic physical conditions (APMS, 2014). Mental health disorders can also exacerbate physical health conditions, thus raising total health care costs (APMS, 2014).  
+> Mental health disorders account for substantial social and economic costs, representing 30% of the non-fatal disease burden and 10% of the overall disease burden, globally (Marquez & Saxena, 2016). In the United States, approximately 19% of adults experienced mental illness in the previous year (NIMH, 2017). An analysis by Greenberg et al. (2015) calculated that the economic burden of individuals with Major Depressive Disorder in the United States in 2010 was over $210 billion, with 47% attributed to direct medical and pharmaceutical costs and 48% attributed to workplace costs including absenteeism and reduced productivity at work.The prevalence of depression, anxiety, and other mental health disorders is higher among those with chronic physical conditions (Rai, 2014). Mental health disorders can also exacerbate physical health conditions, thus raising total health care costs (Rai, 2014).  
 
 > The MEND program is focusing on identifying patients in the inpatient setting, providing psychiatric consults and behavioral interventions, and connecting patients with treatment pathways after discharge. The team verifies patient eligibility mostly through chart review, which is inefficient and prevents them from reaching some patients needing treatment. Extracting data from the electronic health records could identify some patients needing to be seen by the psychiatric team immediately if they have high PHQ-9 scores indicating severe depression or if they have previously diagnosed suicidal ideation. However, other patients may have conditions that are harder to recognize. A machine learning approach could identify patterns in the data more quickly, reducing the burden of performing chart reviews on a large population and enabling the psychiatric care team to reach patients faster. The MEND program relies on individuals across multiple disciplines. An innovation and design team performed contextual inquiry to better understand the scope of the problem. The psychiatric care team works closely with the clinicians on the medicine service. Data analysts and econometricians are also supporting the evaluation of the program's impact.
 
-### Methods
+# Methods
 
-> The data used in this analysis are extracted from Epic Clarity, the reporting database for Epic's EHR. Data are also obtained from the Agent Platform, and interactive tool the clinical team uses to mark patients as cases or controls after conducting chart review.
+> The data used in this analysis are extracted from Epic Clarity, the reporting database for Epic's EHR. Data are also obtained from the Agent Platform, an interactive tool the clinical team uses to mark patients as cases or controls after conducting chart review. The potential predictors included in the analysis were limited to those entered into the EHR by the first day of the patient's admission. While limiting the data to what was known at this time point will likely limit the algorithm's performance (e.g., some patients may have little available data), this most closely reflects how the model could perform in real-time. Training the model on data points, such as discharge diagnoses, would require relying on data not available when the psychiatric team would be in the position to intervene.
+
+> The analysis process began with cleaning the raw data from the EHR and Agent. Summary statistics were used to describe the population, which included patients admitted to the Hospital of the University of Pennsylvania, age 18 and older, on floors Founders 12 and 14. Exploratory data anaylsis included visualizing the relationship between potential features and the outcome of interest. Machine learning models were used to evaluate whether the available features can be used to accurately identify appropriate patients for the MEND intervention. Following the analysis of discrete data elements, unstructured data from the clinical notes (using only a sub-sample) were separately explored.
 
 ## R Libraries
 ```{r, eval = TRUE, warning=FALSE, message=FALSE}
 library(tidyverse)
 library(ggplot2)
+library(knitr)
 library(grid)
 library(gridExtra)
 library(reshape2)
@@ -43,6 +45,10 @@ library(RColorBrewer)
 library(car)
 
 ```
+
+## Preprocessing
+
+> This block of code imports the raw data extracted from Epic Clarity and the Agent platform and merges the dataset on the encounter ID. Data cleaning steps include recategorizing certain variables (e.g., race, place of residence). Patients with a PHQ-9 score greater than or equal to 20 and patients with an encounter or problem list diagnosis indicating suicide/intentional injury were excluded from this analysis. These patients could be flagged to be seen by the MEND team using a simple rule-based logic instead of relying on the risk score, which may cause some of these patients to be missed. In addition, only the most-recent admission for a given patient was selected. This prevented any one patient from having more weight in the analysis.
 
 ```{r, eval = TRUE}
 
@@ -61,15 +67,15 @@ agent <- read.csv("agent_scoring_data_22nov2019.csv")
 data <- clarity %>% left_join(agent, by=c("PAT_ENC_CSN_ID"="encounter_id"))
 
 # De-identify Data
-data <- data %>% select(-c(PAT_ID, MRN, HSP_ACCOUNT_ID,PAT_ENC_CSN_ID))
+data <- data %>% dplyr::select(-c(PAT_ID, MRN, HSP_ACCOUNT_ID,PAT_ENC_CSN_ID))
 
 # Filter Admissions to patients admitted after March, 1, 2017 (Date of Epic Inpatient)
 data <- data %>% filter(HOSP_ADMSN_TIME >= '2017-03-01' & AGE >= 18)
 
 # Clean Data
 clean_data <- data %>% mutate(screening_outcome=factor(if_else(mend_screening_result%in%c("included"),1,0),
-                                       levels=c(1,0),
-                                       labels=c("Positive","Negative"))) %>%
+                                       levels=c(0,1),
+                                       labels=c("Negative","Positive"))) %>%
   mutate(mend_contact_result=gsub('_',' ',gsub("(?<=\\b)([a-z])","\\U\\1",tolower(mend_contact_result),perl=TRUE))) %>%
   mutate(mend_contact_result=if_else(mend_contact_result=='','None',mend_contact_result)) %>%
   mutate(RACE=factor(case_when(RACE=='HLB-Hispanic Latino/Black'~'Black',
@@ -79,6 +85,7 @@ clean_data <- data %>% mutate(screening_outcome=factor(if_else(mend_screening_re
   mutate(ETHNICITY=factor(case_when(ETHNICITY%in% c('Hispanic Latino','HLW','Hlb-Hispanic Latino/Black')~'Hispanic Latino',
                 ETHNICITY %in% c('WHITE','Non-Hispanic Non-Latino','Black','Blk','Caucasian')~'Non-Hispanic Non-Latino',
                 ETHNICITY %in% c('Patient Declined','Unknown','')~'Unknown',
+                is.na(ETHNICITY)~'Unknown',
                 TRUE ~ as.character(ETHNICITY)))) %>%
   mutate(AGE_CATEGORY = factor(if_else(AGE<=29,"18-29",
                                                if_else(AGE<=39,"30-39",
@@ -119,11 +126,13 @@ clean_data <- data %>% mutate(screening_outcome=factor(if_else(mend_screening_re
 
 ## Identifying Patient Characteristics that automatically qualify the patient for a psychiatry consult
 # Last PHQ-9 Score >= 20 (in past year) indicating severe depression
-clean_data %>% group_by(screening_outcome,LAST_PHQ9_SCORE) %>% count() %>% arrange(desc(LAST_PHQ9_SCORE))
+#clean_data %>% group_by(screening_outcome,LAST_PHQ9_SCORE) %>% count() %>% arrange(desc(LAST_PHQ9_SCORE)) %>% kable()
 
 # Encounter Diagnosis or Problem List Diagnosis of Suicide or Intential Injury
-clean_data %>% group_by(screening_outcome,ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% arrange(desc(ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY))
-clean_data %>% group_by(screening_outcome,PL_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% arrange(desc(PL_CCS_662_SUICIDE_INTENTIONAL_INJURY))
+clean_data %>% group_by(screening_outcome,ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% 
+  arrange(desc(ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY)) %>% kable()
+clean_data %>% group_by(screening_outcome,PL_CCS_662_SUICIDE_INTENTIONAL_INJURY) %>% count() %>% arrange(desc(PL_CCS_662_SUICIDE_INTENTIONAL_INJURY)) %>%
+  kable()
 
 # Take only the most recent admission for each patient. This way each patient will have equal weight in the model.
 final_cohort <- clean_data %>% 
@@ -131,12 +140,18 @@ final_cohort <- clean_data %>%
   slice(which.max(HOSP_ADMSN_TIME)) %>%
   # Exclude patients with PHQ-9 scores >= 20, which indicates severe depression and patients with a problem list or encounter diagnosis 
   # of suicide/intential injury.
-  filter(if_else(is.na(LAST_PHQ9_SCORE),-1,LAST_PHQ9_SCORE)<20 & ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0 & PL_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0)
-
-
-
+  filter(if_else(is.na(LAST_PHQ9_SCORE),-1,LAST_PHQ9_SCORE)<20 
+         & ENC_DX_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0 
+         & PL_CCS_662_SUICIDE_INTENTIONAL_INJURY == 0) %>%
+  ungroup()
 
 ```
+
+## Defining the population
+
+> The sample was limited to patients on floors Founders 12 and Founders 14 at the Hospital of the University of Pennsylvania from January through November 2019. The Agent dashboard began identifying patients for chart review for the MEND team in January. The majority of patients were age 50 and older. A little more than half of the patients had a previous inpatient admission within the University of Pennsylvania Health System.
+
+# Results
 
 ```{r, eval = TRUE}
 
@@ -145,59 +160,60 @@ final_cohort <- clean_data %>%
 
 population <-CreateTableOne(vars=c("AGE","AGE_CATEGORY","GENDER","RACE", "ETHNICITY", "FINANCIAL_CLASS","PCP_INSYSTEM_YN","PREVIOUS_ED_VISIT_YN","PREVIOUS_ADMISSION_YN","REGION"), #, strata ="Intervention", 
                             data=final_cohort, test = FALSE)
-pop_table <- print(population, showAllLevels = TRUE)
+print(population, showAllLevels = TRUE)
+
 
 ```
 
 ```{r, eval = TRUE}
+
+# Create theme for visualizations
+
+custom_plot_theme <- function() {
+  theme(plot.title=element_text(hjust=0.5,size=16),axis.text.y = element_text(size=12),axis.text.x = element_text(size=12),
+        axis.title.y = element_text(size=14),axis.title.x = element_text(size=14),
+        legend.text = element_text(size = 12),legend.title = element_text(size = 14))     
+}
 
 # Show bar plot of screening result
 final_cohort %>% group_by(screening_outcome) %>% count() %>%
   ggplot(aes(x=reorder(screening_outcome,-n),n,fill=screening_outcome)) +
   geom_bar(stat='identity',width=0.5) +
-  theme(axis.text.x = element_text(size=12)) +
   ggtitle("MEND Screening Results") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  custom_plot_theme()+
   xlab("Result") +
   ylab("Frequency") +
-  scale_fill_manual(values=c("red3","#999999")) +
-  geom_text(aes(x = screening_outcome, y = n+80, label = n), colour="black", size = 3) +
+  scale_fill_manual(values=c("#999999","red3")) +
+  geom_text(aes(x = screening_outcome, y = n+80, label = n), colour="black", size = 4) +
   labs(fill="Screening Result")
 
 ```
 
+## Examining Previous Encounters
 
+> If patients haven't had visits to the University of Pennsylvania Health System in the past, information about them may be limited. Over 70% of patients had a prior outpatient encounter, but only 50-60% had previous ED visits and admissions. Because the intervention is working in the inpatient setting, data from previous admissions may be the most relevant.
 
 ```{r, eval = TRUE}
 
 # Evaluate availability of prior data
-final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_OUTPATIENT_VISIT_YN==1), Prop_Yes = sum(PREVIOUS_OUTPATIENT_VISIT_YN==1)/n(),
-                                         Freq_No = sum(PREVIOUS_OUTPATIENT_VISIT_YN==0), Prop_No = sum(PREVIOUS_OUTPATIENT_VISIT_YN==0)/n(),
-                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
-                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
 
-final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(ANY_MEDICATION_ORDER_YN==1), Prop_Yes = sum(ANY_MEDICATION_ORDER_YN==1)/n(),
-                                         Freq_No = sum(ANY_MEDICATION_ORDER_YN==0), Prop_No = sum(ANY_MEDICATION_ORDER_YN==0)/n(),
-                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
-                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+all_vars <- final_cohort %>% mutate(PREVIOUS_ED_VISIT_YN=if_else(PREVIOUS_ED_VISIT_YN=="Yes",1,0),
+                                            PREVIOUS_ADMISSION_YN=if_else(PREVIOUS_ADMISSION_YN=="Yes",1,0)) 
+variable_summary <- melt(all_vars[c('RANDOM_ENC_ID','screening_outcome','PREVIOUS_OUTPATIENT_VISIT_YN', 'PREVIOUS_ED_VISIT_YN', 'PREVIOUS_ADMISSION_YN',
+                                         'ANY_MEDICATION_ORDER_YN')], id=c('RANDOM_ENC_ID','screening_outcome'))
 
-final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(ANY_MEDICATION_ORDER_YN==1), Prop_Yes = sum(ANY_MEDICATION_ORDER_YN==1)/n(),
-                                         Freq_No = sum(ANY_MEDICATION_ORDER_YN==0), Prop_No = sum(ANY_MEDICATION_ORDER_YN==0)/n(),
-                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
-                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
+variable_summary %>% group_by(variable,screening_outcome) %>% 
+  summarize(Freq_Yes=sum(value==1), Prop_Yes = sum(value==1)/n(),
+                                         Freq_No = sum(value==0), Prop_No = sum(value==0)/n(),
+                                         Freq_Prop_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
+                                         Freq_Prop_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep="")) %>% kable()
 
-final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_ED_VISIT_YN=="Yes"), Prop_Yes = sum(PREVIOUS_ED_VISIT_YN=="Yes")/n(),
-                                         Freq_No = sum(PREVIOUS_ED_VISIT_YN=="No"), Prop_No = sum(PREVIOUS_ED_VISIT_YN=="No")/n(),
-                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
-                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
 
-final_cohort %>% ungroup() %>% summarize(Freq_Yes=sum(PREVIOUS_ADMISSION_YN=="Yes"), Prop_Yes = sum(PREVIOUS_ADMISSION_YN=="Yes")/n(),
-                                         Freq_No = sum(PREVIOUS_ADMISSION_YN=="No"), Prop_No = sum(PREVIOUS_ADMISSION_YN=="No")/n(),
-                                         Format_Yes = paste(Freq_Yes," (",round(Prop_Yes*100,2),")",sep=''), 
-                                         Format_No = paste(Freq_No," (",round(Prop_No*100,2),")",sep=""))
 ```
 
-```{r, eval = TRUE}
+## Visualizing Geospatial Data
+
+```{r, eval = TRUE, warning=FALSE, message=FALSE, results='hide'}
 
 # Admissions/Screening Outcomes by zip code
 admissions_zip <- final_cohort %>% group_by(ZIP) %>% summarise(Total_Admissions = n(), Proportion_Positive = mean(if_else(screening_outcome=="Positive",1,0)))
@@ -239,7 +255,8 @@ phila_zip <- us_zip %>% filter(GEOID %in% c("19104","19131","19139","19151", # W
                                 )
                    ) 
 
-check <- phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% mutate(Total_Admissions=if_else(is.na(Total_Admissions),0,as.numeric(Total_Admissions)),
+phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% 
+  mutate(Total_Admissions=if_else(is.na(Total_Admissions),0,as.numeric(Total_Admissions)),
   Proportion_Positive=if_else(is.na(Proportion_Positive),0,Proportion_Positive)) %>%
   ggplot(aes(fill = Total_Admissions)) +
   geom_sf() +
@@ -271,6 +288,9 @@ phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% mutate(Total_Adm
         legend.title = element_text(size = 14),
         plot.title = element_text(size=16, hjust=0.5)) 
 
+# Chi-square Test 
+chisq.test(table(final_cohort$screening_outcome,final_cohort$REGION))
+
 ```
 
 ```{r, eval = TRUE}
@@ -278,58 +298,59 @@ phila_zip %>% left_join(admissions_zip,by=c("GEOID"="ZIP")) %>% mutate(Total_Adm
 # Potential Predictors
 final_cohort %>% mutate(FINANCIAL_CLASS = if_else(FINANCIAL_CLASS=='','None',as.character(FINANCIAL_CLASS))) %>%
   count(FINANCIAL_CLASS, screening_outcome) %>%
-  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=screening_outcome)) +
+  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(stat='identity',position=position_stack(reverse=TRUE)) +
+  custom_plot_theme() +
   theme(axis.text.x = element_text(angle = 90)) +
-  theme(plot.title = element_text(hjust = 0.5)) +
   ggtitle("Financial Class") +
   xlab("Financial Class") +
   ylab("Frequency") +
-  scale_fill_manual(values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
 
 final_cohort %>% mutate(FINANCIAL_CLASS = if_else(FINANCIAL_CLASS=='','None',as.character(FINANCIAL_CLASS))) %>%
   count(FINANCIAL_CLASS, screening_outcome) %>%
-  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=screening_outcome)) +
+  ggplot(aes(x=reorder(FINANCIAL_CLASS,-n),n,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(stat='identity',position=position_fill(reverse=TRUE)) +
+  custom_plot_theme() +
   theme(axis.text.x = element_text(angle = 90)) +
-  theme(plot.title = element_text(hjust = 0.5)) +
   ggtitle("Financial Class") +
   xlab("Financial Class") +
   ylab("Frequency") +
-  scale_fill_manual(values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"), guide=guide_legend(reverse=TRUE))
 
 ```
 
 ```{r, eval = TRUE}
 
 # Gender Bar Plot
-final_cohort %>% ggplot(aes(factor(GENDER),fill=screening_outcome)) +
+final_cohort %>% ggplot(aes(factor(GENDER),fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
   scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Outcome by Gender") +
-  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
+  custom_plot_theme() +
+  theme(legend.position="none") +
   ylab("Proportion") +
   xlab("Gender")
 
 # Race Bar Plot
-final_cohort %>% ggplot(aes(factor(RACE),fill=screening_outcome)) +
+final_cohort %>% ggplot(aes(factor(RACE),fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
   scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Outcome by Race") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  custom_plot_theme() +
   theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2),legend.position="none") +
   ylab("Proportion") +
   xlab("Race")
 
 # Ethnicity
-final_cohort %>% ggplot(aes(factor(ETHNICITY),fill=screening_outcome)) +
+final_cohort %>% ggplot(aes(factor(ETHNICITY),fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Outcome by Ethnicity") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  custom_plot_theme() +
   theme(axis.text.x = element_text(angle = 90,hjust=0.85,vjust=0.2)) +
   ylab("Proportion") +
   xlab("Ethnicity")
@@ -339,17 +360,19 @@ final_cohort %>% ggplot(aes(factor(ETHNICITY),fill=screening_outcome)) +
 ```{r, eval = TRUE}
 
 # Boxplot of Age by outcome
-final_cohort %>% ggplot(aes(screening_outcome,AGE,color=screening_outcome)) +
+final_cohort %>% ggplot(aes(screening_outcome,AGE,color=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_boxplot(width=0.5) +
   geom_jitter(width=0.1,alpha=0.3) +
   ggtitle("Age by Outcome") +
   xlab("Outcome") +
   ylab("Age (Years)") +
-  scale_color_manual(values=c("red3","#999999")) +
-  theme(plot.title=element_text(hjust=0.5))
+  scale_color_manual(name="Screening Outcome",values=c("red3","#999999")) +
+  custom_plot_theme()
+
+t.test(final_cohort$AGE~final_cohort$screening_outcome)
 
 # Boxplot of ED Visits by outcome
-final_cohort %>% ggplot(aes(screening_outcome,NUM_ED_VISITS_PAST_YEAR,color=screening_outcome)) +
+final_cohort %>% ggplot(aes(screening_outcome,NUM_ED_VISITS_PAST_YEAR,color=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_boxplot(width=0.5) +
   geom_jitter(width=0.1,alpha=0.3) +
   ggtitle("ED Visits (Past Year)") +
@@ -359,10 +382,10 @@ final_cohort %>% ggplot(aes(screening_outcome,NUM_ED_VISITS_PAST_YEAR,color=scre
   xlab("Screening Outcome") +
   ylab("Number of Visits") +
   ylim(c(-1,150)) +
-  scale_color_manual(values=c("red3","#999999"))
+  scale_color_manual(name="Screening Outcome",values=c("red3","#999999"))
 
 # Boxplot of Admissions by outcome
-final_cohort %>% ggplot(aes(screening_outcome,NUM_ADMISSIONS_PAST_YEAR,color=screening_outcome)) +
+final_cohort %>% ggplot(aes(screening_outcome,NUM_ADMISSIONS_PAST_YEAR,color=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_boxplot(width=0.5) +
   geom_jitter(width=0.1,alpha=0.3) +
   ggtitle("Admissions (Past Year)") +
@@ -372,7 +395,7 @@ final_cohort %>% ggplot(aes(screening_outcome,NUM_ADMISSIONS_PAST_YEAR,color=scr
   xlab("Outcome") +
   ylab("Number of Admissions") +
   ylim(c(-1,30)) +
-  scale_color_manual(values=c("red3","#999999"))
+  scale_color_manual(name="Screening Outcome",values=c("red3","#999999"))
 
 
 ```
@@ -381,25 +404,24 @@ final_cohort %>% ggplot(aes(screening_outcome,NUM_ADMISSIONS_PAST_YEAR,color=scr
 ```{r, eval = TRUE}
 
 # Total ED Visits by ED Visits with Mental Health Chief Complaint 
-final_cohort %>% ggplot(aes(NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,color=screening_outcome)) +
+final_cohort %>% ggplot(aes(NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,
+                            color=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_jitter(alpha=0.3) + 
   ggtitle("ED Visits with Mental Health Chief Complaint") +
-  theme(plot.title = element_text(hjust = 0.5)) +
+  custom_plot_theme() +
   xlab("Total ED Visits (Past Year)") +
   ylab("ED Visits with Any Mental Health Chief Complaint") +
-  scale_color_manual(values=c("red3","#999999"))
+  scale_color_manual(name="Screening Outcome",values=c("red3","#999999"))
 
 ```
 
 ```{r, eval = TRUE}
 
-# Visualize Potential Features
-
 # Previous Medication Orders
 med1 <- final_cohort %>% mutate(ANTIANXIETY_YN = factor(ANTIANXIETY_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(ANTIANXIETY_YN,fill=screening_outcome)) +
+  ggplot(aes(ANTIANXIETY_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Anti-Anxiety Medication Ordered \n(in Past Year)") +
   theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.x=element_blank()) +
@@ -407,9 +429,9 @@ med1 <- final_cohort %>% mutate(ANTIANXIETY_YN = factor(ANTIANXIETY_YN,levels=c(
   xlab("Ordered (Y/N)")
 
 med2 <- final_cohort %>% mutate(ANTIDEPRESSANT_YN = factor(ANTIDEPRESSANT_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(ANTIDEPRESSANT_YN,fill=screening_outcome)) +
+  ggplot(aes(ANTIDEPRESSANT_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Antidepressant Medication Ordered \n(in Past Year)") +
   xlab("Ordered (Y/N)") +
@@ -417,9 +439,9 @@ med2 <- final_cohort %>% mutate(ANTIDEPRESSANT_YN = factor(ANTIDEPRESSANT_YN,lev
   theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.y=element_blank(),axis.title.x=element_blank()) 
 
 med3 <- final_cohort %>% mutate(ANTIPSYCHOTIC_YN = factor(ANTIPSYCHOTIC_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(ANTIPSYCHOTIC_YN,fill=screening_outcome)) +
+  ggplot(aes(ANTIPSYCHOTIC_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Anti-Psychotic Medication Ordered \n(in Past Year)") +
   theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.x=element_blank()) +
@@ -429,7 +451,7 @@ med3 <- final_cohort %>% mutate(ANTIPSYCHOTIC_YN = factor(ANTIPSYCHOTIC_YN,level
 med4 <- final_cohort %>% mutate(ANY_MEDICATION_ORDER_YN = factor(ANY_MEDICATION_ORDER_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
   ggplot(aes(ANY_MEDICATION_ORDER_YN,fill=screening_outcome)) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Any Medication Ordered \n(in Past Year)") +
   theme(plot.title = element_text(hjust = 0.5),legend.position="none",axis.title.y=element_blank(),axis.title.x=element_blank()) +
@@ -440,33 +462,37 @@ grid.arrange(med1,med2,med3,med4,nrow=2)
 
 #Restraints
 final_cohort %>% mutate(RESTRAINTS_ORDERED_YN = factor(RESTRAINTS_ORDERED_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(RESTRAINTS_ORDERED_YN,fill=screening_outcome)) +
+  ggplot(aes(RESTRAINTS_ORDERED_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.4) +
-  scale_fill_manual(name="Screening Result",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("Restraints Ordered") +
-  theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
+  custom_plot_theme() +
+  theme(legend.position="none") +
   ylab("Proportion") +
   xlab("Restraints Ordered (Y/N)")
 
 # One-to-One Obs
 final_cohort%>% mutate(ONE_TO_ONE_OBSERVATION_ORDERED_YN = factor(ONE_TO_ONE_OBSERVATION_ORDERED_YN,levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(ONE_TO_ONE_OBSERVATION_ORDERED_YN,fill=screening_outcome)) +
+  ggplot(aes(ONE_TO_ONE_OBSERVATION_ORDERED_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_fill(reverse=TRUE),width=0.5) +
-  scale_fill_manual(name="Screening Result",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
+  scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) + 
   scale_y_continuous(labels=scales::percent) +
   ggtitle("One-to-One Observation Orders") +
-  theme(plot.title = element_text(hjust = 0.5),axis.title.y=element_blank()) +
+  custom_plot_theme() +
+  theme(axis.title.y=element_blank()) +
   ylab("Proportion") +
   xlab("One-to-One Observation (Y/N)")
 
 ```
 
+> The PHQ-9 assessment for depression was significantly associated with being marked as eligible for the intervention. The GAD-7 score for anxiety was not significantly different between groups, though not as many patients had GAD-7 scores.
+
 ```{r, eval = TRUE}
 
 # Last PHQ-9
 phq9_1 <- final_cohort %>% mutate(PHQ9_YN=factor(if_else(is.na(LAST_PHQ9_SCORE),0,1),levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(PHQ9_YN,fill=screening_outcome)) +
+  ggplot(aes(PHQ9_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_stack(reverse=TRUE)) +
   scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
   ggtitle("PHQ-9 Completion in Past Year") +
@@ -475,9 +501,9 @@ phq9_1 <- final_cohort %>% mutate(PHQ9_YN=factor(if_else(is.na(LAST_PHQ9_SCORE),
   ylab("Frequency")
 
 phq9_2 <- final_cohort %>% filter(!is.na(LAST_PHQ9_SCORE)) %>%
-  ggplot(aes(screening_outcome,LAST_PHQ9_SCORE)) +
+  ggplot(aes(factor(screening_outcome,levels=c("Positive","Negative")),LAST_PHQ9_SCORE)) +
   geom_boxplot(width=0.5) +
-  geom_jitter(width=0.05,alpha=0.3,aes(col=screening_outcome)) +
+  geom_jitter(width=0.05,alpha=0.3,aes(col=factor(screening_outcome,levels=c("Positive","Negative")))) +
   #scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
   scale_color_manual(values = c("red3","#999999")) +
   ggtitle("Last PHQ-9 Score in Past Year") +
@@ -487,9 +513,11 @@ phq9_2 <- final_cohort %>% filter(!is.na(LAST_PHQ9_SCORE)) %>%
 
 grid.arrange(phq9_2,phq9_1,ncol=2)
 
+t.test(final_cohort$LAST_PHQ9_SCORE~final_cohort$screening_outcome)
+
 # Last GAD-7
 gad7_1 <- final_cohort %>% mutate(GAD_YN=factor(if_else(is.na(LAST_GAD_7_SCORE),0,1),levels=c(0,1),labels=c("No","Yes"))) %>%
-  ggplot(aes(GAD_YN,fill=screening_outcome)) +
+  ggplot(aes(GAD_YN,fill=factor(screening_outcome,levels=c("Positive","Negative")))) +
   geom_bar(position=position_stack(reverse=TRUE)) +
   scale_fill_manual(name="Screening Outcome",values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
   ggtitle("GAD-7 Completion in Past Year") +
@@ -498,10 +526,9 @@ gad7_1 <- final_cohort %>% mutate(GAD_YN=factor(if_else(is.na(LAST_GAD_7_SCORE),
   ylab("Frequency")
 
 gad7_2 <- final_cohort %>% filter(!is.na(LAST_GAD_7_SCORE)) %>%
-  ggplot(aes(screening_outcome,LAST_GAD_7_SCORE)) +
+  ggplot(aes(factor(screening_outcome,levels=c("Positive","Negative")),LAST_GAD_7_SCORE)) +
   geom_boxplot(width=0.5) +
-  geom_jitter(width=0.05,alpha=0.3,aes(col=screening_outcome)) +
-  #scale_fill_manual(values=c("red3","#999999"),guide=guide_legend(reverse=TRUE)) +
+  geom_jitter(width=0.05,alpha=0.3,aes(col=factor(screening_outcome,levels=c("Positive","Negative")))) +
   scale_color_manual(values = c("red3","#999999")) +
   ggtitle("Last GAD-7 Score in Past Year") +
   theme(plot.title = element_text(hjust = 0.5),legend.position="none") +
@@ -509,6 +536,8 @@ gad7_2 <- final_cohort %>% filter(!is.na(LAST_GAD_7_SCORE)) %>%
   ylab("Score")
 
 grid.arrange(gad7_2,gad7_1,ncol=2)
+
+t.test(final_cohort$LAST_GAD_7_SCORE~final_cohort$screening_outcome)
 
 ```
 
@@ -572,13 +601,15 @@ edcc %>% mutate(variable=gsub(' CHIEF COMPLAINTS','',gsub('ED VISITS ','',gsub("
 
 ```
 
-### Logistic regression 
+## Logistic regression 
 
-```{r eval=TRUE}
+> A logistic regression model was used to identify individual features significantly associated with being screened as eligible. After performing the bivariate analyses, significant features (after accounting for multiple testing with a Bonferroni correction) were included in a multivariable logistic regression model.
+
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
 
 # Create Analytic Dataset Limited to Features of Interest
-analytic <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(screening_outcome,levels=c("Negative","Positive"))) %>% 
-  select(screening_outcome,AGE,GENDER,RACE,ETHNICITY,FINANCIAL_CLASS,SOI_SCORE,ROM_SCORE,ADMIT_SOURCE,PATIENT_CLASS,
+analytic <- final_cohort %>% ungroup() %>% 
+  dplyr::select(screening_outcome,AGE,GENDER,RACE,ETHNICITY,FINANCIAL_CLASS,REGION,SOI_SCORE,ROM_SCORE,ADMIT_SOURCE,PATIENT_CLASS,
          RESTRAINTS_ORDERED_YN,ONE_TO_ONE_OBSERVATION_ORDERED_YN,ANY_OBSERVATION_ORDERED_YN,INPATIENT_PSYCH_CONSULT_YN,ANTIANXIETY_YN,
          ANTIDEPRESSANT_YN,ANTIPSYCHOTIC_YN,ANY_MEDICATION_ORDER_YN,BEHAVIORAL_HEALTH_CONSULT_YN,PSYCHIATRY_CONSULT_YN,
          PSYCHOLOGY_CONSULT_YN,PL_CCS_651_ANXIETY_DISORDERS,PL_CCS_657_MOOD_DISORDERS,
@@ -587,16 +618,16 @@ analytic <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(scree
          ENC_DX_CCS_651_ANXIETY_DISORDERS,ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
          ENC_DX_CCS_657_MOOD_DISORDERS,ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
          ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
-         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,PREVIOUS_ED_VISIT_YN,NUM_ED_VISITS_PAST_YEAR,
-         ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
+         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,PREVIOUS_ED_VISIT_YN,
+         NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
          PREVIOUS_ADMISSION_YN,NUM_ADMISSIONS_PAST_YEAR,LAST_PHQ2_SCORE,LAST_PHQ9_SCORE,LAST_GAD_7_SCORE,
          UPHS_RISK_SCORE) 
 
 # Identify significant features using logistic regression (bivariate analyses)
 results <- data.frame()
 
-for(var in colnames(analytic[c(2:44)])){
-  bivariate <- analytic %>% select(screening_outcome,var)
+for(var in colnames(analytic[c(2:45)])){
+  bivariate <- analytic %>% dplyr::select(screening_outcome,var)
   logistic_model <- glm(screening_outcome~.,data=bivariate,family=binomial())
   OR <- exp(coef(logistic_model))
   CI <- confint(logistic_model) 
@@ -604,33 +635,41 @@ for(var in colnames(analytic[c(2:44)])){
   results <- rbind(results,data.frame(var=var,OR=OR,CI=CI,pval=pval))
 }
 
-results %>% filter(pval<0.05/43) %>% arrange(pval)
+results %>% filter(pval<0.05/44) %>% arrange(pval) %>% kable()
 
-logistic_model <- glm(screening_outcome ~ANTIDEPRESSANT_YN+PL_CCS_657_MOOD_DISORDERS+INPATIENT_PSYCH_CONSULT_YN+ENC_DX_CCS_657_MOOD_DISORDERS+PSYCHIATRY_CONSULT_YN+
-                        PL_CCS_651_ANXIETY_DISORDERS+ENC_DX_CCS_651_ANXIETY_DISORDERS+PL_CCS_661_SUBSTANCE_RELATED_DISORDERS+UPHS_RISK_SCORE+AGE+
-                        ANTIPSYCHOTIC_YN+NUM_ED_VISITS_PAST_YEAR+NUM_ADMISSIONS_PAST_YEAR+ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS+
-                        ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS+PL_CCS_660_ALCOHOL_RELATED_DISORDERS+ANY_OBSERVATION_ORDERED_YN+BEHAVIORAL_HEALTH_CONSULT_YN+
-                        ONE_TO_ONE_OBSERVATION_ORDERED_YN+ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE+PREVIOUS_ADMISSION_YN+
-                        ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS+ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS+GENDER+
-                        ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS+RESTRAINTS_ORDERED_YN+PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE, 
+logistic_model <- glm(screening_outcome ~ ANTIDEPRESSANT_YN+PL_CCS_657_MOOD_DISORDERS+INPATIENT_PSYCH_CONSULT_YN+
+                        ENC_DX_CCS_657_MOOD_DISORDERS+PSYCHIATRY_CONSULT_YN+PL_CCS_651_ANXIETY_DISORDERS+ENC_DX_CCS_651_ANXIETY_DISORDERS+
+                        PL_CCS_661_SUBSTANCE_RELATED_DISORDERS+UPHS_RISK_SCORE+AGE+ANTIPSYCHOTIC_YN+NUM_ED_VISITS_PAST_YEAR+
+                        NUM_ADMISSIONS_PAST_YEAR+ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS+ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS+
+                        PL_CCS_660_ALCOHOL_RELATED_DISORDERS+ANY_OBSERVATION_ORDERED_YN+BEHAVIORAL_HEALTH_CONSULT_YN+ONE_TO_ONE_OBSERVATION_ORDERED_YN+
+                        ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE+PREVIOUS_ADMISSION_YN+ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS+
+                        ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS+GENDER+ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS+RESTRAINTS_ORDERED_YN+
+                        PL_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE, 
                       data = analytic, family = binomial(logit))
 
-summary(logistic_model)
-OR <- data.frame(exp(coef(logistic_model)))
+# summary(logistic_model)
+OR <- exp(coef(logistic_model))
 CI <- exp(confint(logistic_model))
-pvals <- data.frame(as.numeric(coef(summary(logistic_model))[,'Pr(>|z|)']))
+pvals <- as.numeric(coef(summary(logistic_model))[,'Pr(>|z|)'])
 
+logistic_reg_results <- data.frame(OR=round(OR,2),CI=round(CI,2),pval=round(pvals,4)) 
+colnames(logistic_reg_results) <- c("Estimate","CI_2.5","CI_97.5","pval")
+logistic_reg_results %>% kable()
 
 ```
 
-### Random Forest
-```{r eval=TRUE}
+## Random Forest
+
+> Results from the Random Forest model were consistent with the logistic regression model.
+
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
 
 library(randomForest)
+library(pROC)
 
-rf_data <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(screening_outcome,levels=c("Negative","Positive"))) %>% 
+rf_data <- final_cohort %>% 
   mutate(GENDER = factor(GENDER,levels=c("Male","Female"))) %>%
-  select(screening_outcome,AGE,GENDER,RACE,
+  dplyr::select(screening_outcome,AGE,GENDER,RACE,
          RESTRAINTS_ORDERED_YN,ONE_TO_ONE_OBSERVATION_ORDERED_YN,ANY_OBSERVATION_ORDERED_YN,INPATIENT_PSYCH_CONSULT_YN,ANTIANXIETY_YN,
          ANTIDEPRESSANT_YN,ANTIPSYCHOTIC_YN,ANY_MEDICATION_ORDER_YN,BEHAVIORAL_HEALTH_CONSULT_YN,PSYCHIATRY_CONSULT_YN,
          PSYCHOLOGY_CONSULT_YN,PL_CCS_651_ANXIETY_DISORDERS,PL_CCS_657_MOOD_DISORDERS,
@@ -639,15 +678,14 @@ rf_data <- final_cohort %>% ungroup() %>% mutate(screening_outcome=factor(screen
          ENC_DX_CCS_651_ANXIETY_DISORDERS,ENC_DX_CCS_653_DELIRIUM_DEMENTIA_AMNESTIC_OTH_COGN_DISORDERS,
          ENC_DX_CCS_657_MOOD_DISORDERS,ENC_DX_CCS_659_SCHIZOPHRENIA_OTHER_PSYCHOTIC_DISORDERS,
          ENC_DX_CCS_660_ALCOHOL_RELATED_DISORDERS,ENC_DX_CCS_661_SUBSTANCE_RELATED_DISORDERS,
-         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,PREVIOUS_ED_VISIT_YN,NUM_ED_VISITS_PAST_YEAR,
-         ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
+         ENC_DX_CCS_663_SCREENING_HISTORY_MENTAL_HEALTH_SUBSTANCE_ABUSE,ENC_DX_CCS_670_MISC_MENTAL_HEALTH_DISORDERS,
+         PREVIOUS_ED_VISIT_YN,NUM_ED_VISITS_PAST_YEAR,ED_VISITS_ANY_MENTAL_HEALTH_CHIEF_COMPLAINTS,ED_VISITS_ALTERED_MENTAL_STATUS_CHIEF_COMPLAINTS,
          PREVIOUS_ADMISSION_YN,NUM_ADMISSIONS_PAST_YEAR) 
 
 rf <- randomForest(screening_outcome ~ ., data = rf_data, ntree = 100, importance = TRUE)
 rf
-rf$importance
+#rf$importance
 rf.pred <- predict(rf, rf_data, type = "prob")
-head(rf.pred)
 rf.pred.pos <- rf.pred[ , 2]
 
 #K-Fold Cross Validation
@@ -671,50 +709,47 @@ for(i in 1:K){
 	offset <- offset + length(s[s == i])
 }
 
-# ROC Curvers
-library(pROC)
+# Variable Importance Plot
+impToPlot <- importance(rf, scale=FALSE)
+dotchart(sort(impToPlot[,1]), xlim=c(0,100), xlab="%IncMSE", cex=0.5, main='Random Forest Variable Importance')
 
-#Random Forest
+# ROC Curves for RandomForest
 par(pty = "s")
 roc(obs.outputs, pred.outputs.rf, ci = TRUE)
 plot.roc(rf_data$screening_outcome, rf.pred.pos)
 plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE)
 legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "darkgreen"), lwd = 1)
 
-# Variable Importance Plot
-impToPlot <- importance(rf, scale=FALSE)
-dotchart(sort(impToPlot[,1]), xlim=c(0,100), xlab="%IncMSE", cex=0.5, main='Random Forest Variable Importance')
-
-
 ```
 
-### Naive Bayes
-```{r eval = TRUE, message = FALSE}
-#library(e1071)
-#library(caret)
-#set.seed(1)
-#traning.indices <- createDataPartition(y = analytic$outcome, p = 0.7, list = FALSE)
-#training.set <- analytic[traning.indices,]
-#test.set <- analytic[-traning.indices,]
+## Exploratory Analysis using Clinical Notes
 
-#classifier = naiveBayes(x=training.set[,-47], y=training.set$outcome)
+> Free text data stored within clinical notes likely includes important details for a patient that could not be identified using discrete data elements alone. This section involves randomly sampling 500 cases and 500 controls. The encounter IDs for these patients are used to query clinical notes from the inpatient, ED, and outpatient settings in the 6 months prior to admission (including the first day of the admission). Initial visualizations of the text using barcharts and word clouds included terms likely related to medications, such as "mg," "oral," and "tablet."
 
-#prediction = predict(classifier, newdata = test.set[,-47], type='raw')
-
-#roc(test.set$outcome, factor(prediction,ordered=TRUE), ci = TRUE)
-
-```
-
-```{r eval = TRUE}
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
 
 # Text Analysis
 library(tidytext)
-patient_notes <- read_xlsx("U:/MEND/Agent_Patient_Notes_05dec2019.xlsx",col_names=TRUE,n_max = 1001)
+library(wordcloud)
 
-classified_notes <- clarity %>% select(PAT_ENC_CSN_ID,RANDOM_ID,RANDOM_ENC_ID) %>% 
-  inner_join(select(final_cohort,RANDOM_ID,RANDOM_ENC_ID,screening_outcome),by="RANDOM_ENC_ID") %>%
-  inner_join(select(patient_notes,PAT_ENC_CSN_ID,progress_note),by="PAT_ENC_CSN_ID") %>%
-  select(RANDOM_ENC_ID,screening_outcome,progress_note)
+# Randomly select 500 Cases and 500 Controls to create sample of notes
+set.seed(123)
+
+pos_csn_list <- clarity %>% dplyr::select(PAT_ENC_CSN_ID,RANDOM_ID,RANDOM_ENC_ID) %>% 
+  inner_join(dplyr::select(final_cohort,RANDOM_ID,RANDOM_ENC_ID,screening_outcome),by="RANDOM_ENC_ID") %>%
+  filter(screening_outcome=="Positive") %>% dplyr::select(PAT_ENC_CSN_ID,RANDOM_ENC_ID,screening_outcome) %>% 
+  sample_n(size=500, replace = FALSE)
+
+neg_csn_list <- clarity %>% dplyr::select(PAT_ENC_CSN_ID,RANDOM_ID,RANDOM_ENC_ID) %>% 
+  inner_join(dplyr::select(final_cohort,RANDOM_ID,RANDOM_ENC_ID,screening_outcome),by="RANDOM_ENC_ID") %>%
+  filter(screening_outcome=="Negative") %>% dplyr::select(PAT_ENC_CSN_ID,RANDOM_ENC_ID,screening_outcome) %>% 
+  sample_n(size=500, replace = FALSE)
+
+sample_csn_list <- rbind(pos_csn_list,neg_csn_list)
+
+write.csv(sample_csn_list,file="U:/MEND/sample_csn_for_notes.csv",row.names=FALSE)
+
+patient_notes <- read_xlsx("U:/MEND/Sample_Patient_Notes_13Dec2019.xlsx",col_names=TRUE)
   
 custom_stop_words <- tribble(
   ~word, ~lexicon,
@@ -730,9 +765,9 @@ custom_stop_words <- tribble(
   "9","CUSTOM"
 ) %>% rbind(stop_words)
 
-word_counts <- classified_notes %>% 
+word_counts <- patient_notes %>% 
   # Tokenize text
-  unnest_tokens(word,progress_note) %>% 
+  unnest_tokens(word,note_text) %>% 
   # Remove Stopwords
   anti_join(custom_stop_words) %>%
   # Summarize
@@ -752,11 +787,9 @@ word_counts %>%
   ylab("Frequency")
 
 # Word Cloud
-library(wordcloud)
-
-word_counts <- classified_notes %>% 
+word_counts <- patient_notes %>% 
   # Tokenize text
-  unnest_tokens(word,progress_note) %>% 
+  unnest_tokens(word,note_text) %>% 
   # Remove Stopwords
   anti_join(custom_stop_words) %>%
   # Summarize
@@ -773,11 +806,181 @@ wordcloud(
 
 ```
 
+> The comparison cloud contrasting the terms found in each group displayed the words "anxiety," "disorder," and "pain." Medication-related terms appeared to be more common among those who were screened as eligible.
+
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
+
+library(tm)
+library(plotrix)
+
+df_source <- patient_notes %>% 
+  dplyr::select(RANDOM_ENC_ID, note_text, screening_outcome) %>%
+  rename(doc_id = RANDOM_ENC_ID, text = note_text) %>% DataframeSource()
+
+df_corpus <- VCorpus(df_source)
+
+clean_text <- function(text){
+  # Remove Punctuation
+  text <- tm_map(text,removePunctuation)
+  # Transform to lower case
+  text <- tm_map(text,content_transformer(tolower))
+  # Remove Stop Words
+  text <- tm_map(text,removeWords, c(stopwords("en"), "â"))
+  # Remove Numbers 
+  text <- tm_map(text, removeNumbers)
+  # Strip whitespace
+  text <- tm_map(text,stripWhitespace)
+  return(text)
+}
+
+clean_corpus <- clean_text(df_corpus)
+
+# Create a Term Document Matrix (TDM)
+notes_tdm <- TermDocumentMatrix(clean_corpus) %>% as.matrix()
+
+term_freq <- rowSums(notes_tdm)
+term_freq <- sort(term_freq,decreasing=TRUE)
+
+barplot(term_freq[1:10],col="tan",las=2)
+
+# Separate Positive and Negative Cases
+positive_text <- patient_notes %>% filter(screening_outcome=="Positive") %>% dplyr::select(note_text)
+positive_text <- paste(positive_text,collapse=" ")
+
+negative_text <- patient_notes %>% filter(screening_outcome=="Negative") %>% dplyr::select(note_text)
+negative_text <- paste(negative_text,collapse=" ")
+
+all_text <- c(positive_text,negative_text)
+all_text <- VectorSource(all_text)
+all_corpus <- VCorpus(all_text)
+
+all_clean <- clean_text(all_corpus)
+
+all_tdm <- TermDocumentMatrix(all_clean) %>% as.matrix()
+
+colnames(all_tdm) <- c("Positive","Negative") 
+
+# Commonality Wordcloud
+commonality.cloud(all_tdm,max.words=90,colors="#AD1DA5")
+
+# Comparison Cloud
+comparison.cloud(all_tdm,colors=c('red','grey'),max.words=35)
+
+# Pyramid Plot
+top_25_words <- all_tdm %>% as_data_frame(rownames="word") %>% filter(Positive>0 & Negative>0) %>%
+  mutate(difference = Positive-Negative) %>%
+  top_n(25, wt=difference) %>%
+  arrange(desc(difference))
+
+pyramid.plot(
+  # Positive counts
+  top_25_words$Positive,
+  # Negative counts
+  top_25_words$Negative,
+  # Labels
+  labels = top_25_words$word,
+  top.labels = c("Positive","Words","Negative"),
+  main = "Words in Common",
+  unit = NULL,
+  gap = 1000,
+  space = 0.2,
+  lxcol = "red3",
+  rxcol = "darkgrey"
+)
+
+```
+
+## Modeling Text Data
+
+> The text data was weighted using term-frequency inverse-document-frequency (TF-IDF) and modeled with Naive Bayes and SVM. The AUC for the Naive Bayes model was only 0.5233 (95% CI: 0.4454-0.6012). The AUC for the SVM model was 0.639 (95% CI: 0.5999-0.6781).
+
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
+
+library(e1071)
+library(caret)
+library(klaR)
+
+# Create a Document Term Matrix (DTM) with TF-IDF
+dtm <- DocumentTermMatrix(clean_corpus, control = list(weighting=weightTfIdf)) %>% removeSparseTerms(0.90)
+
+analytic_set <- cbind(patient_notes,as.matrix(dtm))
+analytic_set <- analytic_set %>% 
+  dplyr::select(-RANDOM_ENC_ID,-PAT_ENC_CSN_ID,-note_text) %>%
+  mutate(screening_outcome=factor(if_else(screening_outcome=="Positive",1,0),levels=c(0,1),labels=c("Negative","Positive")))
+
+# Split Data
+train_index <- createDataPartition(analytic_set$screening_outcome, p=0.80, list=FALSE)
+nb_train <- analytic_set[train_index,]
+nb_test <- analytic_set[-train_index,]
+
+# create response and feature data
+features <- setdiff(names(nb_train), "screening_outcome")
+x <- nb_train[, features]
+y <- nb_train$screening_outcome
+
+# 10-fold cross validation procedure
+train_control <- trainControl(
+  method = "cv", 
+  number = 10
+  )
+
+# Train model
+naivebayes_model <- train(
+  x = x,
+  y = y,
+  method = "nb",
+  trControl = train_control
+  )
+
+# Results
+confusionMatrix(naivebayes_model)
+
+# Testing
+nb_prediction <- predict(naivebayes_model, newdata = nb_test[,features], type='raw')
+
+# Naive Bayes ROC 
+roc(nb_test$screening_outcome, factor(nb_prediction,ordered=TRUE), ci = TRUE)
+
+# Support Vector Machine
+svm_model <- svm(screening_outcome ~ ., data = analytic_set, scale = TRUE, kernel = "radial", probability = TRUE)
+svm.pred <- predict(svm_model, analytic_set, probability = TRUE)
+svm.pred.pos <- attr(svm.pred, "probabilities")[ , 1]
+
+# K-Fold Cross Validation
+N = nrow(analytic_set)
+K = 10
+set.seed(333)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.svm <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset <- 0
+for(i in 1:K){
+	train <- filter(analytic_set, s != i)
+	test <- filter(analytic_set, s == i)
+	obs.outputs[1:length(s[s == i]) + offset] <- test$screening_outcome
+
+	#SVM train/test
+	svm.m <- svm(screening_outcome ~ ., data = train, scale = TRUE, kernel = "radial", probability = TRUE)
+	svm.pred.curr <- predict(svm.m, test, probability = TRUE) 
+	pred.outputs.svm[1:length(s[s == i]) + offset] <- attr(svm.pred.curr, "probabilities")[ , 1]
+
+	offset <- offset + length(s[s == i])
+}
+
+# ROC Curves for SVM
+par(pty = "s")
+roc(obs.outputs, pred.outputs.svm, ci = TRUE)
+plot.roc(analytic_set$screening_outcome, svm.pred.pos)
+plot.roc(obs.outputs, pred.outputs.svm, ci = TRUE, col = "blue", add = TRUE)
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "blue"), lwd = 1)
+
+```
+
 ## Evaluating the Impact of the Program
 
 > This section evaluates if there are any differences in who receives the MEND intervention. Although those receiving the intervention were significantly younger (mean 53 vs 55.6 years), this was not a clinically meaningful difference. There were no significant differences by race or gender.
 
-```{r, eval = TRUE}
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
 
 # Show bar plot MEND Contact Results Among Those Screened Positive
 final_cohort %>% filter(screening_outcome=="Positive") %>% group_by(mend_contact_result) %>% count() %>%
@@ -801,7 +1004,7 @@ outcome_eval %>% group_by(Received_Intervention_YN,RACE) %>%
   summarize(Freq=n()) %>% 
   group_by(RACE) %>% 
   mutate(Prop = Freq/sum(Freq), N_Proportion = paste(Freq," (", round(Freq / sum(Freq)*100,2),")",sep='')) %>% 
-  arrange(desc(Received_Intervention_YN),RACE)
+  arrange(desc(Received_Intervention_YN),RACE) %>% kable()
 
 fisher.test(table(outcome_eval$Received_Intervention_YN,outcome_eval$RACE))
 
@@ -809,20 +1012,20 @@ outcome_eval %>% group_by(Received_Intervention_YN,GENDER) %>%
   summarize(Freq=n()) %>% 
   group_by(GENDER) %>% 
   mutate(Prop = Freq/sum(Freq), N_Proportion = paste(Freq," (", round(Freq / sum(Freq)*100,2),")",sep='')) %>% 
-  arrange(desc(Received_Intervention_YN),GENDER)
+  arrange(desc(Received_Intervention_YN),GENDER) %>% kable()
 
 chisq.test(table(outcome_eval$Received_Intervention_YN,outcome_eval$GENDER))
 
 # Continous Variables
-outcome_eval %>% group_by(Received_Intervention_YN) %>% summarize(n=n(), avg=mean(AGE), sd=sd(AGE), med=median(AGE), 
-q1s=quantile(AGE,0.25), q3=quantile(AGE,0.75), min=min(AGE),max=max(AGE)) 
+outcome_eval %>% group_by(Received_Intervention_YN) %>% summarize(N=n(), AvgAge=mean(AGE), SdAge=sd(AGE), MedianAge=median(AGE), 
+Q1AGe=quantile(AGE,0.25), Q3Age=quantile(AGE,0.75), MinAge=min(AGE),MaxAge=max(AGE)) %>% kable()
 
 t.test(outcome_eval$AGE~outcome_eval$Received_Intervention_YN)
 ```
 
-> This section evaluates whether there were changes in inpatient length of stay (LOS) after the program was initiated. An interrupted time series analysis was performed to compare level and trend changes in LOS for floors Founders 12 and 14, relative to inpatients on other floors at the Hospital of the University of Pennsylvania.
+> This section evaluates whether there were changes in inpatient length of stay (LOS) after the program was initiated. An interrupted time series analysis was performed to compare level and trend changes in LOS for floors Founders 12 and 14, relative to inpatients on other floors at the Hospital of the University of Pennsylvania. Although the time series plot suggested there was a drop in average length of stay after the intervention, the results were not significant.
 
-```{r, eval = TRUE}
+```{r, eval = TRUE, warning=FALSE, message=FALSE}
 
 # Time series data
 mend <- read.csv('U:/MEND/MEND_ITS_Data_Mar2017_05Dec2019.csv',header=TRUE,stringsAsFactors=FALSE)
@@ -838,6 +1041,7 @@ mend_eval <- mend %>% mutate(Level = if_else(Time>=22,1,0), Trend = if_else(Time
 # Excl December 2018 from the model because the MEND team started piloting
 mend_excl <- mend_eval %>% filter(Time!=22) 
 
+#its_model <- lm(Avg_Winsorized_Floor_Disch_Time~Site+Time+Level+Trend+Int_Time+Int_Level+Int_Trend,data=mend_excl)
 its_model <- lm(Avg_Floor_Disch_Time~Site+Time+Level+Trend+Int_Time+Int_Level+Int_Trend,data=mend_excl)
 
 coef <- data.frame(coefficients(summary(its_model)))
@@ -911,10 +1115,35 @@ mend_eval %>% ggplot(aes(Time,Avg_Floor_Disch_Time,col=Site)) +
                  33*coef['Int_Time','Estimate']+
                  coef['Level','Estimate']+
                 10*coef['Trend','Estimate']), col="steelblue",linetype="dashed") +
-  geom_text(aes(x=28,y=5.85,label="HUP",color = "darkgrey",angle=2),size=4) +
-  geom_text(aes(x=28,y=6.75,label="FP12/14",color="steelblue",angle=7),size=4) +
-  geom_text(aes(x=27,y=8.45,label="Counterfactual", color = "steelblue",angle=12),size=4)
+  geom_text(aes(x=28,y=5.70,label="HUP",color = "darkgrey",angle=2),size=3) +
+  geom_text(aes(x=27.8,y=7.75,label="FP12/14",color="steelblue",angle=7),size=3) +
+  geom_text(aes(x=28,y=8.55,label="Counterfactual", color = "steelblue",angle=10),size=3)
 
-
+# Results
+kable(cbind(coef[1],conf_int,coef[4]))
 
 ```
+
+# Conclusion
+
+> The RandomForest model achieved an AUC of 0.797 using only discrete data points from the EHR, suggesting this approach may have the potential for deployment in the clinical setting. The algorithm's performance was likely limited by restricting the data to what had been recorded up to the first day of admission. Re-calculating prediction scores on subsequent days during the patient's stay may enable the team to identify additional patients who could benefit. Future analyses could involve comparing the algorithms performance when extending the data to what was known the day before discharge (still factoring in the ETL process that loads data into Clarity overnight on the previous day). This comparison could enable us to quantify the additional benefit of re-running the algorithm daily for patients on the included floors.
+
+> Although the Naive Bayes and SVM models did not perform as well the RandomForest using discrete data, the analysis was based off a subsample of the patients and only included clinical text from the previous six months. Future analyses should include the full sample and could include different time periods, depending on what is available for the patients. 
+
+> No clinically meaningful differences in demographics were identified between those eligible who received an intervention and those eligible who declined or otherwise did not receive the intervention. Additional analyses could attempt to predict which patients are most likely to accept an intervention.
+
+> Lastly, no significant differences in average length of stay were observed using an interrupted time series analysis. The analysis included all inpatients present on those floors. Limiting the analysis to eligible patients on Founders 12 and 14 and similar would-be eligible patients on control floors may enable us to observe an effect with less noise if an effect is present. If the algorithm proves to be generazible to other floors, the model could be used to identify retrospective controls for the program's evaluation.
+
+# References
+
+Greenberg PE, Fournier A-A, Sisitsky T, et al. The economic burden of adults with major depressive disorder in the United States (2005 and 2010). J Clin Psychiatry 2015;76:155-62. doi:10.4088/JCP.14m09298
+
+Hansen MS, Fink P, Frydenberg M, et al. Mental disorders among internal medical inpatients: Prevalence, detection, and treatment status. Journal of Psychosomatic Research 2001;50:199-204. doi:10.1016/S0022-3999(00)00230-0
+
+Marquez PV, Saxena S. Making Mental Health a Global Priority. Cerebrum 2016;2016.https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5198754/ (accessed 10 Dec 2019).
+
+National Institute of Mental Health. Prevalence of Any Mental Illness (AMI). 2017.
+
+Rai D, Stansfeld S, Weich S, et al. Comorbidity in mental and physical illness. 2014.
+
+
