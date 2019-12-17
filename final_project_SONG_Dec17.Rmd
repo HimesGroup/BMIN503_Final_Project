@@ -1,0 +1,1590 @@
+---
+title: 'Risk Analyses and Prediction of US Adult Chronic Diseases'
+author: 'Final Project of Data Science for Biomedical Informatics (BMIN503/EPID600) <br>Instructor: Blanca Himes <br><br> Nianfu Song '
+output: 
+  html_document:
+  toc: FALSE
+depth: 3
+theme: paper 
+highlight: tango
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE, width = 110)
+options(width = 110)
+```  
+
+```{r libs, echo=FALSE, cache=FALSE, message = FALSE, warning=FALSE}
+# install.packages("MatchIt")
+#  install.packages('Zelig')
+#  install.packages("tidywerse")
+#  install.packages("datasets")
+#  install.packages("sf")
+#  install.packages("ggmap")
+#  install.packages("ggplot2")
+#  install.packages("gplots")
+#  install.packages("GGally")
+#  install.packages("RColorBrewer")
+#  install.packages("leaflet")
+#  install.packages("randomForest")
+#  install.packages("pROC")
+library("MatchIt")
+library("Zelig")
+library(tidyverse)
+library(tidycensus)
+library(datasets)
+library(dplyr)
+library(sf)
+library(ggmap)
+library(ggplot2)
+library(gplots)
+library(GGally)
+library(cowplot)
+library(RColorBrewer)
+library(leaflet)
+#library(xtable)
+#library("expss")
+library(randomForest)
+library(pROC)
+```    
+# 1. Introduction
+
+## 1.1. Overview
+The goal of my final project is to use survey data to analyze health related factors and predict potential risk of diseases. The National Health Interview Data is used and logistic, rare event logistic and machine learning methods are used to train models and to predict risk of cancers. Cross validation will be applied to evaluate the power of prediction of estimated models.
+
+## 1.2. Aims of the project
+Chronic diseases such as cancer, lung disease, and stroke have been major health concerns and reasons of death in the U.S. Risk evaluation of these can lead to preventional treatments or lifestyle changes that help patients survive and improve quality of life. The National Health Interview database enables us to use data analytical tools to predict the risk of many types of diseases with only simple interview answers to social, economic, and lifestyle questions. The risk diseases could be estimated before any labs and clinical visits. When integrated into web tools, anybody can do the prediction by answering simple questions about themselves. This model can also help doctors to focus on high risk patient groups and help people to change their diet, and lifestyle to reduce their risk of specific health problems.
+
+This project is interdisciplinary because it needs not only the knowledge and skill of data analysis, it also needs physicians to reason and explain the predictions and causality relationships between risk and prediction variables, the predictors of the models. A predictor in a model could be a result or the cause of individual's awareness of risk. For example, a women with breast cancer might follow suggestions of her friends to become a vegetarian, if there are many such cases, vegetarians may be a good predictor for risk of this group of women. However, this predictor may not be the cause of the disease. It may be statistically correlated to existing cancer cases, but may not be a good predictor for the risk of potentially unknown breast cancers. In such a case, if physicians could help confirm the irrelevance of vegeterian lifestyle, the model can predict the risk of diseases before the first attack of these diseases.
+
+# 2. Method and data
+The data from National Health Interview Survey [NHIS 2018](https://www.cdc.gov/nchs/nhis/data-questionnaires-documentation.htm) are analyzed first by plots, tables, and maps, then by logistic and random forest models before rare event logistic models are estimated. The estimated results are represented in ROCs and heatmaps specifically designed for this project using truncated and signed log-transformed p-values that are less than 0.05. 
+
+## 2.1. Data Downloading, Dimension, IDs, and Relations between Data Tables 
+Please read comments to help understand the code. Some comments, however, are inactivated code lines for program testing and data examination.
+
+```{r, ch2.1 }
+temp <- tempfile()
+download.file("ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHIS/2018/househldcsv.zip", temp)
+hshld <- read.csv(unz(temp, "househld.csv"))
+download.file("ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHIS/2018/familyxxcsv.zip", temp)
+fmly <- read.csv(unz(temp, "familyxx.csv"))
+download.file("ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHIS/2018/personsxcsv.zip", temp)
+prsn <- read.csv(unz(temp, "personsx.csv"))
+download.file("ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHIS/2018/samadultcsv.zip", temp)
+adlt <- read.csv(unz(temp, "samadult.csv"))
+download.file("ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/NHIS/2018/samchildcsv.zip", temp)
+chldrn <- read.csv(unz(temp, "samchild.csv"))
+unlink(temp)
+
+#dim(hshld) ## 46500x17
+#dim(fmly) ## 30307x127 
+#dim(prsn) ## 72831x602 
+#dim(adlt) ## 25417x742
+#dim(chldrn) ## 8269x158
+
+# data table number of rows and columns
+NHIStables <- data.frame(c("Household", "Family", "Persons", "Adults", "Children"),
+                        rbind(dim(hshld), dim(fmly), dim(prsn), dim(adlt), dim(chldrn))) 
+names(NHIStables) <- c("dataName", "rows", "columns")
+NHIStables
+#common columns compared with family table
+com.hs_fm <- na.omit(match(names(hshld), names(fmly))) #4:6
+names(fmly[,com.hs_fm])
+com.ps_fm <- na.omit(match(names(prsn), names(fmly)))  #3:6
+names(fmly[,com.ps_fm])
+com.ad_fm <- na.omit(match(names(adlt), names(fmly)) ) #3:6
+names(fmly[,com.ad_fm])
+com.ch_fm <- na.omit(match(names(chldrn), names(fmly)))  #3:6
+names(chldrn[,com.ch_fm])
+#children and adults
+com.ch_ad <- na.omit( match(names(chldrn), names(adlt)))
+length(com.ch_ad) # 158 columns are all in adult
+com.ad_ch <- na.omit( match(names(adlt), names(chldrn)))
+length(com.ad_ch) # 158 columns are all in adult
+#person and adults
+com.pr_ad <- na.omit( match(names(prsn), names(adlt)))
+length(com.pr_ad) # 158 columns are all in adult
+sort(names(adlt[,com.pr_ad]))
+com.ad_pr <- na.omit( match(names(adlt), names(prsn)))
+length(com.ad_pr) # 158 columns are all in adult
+sort(names(prsn[, com.ad_pr]))
+## common names
+head(hshld[, names(fmly[, c(4:6)])])
+head(prsn[, names(fmly[, c(3:6)])])
+head(adlt[, names(fmly[, c(3:6)])])
+#head(chldrn[, names(fmly[, c(3:6)])])
+##uniqueness of ids
+dim(distinct(adlt[, c("FMX", "HHX")])) # unique ID, FPX is a number of head of Household
+dim(adlt)
+dim(distinct(prsn[, c("FMX","HHX", "FPX")])) # unique ID
+dim(prsn)
+dim(distinct(fmly[, c("FMX","HHX")])) # unique ID
+dim(fmly)
+##join to construction data of unique variables. persons<adults<household<family
+Allxx <- left_join(prsn, adlt, by=names(adlt[, com.pr_ad])[-11]) %>% 
+  left_join(hshld, by ="HHX") %>% 
+   left_join(fmly, by =c("HHX", "FMX") ) 
+names(Allxx)
+#View(xx)
+```
+
+* Four of the 5 data tables are potentially the data sources for the study project. The child table for children information is excluded from this project because their information is unlikely to be predictors for adults' health. These 4 tables have a total 72831 rows and 1466 columns
+* After reading all the several hundreds of pages of documents, only 1 column of data for family size in the family data table will useful for this study. None are from the household table.
+* Personsx table includes data of all interviewed persons of families. Diseases are included for relatives information of adults in the adults table. This columns diseases in this personsx table are systematically named differently from the simillar information in the adults table.
+
+> The 4 data tables have 3 shared ids\ 
+--FMX:   Family number\
+--HHX:   Household number\
+--FPX:   Person number
+
+# 2.2. Variable Selection and Transformation
+Potential response variables are selected diseases such as cancers and 15 other types of chronic diseases. All demographic, activities, smoking, drinking, and other lifestyle related factors are included as potential predictors. The unknown, not answered, and not applicable values are change into NA values. All categorical and some continuous variables such as first smoking age and hours of sleep are transformed into categorical variables to simplify estimation for logistic models by constructing only linear link functions in the logistic model. Such a categoricalization of continuous variables is an approximation to a nonlinear link function. All data categories are labeled to reduce errors in coding. Consistency of transformation is checked against their corresponding original data. Thus, you may expect to see some examination code lines for consistency. The three columns of data for vigorous, strength, and moderate physical activities are combined into a categorical variable to measure different types of activity. Age and BMI are the only continuous variables included in the estimation. They are kept as continuous variables just to keep the diversity of the model and see if the code may work better or worse with them. For details of the data transformations please read the comments in the code chunks. 
+
+```{r, ch2.2,warning=FALSE, message=FALSE, error=FALSE}
+#family table
+fm <- fmly %>% 
+  select(HHX, FMX, FM_SIZE)
+#person table
+ps <- ps0 <- prsn %>% 
+  select(HHX, FMX, FPX, REGION, REGIONBR,
+         HISCODI3, FSPOUS2, FMOTHER1, FFATHER1, MOM_ED, DAD_ED, 
+         
+         LADURA1,  LADURA2,  LADURA3, LADURA4, LADURA7,LADURA8, LADURA9, LADURA10,
+         LADURA11,  LADURA12,  LADURA18, LADURA21, LADURA28,  LADURA29, LDURA14A, 
+         
+         LADURB1, LADURB2, LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9, LADURB10,
+         LADURB11, LADURB12, LADURB18, LADURB21, LADURB28, LADURB29, LDURB14A,
+         PHSTAT, WRKLYR1, WRKFTALL)
+# Check names
+# names(ps0)[12:26]
+# names(ps0)[27:41]
+#replace missings in with 0 where no diseases are blank
+ps[, c(12:41)] <- replace(ps0[, c(12:41)], is.na(ps0[, c(12:41)]), -1)   ##missing cells are 0
+# 97,98,99, 7,8,9 cases for some variables
+ps[, c(12:26)] <- replace(ps[, c(12:26)], (ps[, c(12:26)] %in% c(96,97, 98,99)), NA)   ##group into 99
+ps[, c(27:41)] <- replace(ps[,c (27:41)], (ps[, c(27:41)] %in% c(7, 8, 9)), NA)   ##group into 99
+#table(ps[,27], exclude = NULL)
+#adult table
+ad <- ad0 <- adlt %>% 
+  select(HHX, FMX, FPX, SEX, AGE_P, MRACRPI2, R_MARITL, PAR_STAT, INDSTRN1, WRKCATA,
+         ALDURA1, ALDURA2, ALDURA3, ALDURA4, ALDURA7,ALDURA8, ALDURA9, ALDURA10,
+         ALDURA11, ALDURA12, ALDURA18, ALDURA21, ALDURA28,  ALDURA29, ADURA14A, 
+         ALDURB1, ALDURB2, ALDURB3, ALDURB4, ALDURB7,   ALDURB8,  ALDURB9,  ALDURB10,
+         ALDURB11, ALDURB12, ALDURB18, ALDURB21, ALDURB28, ALDURB29, ADURB14A, LIVEV,
+         SMKEV, SMKREG, SMKNOW, SMKSTAT2, VIGFREQW, MODFREQW, STRFREQW, ALCSTAT ,AHEIGHT, AWEIGHTP, BMI,
+         ASISLEEP,AASSTILL )
+# Check names
+#names(ad0)[11:25]
+#names(ad0)[26:41]
+#replace 7,8,9,97, 98, 99 for refuse, uncertain, and unknown, 
+ad[, c(11:41)] <- replace(ad0[, c(11:41)], is.na(ad0[,c(11:41)]), -1)   ##missing cells are 0
+ad[, c("SMKEV")] <- replace(ad[, c("SMKEV")],(ad[, c("SMKEV")] %in% c(7, 8, 9)), NA)   #### above 99.5
+ad[, c("SMKREG")] <- replace(ad[, c("SMKREG")],(ad[, c("SMKREG")] %in% c(96, 97, 98, 99)), NA)   #### above 99.5
+ad[, c("SMKNOW")] <- replace(ad[, c("SMKSTAT2")],(ad[, c("SMKSTAT2")] %in% c(7, 8, 9)), NA)   #### above 99.5
+ad[, c("SMKSTAT2")] <- replace(ad[, c("SMKSTAT2")],(ad[, c("SMKSTAT2")] %in% c(9)), NA)   #### above 99.5
+ad[, c("ALCSTAT")] <- replace(ad[, c("ALCSTAT")],(ad[, c("ALCSTAT")] %in% c(9, 10)), NA)   ####Alcohol remove unknown frequency (very few)
+ad[, c("ASISLEEP")] <- replace(ad[, c("ASISLEEP")], (ad[, c("ASISLEEP")] %in% c(97, 98, 99)), NA)   ####sleep hours
+ad[, c("VIGFREQW")] <- replace(ad[, c("VIGFREQW")], (ad[, c("VIGFREQW")] %in% c(0)), 1)   #### vigorous excercise times 0=<1, 
+ad[, c("VIGFREQW")] <- replace(ad[, c("VIGFREQW")], (ad[, c("VIGFREQW")] %in% c(95, 96)), 0)   #### vigorous excercise 0 times
+ad[, c("VIGFREQW")] <- replace(ad[, c("VIGFREQW")], (ad[, c("VIGFREQW")] %in% c(97, 98, 99)), NA)   #### 
+ad[, c("MODFREQW")] <- replace(ad[, c("MODFREQW")], (ad[, c("MODFREQW")] %in% c(0)), 1)   #### moderate excercise times 0=<1, 
+ad[, c("MODFREQW")] <- replace(ad[, c("MODFREQW")], (ad[, c("MODFREQW")] %in% c(95, 96)), 0)   #### moderate excercise 0 times
+ad[, c("MODFREQW")] <- replace(ad[, c("MODFREQW")], (ad[, c("MODFREQW")] %in% c(97, 98, 99)), NA)   #### no moderate exc
+ad[, c("STRFREQW")] <- replace(ad[, c("STRFREQW")], (ad[, c("STRFREQW")] %in% c(0)), 1)   #### strength excercise times 0=<1, 
+ad[, c("STRFREQW")] <- replace(ad[, c("STRFREQW")], (ad[, c("STRFREQW")] %in% c(95, 96)), 0)   #### strength excercise 0 times
+ad[, c("STRFREQW")] <- replace(ad[, c("STRFREQW")], (ad[, c("STRFREQW")] %in% c(97, 98, 99)), NA)   #### no strength exc
+ad[, c("AWEIGHTP")] <- replace(ad[, c("AWEIGHTP")], (ad[, c("AWEIGHTP")] %in% c(996, 997, 998, 999)), NA)   ####weight lbs.
+ad[, c("AHEIGHT")] <- replace(ad[, c("AHEIGHT")],(ad[, c("AHEIGHT")] %in% c(96, 97, 98, 99)),NA)   ####height inch
+ad[, c("BMI")] <- replace(ad[, c("BMI")], (ad[, c("BMI")] %in% c(9999)), NA)   ####sleep hours
+ad[, c("BMI")] <- replace(ad[, c("BMI")], (ad[, c("BMI")] %in% c(9995)), 99.5)   #### above 99.5
+ad[, c("PAR_STAT")] <- replace(ad[, c("PAR_STAT")],(ad[, c("PAR_STAT")] %in% c(9)), NA)   ####parents status
+ad[, c("R_MARITL")] <- replace(ad[, c("R_MARITL")], (ad[, c("R_MARITL")] %in% c(9)), NA)   ####Marriage status
+ad[, c("LIVEV")] <- replace(ad[, c("LIVEV")], (ad[, c("LIVEV")] %in% c(7, 8, 9)), NA)   ####liver condition
+#add a flag for adult data rows to make it different from other data sources
+ad$adult <- 1
+# this columns is not included in the models because of BMI 
+ps[,c("FSPOUS2")] <- replace(ps[, c("FSPOUS2")], (ps[, c("FSPOUS2")] %in% c(98)) ,NA)   ####weight lbs.
+#head(ad$adult)
+#table(ad$R_MARITL)
+# data are mostly integers now
+# list of variables and number of na
+mis.fm <- sapply(fm, function(x) sum(is.na(x)))
+mis.ps <-sapply(ps, function(x) sum(is.na(x)))
+mis.ad <- sapply(ad, function(x) sum(is.na(x)))
+# MERGE and convert data into analyzable data types; Disease (nmaed dis?) are response variables for health status .
+# 4 variables (smk, activ, sleep, and dis99) are tranformated with fct_rev() function to facilitate the default baseline as wanted. 
+hlth <- left_join(ps, ad, by=c('HHX', 'FMX', 'FPX')) %>% 
+  left_join(fm, by =c("HHX", "FMX") ) %>% 
+  mutate(sex=factor(SEX, levels=c(1, 2), labels=c("male", "female")), 
+         alc=factor(cut(ALCSTAT, breaks = c(0, 1, 5, 7,8), labels=c("Abstainer", "Former", "Light", "Heavier"))),
+         smk=fct_rev(factor(SMKSTAT2, levels=c(1, 2, 3, 4), labels=c("Daily", "Some", "Former", "Never") )), 
+         age_smk=ifelse(smk=="Never", -5, SMKREG),
+         age_smk=factor(cut(age_smk, breaks = c(-6, 0, 18, 100), labels=c("Never","6-18", "above19"), useNA='ifany' )),
+         # three columns are merged into 1. 
+         activ=fct_rev(factor(ifelse(VIGFREQW >2, 1, 
+                              ifelse(STRFREQW>2, 2, 
+                              ifelse(MODFREQW>2, 3, 
+                              ifelse(VIGFREQW==0 & STRFREQW==0 & MODFREQW==0, 5, 4)))), 
+                              levels=c(1, 2, 3, 4, 5), labels = c("Vigorous","Strength","Moderate", "Some", "None"))),
+         sleep=fct_rev(factor(cut(ASISLEEP, breaks = c(-1, 0, 4, 5, 6, 7, 24), useNA='ifany'), 
+                              labels = c("<=4 hrs", "5 hrs", "6 hrs", "7 hrs", ">7 hrs"))),
+         fm_size=factor(cut(FM_SIZE, breaks = c(0, 1, 2, 4, 20), useNA='ifany' ), 
+                              labels = c("1 person", "2 persons", "3-4 persons", ">5 persons")),
+         
+         age=as.numeric(AGE_P),
+         BMI=as.numeric(BMI)/100,
+         
+         region=factor(REGION, levels=c(1, 2, 3, 4), labels = c("Northeast", "Midwest", "South", "West")),
+         race0= factor(HISCODI3,levels=c(1:5), labels = c("Hispanic", "White","Black", "Asian","Other")),
+         race= factor(race0, levels = c("White", "Hispanic", "Black", "Asian","Other")),
+         marriage = factor(cut(R_MARITL, breaks = c(0, 2, 6, 7, 8), useNA='ifany'), labels = c("married", "D/S/W", "Never", "Partner")),
+         par_stat = factor(cut(PAR_STAT, breaks = c(0, 2, 3), useNA='ifany'), labels= c("Children", "No children")),
+         
+         dis1=factor(cut(ALDURB1, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No vision disease", "Vision disease")),
+         dis2=factor(cut(ALDURB2, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No hearing disease", "Hearing disease")),
+         dis3=factor(cut(ALDURB3, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No arthritis disease", "Arthritis disease")),
+         dis4=factor(cut(ALDURB4, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No back or neck disease", "Back or neck")),
+         dis7=factor(cut(ALDURB7, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No heart disease", "Heart disease")),
+         
+         dis8=factor(cut(ALDURB8, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No stroke disease", "Stroke")),
+         dis9=factor(cut(ALDURB9, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No hypertension disease", "Hypertension disease")),
+         dis10=factor(cut(ALDURB10, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No diabetes disease", "Diabetes disease")),
+         dis11=factor(cut(ALDURB11, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No lung or breathing disease", "Lung or breathing disease")),
+         dis12=factor(cut(ALDURB12, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No cancer disease", "Cancer disease")),
+         
+         dis14=factor(cut(ADURB14A, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No mental retardation", "Mental retardation")),
+         dis18=factor(cut(ALDURB18, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No weight problem", "Weight problem")),
+         dis21=factor(cut(ALDURB21, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No circulation disease", "Circulation disease")),
+         dis28=factor(cut(ALDURB28, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No benign tumor disease", "Benign tumor disease")),
+         dis29=factor(cut(ALDURB29, breaks =c(-1.1, -0.1, 4), useNA ='ifany'), labels = c("No alcohol/drug problem", "Alcohol/drug problem")),
+         dis99=fct_rev(factor(cut(LIVEV, breaks =c(0, 1, 2), useNA ='ifany'), labels = c("Chronic liver disease", "No chronic liver disease")))
+              # Chronic liver, original 1=yes 2=no, reversed 1=no, 2=yes to be consistent with others
+          ) %>% 
+  filter(adult==1)
+# Combine/NA some confusing categories, several others were correct in the above code.
+hlth$smk[hlth$smk == "smk/unknown"] = NA
+## check data
+names(hlth)
+nrow(hlth)
+nrow(ad)
+# liver, smoking age special check
+#table(hlth$dis99, exclude = NULL)
+#table(ad$LIVEV, exclude = NULL)
+#table(hlth$LIVEV, exclude = NULL)
+#table(hlth$age_smk, exclude = NULL)
+#check number of no activity
+#table(hlth$activ, exclude = NULL)
+#hlth %>% filter(VIGFREQW==0 & STRFREQW==0 & MODFREQW==0) %>% summarise(n=n())
+#check transormed data with original data
+#sum(ad0$ALDURB1 %in% c(6,7,8,9))
+#table(hlth$dis1, exclude = NULL)
+```
+
+# 3. DATA Descriptions and Exploration of Potential Correlations. 
+This section uses mainly plots ot represents distribution of variables.
+
+## 3.1. Demographics and Activities
+
+```{r, ch3.1, warning=FALSE, message=FALSE, error=FALSE, fig.width=12}
+#personal demographics and behaviors
+XX0 <- hlth %>% 
+  select(HHX, FMX, FPX, age, sex, race,  smk, age_smk, alc, sleep, activ,
+          fm_size, marriage, par_stat, BMI)
+head(XX0)
+#summary(XX0)
+#ggpairs(XX0)
+##plots
+p1 <- ggplot(data = XX0, aes(x=age )) + 
+  geom_histogram(bins = 8, color = "black", fill = "purple") +
+  labs(y = "People (n)", x = "Age")  +
+  theme_bw()
+p2 <- ggplot(data = XX0, aes(x = sex )) + 
+  geom_bar(color = "black", fill = "pink", width = 0.7) +
+  labs(y = "People (n)", x = "Sex")  +
+  theme_bw()
+p3 <- ggplot(data = XX0, aes(x = smk)) + 
+  geom_bar(color="black", fill = "green", width = 0.7) +
+  labs(y ="People (n)", x = "Smoking")  +
+  theme_bw()
+p4 <- ggplot(data = XX0, aes(x = age_smk)) + 
+  geom_bar(color ="black", fill = "grey", width=0.7) +
+  labs(y = "People (n)", x = "Age first smoked regularly") + 
+  theme_bw()
+p5 <- ggplot(data = XX0, aes(x = alc)) + 
+  geom_bar(color = "black", fill = "Red", width = 0.7) +
+  labs(y = "People (n)", x = "Alcohol drinking")  +
+  theme_bw()
+p6 <- ggplot(data = XX0, aes(x = sleep)) + 
+  geom_bar(color = "black", fill = "brown", width = 0.7) +
+  labs(y = "People (n)", x = "Hours of spleep")  +
+  theme_bw()
+p7 <- ggplot(data = XX0, aes(x = activ)) + 
+  geom_bar(color ="black", fill = "purple", width =0.7) +
+  labs(y="People", x="Physical activity")  +
+  theme_bw()
+p8 <- ggplot(data = XX0, aes(x = BMI)) + 
+  geom_histogram(bins = 8, color = "blue", fill = "red") +
+  labs(y = "People (n)", x = "BMI")  +
+  theme_bw()
+p9 <- ggplot(data = XX0, aes(x = fm_size)) + 
+  geom_bar(color="black", fill = "Brown", width=0.7) +
+  labs(y="People (n)", x="Family size")  +
+  theme_bw()
+p10 <- ggplot(data = XX0, aes(x=race)) + 
+  geom_bar(color="black", fill = "lightblue", width=0.7) +
+  labs(y="People", x="Race") + 
+  theme_bw()
+p11 <- ggplot(data = XX0, aes(x = marriage)) + 
+  geom_bar(color = "black", fill = "pink", width = 0.7) +
+  labs(y = "People (n)", x = "Marriage")  +
+  theme_bw()
+p12 <- ggplot(data = XX0, aes(x = par_stat)) + 
+  geom_bar(color = "black", fill = "blue", width = 0.7) +
+  labs(y = "People (n)", x = "Children")  +
+  theme_bw()
+  
+plot_grid(p1,p2,p3,p4,p5,p6,labels = "AUTO")
+plot_grid(p7,p8,p9,p10,p11,p12,labels = c("G","H","I","J","K","L","M"))
+# clearn memory
+rm("Allxx", "chldrn", "XX0", "fm", "ps0", "ad", "ad0", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12",
+   "mis.ad", "mis.fm", "mis.ps", 'com.ad_ch', 'com.ad_fm', 'com.ad_pr', 'com.ch_ad', 'com.ch_fm', 'com.hs_fm', 'com.pr_ad', 'com.ps_fm', "prsn", "adlt", "fmly", "hshld", "NHIStables")
+```
+
+## 3.2. Exploration of Chronic Diseases vs. Alcohol and Smoking
+Ratios of cases of selected disease are ploted against drinking and smoking, which are the 2 most interesting factors I would like to analyze.
+
+```{r, ch3.2 first, fig.width=10, warning=FALSE, message=FALSE, error=FALSE}
+YY <- hlth %>% 
+  select(dis1, dis2, dis3, dis4, dis7, 
+         dis8,dis9, dis10, dis11, dis12,
+         dis18, dis28,dis21, dis29, dis14, dis99)
+#total number diseases by type
+dis <- data.frame(sapply(YY, function(x) sum(as.numeric(x)==2, na.rm = TRUE)))
+table(YY$dis99)
+dis$name <-  c("vision", "hearing", "arthritis","back or neck", "heart",
+                "strock", "hypertension", "diabetes", "lung", "cancer",
+                "weight", "circulation", "benign tumor", "alcohol/drug", "mental", "liver")
+names(dis)[1] <- c("number.disease")
+## try some contract
+ggplot(data = hlth[!is.na(hlth$smk), ], aes(x = smk, fill = factor(dis11))) + 
+  geom_bar(position = "dodge", color="blue") +
+  theme_bw()+
+  labs(y="People (n)", x="Smoking")+
+  theme(legend.title = element_blank())
+```
+
+>The above plot demonstrates that bar plots of absolute numbers of each disease categories are not suitable for comparison against the categories of other variables, Thus, bar plots of ratios will be applied. 
+
+```{r, ch3.2_second, fig.width=10, warning=FALSE, message=FALSE, error=FALSE}
+# check ratio: smoke
+par(mfrow=c(2,3))
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk,dis11)) 
+r=tmt[, 2]/(tmt[,1]+tmt[, 2])
+barplot(r, xlab = "Smoke", ylab = "lung or breathing %", col = c("green", "red", "purple", "brown"))
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk,dis12)) 
+r=tmt[, 2]/(tmt[, 1] + tmt[, 2])*100
+barplot(r, space = 0.3, xlab = "Smoke", ylab="Cancer %", col = c("green", "red","purple","brown"))
+tmt <- with(hlth[!is.na(hlth$smk), ], table(smk, dis99)) 
+r=tmt[, 2]/(tmt[, 1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Smoke", ylab="Liver %", col = c("green", "red","purple","brown"))
+# alcohol
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis11)) 
+r=tmt[, 2]/(tmt[, 1]+tmt[, 2])
+barplot(r, xlab = "Alcohol", ylab="lung or breathing %", col = c("green", "red","purple","brown"))
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis12)) 
+r=tmt[, 2]/(tmt[, 1]+tmt[, 2])*100
+barplot(r, space =0.3, xlab = "Alcohol", ylab="Cancer %", col = c("green", "red", "purple", "brown"))
+tmt <- with(hlth[!is.na(hlth$alc), ], table(alc,dis99)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3, xlab = "Alcohol", ylab="Liver %", col = c("green", "red", "purple", "brown"))
+
+```
+
+>Smoking is bad to health, but drinking alcohol has mixed relationships with health.
+
+## 3.3. Diseases and Parents
+This section checked correlation between parent diseases and adult diseases.  The diseases are linked using a parents flag in the adult data.
+
+```{r, ch3.3, warning=FALSE, message=FALSE, error=FALSE}
+## liver condition is not in the persons data
+names(ps)
+mom <- ps %>% 
+  select(HHX, FMX, FPX,
+         LADURB1,LADURB2,LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9,LADURB10,
+         LADURB11, LADURB12, LDURB14A, LADURB18, LADURB21, LADURB28, LADURB29) %>% 
+  mutate(FMOTHER1c=FPX,
+         mdis1=factor(cut(LADURB1, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No vision disease", "Vision disease")),
+         mdis2=factor(cut(LADURB2, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No hearing disease", "Hearing disease")),
+         mdis3=factor(cut(LADURB3, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No arthritis disease", "Arthritis disease")),
+         mdis4=factor(cut(LADURB4, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No back or neck disease", "Back or neck ")),
+         mdis7=factor(cut(LADURB7, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No heart disease", "Heart disease")),
+         
+         mdis8=factor(cut(LADURB8, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No stroke disease", "Stroke")),
+         mdis9=factor(cut(LADURB9, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No hypertension disease", "Hypertension disease")),
+         mdis10=factor(cut(LADURB10, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No diabetes disease", "Diabetes disease")),
+         mdis11=factor(cut(LADURB11, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No lung or breathing disease", "Lung or breathing disease")),
+         mdis12=factor(cut(LADURB12, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No cancer disease", "Cancer disease")),
+         
+         mdis14=factor(cut(LDURB14A, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No mental retardation", "Mental retardation")),
+         mdis18=factor(cut(LADURB18, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No weight problem", "Weight problem")),
+         mdis21=factor(cut(LADURB21, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No circulation disease", "Circulation disease")),
+         mdis28=factor(cut(LADURB28, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No benign tumor disease", "Benign tumor disease")),
+         mdis29=factor(cut(LADURB29, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No alcohol/drug problem", "Alcohol/drug problem")),
+         
+   #      mdis99=fct_rev(factor(cut(LIVEV, breaks =c(0,1,2), useNA='ifany' ), labels=c("Chronic liver disease", "No chronic liver disease")))
+            ) 
+# Dad data, the same variable name pattern as mom's
+dad <- ps %>% 
+  select(HHX, FMX, FPX,
+         LADURB1,LADURB2,LADURB3, LADURB4, LADURB7, LADURB8,  LADURB9,LADURB10,
+         LADURB11, LADURB12, LDURB14A, LADURB18, LADURB21, LADURB28, LADURB29) %>% 
+  mutate(FFATHER1c=FPX,
+         ddis1=factor(cut(LADURB1, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No vision disease", "Vision disease")),
+         ddis2=factor(cut(LADURB2, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No hearing disease", "Hearing disease")),
+         ddis3=factor(cut(LADURB3, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No arthritis disease", "Arthritis disease")),
+         ddis4=factor(cut(LADURB4, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No back or neck disease", "Back or neck ")),
+         ddis7=factor(cut(LADURB7, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No heart disease", "Heart disease")),
+         
+         ddis8=factor(cut(LADURB8, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No stroke disease", "Stroke")),
+         ddis9=factor(cut(LADURB9, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No hypertension disease", "Hypertension disease")),
+         ddis10=factor(cut(LADURB10, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No diabetes disease", "Diabetes disease")),
+         ddis11=factor(cut(LADURB11, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No lung or breathing disease", "Lung or breathing disease")),
+         ddis12=factor(cut(LADURB12, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No cancer disease", "Cancer disease")),
+         ddis14=factor(cut(LDURB14A, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No mental retardation", "Mental retardation")),
+         ddis18=factor(cut(LADURB18, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No weight problem", "Weight problem")),
+         ddis21=factor(cut(LADURB21, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No circulation disease", "Circulation disease")),
+         ddis28=factor(cut(LADURB28, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No benign tumor disease", "Benign tumor disease")),
+         ddis29=factor(cut(LADURB29, breaks = c(-1.1, -0.1, 4), useNA='ifany'), labels = c("No alcohol/drug problem", "Alcohol/drug problem")),
+   #      mdis99=fct_rev(factor(cut(LIVEV, breaks =c(0,1,2), useNA='ifany' ), labels=c("Chronic liver disease", "No chronic liver disease")))
+          )
+# merge with hlth
+hlth_par <- hlth %>% 
+  mutate(FFATHER1c=FFATHER1, FMOTHER1c=FMOTHER1) %>% 
+  left_join(mom, by = c("HHX","FMX", "FMOTHER1c")) %>% 
+  left_join(dad, by = c("HHX","FMX", "FFATHER1c"))
+  
+#table(hlth_par$dis11)
+#table(hlth_par$dis11, hlth_par$mdis11)
+#table(hlth_par$dis1, hlth_par$mdis1)
+## check for relationship between adult and mom
+ggplot(data = hlth_par[!is.na(hlth_par$mdis11), ], aes(x = dis11, fill = mdis11)) + 
+  geom_bar(position = "dodge", color="blue", na.rm = TRUE) +
+  theme_bw()+
+  labs(x="Mom lung problem", y="People (n)")+
+  theme(legend.title = element_blank())
+```
+
+>The above plot suggests again the difficulty in displaying the diseases with absolute number count. So in this project most of the results will be shown in relative values or percents.
+
+```{r, ch3.3_second, warning=FALSE, message=FALSE, error=FALSE}
+# rate aldults and their parents
+fig.dim=c(10, 7)
+fig.width=9
+par(mfrow=c(3,  2))
+tmt <- with(hlth_par[!is.na(hlth_par$mdis11), ], table(mdis11,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Mom lung or breath problem", ylab="lung or breath problem %",  col=c("green","red"))
+#dady
+tmt <- with(hlth_par[!is.na(hlth_par$ddis11), ], table(ddis11,dis11)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Dad lung or breath problem", ylab="lung or breath problem %",  col=c("green","blue"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$mdis7), ], table(mdis7,dis7)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Mom heart disease", ylab="Heart disease %", col=c("green","red"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$ddis7), ], table(ddis7,dis7)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Dad heart disease", ylab="Heart disease %", col=c("green","blue"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$mdis3), ], table(mdis3,dis3)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Mom arthritis", ylab="Arthritis %",  col=c("green","red"))
+# in this case the sample size is too small, 1 case would be too big
+tmt <- with(hlth_par[!is.na(hlth_par$ddis3), ], table(ddis3,dis3)) 
+r=tmt[,2]/(tmt[,1]+tmt[,2])*100
+barplot(r, space =0.3,xlab = "Dad arthritis", ylab="Arthritis %",  col=c("green","blue"))
+#names(hlth_par)
+```
+
+>Parents' health is relevant to adults' health.
+
+# 4. Regional Variation
+Maps of selected predictors and diseases are produced to represent regional variations
+
+## 4.1. Regional Variation of Drinking and Smoking
+Drinking and smoking ratios are displayed on the US regional map. A map function is created to map variables.
+
+```{r, ch4.1, echo=FALSE, include=FALSE, message=FALSE, warning=FALSE}
+# US state level geometry data from ACS
+state<- get_acs(geography = "state",  geometry=TRUE,       # query data at the state level 
+                   year = 2016,                 # end year (these will give us ACS 5-year estimates for 2011-2016)
+                    variables = c("B01003_001")) #population
+```
+
+
+```{r, ch4.1_Second, warning=FALSE, message=FALSE, error=FALSE}
+#map
+# assign a region for each state. Region definition is based on maps of the US Census Beaurau
+state$STATE=as.integer(state$GEOID)
+NorthEast <- c(9, 10, 11, 23, 24, 25, 33, 34, 36, 42, 44, 50)
+MidWest <- c(17, 18, 19, 20, 26, 27, 29, 31, 38, 39, 46, 55)
+South <- c(1, 5, 12, 13, 21, 22, 28, 37, 40, 45, 47, 48, 51, 54)
+West <-  c(4, 6, 8, 16, 30, 32, 35, 41, 49, 53, 56)
+#geos is only a object name for the geometric data
+geos <- state[!(state$STATE %in% c(2, 15, 72)), ]
+geos$REGION[geos$STATE %in% NorthEast] <- 1
+geos$REGION[geos$STATE %in% MidWest] <- 2
+geos$REGION[geos$STATE %in% South] <- 3
+geos$REGION[geos$STATE %in% West] <- 4
+#check data
+#table(geos$REGION)
+geos[geos$REGION==2,]
+#Percent of Abstainers by region
+regionx <- hlth %>% filter(!is.na(alc)) %>% group_by(REGION, alc) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+# Abst for alcohol abstainer 
+Abst <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(alc=="Abstainer") %>%  
+  mutate( per = 100-n_1/n_t*100) %>% 
+  select(REGION, per) 
+#theme
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+#coordinates of labels for Regions
+coordinates = st_coordinates(st_point_on_surface(geos))
+##Map function that will be used for all region maps
+Rmap <- function(vrb, title,colors){
+   # merge data
+  map1 <- left_join( geos, vrb,by = "REGION")
+  prev_min <-min(as.numeric(map1$per), na.rm = TRUE)
+  prev_max <- max(as.numeric(map1$per), na.rm = TRUE)
+  
+  myPalette <- colorRampPalette(brewer.pal(9, colors))
+  
+   # Center of geometry
+  map2 <- data.frame(map1,coordinates)
+  map2$perc=as.character(paste0(round(map2$per,1),"%"))
+  map2$lab=ifelse(map2$STATE %in% c(42, 19, 28,32), map2$perc,'')
+ 
+  ggplot() +
+    geom_sf(data=map1, lwd = 0, aes(fill = map1$per)) +
+    my_theme() +
+    ggtitle(title)+
+    scale_fill_gradientn(name = "Rate (%)", colours = myPalette(50),
+                         limit = range(0, prev_max))  +
+    geom_text(data = map2, aes(x=X, y=Y, label=lab), size = 5, fontface = "bold",color="white")
+}
+# map for Alcohol
+Rmap(Abst, "US Map of Adults Ever been Alcohol Consumers", "YlGnBu")
+#percent of Never smoke by region
+regionx <- hlth %>% filter(!is.na(smk)) %>% group_by(REGION, smk) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+# Abst is for "never smoking" here
+nonsmk <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(smk=="Never") %>%  
+  mutate( per=100-n_1/n_t*100) %>% 
+  select(REGION, per) 
+# map for Alcohol
+Rmap(nonsmk, "US Map of Adults Ever been Smokers", "YlOrRd")
+```
+
+## 4.2. Regional Variabtion of Diseases
+The database does not include state information and regions have to be used to display location variation. For those rarely occured diseases the regional level percentages of specific categorie are still quite meaningful. This section of analysis display some examples of veriation among the 4 regions.Maps are based on continental state multipolygon vector geometry data from US Census Beaureu website. Each state in the same region are shown in the same color that indicate the percentage values of the region. 
+
+```{r, ch4.2, warning=FALSE, message=FALSE, error=FALSE}
+par(mfrow=c(3,2))
+#lung diseases %
+regionx <- hlth %>% filter(!is.na(dis11)) %>% group_by(REGION, dis11) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+Lung <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis11=="Lung or breathing disease") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per) 
+  class(Abst$REGION ) 
+  class (geos$REGION)
+  colors="Purples"
+  title="Title"
+Rmap(Lung,"US Map of Adult Lung Diseases", "YlGn")
+#Heart diseases %
+regionx <- hlth %>% filter(!is.na(dis7)) %>% group_by(REGION, dis7) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+Heart <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis7=="Heart disease") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per)
+Rmap(Heart,"US Map of Heart Diseases", "Purples")
+#Liver %
+regionx <- hlth %>% filter(!is.na(dis99)) %>% group_by(REGION, dis99) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+Liver <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis99=="Chronic liver disease") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per)
+Rmap(Liver, "US Map of Liver Diseases", "OrRd")
+#Arthritis diseases %
+regionx <- hlth %>% filter(!is.na(dis3)) %>% group_by(REGION, dis3) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+Arthritis <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis3=="Arthritis disease") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per)
+Rmap(Arthritis, "US Adult Arthritis", "PuRd")
+#stroke %
+regionx <- hlth %>% filter(!is.na(dis8)) %>% group_by(REGION, dis8) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+stroke <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis8=="Stroke") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per)
+Rmap(stroke,"US Adult Stoke", "GnBu")
+#Mental retardation
+regionx <- hlth %>% filter(!is.na(dis14)) %>% group_by(REGION, dis14) %>% summarise(n= n())
+tot <- regionx %>% group_by(REGION) %>% summarise(n= sum(n))
+Mental <- left_join(regionx, tot, by = "REGION", suffix = c("_1", "_t")) %>% 
+  filter(dis14=="Mental retardation") %>%  
+  mutate( per=n_1/n_t*100) %>% 
+  select(REGION, per)
+Rmap(Mental,"US Adult Mental Retardation", "RdPu")
+```
+
+# 5. Modeling Relationships between Diseases and Predictors. 
+All the diseases have binary values and logistic model is an intuitive method. Only age and BMI of all the feathures of interviewed adults are kept to be numeric variables. Factors are first transformed into binary variables before estimation of models. Baseline categories are the ones that omitted in the estimation results. 
+
+## 5.1. Variables Significantly Correlated to Health
+Variables/categories of variables that are significantly related to diseases are identified using logistic model.
+
+```{r, ch5.1, warning=FALSE, message=FALSE, error=FALSE}
+dis_Names <- c("Vision","Hearing", "Arthritis","Back_neck", "Heart",
+              "Stroke","Hypertension", "Diabetes", "Lung_breath", "Cancer",
+              "Mental", "Weight", "Circulation", "Benign_tumor","Alcohol_drug", 
+              "Chronic_liver")
+# reset the XX incase order change
+# age, BMI are numeric, others are factors 
+XX <- hlth %>% 
+  select(age, sex, race,  smk, alc, sleep, activ,  
+          fm_size, marriage, par_stat, BMI, region) ##HHX, FMX, FPX,age_smk, 
+# Reset the YY in case order change
+YY <- hlth %>% 
+  select(dis1, dis2, dis3, dis4, dis7, 
+         dis8, dis9, dis10, dis11, dis12,
+         dis14, dis18, dis21, dis28, dis29,  
+         dis99)
+i=1
+cef <- NA
+sigName = NA 
+dstName = NA
+sigcef <- NA
+pval <- NA
+for (i in 1:16) {
+  Y=YY[,i]
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX),]
+  #dim(data.frame(Y, XX))
+  dim(YXX)
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))] ))
+  dt <-  data.frame(y=YXX[,"Y"],Xmat)
+  dt.glm <- glm( y ~ . , data =dt, family = binomial(logit))
+  s <- summary(dt.glm)$coefficients[,4]
+  c <- summary(dt.glm)$coefficients[s<0.05, "Estimate"]
+  nam <- names(c)[2:length(c)]
+  sigName[i] <- list(nam)   #significant var names
+  sigcef[i] <- list(c)      #significant coefficients
+  cef[i] <-  list(summary(dt.glm)$coefficients[, "Estimate"]) ## all estimate
+  pval[i] <- list(s)
+  }
+#sigName
+cefTab <- as.data.frame(cef)
+pvalTab <- as.data.frame(pval)
+sig <- as.data.frame(pval) < 0.05
+sig=ifelse(sig==0, NA, sig)
+sigTab <- cefTab*sig
+names(sigTab)=names(YY)
+sigTabf <- round(sigTab, 2)
+print(sigTabf)
+```
+
+>The above table contends all the significant coefficients whose p-values are less than 0.05. Those "NA" values in the table represent insignificant coefficients. The next section will display them in a heat map.
+
+## 5.2. Heatmap of P-values
+
+```{r, ch5.2, fig.height=8, warning=FALSE, message=FALSE, error=FALSE}
+# Obtain the signs of estimated coefficients, 1= positive, -1=negtative
+HMsign <- cefTab
+HMsign[cefTab>0] = 1
+HMsign[cefTab<0] = -1
+#log transformation
+lps <- log(pvalTab)
+# significance ones <0.05 are kept
+lps[pvalTab>=0.05] = NaN
+#add sign
+pmat <- lps*HMsign*(-1)
+X <- as.matrix(pmat[-1, ])
+#Truncation for managing extremely small p-values for reasonable color scheme
+Z <- X
+Z[X > -log(0.0001)] = -log(0.0001)
+Z[X <= log(0.0001)] = log(0.0001)
+# add names of diseases for each model
+colnames(Z) <- dis_Names
+# mgp and mar are used to adjust position of key, 
+# color panel is defined for transision of colors from green to yellow to red
+# margin to make room for labels on the margin
+heatmap.2(Z, col = colorpanel(10,"green","yellow", "red"),  Rowv = FALSE, Colv = FALSE,  na.color = "white",
+          margin=c(8,8), trace="none", 
+          main="                    Significance of Estimated Coefficients",
+          dendrogram = "none", key.xlab="Truncated and signed log p-value", 
+          key.par = list(mgp=c(1.2, 0.3, 0), mar=c(2.5, 2.5, 4, 0)), key.title = "- coeff               + coeff")
+```
+
+>The heatmap was designed to display the significant correlations (by the standard of p-values <=0.05) between diseases in columns and predictors in rows. Green in the the above heatmap is used to indicate negatively correlated to diseases, and thus positively correlated to health. Red is for positively correlated to diseases and thus negatively related to health. The color scheme as shown in the color key is realized using a truncated log-transformed scores based on p-values and the sign of its corresponding coefficients. There are 4 steps to transform the p-values: (1). Log-transform the p-values from the estimation; (2). Replace all cells with NaN when corresponding p-values>=0.05; (3). Add the opposite sign of the corresponding estimated coefficients; (4). Truncate large values by + and - log(0.0001) so that colors display in a right range.
+## 5.3. Implications of Correlations between Predictors and Health 
+A continuous variable or a category of a factor is defined to be "much" healthier if the difference between the number of models in which it is negatively significant is 10 or above more than the number of models in which it is positively significant.  A continuous variable or a category of a factor is defined to be healthier if the numbers of models in which it is negatively significant is 5 or above more than the number of models in which it is positively significant.  A continuous variable or a category of a factor is defined to be moderately healthier if the number of models in which it is negatively significant is 4 or below 4 more than the number of models in which it is ositively significant. If opposite of the three situations are true, then they are defined as much worse, worse or moderately worse correspondingly. 
+
+```{r, ch5.3, warning=FALSE, message=FALSE, error=FALSE}
+nPsig <- apply(sigTabf, 1, function(x) sum(x>=0, na.rm = TRUE))
+nNsig <- apply(sigTabf, 1, function(x) sum(x<0, na.rm = TRUE))
+nsig <- as.data.frame(cbind(Var=names(nPsig), nPsig, nNsig))
+nsig$Contrast <- nNsig-nPsig
+nsig$Baseline <- c("", "", "male", 
+                   "white", "white", "white", "white",
+                   "Never smoke", "Never smoke", "Never smoke",
+                   "abstainer", "abstainer", "abstainer", 
+                   ">8 hrs of sleep", ">8 hrs of sleep",">8 hrs of sleep",">8 hrs of sleep",
+                   "No activities", "No activities", "No activities", "No activities", 
+                   "1-person family", "1-person family", "1-person family",
+                   "married couple", "married couple", "married couple",
+                   "parents with kids",
+                   "",
+                   "Northeast", "Northeast", "Northeast")
+nsig$Implication <- c("", "Young people are much healthier",
+          "Female are moderately healthier", 
+          "Blacks are moderately worse","Hispanics are moderately worse", "Asians, moderately healthier", "Other races are worse",
+          "Former smokers, much worse","Some smokers, worse","Daily smokers, much worse",
+          "Former alcohol users, moderately worse", "Current light drinker, much healthier", "Current heavy drinker, healthier",
+          "7 hrs sleep, moderately healthier","6 hrs sleep, healthier",
+              "5 hrs sleep, worse", "<4 hrs sleep, much worse",
+          "Some activity is healthier",  "Moderate activity is much healthier",  "Strength activity is moderately healthier",  
+              "Vigorous activity is much healthier",  
+          "2-or-more-member family, moderately worse", ">=2 member family, moderately worse", ">=2 member family, moderately worse",
+          "Divorce, separate, widow, much worse", "Never married, moderately worse", "live with partner, moderately worse", 
+              "parents, healthier", "",
+          "Midwest people are moderately healthier", "Southern people are as health as Northeast", "west people are as moderately healthier")
+names(nsig) <- c("Variables", "# +coeff","# -coeff", "difference", "Baseline", "Implication")
+print(nsig[2:nrow(nsig), c(2:5)])
+print(nsig[2:nrow(nsig), c(4,6)])
+rm("Abst", "coordinates", "geos", "dis", "regionx", "state", "tot","dad","mom","dt", "lps")
+```
+
+# 6. Trainining Models for Prediction
+
+## 6.1. Full Prediction Model Training
+All predictors are included in the estimation of the prediction models for the 16 diseases. Records with missing values are excluded in the model training process. There are only a small number of incomplete records. 
+
+The current directory is specified for my computer, please change the folder name you want to use, or delete the directory to use your default workspace for saving and reading the temporary results. 
+
+Please be patient, the training may take several minutes or longer depending on the environment it runs.
+
+### 6.1.1. Estimation and Cross-Validation 
+```{r, ch6.1.1, message=FALSE,warning=FALSE} 
+j=1
+pred.y.logit <- NA
+obs.y.logit <- NA 
+pred.y.rf <- NA
+obs.y.rf <- NA 
+for (j in 1:16) {
+  # j is the jth diseases such as dis1, dis2,...dis29, dis99
+  Y=YY[,j]
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX),]
+  #dim(data.frame(Y, XX))
+  dim(YXX)
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))] ))
+  dt <-  data.frame(y=YXX[,"Y"],Xmat)
+  ###logistic CV with all variables
+  dtxx <- dt
+  N = nrow(dtxx)
+  K = 10
+  set.seed(1234)
+  # randomly select one of the K from N, the number of rows of data
+  s = sample(1:K, size = N, replace = T) # used for label rows of data titanic for each group       
+  pred.outputs.logit <- vector(mode = "numeric", length = N)
+  obs.outputs.logit <- vector(mode = "numeric", length = N)
+  offset <- 0 # offset is a pointer used for determine where to pending results for the next loop	
+  
+  i=1
+  for(i in 1:K){
+    	train <- filter(dtxx, s != i)
+    	test <- filter(dtxx, s == i)
+    	obs.outputs.logit[1:length(s[s == i]) + offset] <- test$y
+    
+      dt.glm <- glm(y ~ . , data =train, family = binomial(logit))
+      logit.pred.curr <- predict(dt.glm, test, type = "response")
+      pred.outputs.logit[1:length(s[s == i]) + offset] <- logit.pred.curr 
+     	offset <- offset + length(s[s == i])
+     # 	return(list(obs.outputs.logit, pred.outputs.logit))
+    }
+  pred.y.logit[j] <- list(pred.outputs.logit)
+  obs.y.logit[j] <- list(obs.outputs.logit) 
+###random forest with top variables
+dtxx <- dt
+  N = nrow(dtxx)
+  K = 10
+  set.seed(1234)
+  # randomly select one of the K for N times, the number of rows of data
+  s = sample(1:K, size = N, replace = T) # used for label rows of data titanic for each group       
+  pred.outputs.rf <- vector(mode = "numeric", length = N) # to store prediction
+  obs.outputs.rf <- vector(mode = "numeric", length = N) # to store response yi
+  offset <- 0
+  i=1
+  for(i in 1:K){
+  	train <- filter(dtxx, s != i)
+  	test <- filter(dtxx, s == i)
+  	obs.outputs.rf[1:length(s[s == i]) + offset] <- test$y 
+    
+  	#RF train/test
+  	rf <- randomForest(y ~ ., data = train, ntree = 100)
+  	
+  	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
+  	pred.outputs.rf[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
+  
+      # offset is used for determine where to pending results for the next loop	
+  	offset <- offset + length(s[s == i])
+#  	return (obs.outputs.rf)
+  }
+  pred.y.rf[j] <- list(pred.outputs.rf)
+  obs.y.rf[j] <- list(obs.outputs.rf)
+}
+Xmat <- X <- NULL
+Y <- YXX <-  NULL
+# saveRDS(pred.y.logit,file="pred_y_logit.rds") 
+# saveRDS(obs.y.logit, file="obs_y_logit.rds") 
+# saveRDS(pred.y.rf, file="pred_y_rf.rds") 
+# saveRDS(obs.y.rf, file="obs_y_rf.rds") 
+```
+
+### 6.1.2. Full Model AUC and ROC
+```{r, ch6.1.2, warning=FALSE, message=FALSE, error=FALSE}
+#getwd()
+#please change the directory or delete the directory for reading the files from the above code
+# pred.y.logit <- readRDS("/home/Nianfu/pred_y_logit.rds")
+# obs.y.logit <- readRDS("/home/Nianfu/obs_y_logit.rds") 
+# pred.y.rf <- readRDS("/home/Nianfu/pred_y_rf.rds") 
+# obs.y.rf <- readRDS("/home/Nianfu/obs_y_rf.rds") 
+# AUC in one table
+auc <- matrix(data=NA, nrow = 16, ncol=2)
+i=1
+for (i in c(1:16)){
+  r1 <- roc(obs.y.logit[[i]], pred.y.logit[[i]], ci = TRUE)
+  auc[i,1] = r1$auc[1]
+  r2 <- roc(obs.y.rf[[i]], pred.y.rf[[i]], ci = TRUE)
+  auc[i,2] = r2$auc[1]
+}
+aucdt <- as.data.frame(auc)
+names(aucdt) = c("Logistic", "Random.Forest")
+aucdt
+print(paste("logistic 10-fold CV model AUC = ", round(mean(auc[,1]), 3)))
+print(paste("Random Forest 10-fold CV model AUC = ", round(mean(auc[,2]), 3)))
+#Plot ROCs
+par(mfrow = c(1,1))
+i=1
+plot.roc(obs.y.logit[[1]], pred.y.logit[[1]],  lwd = 0.7, lty=1, ci = TRUE, col = "blue") #CV of svm
+plot.roc(obs.y.rf[[i]], pred.y.rf[[i]],  lwd = 0.7, lty=2, ci = TRUE, col = "brown", add = TRUE) #CV of rf
+legend("bottomright", legend = c("Logistic Cross-Validation", "RF Cross-Validation"), col = c("blue", "brown"), lwd = 2, lty = c(1,1,2,1))
+for (i in c(2:16)){
+plot.roc(obs.y.logit[[i]], pred.y.logit[[i]], lwd = 0.7, ci = TRUE, lty=1, col = "blue", add=TRUE) #CV of svm
+plot.roc(obs.y.rf[[i]], pred.y.rf[[i]], lwd = 0.7, ci = TRUE, lty=2, col = "brown", add = TRUE) #CV of rf
+}
+```
+
+> The logit models predict better than random forest models
+
+
+## 6.2. Reduced Models for Prediction
+In this section, the top 10 variables/categories from the full models are used for prediction model training with 10-fold cross-validation. AUC and ROC are produced to compare the power of predictions.
+
+Again, as with the previous full model training, please change the directories and be patient to wait for the running of the code. 
+
+### 6.2.1. Reduced Model Cross-Validation 
+```{r,ch6.2.1,  message=FALSE,warning=FALSE}
+j=1
+pred.y.logit10 <- NA
+obs.y.logit10 <- NA 
+pred.y.rf10 <- NA
+obs.y.rf10 <- NA 
+for (j in 1:16) {
+  # j is the jth diseases such as dis1, dis2,...dis29, dis99
+  Y=YY[,j]
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX),]
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))]))
+  # reduced 10 variables
+  z <-  rownames(cefTab)[-1] # logistic coefficient from above code
+  zp <- pvalTab[-1,j] #pvalue matrix from above code
+  tp10nam <- z[order(zp)][1:10] # top 10 x
+  tp10X <- Xmat[, tp10nam]
+  Y10X <- data.frame(YXX$Y, tp10X)
+  Xmat10 <- data.frame(model.matrix(~., data = Y10X[, c(2:ncol(Y10X))]))
+  dt <-  data.frame(y=YXX[,"Y"],Xmat10)
+  ###logistic CV with all variables
+  dtxx <- dt
+  N = nrow(dtxx)
+  K = 10
+  set.seed(1234)
+  # randomly select one of the K from N, the number of rows of data
+  s = sample(1:K, size = N, replace = T) # used for label rows for each group       
+  pred.outputs.logit <- vector(mode = "numeric", length = N)
+  obs.outputs.logit <- vector(mode = "numeric", length = N)
+  offset <- 0 # offset is a pointer used for determine where to pending results for the next loop	
+  
+  i=1
+  for(i in 1:K){
+    	train <- filter(dtxx, s != i)
+    	test <- filter(dtxx, s == i)
+    	obs.outputs.logit[1:length(s[s == i]) + offset] <- test$y
+    
+      dt.glm <- glm(y ~ . , data =train, family = binomial(logit))
+      logit.pred.curr <- predict(dt.glm, test, type = "response")
+      pred.outputs.logit[1:length(s[s == i]) + offset] <- logit.pred.curr 
+     	offset <- offset + length(s[s == i])
+     # 	return(list(obs.outputs.logit, pred.outputs.logit))
+    }
+  pred.y.logit10[j] <- list(pred.outputs.logit)
+  obs.y.logit10[j] <- list(obs.outputs.logit) 
+###random forest with top variables
+dtxx <- dt
+  N = nrow(dtxx)
+  K = 10
+  set.seed(1234)
+  # randomly select one of the K for N times, the number of rows of data
+  s = sample(1:K, size = N, replace = T) # used for label rows of data titanic for each group       
+  pred.outputs.rf <- vector(mode = "numeric", length = N) # to store prediction
+  obs.outputs.rf <- vector(mode = "numeric", length = N) # to store response yi
+  offset <- 0
+  i=1
+  for(i in 1:K){
+  	train <- filter(dtxx, s != i)
+  	test <- filter(dtxx, s == i)
+  	obs.outputs.rf[1:length(s[s == i]) + offset] <- test$y
+  
+  	#RF train/test
+  	rf <- randomForest(y ~ ., data = train, ntree = 100)
+  	
+  	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
+  	pred.outputs.rf[1:length(s[s == i]) + offset] <- rf.pred.curr[, 2]
+  
+      # offset is used for determine where to pending results for the next loop	
+  	offset <- offset + length(s[s == i])
+#  	return (obs.outputs.rf)
+  }
+  pred.y.rf10[j] <- list(pred.outputs.rf)
+  obs.y.rf10[j] <- list(obs.outputs.rf)
+}
+Xmat <- X <- NULL
+Y <- YXX <-  NULL
+# saveRDS(pred.y.logit10,file="pred_y_logit10.rds") 
+# saveRDS(obs.y.logit10, file="obs_y_logit10.rds") 
+# saveRDS(pred.y.rf10, file="pred_y_rf10.rds") 
+# saveRDS(obs.y.rf10, file="obs_y_rf10.rds") 
+```
+
+
+### 6.2.2.Reduced Model AUC and ROC
+```{r, chunk6.2.2, warning=FALSE, message=FALSE, error=FALSE}
+# pred.y.logit10 <- readRDS("/home/Nianfu/pred_y_logit10.rds")
+# obs.y.logit10 <- readRDS("/home/Nianfu/obs_y_logit10.rds") 
+# pred.y.rf10 <- readRDS("/home/Nianfu/pred_y_rf10.rds") 
+# obs.y.rf10 <- readRDS("/home/Nianfu/obs_y_rf10.rds")  
+# AUC in one table
+auc10 <- matrix(data=NA, nrow = 16, ncol=2)
+i=1
+for (i in c(1:16)){
+  r1 <- roc(obs.y.logit10[[i]], pred.y.logit10[[i]], ci = TRUE)
+  auc10[i,1]=r1$auc[1]
+  r2 <- roc(obs.y.rf10[[i]], pred.y.rf10[[i]], ci = TRUE)
+  auc10[i,2]=r2$auc[1]
+}
+aucdt10 <- as.data.frame(auc10)
+names(aucdt10)=c("Logistic", "Random.Forest")
+aucdt10
+print(paste("Reduced logistic 10-fold CV model AUC= ", round(mean(auc10[,1]), 3)))
+print(paste("Reduced random Forest 10-fold CV model AUC = ", round(mean(auc10[,2]), 3)))
+   
+  
+#Plot ROCs
+par(mfrow=c(1, 1))
+i=1
+plot.roc(obs.y.logit10[[i]], pred.y.logit10[[i]],  lwd = 0.7, lty=1, ci = TRUE, col = "red") #CV of svm
+plot.roc(obs.y.rf10[[i]], pred.y.rf10[[i]],  lwd = 0.7, lty=2, ci = TRUE, col = "green", add = TRUE) #CV of rf
+legend("bottomright", legend = c("Logistic Cross-Validation", "RF Cross-Validation"), col = c("red", "green"), lwd = 2, lty = c(1,1,2,1))
+for (i in c(2:16)){
+  plot.roc(obs.y.logit10[[i]], pred.y.logit10[[i]], lwd = 0.7, ci = TRUE, lty=1, col = "red", add=TRUE) #CV of svm
+  plot.roc(obs.y.rf10[[i]], pred.y.rf10[[i]], lwd = 0.7, ci = TRUE, lty=2, col = "green", add = TRUE) #CV of rf
+}
+```
+
+>Area Under the Curve (AUC) of the logistic regression for all the 16 full models are larger than those of the Random Forest models. 
+
+## 6.3., Reduced vs. Full Model Prediction
+If only top 10 variables/catigories of variables are used, the prediction model can be applied for cheaper surveys. This section compares the similarity of full and top 10 variable logistic models.
+
+```{r, ch6.3, warning=FALSE, message=FALSE, error=FALSE}
+i=1
+plot.roc(obs.y.logit[[i]], pred.y.logit[[i]],  lwd = 0.7, lty=1, ci = TRUE, col = "blue") #CV of svm
+plot.roc(obs.y.logit10[[i]], pred.y.logit10[[i]],  lwd = 0.7, lty=1, ci = TRUE, col = "red", add=TRUE) #CV of svm
+legend("bottomright", legend = c("Full Logistic Model", "Reduced Logistic Model"), col = c("blue", "red"), lwd = 2, lty = c(1,1,2,1))
+for (i in c(2:16)){
+plot.roc(obs.y.logit[[i]], pred.y.logit[[i]], lwd = 0.7,ci = TRUE, lty=1, col = "blue", add=TRUE) #CV of svm
+plot.roc(obs.y.logit10[[i]], pred.y.logit10[[i]], lwd = 0.7,ci = TRUE, lty=1, col = "red", add = TRUE) #CV of rf
+}
+allauc <- cbind(aucdt, aucdt10)
+names(allauc)[] <- c("Logistic_AUC", "RF_AUC", "Top10_Logistic_AUC", "Top10_RF_AUC")
+allauc[, c(1,3)]
+```
+
+>The prediction qualities are similar when measured by AUC values of the 2 groups of models. Only for the NOT-converged estimtation of alcohol_drug abuse models there are obvious difference. But the difference does not matter much because both full and reduced top 10 variable models are not converged. Thus the reduced models are as good as full model in prediction.
+
+# 7. Discussion about Adding Parent Health as a Predictor
+In the previous section the parents diseases have shown strong correlation with adults diseases. But the estimation performed with the code below cannot find many converged coefficients. The reason is the numbers of adults who have parents information are too small. Thus, this part of the unconverged results was not reported. 
+
+```{r, ch7, eval=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+  cef <- NA
+  sigName =NA 
+  dstName=NA
+  sigcef <- NA
+  pval <- NA
+  ncomplete <- rep(NA , 16)
+tryfunc <- function(){
+  dim(hlth_par)
+  dis_Names <- c("Vision","Hearing", "Arthritis", "Back_neck", "Heart",
+                "Stroke", "Hypertension", "Diabetes", "Lung_breath", "Cancer",
+                "Mental", "Weight", "Circulation", "Benign_tumor", "Alcohol_drug", 
+                "Chronic_liver")
+  # reset the XX incase order change
+  # age, BMI are numeric, others are factors 
+  
+  XX <- hlth_par %>% 
+    select(age, sex, race,  smk, alc, sleep, activ,  
+            fm_size, marriage, par_stat, BMI, REGION ) ##HHX, FMX, FPX,age_smk, 
+  # reset the YY incase order change
+  YY <- hlth_par %>% 
+    select(dis1, dis2, dis3, dis4, dis7, 
+           dis8, dis9, dis10, dis11, dis12,
+           dis14, dis18, dis21, dis28, dis29,  
+           dis99)
+  mY <- hlth_par %>% 
+    select(mdis1, mdis2, mdis3, mdis4, mdis7, 
+           mdis8, mdis9, mdis10, mdis11, mdis12,
+           mdis14, mdis18, mdis21, mdis28, mdis29)
+  dY <- hlth_par %>% 
+    select(ddis1, ddis2, ddis3, ddis4, ddis7, 
+           ddis8, ddis9, ddis10, ddis11, ddis12,
+           ddis14, ddis18, ddis21, ddis28, ddis29)
+  i=2
+  for (i in 1:15) {
+  
+    Y=YY[,i]
+    mom=mY[, i]
+    dad=dY[, i]
+    YXX <- data.frame(Y, XX, mom, dad)
+    YXX <- YXX[complete.cases(YXX), ]
+    #dim(data.frame(Y, XX))
+    dim(YXX)
+    Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))] ))
+    dt <-  data.frame(y=YXX[,"Y"], Xmat)
+    dt.glm <- glm( y ~ . , data =dt, family = binomial(logit))
+    s <- summary(dt.glm)$coefficients[,4]
+    names(s)[substr(names(s), 1, 3)=="mom"] <- "mom"
+    names(s)[substr(names(s), 1, 3)=="dad"] <- "dad"
+    c <- summary(dt.glm)$coefficients[s < 0.05, "Estimate"]
+    names(c)[substr(names(c), 1, 3)=="mom"] <- "mom"
+    names(c)[substr(names(c), 1, 3)=="dad"] <- "dad"
+    nam <- names(c)[2:length(c)]
+    sigName[i] <- list(nam)   #significant var names
+    sigcef[i] <- list(c)      #significant coefficients
+    cef[i] <-  list(summary(dt.glm)$coefficients[, "Estimate"]) ## all estimate
+    pval[i] <- list(s)
+    names(cef[[i]])[substr(names(cef[[i]]), 1, 3) == "mom"] <- "mom"
+    names(cef[[i]])[substr(names(cef[[i]]), 1, 3) == "dad"] <- "dad"
+    ncomplete[i] <- nrow(YXX)
+    }
+# special case, there are no mom dad for liver diseases
+for (i in 16) {
+  Y=YY[,i]
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX), ]
+  #dim(data.frame(Y, XX))
+  dim(YXX)
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))] ))
+  dt <-  data.frame(y=YXX[, "Y"], Xmat)
+  dt.glm <- glm( y ~ . , data =dt, family = binomial(logit))
+  s <- summary(dt.glm)$coefficients[, 4]
+  c <- summary(dt.glm)$coefficients[s<0.05, "Estimate"]
+  nam <- names(c)[2:length(c)]
+  sigName[i] <- list(nam)   #significant var names
+  sigcef[i] <- list(c)      #significant coefficients
+  cef[i] <-  list(summary(dt.glm)$coefficients[, "Estimate"]) ## all estimate
+  pval[i] <- list(s)
+  ncomplete[i] <- nrow(YXX)
+ 
+ }
+ return(pval)
+}
+########################################################################################
+# function created based on https://stackoverflow.com/questions/17999920/merge-vectors-of-a-list-using-row-names-in-r
+comlstVect <- function (x){
+  Rows <- unique(unlist(lapply(x, names)))
+  
+  ## Create a matrix of NA values 
+  ##   with appropriate dimensions and dimnames
+  myMat <- matrix(NA, nrow = length(Rows), ncol = length(x), 
+                  dimnames = list(Rows, sapply(x, colnames)))
+  ## Use your `for` loop to fill it in
+  ##   with the appropriate values from your list
+  for (i in seq_along(x)) {
+    myMat[names(x[[i]]), i] <- x[[i]]
+  }
+  return(myMat)
+}
+# x <- tryfunc()
+# pval <- comlstVect(x)
+```
+
+>The last chunk of R code is inactivated because  most of the estimations are not converged. if readers want to check the results, please decomment the last severa commented lines of commands such as "x =  tryfunc()", and "pval <- comlstVect(x)". 
+
+# 8. Rare Events and Power of Predictions
+Unfortunately, we have unbalanced data, and most diseases occure rarely. Thus the true false in the confusion table is large. This is a situation when sensitivity is large, precision is small. Such a situatioin implies that if the prediction rule of the logistic models capture most of the diseases, there would be a larger number of false positive predictions even when the rate of error is small and specificity is large. IIn this section, F-score is constructed as the harmonic mean of sensitivity and precision for a sequence of prediciton rules using different probability. The best prediction rule corresponding to the maximum F-score for each model is found and reported in this section.
+
+```{r, ch8, warning=FALSE, message=FALSE, error=FALSE}
+# reduced model predicted probability for each aldults
+# pred.y.logit10 <- readRDS("/home/Nianfu/pred_y_logit10.rds")
+# obs.y.logit10 <- readRDS("/home/Nianfu/obs_y_logit10.rds") 
+# Diseases data
+YY <- hlth_par %>% 
+    select(dis1, dis2, dis3, dis4, dis7, 
+           dis8, dis9, dis10, dis11, dis12,
+           dis14, dis18, dis21, dis28, dis29,  
+           dis99)
+#Binary matrix
+Ymat <- data.frame(model.matrix(~., data = YY ))
+#rate of diseases/cases
+case <- sapply(Ymat, function(x) sum(x, na.rm = TRUE))
+all <- sapply(Ymat, function(x) sum(!is.na(x)))
+Case.ratio <-case/all 
+r <- data.frame(case[-1], round(Case.ratio[-1],3))
+rownames(r) <- dis_Names
+colnames(r) <- c("cases","rate_of-occurance")
+r
+taul<- r
+```
+
+> Fourteen out of 16 diseases have rates of occurence less than 3%. 
+
+```{r, Ch8_second, warning=FALSE, message=FALSE, error=FALSE}
+#confusion matrix
+conf <- pred <- pred.y.logit10
+maxl <- matrix(0, nrow = 16, ncol = 7)
+for (f in seq(from  =0, to=1, by = 0.01)){
+  # TRUE = casse or yes disease 
+  pred <- lapply(pred.y.logit10, function(x) {x>f})
+  
+  for (i in 1:16){
+    t <- table(obs.y.logit10[[i]], pred[[i]])
+    if (nrow(t) == 2 & ncol(t) == 2) {
+      sensitivity <- t[2, 2]/(t[1,2] + t[2, 2])
+      specificity <- t[1, 1]/(t[1,1] + t[2, 1])
+      precision <- t[2, 2]/(t[2,1] + t[2, 2])
+      Fscore <- 2*sensitivity*precision/(sensitivity+precision)
+    
+      if(Fscore>maxl[i, 7] & !is.na(Fscore)) {
+        maxF=Fscore
+        maxl[i, ] <- c(i, f, round(sensitivity, 2), round(specificity, 2), round(precision, 2), round(Fscore, 2), round(maxF, 4))
+      }
+    }
+  }
+}
+Fscor <- data.frame(dis_Names, maxl)
+names(Fscor) <- c("","","pred.pr", "sensitivity","specificity","precision","Max F score", "max F")
+Fscor
+#clearn memory
+rm( "dt.glm", "hlth_par", "obs.y.logit", "obs.outputs.rf",  "obs.y.logit10", "obs.y.rf", "obs.y.rf10", "pred.y.logit", "pred.outputs.rf", "pred.y.logit", "pred.y.logit10", "pred.y.rf", "pred.y.rf10","r1","r2")
+#"dt.lg", "dt0", "fX","m.data", "m.out","ps","dtxx", "obs.y.logit","rf.pred.curr" 
+```
+
+> The best F-score for these models are less than 0.5. About half of them have only F-scores equal to or less than 0.1.
+
+# 9. Discussion of Rare Event Models
+
+The low rates of diseases in the general US population imply the dificulty of prediction with such unbalanced data. An alternative is to estimate Rare Event Models which use only all the cases and selected proportion of controls from the original survey data. The estimates are adjusted for such data selection. The method used for such models is called Rare Event Logistic Model.
+
+## 9.1. Rare Event Full Models
+Randomly selected 5 controls are selected for each of all the case. R package "Zelig" can estimate rare event logistic models. Variables/categories of variables that are significantly correlated to diseases are identified with rare event logistic model estimation. 
+
+```{r, ch9.1, warning=FALSE, message=FALSE, error=FALSE}
+# install.packages("MatchIt")
+#library("MatchIt")
+# install.packages('Zelig')
+library("Zelig")
+library(dplyr)
+## region is excluded 
+XX <- hlth %>% 
+  select(age, sex, race,  smk, alc, sleep, activ,  
+          fm_size, marriage, par_stat, BMI) ##HHX, FMX, FPX,age_smk, region
+# reset the YY incase order change
+YY <- hlth %>% 
+  select(dis1, dis2, dis3, dis4, dis7, 
+         dis8, dis9, dis10, dis11, dis12,
+         dis14, dis18, dis21, dis28, dis29,  
+         dis99)
+j=1
+m=5
+cef <- NA
+sigName = NA 
+dstName = NA
+sigcef <- NA
+pval <- NA
+for (j in c(1:10,13, 16)) {
+  # j is the jth diseases such as dis1, dis2,...dis29, dis99
+  Yj=YY[,j]
+  Y=ifelse(Yj == levels(Yj)[1], 0, 1)
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX), ]
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))]))
+  # reduced 10 variables
+  nam <- colnames(Xmat)[-1]
+  fX <- Xmat[, -1]
+  YX <- data.frame(YXX$Y, fX)
+  Xmat <- data.frame(model.matrix(~., data = YX[, c(2:ncol(YX))]))  #exclude y
+  dt0 <-  data.frame(y=YXX[,"Y"],Xmat[,-1])
+  
+  # model formula
+  formulaX <- as.formula(paste("y ~", nam[1], "+", nam[2], "+", nam[3], "+", nam[4], "+", nam[5],"+",
+                               nam[6], "+", nam[7], "+", nam[8], "+", nam[9],"+", nam[10], "+",
+                               nam[11], "+", nam[12], "+", nam[13], "+",nam[14], "+", nam[15], "+",
+                               nam[16], "+", nam[17], "+", nam[18], "+",nam[19], "+", nam[20], "+",
+                               nam[21], "+", nam[22], "+", nam[23], "+",nam[24], "+", nam[25], "+",
+                               nam[26], "+", nam[27], "+", nam[28]))
+  # number controls needed, m is the number controls for each case
+  nmatch <- sum(dt0$y)*m
+  #Id the controls
+  mr <- sample(rownames(dt0[dt0$y==0,]), size=nmatch, replace=FALSE)
+  # select controls
+  dtm <- dt0[mr,]
+  # form a new data, m controls for each case
+  dt <- as.data.frame(rbind(dt0[dt0$y==1,],dtm))
+  # Rare event logistic estimation
+  dt.zlig  <- zelig(y ~ .,  data =dt, model = "relogit", tau = taul[j,2], cite = FALSE)
+  # coefficients
+  b <- coefficients(dt.zlig)
+  cef[j] = list(b)
+  #p-values
+  pval[j] <- list(get_pvalue(dt.zlig))
+}   
+cefTab <- as.data.frame(cef[c(1:10, 13,16)])
+pvalTab <- as.data.frame(pval[c(1:10, 13, 16)])
+sig <- as.data.frame(pval[c(1:10, 13, 16)]) < 0.05
+sig=ifelse(sig == 0, NA, sig)
+sigTab <- cefTab*sig
+names(sigTab) = names(YY[c(1:10, 13, 16)])
+sigTabf <- round(sigTab,2)
+#significant coefficients only
+print(sigTabf)  
+```
+
+>Included in the table above are only significant coefficents from the estimation of full rare event model, using all variables. These significant coefficients can also be respresented on a heeat map.
+
+## 9.2 Rare Event Heatmap of P-Values of Full Models
+Similar to the heat map produced for the regular logistic model, a heat map for a rare event model is constructed to show the correlation of predictors and diseases. Four diseases are excluded from the heat map because of smaller number of records used in the estimation. The regressor for US regions is excluded because the Zelig package does not produce coefficient for it in some of the models. 
+
+```{r, ch9.2, fig.height=8, warning=FALSE, message=FALSE, error=FALSE}
+library(gplots)
+HMsign <- cefTab
+HMsign[cefTab>0] = 1
+HMsign[cefTab<0] = -1
+# manage small p values
+ps <- log(pvalTab)
+ps[pvalTab>0.05] = NaN
+pmat <- ps*HMsign*(-1)
+X <- as.matrix(pmat[-1,])
+Z <- X
+Z[X > -log(0.0001)] = -log(0.0001)
+Z[X <= log(0.0001)] = log(0.0001)
+colnames(Z) <- dis_Names[c(1:10, 13, 16)]
+#heatmap(X, Rowv = NA, Colv = NA, scale = "column",
+#        main = "heatmap(*, NA, NA) ~= image(t(X))")
+heatmap.2(Z, col=colorpanel(10, "green", "yellow", "red"),  Rowv = FALSE, Colv = FALSE,  na.color = "white",
+          margin = c(8,8), trace = "none", 
+          main = "                    Significance of Rare Event Model",
+          
+          dendrogram = "none", key.xlab="Truncated and signed log p-value", 
+          key.par = list(mgp=c(1.2,0.3,0), mar=c(2.5,2.5,4,0)), key.title = "- coeff               + coeff")
+```
+
+## 9.3 Prediction with Rare Event Logistic Model
+
+### 9.3.1 Prediction of Case-Control Samples, Top 10 Variable Rare Event Logistic Model
+
+Following the previous regular logistic model using top 10 variables, the top 10 most significant variables from section 9.2 are selected for the prediction with rare even model. ROC and AUC are produced to assess the quality of prediction
+
+```{r Ch9.3.1, warning=FALSE, message=FALSE, error=FALSE}
+# install.packages("MatchIt")
+library("MatchIt")
+#install.packages('Zelig')
+library("Zelig")
+# taul is from above chunk "Ch8" r
+j = 1
+m = 5
+pred.zelig <- NA
+obs.zelig <- NA 
+## only 1:10, 13, 16 diseases converge
+for (j in c(1:12) ){
+  # j is the jth diseases such as dis1, dis2,...dis29, dis99
+  YY0 <- YY[, c(1:10,13,16)]
+  Yj=YY0[, j]
+  Y=ifelse(Yj == levels(Yj)[1], 0, 1)
+  YXX <- data.frame(Y, XX)
+  YXX <- YXX[complete.cases(YXX), ]
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))]))
+  # reduced 10 variables
+  z <-  colnames(Xmat)[-1] # logistic coefficient from above code
+  zp <- pvalTab[-1, j] #pvalue matrix from above full code
+  tp10nam <- z[order(zp)][1:10] # top 10 x
+  #print(paste("j=", j))
+  tp10X <- Xmat[, tp10nam]
+  Y10X <- data.frame(YXX$Y, tp10X)
+  Xmat10 <- data.frame(model.matrix(~., data = Y10X[, c(2:ncol(Y10X))]))  #exclude y
+  dt0 <-  data.frame(y=YXX[, "Y"], Xmat10[,-1])
+  
+  #propensity score matching formula
+  formulaX <- as.formula(paste("y ~", tp10nam[1], "+", tp10nam[2], "+", tp10nam[3], "+", tp10nam[4], "+", tp10nam[5], "+",
+                               tp10nam[6], "+", tp10nam[7], "+", tp10nam[8], "+", tp10nam[9], "+", tp10nam[10]))
+  
+  nmatch <- sum(dt0$y)*m
+  mr <- sample(rownames(dt0[dt0$y == 0,]), size = nmatch, replace = FALSE)
+  dtm <- dt0[mr, ]
+  dtxx <- as.data.frame(rbind(dt0[dt0$y==1, ], dtm))
+  #dtxx <- m.data
+  n = nrow(dtxx)
+  #N = nrow(dt0)
+  K = 10
+  set.seed(1234)
+  # randomly select one of the K from N, the number of rows of data
+  s = sample(1:K, size = n, replace = T) # used for label rows of data titanic for each group       
+  pred.outputs.logit <- vector(mode = "numeric", length = n)
+  obs.outputs.logit <- vector(mode = "numeric", length = n)
+  offset <- 0 # offset is a pointer used for determine where to pending results for the next loop	
+  i=1
+  for(i in 1:K){
+    	train <- filter(dtxx, s != i)
+    	
+    	test1 <- filter(dtxx, s == i)
+    	#test2 <- ex.data
+    	test <- test1
+    	obs.outputs.logit[1:(n-length(s[s != i])) + offset] <- test$y
+    
+      dt.zlig  <- zelig(y ~ .,
+                data =train, model = "relogit", tau = taul[i,2], cite = FALSE)
+      b <- coefficients(dt.zlig)
+      test.x <- as.matrix(test %>% mutate(y = 1) )
+      prb <- 1/(1+exp(test.x%*%b*(-1)))
+      pred.outputs.logit[1:(n-length(s[s != i])) + offset] <- prb
+     	offset <- offset + (n-length(s[s != i]))
+     # 	return(list(obs.outputs.logit, pred.outputs.logit))
+    }
+  pred.zelig[j] <- list(pred.outputs.logit)
+  obs.zelig[j] <- list(obs.outputs.logit) 
+}
+#confusion matrix for 1:11, 13, 16
+## A combination of propensity score match and rare event logistic model
+conf <- pred <- pred.zelig
+f=0.2
+maxl <- matrix(0, nrow = 12, ncol = 7)
+for (f in seq(from = 0, to = 0.3, by = 0.001)){
+  # TRUE = casse or yes disease 
+  pred <- lapply(pred.zelig, function(x) {x > f})
+  
+  for (i in 1:12){
+    t <- table(obs.zelig[[i]], pred[[i]])
+    if (nrow(t) == 2 & ncol(t) == 2) {
+      sensitivity <- t[2,2]/(t[1,2]+t[2,2])
+      specificity <- t[1,1]/(t[1,1]+t[2,1])
+      precision <- t[2,2]/(t[2,1]+t[2,2])
+      Fscore <- 2*sensitivity*precision/(sensitivity+precision)
+    
+      if(Fscore>maxl[i, 7] & !is.na(Fscore)) {
+        maxF = Fscore
+        maxl[i,] <- c(i, f, round(sensitivity, 2), round(specificity, 2), round(precision, 2), round(Fscore, 2), round(maxF, 4))
+      }
+    }
+  }
+}
+Fscor <- data.frame(dis_Names[c(1:10, 13, 16)], maxl)
+names(Fscor) <- c("", "", "pred.pr", "sensitivity", "specificity", "precision", "MaxFscore", "maxF")
+Fscor
+```
+
+>Even for the predictions of the selected sample data, the maximum F-scores (MaxFscore) are mostly around 0.5, and the sensitivity is still about 0.3, and specificity about 0.9 for most of the models. but these data do not reflect the survey population. Predictions for the population should predict all the data as the next section will do.
+
+### 9.3.2. Prediction of All Data, Top-10 Variable Rare Event Logistic Model 
+The test data used in the cross validation of the top-10 variable rare event logistic model are all the data except the training data. Thus the predictions represent all the population. The models take a parameter tau from the test data. Please see variables, "top10nam", "ex.data","e" and command lines with "zelig()" for the method used. "MatchIt" could be used but not in this section, because controls in the matched data are randomly selected. When controls are selected with the nearest match, most models do not converge. Random controls perform better than nearest match. 
+
+```{r Ch9.3.2, warning=FALSE, message=FALSE, error=FALSE}
+# install.packages("MatchIt")
+#library("MatchIt")
+#install.packages('Zelig')
+library("Zelig")
+j=1
+pred.zeligAll <- NA
+obs.zeligAll <- NA 
+## only 1:11, 13, 16 diseases converge
+for (j in c(1:12) ){
+  # j is the jth diseases such as dis1, dis2,...dis29, dis99
+  YY0 <- YY[,c(1:10, 13, 16)]
+  Yj = YY0[,j]
+  Y = ifelse(Yj == levels(Yj)[1], 0, 1)
+  YXX <- data.frame(Y, XX)
+  #complete records only
+  YXX <- YXX[complete.cases(YXX),]
+  # reconstruct egressor matrix used in section 9.1 
+  Xmat <- data.frame(model.matrix(~., data = YXX[, c(2:ncol(YXX))]))
+  # Top 10 variables from section 9.1 for full rare event model
+  z <-  rownames(cefTab)[-1] # logistic coefficient from above section 9.1 code
+  zp <- pvalTab[-1, j] # pvalue matrix from above section 9.1 code
+  tp10nam <- z[order(zp)][1:10] # top 10 x
+  #print(paste("j=",j))
+  
+  #select the top 10 from Xmat
+  tp10X <- Xmat[, tp10nam]
+  
+  # matched data for rare event regression
+  Y10X <- data.frame(YXX$Y, tp10X)
+  Xmat10 <- data.frame(model.matrix(~., data = Y10X[, c(2:ncol(Y10X))] ))  #exclude y
+  
+  # Top 10 variables and the jth disease data for the rare event model
+  dt0 <-  data.frame(y=YXX[, "Y"],Xmat10[, -1])
+  
+  # Model formula
+  formulaX <- as.formula(paste("y ~", tp10nam[1], "+", tp10nam[2], "+", tp10nam[3], "+", tp10nam[4], "+", tp10nam[5], "+",
+                               tp10nam[6], "+", tp10nam[7], "+",tp10nam[8], "+", tp10nam[9], "+", tp10nam[10]))
+  #Number of controls
+  nmatch <- sum(dt0$y)*m
+  mr <- sample(rownames(dt0[dt0$y == 0,]), size = nmatch, replace = FALSE)
+  dtm <- dt0[mr,]
+  #matched matrix corresponding to cases of jth disease
+  dtxx <- as.data.frame(rbind(dt0[dt0$y == 1, ], dtm))
+  n = nrow(dtxx)
+  N = nrow(dt0)
+  K = 10
+  set.seed(1234)
+  
+  # randomly select one of the K from N, the number of rows of data
+  s = sample(1:K, size = n, replace = T) # used for label rows for each group       
+  pred.outputs.logit <- vector(mode = "numeric", length = N)
+  obs.outputs.logit <- vector(mode = "numeric", length = N)
+  offset <- 0 # offset is a pointer used for determine where to pending results for the next loop	
+  
+  #Unmatched data excluded data from sample
+  ex.data <- dt0 %>% filter(!(rownames(dt0) %in% (rownames(dtxx))))
+  e = sample(1:K, size = N-n, replace = T) # used for label rows of Ex.data titanic for each group       
+  i=1  #example for test code
+  for(i in 1:K){
+    	train <- filter(dtxx, s != i)
+    	# test1= the test data from matched data
+    	test1 <- filter(dtxx, s == i)
+    	# test2=  all unmatched data for taining i
+    	test2 <- filter(ex.data,e==i)
+    	test <- rbind(test1, test2)
+    	obs.outputs.logit[1:(nrow(test) + offset)] <- test$y
+    	
+    	#tau value are the ratio of cases in the test data, this make the model flexble.
+      tau_i = sum(test$y)/nrow(test)
+      dt.zlig  <- zelig(y ~ .,
+                data =train, model = "relogit", tau = tau_i, cite = FALSE)
+      
+      # Probability prediction for the test data, a list
+      prb <- predict(dt.zlig, test, type = "response")
+      pred.outputs.logit[1:(nrow(test) + offset)] <- prb[[1]]  # [[1]] to obtain the vector
+     	offset <- offset + nrow(test)
+    }
+  pred.zeligAll[j] <- list(pred.outputs.logit)
+  obs.zeligAll[j] <- list(obs.outputs.logit) 
+}
+#free some memory
+Xmat <- NULL
+Xmate10 <- NULL
+Y10X <- Ymat <-  NULL
+YX <- YXX <- NULL
+YY0 <- NULL
+mr <- NULL
+# ROCs
+library(pROC)
+i = 1 
+plot.roc(obs.zeligAll[[i]], as.numeric(pred.zeligAll[[i]]),  lwd = 1, lty=1, ci = TRUE, col = "purple") #CV of svm
+legend("bottomright", legend = c("Rare Event Logistic Model"), col = c("purple"), lwd = 2, lty = c(1))
+for (i in c(2:12)){
+  plot.roc(obs.zeligAll[[i]], pred.zeligAll[[i]], lwd = 1, ci = TRUE, lty=1, col = "purple", add = TRUE) #CV of rf
+}
+#confusion matrix for 1:11, 13, 16
+## confusion table and F score for the above model
+f = 0.2 # for code test
+# matrix for sensitivity, specificity, precision and maximum F-scores
+maxl <- matrix(0, nrow = 12, ncol = 7)
+#search for the boundary probability that has the maximum F-score
+for (f in seq(from = 0, to = 0.5, by = 0.001)){
+  # probability x>f = casse, yes disease 
+  pred <- lapply(pred.zeligAll, function(x) {x > f})
+  
+  # numbers for all diseases
+  for (i in 1:12){
+    t <- table(obs.zeligAll[[i]], pred[[i]])
+    if (nrow(t)==2 & ncol(t)==2) {
+      sensitivity <- t[2,2]/(t[1,2]+t[2,2])
+      specificity <- t[1,1]/(t[1,1]+t[2,1])
+      precision <- t[2,2]/(t[2,1]+t[2,2])
+      Fscore <- 2*sensitivity*precision/(sensitivity+precision)
+      # if an Fscore is larger than old one than change to the new one
+      if(Fscore>maxl[i, 7] & !is.na(Fscore)) {
+        maxF=Fscore
+        maxl[i,] <- c(i, f, round(sensitivity, 2), round(specificity, 2), round(precision, 2), round(Fscore, 2), round(maxF, 4))
+      }
+    }
+  }
+}
+Fscor <- data.frame(dis_Names[c(1:10,13,16)], maxl[,-1])
+names(Fscor) <- c("disease", "pred.pr", "sensitivity", "specificity", "precision", "MaxFscore", "maxF")
+Fscor
+```
+
+When the health of all the surveyed adults are predicted with the rare event models, the F score and sensitivity is even smaller than the full data logistic model. 
+
+# 10. Conclusion
+The project has tabled, plotted, mapped and modeled variations of characters and diseases of interviewed U.S. adults. Logistic model were estimated to quantitively capture these relations. The results are displayed on a heatmap, and summarized in tables. The model estimation results are similar to the exploratory analyes. The major conclusions include
+1. Smoking is a negative factor for health and strongly correlated with most types of diseases;
+2. Physical activities are positive for health, and negatively correlated with most diseases;
+3. 7 hours of sleep is positively correlated to health, and less sleep is definitely positively correlated with many diseases;
+4. Interestingly, drinking has a mixed correlation with health, While former alcohol users may be positively related to diseases, existing alcohol users are relatively healthier than abstainers;
+5. Females, compared to males are less likely to have chronic diseases;
+6. There are some regional differences among drinking, smoking, and selective diseases;
+7. Prediction model have high value of AUC, but the F scores for the prediction models are very low for most of the diseases because of the rareness of the diseases, or the imbalanced data. Thus, the prediction model may predict too many false cases or not catch true cases. However, as a prevention for deadly diseases, a positive prediction for a disease even with a low precision can be considered as an alarm . Further medical examination should be performed.
+8. Rare event models cannot predict disease risks better than logistic models.
+
+# 11. Future Improvement Possible
+Although plots show that adults' diseases share some similarities with their parents, only 754 adults in the sample have parents information, which is not big enough for modeling the correlation between diseases of adults and their parents.
+
+The models are estimated based on existing cases and predictors without any scientific knowledge of causality. Thus the models do not reflect causality between predictors and disease. The significant predictors are only potential candidates of causes. They may also be the results of life style change because of the awareness of risk of disease. Although these models could predict known diseases well, they may not perform as well for prediction of risk of unknown cases as they do for known diseases.  
+
+Propensity score matching methods could be combined with rare event logistic estimation and may produce consistent estimate with a relatively smaller number of matched controls. 
+
+# 12. Aknowledgement 
+
+I would like to give special thanks to Dr. Blanca Himes, at the Institute of Biomedical Informatics of University of Pennsylvania. R methods and code are mostly based on the practicums of her Data Science for Biomedical Informatics class. This project also received help from Dr. Stephen Kawut, Dr. Rui Feng, and Biostatistician Leigh Cressman at the Center for Clinical Epidermiology and Biostatistics of the Perelman School of Medicine, University of Pennsylvania. 
+
