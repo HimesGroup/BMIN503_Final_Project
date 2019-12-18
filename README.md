@@ -1,6 +1,6 @@
 # nsong1/BMIN503_Final_Project
 
-This is Nianfu Song's Repo for the Final Project of BMIN503/EPID600 Data Science for Biomedical Informatics 
+This is Nianfu Song's repo for the Final Project of BMIN503/EPID600 Data Science for Biomedical Informatics 
 
 This project is an analysis of associations between some chronic diseases and measures of demographic variables and lifestyles of US adults using the National Health Survey Data 2018. Rare event logistic is applied to deal with the category imbalance of rare event data. Cross validation is used to evaluate the power of risk predicitons.
 
