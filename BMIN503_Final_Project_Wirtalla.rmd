@@ -1,0 +1,165 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "Chris Wirtalla"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+### Overview
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+
+### Introduction 
+Describe the problem addressed, its significance, and some background to motivate the problem.
+
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(usmap)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(modelsummary)
+library(jtools)
+library(tidyr)
+library(doBy)
+library(RColorBrewer)
+library(cowplot)
+
+
+setwd("/Users/chris/Documents/MBMI/BMIN 503/BMIN503_Final_Project/")
+dartmouth<-read.csv("county_medutil_6599ffs.csv", header=TRUE)
+election<-read.csv("countypres_2000-2016.csv", header=TRUE)
+cty_rank_2012<-read.csv("analytic_data2012.csv", header=TRUE, skip=1, sep=",")
+cty_rank_2016<-read.csv("analytic_data2016.csv", header=TRUE, skip=1, sep=",")
+rural_atlas_people<-read.csv("people.csv", header=TRUE)
+rural_atlas_income<-read.csv("income.csv", header=TRUE)
+gdp<-read.csv("gdp_bea_county_12_16.csv", header=TRUE, skip=4)
+
+surg_dis<-dartmouth %>%
+  filter(Eventname %in% c("AS_DIS"), Year %in% c(2011,2015), Race=="Overall", Gender=="All") %>%
+  dplyr::select(Geo_Code, Adjusted_Rate, Crude_rate, Year) %>%
+  rename(fips=Geo_Code, adj_surg_rate=Adjusted_Rate, crude_surg_rate=Crude_rate, surg_year=Year) %>%
+  mutate(fips=str_pad(fips, 5, pad = "0"), adj_surg_rate=round(adj_surg_rate,digits=1), crude_surg_rate=round(crude_surg_rate,digits=1), merge_year=ifelse(surg_year==2011,2012,2016)) %>%
+  filter(adj_surg_rate>=0)
+
+elect_tmp<-election %>%
+  filter(year %in% c(2008,2012,2016), party %in% c("republican","democrat"), !is.na(FIPS), !is.na(candidatevotes)) %>%
+  select(FIPS, party, candidatevotes, year) %>%
+  rename(fips=FIPS) %>%
+  spread(party, candidatevotes) %>%
+  mutate(fips=str_pad(fips, 5, pad = "0"), r_pct=republican/(republican+democrat)) %>%
+  select(fips,year,r_pct)
+
+elect_2012<-elect_tmp %>%
+  filter(year %in% c(2008,2012)) %>%
+  spread(year, r_pct) %>%
+  rename(past_vote_share="2008", r_pct="2012") %>%
+  mutate(elect_year=2012, merge_year=2012, past_vote_share=round(past_vote_share*100,digits=1), r_pct=round(r_pct*100,digits=1))
+
+elect_2016<-elect_tmp %>%
+  filter(year %in% c(2012,2016)) %>%
+  spread(year, r_pct) %>%
+  rename(past_vote_share="2012", r_pct="2016") %>%
+  mutate(elect_year=2016, merge_year=2016, past_vote_share=round(past_vote_share*100,digits=1), r_pct=round(r_pct*100,digits=1))
+
+elect_final<-rbind(elect_2012,elect_2016)
+
+cty_rank_all<-dplyr::bind_rows(cty_rank_2012, cty_rank_2016)
+
+cty_rank_all_clean<-cty_rank_all %>%
+  mutate(fipscode=as.character(fipscode),
+         fips=str_pad(fipscode, 5, pad = "0"),
+         v002_rawvalue=v002_rawvalue*100,
+         v021_rawvalue=v021_rawvalue*100,
+         v023_rawvalue=v023_rawvalue*100,
+         v054_rawvalue=v054_rawvalue*100,
+         v058_rawvalue=v058_rawvalue*100,
+         v085_rawvalue=v085_rawvalue*100,
+         v051_rawvalue=round(v051_rawvalue,digits=0),
+         v063_rawvalue=round(v063_rawvalue,digits=0),
+         cty_year=year) %>%
+  rename(pct_fairpoor=v002_rawvalue,
+         pct_hsgrad=v021_rawvalue, 
+         pct_unemp=v023_rawvalue,
+         pct_nhblack=v054_rawvalue,
+         pct_rural=v058_rawvalue,
+         pct_uninsured=v085_rawvalue,
+         tot_pop=v051_rawvalue,
+         med_income=v063_rawvalue,
+         merge_year=year) %>%
+  dplyr::select(fips, pct_fairpoor, pct_hsgrad, pct_unemp, pct_nhblack, pct_rural, pct_uninsured, tot_pop, med_income, cty_year, merge_year)
+  
+rural_atlas_people_clean<-rural_atlas_people %>%
+  mutate(fips=str_pad(FIPS, 5, pad = "0")) %>%
+  dplyr::select(fips,PopDensity2010)
+
+rural_atlas_income_clean<-rural_atlas_income %>%
+  mutate(fips=str_pad(FIPS, 5, pad = "0")) %>%
+  dplyr::select(fips, PovertyAllAgesPct)
+
+gdp_clean<-gdp %>%
+  rename(fips=GeoFips,y2012=X2011.2012, y2016=X2015.2016) %>%
+  gather(year, pct_gdp_chg, y2012:y2016, factor_key=TRUE) %>%
+  mutate(merge_year=ifelse(year=="y2012",2012,2016), pct_gdp_chg=as.numeric(pct_gdp_chg)) %>%
+  dplyr::select(fips,merge_year,pct_gdp_chg) %>%
+  filter(!is.na(pct_gdp_chg))
+
+analytical_cohort<-surg_dis %>%
+  left_join(elect_final) %>%
+  left_join(cty_rank_all_clean) %>%
+  left_join(rural_atlas_people_clean) %>%
+  left_join(rural_atlas_income_clean) %>%
+  left_join(gdp_clean) %>%
+  mutate(merge_year=as.factor(merge_year), log_pop=log(tot_pop), log_med_inc=log(med_income))
+
+collapse1 <- summaryBy(r_pct + adj_surg_rate + tot_pop ~ fips, FUN=c(mean), data=analytical_cohort)
+collapse1<- collapse1 %>% mutate(log_adj_surg_rate=log(adj_surg_rate.mean))
+
+usplot_surg<-plot_usmap(data=collapse1, values="adj_surg_rate.mean", regions = "counties", exclude=c("HI","AK")) + 
+  labs(title = "Adjusted Rate of Surgical Discharges per 100K Medicare Enrollees by US County", subtitle="(Mean of 2012 & 2016)") + 
+  theme(panel.background = element_rect(color=NA, fill = "white"), plot.title = element_text(hjust = 0.5), plot.subtitle=element_text(hjust=0.5)) + 
+  scale_fill_gradient2(low="#2E74C0", mid="#D3D3D3", high="#CB454A",midpoint=81.55, name="Rate", na.value="white")
+
+usplot_elect<-plot_usmap(data=collapse1, values="r_pct.mean", regions = "counties", exclude=c("HI","AK")) +
+  labs(title = "Republican Voting % in the 2012 & 2016 Presidential Elections by County") +
+  theme(panel.background = element_rect(color=NA, fill = "white"), plot.title = element_text(hjust = 0.5)) +
+  scale_fill_gradient2(low="#2E74C0", mid="#D3D3D3", high="#CB454A", midpoint=50, name="Republican %", na.value="white")
+
+usplot_surg
+usplot_elect
+
+```
+
+lmodel_uni<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate)
+summ(lmodel_uni, confint=TRUE)
+lmodel<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_fairpoor + pct_hsgrad + pct_unemp + pct_nhblack + pct_rural + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + merge_year)
+summ(lmodel, confint=TRUE)
+lmodel2<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_unemp + pct_nhblack + pct_rural + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + merge_year)
+summ(lmodel2, confint=TRUE)
+ggplot(data=analytical_cohort, aes(y=r_pct, x=crude_surg_rate, group=merge_year)) + geom_smooth(method="lm")
+analytical_cohort %>% filter(merge_year==2012) %>% ggplot(aes(y=r_pct, x=crude_surg_rate)) + geom_point() + geom_smooth(method="lm")
+analytical_cohort %>% filter(merge_year==2016) %>% ggplot(aes(y=r_pct, x=crude_surg_rate)) + geom_point() + geom_smooth(method="lm")
+ggplot(data=analytical_cohort, aes(y=adj_surg_rate, x=merge_year)) + geom_boxplot()
+
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
