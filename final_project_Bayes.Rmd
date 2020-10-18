@@ -1,0 +1,609 @@
+---
+title: "BMIN503/EPID600 Final Project: Air Quality"
+author: "Brian Bayes"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+### Overview
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+
+### Introduction 
+Describe the problem addressed, its significance, and some background to motivate the problem.
+
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+```{r eval=TRUE}
+
+library(httr)
+library(jsonlite)
+library(tidyverse)
+
+# Retrieve environment variables with EPA AQS API credentials
+api.email <- Sys.getenv("EPA_AQS_EMAIL")
+api.key   <- Sys.getenv("EPA_AQS_KEY")
+```
+
+```{r eval=TRUE}
+download.AQS <- function(whichData,customParams) { 
+  rootpath <- "https://aqs.epa.gov/data/api/"
+  morepath <- paste0(rootpath,whichData)
+  fullParams <- append(list(email = api.email, key = api.key),customParams)
+  step1.json <- httr::GET(url = morepath, query = fullParams)
+  step2.parsed <- jsonlite::fromJSON(content(step1.json, "text"), simplifyVector = FALSE)
+  step3.df <- tibble(Data = step2.parsed$Data) %>% unnest_wider(.,Data)
+  return(step3.df)
+}
+
+test5 <- download.AQS("sampleData/byCounty",
+                      list(param = "88101",bdate = "20160101",edate = "20160228",state = "37",county = "183"))
+
+
+PA.particles.2019.01 <- download.AQS("sampleData/byState",
+                      list(param = "88101",bdate = "20190102",edate = "20190201",state = "42"))
+
+starter <- as.Date("2019-01-01")
+s1 <- format(starter,"%Y%m%d")
+
+fiveDay <- function(p,start,end,s){
+  s.dt <- as.Date(start)
+  e.dt <- as.Date(end)
+  now.dt <- s.dt
+  now.dt.e <- now.dt + 4
+  now.char <- format(now.dt,"%Y%m%d")
+  now.char.e <- format(now.dt.e,"%Y%m%d")
+  build1 <- download.AQS("sampleData/byState",list(param = p, bdate = now.char, edate = now.char.e, state = s))
+  now.dt <- now.dt + 5
+  now.dt.e <- now.dt + 4
+  while (now.dt < e.dt){
+    now.char <- format(now.dt,"%Y%m%d")
+    now.char.e <- format(now.dt.e,"%Y%m%d")
+    build2 <- download.AQS("sampleData/byState",list(param = p, bdate = now.char, edate = now.char.e, state = s))
+    build1 <- bind_rows(build1,build2)
+    now.dt <- now.dt + 5
+    now.dt.e <- now.dt + 4
+  } 
+  return(build1)
+}
+
+PA.2019.PM2.5 <- fiveDay("88101","2019-01-01","2019-12-31","42")
+table(PA.2019.PM2.5$date_local)
+
+# fiveDay("2019-01-01","2019-02-15")
+
+str(PA.2019.PM2.5)
+
+# revHist <- download.AQS("metaData/revisionHistory",list())
+# head(revHist)
+
+
+# First question: For averaging pollutant values across time, should we consider the hour of day? 
+
+table(PA.2019.PM2.5$time_local)
+
+library(dplyr)
+library(ggplot2)
+ 
+table(PA.2019.PM2.5$units_of_measure, useNA = TRUE)
+# All Micrograms/cubic meter (LC) 
+
+table(round(PA.2019.PM2.5$sample_measurement))
+
+# Plot distribution of time-of-day-of-measurement by testing site, 
+# to determine whether an overall plot of measurement x time of day will be representative
+
+table(PA.2019.PM2.5$site_number)
+
+PA.testing.sites <- PA.2019.PM2.5 %>%
+                      select(state_code, state, county_code, county, cbsa_code, site_number, latitude, longitude) %>%
+                      unique() %>%
+                      arrange(site_number)
+
+dim(PA.testing.sites)
+# 47 rows
+
+View(PA.testing.sites)
+
+# Site_number is not unique. Is county (or county_code) x site_number unique? 
+PA.testing.sites %>% 
+  select(county, site_number) %>%
+  unique() %>%
+  dim()
+
+# Yes. Create county (1st 4 letters) + site_number to have something unique and also sort of readable.
+
+PA.testing.sites <- PA.testing.sites %>%
+                      mutate(site_cty = paste0(substring(toupper(county),1,4),site_number))
+
+table(PA.testing.sites$site_cty)
+length(unique(PA.testing.sites$site_cty))
+
+# Apply to full data set
+
+PA.2019.PM2.5 <- PA.2019.PM2.5 %>%
+                  mutate(site_cty = paste0(substring(toupper(county),1,4),site_number))
+
+table(PA.2019.PM2.5$site_cty)
+
+# What do the counts look like by site?
+
+PA.site.counts <- PA.2019.PM2.5 %>%
+                    group_by(site_cty) %>%
+                    summarize(obs = n(), .groups = "keep") %>%
+                    arrange(-obs)
+
+head(PA.site.counts)
+
+PA.site.counts %>% filter(obs > 10000)
+# WASH0005	17885			
+# CAMB0011	17520	
+
+# Look more closely - should these actually be 2 sites (with the same long/lat?)?
+PA.2019.PM2.5 %>% filter(site_cty == "WASH0005") %>% View()
+
+table(PA.2019.PM2.5$method_code,PA.2019.PM2.5$site_cty)
+# Some sites use different methods at different points in the year
+# The 2 highest-count sites appear to use 2 methods simultaneously throughout the year
+# One method appears seems likely to be a daily measurement which should be ignored 
+# in considering trends by time of day
+
+ggplot(data = PA.2019.PM2.5, aes(x = factor(substring(time_local,1,2)), fill = factor(method_code))) + 
+    geom_bar(position = "stack")
+
+# Yes. Ignore method_code = "145" for considering time-of-day. Also ignore time_local = "00:14"
+
+PA.2019.PM2.5 %>%
+  filter(method_code != "145" & time_local != "00:14") %>%
+  ggplot(data = ., aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
+    geom_bar(position = "stack")
+
+# Also drop sites that have less than approx 1 measurement/hour for the year (365 x 24 = 8760)
+PA.site.counts %>% filter(obs < 8000)
+# LYCO0419	3840			
+# WYOM0010	672			
+# ALLE0067	121			
+# ALLE1008	121			
+# ALLE1301	121			
+# ALLE0093	61			
+# ALLE3007	61	
+
+PA.2019.PM2.5 %>%
+  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010"))) %>%
+  ggplot(data = ., aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
+    geom_bar(position = "stack")
+
+# Now, ready to make violin plots for sample_measurement by time_local
+
+# #########################################
+# NEED TO REMOVE NA MEASUREMENT VALUES!!!
+# #########################################
+
+PA.2019.PM2.5 %>% filter(is.na(sample_measurement) == TRUE) %>% View()
+# Consider the `qualifier` field - seems to explain why no measurement was collected 
+
+# table(PA.2019.PM2.5$qualifier,useNA = "always")
+# PA.2019.PM2.5 %>% select(qualifier) %>% unique() %>% arrange(qualifier)
+
+PA.qualifier.counts <- PA.2019.PM2.5 %>% 
+                        mutate(any_measure = !is.na(sample_measurement)) %>%
+                        group_by(any_measure,qualifier) %>% 
+                        summarize(obs = n(), .groups = "keep") %>% 
+                        arrange(-any_measure, -obs)
+
+PA.qualifier.counts
+
+PA.2019.PM2.5 %>% filter(!is.na(qualifier) & !is.na(sample_measurement)) %>% View()
+# Not many in total and most are type 145 anyway
+
+PA.2019.PM2.5 %>% filter(!is.na(qualifier) & !is.na(sample_measurement) & method_code != "145") %>% View()
+# 5 records, all flagged as "Outlier" - no need to exclude here
+
+PA.2019.PM2.5 %>%
+  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010"))) %>%
+  select(sample_measurement) %>%
+  summary()
+
+
+table(round(PA.2019.PM2.5$sample_measurement))
+
+# 75th pct 11.0 but max 217.9 !! 
+# And negative concentrations are impossible; code to 0
+
+PA.2019.PM2.5 %>%
+  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010")) & sample_measurement < 0) %>% 
+  View()
+
+PA.2019.PM2.5 %>%
+  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010")) & sample_measurement >= 100) %>% 
+  View()
+
+clean.PA.2019.PM2.5 <- PA.2019.PM2.5 %>%
+                        filter(method_code != "145" 
+                               & time_local != "00:14" 
+                               & !(site_cty %in% c("LYCO0419","WYOM0010"))
+                               & !is.na(sample_measurement)) %>%
+                        mutate(sample_measurement = case_when(sample_measurement < 0 ~ 0, TRUE ~ sample_measurement))
+
+dim(clean.PA.2019.PM2.5)
+table(round(clean.PA.2019.PM2.5$sample_measurement),useNA = "always")
+
+ggplot(data = clean.PA.2019.PM2.5, aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
+    geom_bar(position = "stack")
+
+ggplot(data = clean.PA.2019.PM2.5, aes(x = factor(substring(time_local,1,2)), y = sample_measurement)) + 
+    geom_violin(fill = "lightblue", draw_quantiles = c(0.10,0.30, 0.50, 0.70, 0.90)) +
+    ylim(c(0,25))
+
+# There is some fluctuation by time of day -- 
+# But, all of the site left in have ~hourly readings throughout the year. 
+# So it would still be reasonable to compute annual percentiles and means by site 
+# for an overall sense of typical particulate conditions by geography. 
+
+clean.PA.site.summary <- clean.PA.2019.PM2.5 %>%
+                          group_by(site_cty,county,county_code,site_number,latitude,longitude) %>%
+                          summarise(pm2.5_mean = mean(sample_measurement),
+                                    pm2.5_p10 = quantile(sample_measurement, 0.10), 
+                                    pm2.5_p25 = quantile(sample_measurement, 0.25), 
+                                    pm2.5_p50 = quantile(sample_measurement, 0.50), 
+                                    pm2.5_p75 = quantile(sample_measurement, 0.75), 
+                                    pm2.5_p90 = quantile(sample_measurement, 0.90), 
+                                    .groups = "keep") %>%
+                          arrange(-pm2.5_p50)
+
+View(clean.PA.site.summary)
+summary(clean.PA.site.summary$longitude)
+summary(clean.PA.site.summary$latitude)
+
+# library(usmap)
+# 
+# 
+# plot_usmap(data = statepop, values = "pop_2015", color = "red") + 
+#   scale_fill_continuous(low = "white", high = "red", name = "Population (2015)", label = scales::comma) + 
+#   theme(legend.position = "right")
+# 
+# plot_usmap(data = clean.PA.site.summary, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
+#     geom_point() + 
+#     scale_color_gradient(low = "#ffff00", high = "#0000ff")
+
+library(maps)
+# ?map_data
+# pa <- map("state","pennsylvania")
+
+ggplot(mtcars, aes(wt, mpg, label = rownames(mtcars))) + 
+  geom_text(check_overlap = TRUE)
+
+x <- map.cities(us.cities, country="PA")
+
+
+
+ggplot(data = clean.PA.site.summary, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
+    geom_point() + 
+    borders("state","pennsylvania") + 
+    scale_color_gradient(low = "#ffff00", high = "#0000ff") +
+    labs(title = "Median PM2.5 by testing site") +
+    labs(x = "Longitude", y = "Latitude") + 
+    xlim(c(-81.00, -74.50)) +
+    ylim(c( 39.50,  42.50)) +
+    theme_bw() 
+
+
+# ############################
+
+ggplot(data = clean.PA.site.summary, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
+    geom_point() + 
+    scale_color_gradient(low = "#ffff00", high = "#0000ff") +
+    labs(title = "Median PM2.5 by testing site") +
+    labs(x = "Longitude", y = "Latitude") + 
+    xlim(c(-81.00, -74.50)) + 
+    ylim(c( 39.50,  42.50)) + 
+    theme_bw() 
+
+ggplot(data = clean.PA.site.summary, aes(x = longitude, y = latitude, color = county, size = pm2.5_p50)) + 
+    geom_point() + 
+    labs(title = "Median PM2.5 by testing site") +
+    labs(x = "Longitude", y = "Latitude") + 
+    xlim(c(-81.00, -74.50)) + 
+    ylim(c( 39.50,  42.50)) + 
+    theme_bw() 
+
+
+ggplot(data = clean.PA.site.summary, aes(x = longitude, y = latitude, color = pm2.5_p90)) + 
+    geom_point() + 
+    scale_color_gradient(low = "#ffff00", high = "#0000ff") +
+    labs(title = "90th pct PM2.5 by testing site") +
+    labs(x = "Longitude", y = "Latitude") + 
+    xlim(c(-81.00, -74.50)) + 
+    ylim(c( 39.50,  42.50)) + 
+    theme_bw() 
+
+```
+
+
+
+```{r eval=TRUE}
+
+AQS.signup <- "https://aqs.epa.gov/data/api/signup?email=api.email"
+# response <- GET(AQS.signup)
+response
+http_type(response)
+# application/json -- as expected
+
+parse.response <- fromJSON(content(response, "text"), simplifyVector = FALSE)
+parse.response
+
+test <- GET("https://aqs.epa.gov/data/api/metaData/isAvailable")
+test
+
+# Try out function(s) exemplified in the httr vignette
+call.AQS <- function(path, query=NULL) {
+  if (!is.null(query)) {
+    url <- modify_url("https://aqs.epa.gov", path = path, query = query)
+  } else {
+    url <- modify_url("https://aqs.epa.gov", path = path) 
+  }
+  
+  resp <- GET(url)
+  if (http_type(resp) != "application/json") {
+    stop("API did not return json", call. = FALSE)
+  }
+  parsed <- jsonlite::fromJSON(content(resp, "text"), simplifyVector = FALSE)
+  return(parsed)
+}
+
+isAvail <- call.AQS("/data/api/metaData/isAvailable")
+isAvail
+
+stateList.raw <- call.AQS("/data/api/list/states?email=api.email&key=api.key")
+stateList <- tibble(Data = call.AQS("/data/api/list/states?email=api.email&key=api.key")$Data) %>%
+                unnest_wider(.,Data)
+
+get.AQS.data <- function(path, query=NULL) {
+  if (!is.null(query)) {
+    url <- modify_url("https://aqs.epa.gov", path = path, query = query)
+  } else {
+    url <- modify_url("https://aqs.epa.gov", path = path) 
+  }
+  
+  resp <- GET(url)
+  if (http_type(resp) != "application/json") {
+    stop("API did not return json", call. = FALSE)
+  }
+  
+  parsed <- jsonlite::fromJSON(content(resp, "text"), simplifyVector = FALSE)
+  df <- tibble(Data = parsed$Data) %>% unnest_wider(.,Data)
+  return(df)
+}
+
+# How well does last year's data predict this year's data? 
+# How well does last month's data predict this month's data?
+# How well does yesterday's data predict today's data?
+
+
+sampleTest <- get.AQS.data("/data/api/sampleData/byCounty?email=api.email&key=api.key&param=88101&bdate=20160101&edate=20160228&state=37&county=183")
+
+rootpath <- "https://aqs.epa.gov/data/api/"
+cred <- "?email=api.email&key=api.key"
+bind_rows(c("param","88101"),c("bdate","20160101"))
+
+sampleTest2 <- httr::GET(
+  url = "https://aqs.epa.gov/data/api/sampleData/byCounty",
+  query = list(
+    email = api.email,
+    key = api.key,
+    param = "88101",
+    bdate = "20160101",
+    edate = "20160228",
+    state = "37",
+    county = "183"
+  )
+)
+
+sampleTest22 <- list(email = api.email, key = api.key, 
+                     param = "88101",bdate = "20160101",edate = "20160228",state = "37",county = "183") %>%
+                httr::GET(url = "https://aqs.epa.gov/data/api/sampleData/byCounty",query = .)
+  
+
+customPart <- list(param = "88101",bdate = "20160101",edate = "20160228",state = "37",county = "183")
+fullParams <- append(list(email = api.email, key = api.key),customPart)
+sampleTes <- httr::GET(url = "https://aqs.epa.gov/data/api/sampleData/byCounty", query = fullParams)
+  
+
+
+
+
+whichData <- "sampleData/byCounty"
+customParams <- list(param = "88101",bdate = "20160101",edate = "20160228",state = "37",county = "183")
+rootpath <- "https://aqs.epa.gov/data/api/"
+morepath <- paste0(rootpath,whichData)
+fullParams <- append(list(email = api.email, key = api.key),customParams)
+sampleTest4 <- httr::GET(url = morepath, query = fullParams)
+sT4.parsed <- jsonlite::fromJSON(content(sampleTest4, "text"), simplifyVector = FALSE)
+sT4.df <- tibble(Data = sT4.parsed$Data) %>% unnest_wider(.,Data)
+
+
+
+
+download.AQS <- function(whichData,customParams) { 
+  rootpath <- "https://aqs.epa.gov/data/api/"
+  morepath <- paste0(rootpath,whichData)
+  fullParams <- append(list(email = api.email, key = api.key),customParams)
+  step1.json <- httr::GET(url = morepath, query = fullParams)
+  step2.parsed <- jsonlite::fromJSON(content(step1.json, "text"), simplifyVector = FALSE)
+  step3.df <- tibble(Data = step2.parsed$Data) %>% unnest_wider(.,Data)
+  return(step3.df)
+}
+
+test5 <- download.AQS("sampleData/byCounty",
+                      list(param = "88101",bdate = "20160101",edate = "20160228",state = "37",county = "183"))
+
+revHist <- download.AQS("metaData/revisionHistory",list())
+head(revHist)
+
+
+
+```
+
+```{r eval=TRUE}
+
+stateList.oneStep <- get.AQS.data("/data/api/list/states?email=api.email&key=api.key")
+stateList.oneStep
+
+isAvail.Data <- get.AQS.data("/data/api/metaData/isAvailable")
+# Generates an empty data frame
+
+issues <- call.AQS("/data/api/metaData/issues?email=api.email&key=api.key")
+issues.data <- get.AQS.data("/data/api/metaData/issues?email=api.email&key=api.key")
+head(issues.data)
+
+revision.history <- get.AQS.data("/data/api/metaData/revisionHistory?email=api.email&key=api.key")
+revision.history
+
+fieldsByService.sampleData <- get.AQS.data(
+  "/data/api/metaData/fieldsByService?email=api.email&key=api.key&service=sampleData"
+)
+fieldsByService.list       <- get.AQS.data(
+  "/data/api/metaData/fieldsByService?email=api.email&key=api.key&service=list"
+)
+
+fieldsByService.list
+fieldsByService.sampleData
+
+parameterClasses <- get.AQS.data(
+  "/data/api/list/classes?email=api.email&key=api.key"
+)
+# View(parameterClasses)
+
+parameters.AQIpollutants <- get.AQS.data(
+  "/data/api/list/parametersByClass?email=api.email&key=api.key&pc=AQI%20POLLUTANTS"
+)
+View(parameters.AQIpollutants)
+
+parameters.Forecast <- get.AQS.data(
+  "/data/api/list/parametersByClass?email=api.email&key=api.key&pc=FORECAST"
+)
+View(parameters.Forecast)
+
+parameters.All <- get.AQS.data(
+  "/data/api/list/parametersByClass?email=api.email&key=api.key&pc=ALL"
+)
+View(parameters.All)
+
+parameters.AirNowMaps <- get.AQS.data(
+  "/data/api/list/parametersByClass?email=api.email&key=api.key&pc=AIRNOW%20MAPS"
+)
+View(parameters.AirNowMaps)
+
+# Try getting 1 month of state-level daily summary data - Jan 2017, Pennsylvania
+# 88101	: PM2.5 - Local Conditions
+dSum.PA201701.PM2.5Local <- get.AQS.data(
+    "/data/api/dailyData/byState?email=api.email&key=api.key&param=88101&bdate=20170101&edate=20170131&state=42"
+)
+
+head(dSum.PA201701.PM2.5Local)
+table(dSum.PA201701.PM2.5Local$county_code)
+summary(dSum.PA201701.PM2.5Local)
+View(dSum.PA201701.PM2.5Local)
+
+table(dSum.PA201701.PM2.5Local$local_site_name,useNA="ifany") 
+# 1,445 NA
+dSum.PA201701.PM2.5Local %>% filter(is.na(local_site_name)) %>% View()
+
+dSum.PA201701.PM2.5Local %>% 
+  group_by(county_code,site_number,cbsa_code,site_address,local_site_name) %>% 
+  summarise(count=n(), .groups="keep")
+
+length(unique(dSum.PA201701.PM2.5Local$local_site_name))
+# 38 unique sites
+
+table(dSum.PA201701.PM2.5Local$observation_count)
+# Ranges from 1 to 24
+table(dSum.PA201701.PM2.5Local$units_of_measure) 
+# Micrograms/cubic meter (LC) for all
+
+
+
+
+dSum.PA201701.PM2.5Local %>% filter(observation_count > 20) %>% View()
+
+```
+
+
+```{r EVAL=TRUE}
+str(dSum.PA201701.PM2.5Local)
+
+test.PM2.5 <- call.AQS(
+    "/data/api/dailyData/byState?email=api.email&key=api.key&param=88101&bdate=20190101&edate=20190131&state=42"
+)
+test.PM2.5 <- 
+
+paste0(
+  '"'
+  ,"/data/api/dailyData/byState"
+  ,"?email=api.email"
+  ,"&key=api.key"
+  ,"&param=88201"
+  ,"&bdate=20170101"
+  ,"&edate=20170131"
+  ,"&state=42"
+  ,'"'
+)
+
+testDaily <- call.AQS(paste0(
+  '"'
+  ,"/data/api/dailyData/byState"
+  ,"?email=api.email"
+  ,"&key=api.key"
+  ,"&param=45201"
+  ,"&bdate=20170101"
+  ,"&edate=20170131"
+  ,"&state=42"
+  ,'"'
+))
+
+testDaily <- call.AQS("/data/api/dailyData/byState?email=api.email&key=api.key&param=45201&bdate=20170101&edate=20170131&state=42")
+
+testDaily <- get.AQS.data(
+  "/data/api/dailyData/byState?email=api.email&key=api.key&param=45201&bdate=20170101&edate=20170131&state=42"
+)
+
+
+
+dSum.PA.2017.01.all <- get.AQS.data(
+  "/data/api/dailyData/byState?email=api.email&key=api.key&param=#####&bdate=20170101&edate=20170131&state=42"
+)
+
+View(testDaily)
+
+paste0("the quoted string "
+  ,'"'
+  ,"/data/api/dailyData/byState"
+  ,"?email=api.email"
+  ,"&key=api.key"
+  ,"&param=45201"
+  ,"&bdate=20170101"
+  ,"&edate=20170131"
+  ,"&state=42"
+  ,'"'
+  ," was created"
+)
+
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
