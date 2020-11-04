@@ -1,0 +1,149 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "Danielle Kellier"
+bibliography: references.bib
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+library(tidyverse)
+library(gtsummary)
+library(simstudy)
+library(randomForest)
+library(inTrees)
+library(glue)
+library(fabricatr)
+
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+1. Recall that you forked the [Final Project Repo](https://github.com/HimesGroup/BMIN503_Final_Project) and have downloaded it as a project to your local computer. Write the overview and introduction for your final project. The overview consists of 2-3 sentences summarizing the project and goals. For the introduction, the first paragraph describes the problem addressed, its significance, and some background to motivate the problem. In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff. Start working on the Methods/Results section, which consists of code and its output along with text describing what you are doing (Note: we will not check your code now, but you should have something in place before Assignment 6 is distributed).
+
+
+### Overview
+`Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.`
+
+For children visiting the emergency department with a chief complaint of headache of migraine, are there features of their initial clinical presentation that can predict the presence of an intracranial abnormality? This study uses a retrospective cohort of children who visited the CHOP ED between 2012 and 2018 with the complaint of headache or migraine to predict risk of positive findings seen on imaging.
+
+### Introduction 
+`Describe the problem addressed, its significance, and some background to motivate the problem.`
+`Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.`
+
+Headache is a major cause of disability in children and a common chief complaint in the pediatric emergency room. Given the range of etiologies from primary to life-threatening, many children end up receiving imaging for ultimately benign which leads to excessive cost for both the patient and the healthcare system[@Cain2018; @Irwin2018; @Kan2000; @Young2018]. In addition, exposure to radiation from computed tomography scanning in children can greatly increase the risk of later malignancy[@Brenner2001; @Feng2010]. Using a nested case-control design within a larger cohort of ED visits for headache/migraine, we hope to establish whether there are particular features of a child's initial clinical presentation that can inform an emergency physician’s decision to order imaging for a child with headache.
+
+Headache is consistently ranked as one of the top 10 chief complaints for an emergency room visit within the United States according to the National Hospital Ambulatory Medical Care Survey[@UnitedStatesDepartmentofHealthHumanServices-NationalCenterforHealthStatistics2019]. In fact, for over 1.7 million (5% overall) pediatric emergency visits in 2017, headache was listed as a reason for the visit[@UnitedStatesDepartmentofHealthHumanServices-NationalCenterforHealthStatistics2019]. Headache can be an alarming but highly nonspecific symptom in that it can be triggered by a disabling but ultimately benign primary disorder, a secondary but nonconcerning case of influenza, or act as the harbinger for a brain tumor or subarachnoid hemorrhage. Although a neurologist or headache subspecialist may focus on pinpointing a headache's etiology to direct treatment, an emergency room physician's goal is to look for "red flags" or signs of a serious etiology requiring urgent intervention. Still, a symptom's status as a "red flag" can be questionable: changes in vision or sensation can be associated with a stroke or simply be the aura of an incoming migraine. As a result, roughly 18-41% of children with headache end up receiving some form of neuroimaging of which only 4-10% had new abnormal findings seen on imaging[@Cain2018; @Kan2000; @Sheridan2013]. The high rate of children undergoing unnecessary imaging, especially the additional exposure risks of computed tomography, demonstrate a gap in the knowledge base that is made available to physicians within the emergency room who must deal with a high volume of patients diverse in their clinical presentations and acuity. This study aims to attempts to use machine learning techniques to select features of the clinical presentation that are informative to assessing the risk of an abnormal finding on imaging and to simplify the predictive model generated into an algorithm that can be disseminated and shared amongst emergency room physicians.
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+
+```{r simulate-data}
+
+set.seed(12345)
+
+image_types <- c("Imaged", "Not imaged")
+image_freq <- c(0.2, 0.8)
+outcome_types <- c("Abnormality", "No abnormality")
+outcome_freq <- c(0.05, 0.95)
+
+nsymptoms <- 10
+symptom_corr <- genCorMat(nsymptoms)
+nobs <- 6000
+
+dt <- fabricate(N = nobs,
+                age = runif(N, min = 3, max = 17),
+                female = correlate(given = age, rho = 0.2, draw_binary, prob = 0.55),
+                outcome = correlate(given = age, rho = -0.6, draw_binary, prob = outcome_freq[[1]]),
+                image = correlate(given = outcome, rho = 0.9, draw_binary, prob = image_freq[[1]]),
+                symptoms_mu = pmin(pmax(rnorm(N, mean = 0.05 + 0.2*image + 0.7*outcome - 0.1*age, 
+                                              sd = 0.05 + 0.05*image + 0.05*outcome),0),1))
+
+rmat <- matrix(rnorm(nsymptoms^2),nsymptoms,nsymptoms)
+cov_mat <- rmat%*%t(rmat)
+corr_mat <- cov_mat/sqrt(diag(cov_mat)%*%t(diag(cov_mat)))
+
+dt_symptoms <- cbind(genData(nobs, id = "ID"), "symptoms_mu" = dt$symptoms_mu) %>%
+  addCorGen(., nvars = nsymptoms, idvar = "ID", param1 = "symptoms_mu", dist = "binary", 
+            corMatrix = corr_mat, cnames = paste("symptom", 1:nsymptoms, sep = "_")) %>% 
+  dplyr::select(-ID, -symptoms_mu)
+
+dt <- bind_cols(dt, dt_symptoms) %>% 
+  dplyr::select(-symptoms_mu) %>%
+  dplyr::mutate(across(c("image", "outcome"), as.factor))
+
+dt_assignments <- sample(1:2, size = nobs, replace = T, prob = c(0.8, 0.2))
+```
+
+
+```{r table-1}
+
+set.seed(12345)
+
+dt %>%
+  group_by(image, outcome) %>%
+  summarise(n_total = n(),
+            n_girls = sum(female == 1),
+            n_boys = sum(female == 0),
+            across(starts_with("symptom"), mean))
+
+
+```
+
+```{r}
+
+set.seed(12345)
+
+dt_train <- filter(dt, dt_assignments == 1)
+dt_test <- filter(dt, dt_assignments == 2)
+
+trim_vars <- c("ID", "image", "outcome")
+
+dt_rf_predictors <- select(dt_train, -trim_vars) %>% data.matrix()
+
+dt_rf <- randomForest(x = dt_rf_predictors, y = dt_train$outcome, ntree = 500, 
+                      importance = TRUE, cutoff = c(0.95, 0.05), nodesize = 3)
+
+dt_rf_pred <- predict(dt_rf, select(dt_test, -trim_vars), type = "response")
+
+table(Outcome = dt_test$outcome, Predicted = dt_rf_pred)
+
+ruleExec <- extractRules(RF2List(dt_rf), X = dt_rf_predictors, digits = 2)
+
+ruleMetric <- getRuleMetric(ruleExec, X = dt_rf_predictors, target = dt_train$outcome) %>%
+  pruneRule(., X = dt_rf_predictors, target = dt_train$outcome)
+
+learner <- buildLearner(ruleMetric, X = dt_rf_predictors, target = dt_train$outcome, minFreq = 0.05)
+
+pretty_learner <- presentRules(learner, colnames(dt_rf_predictors))
+
+bind_cols(true = dt_test$outcome, pred = applyLearner(learner, X = select(dt_test, -trim_vars))) %>%
+  group_by(true, pred) %>%
+  summarise(n = n())
+
+
+```
+
+# Methods
+
+## Participants
+We conducted a retrospective cohort study consisting of children ages 2-18 seen in the pediatric emergency department between 2012 and 2018 with the primary complaint of headache or migraine. This study took place within a tertiary pediatric hospital system in a urban setting with XX,XXX visits yearly. Due to its tertiary status, the pediatric emergency department often receives patient transfers from nearby hospitals for admission to specialized care. This can inflate the number of cases with rare and/or serious etiologies compared to another pediatric emergency care setting. We excluded children if they had their first headache-related visit prior to 2012, abnormal neurological findings at baseline, or documentation of prior abnormal findings on imaging. Children with a condition predisposing to an intracranial abnormality but no prior documented findings were included in the study. 
+
+## Red Flag Findings
+We extracted both symptom and physical finding information from provider notes documented during the emergency room visit of interest. Based on past work, we were particularly interested in documentation of fever and other constitutional symptoms, acute neurological abnormalities, papilledema and other ophthalmic symptoms and findings, age, descriptions of sudden onset or "thunderclap" headache, awakening from sleep, occipital location, and responsiveness to positional changes or the Valsalva maneuver [@Do2019]. We also included other variables often associated with headache assessment including age, family history of headache, blurry vision, nausea and vomiting, photophobia and phonophobia, abnormal blood pressure or recorded changes in blood pressure, headache frequency at baseline, and current headache duration. 
+
+Given the nature of secondary data collection, we expected to encounter records with missing variables. We excluded any records that lacked a visit diagnosis commonly associated with headache such as minor trauma to extremities. Given the broad relationship between infection and headache, we included cases related to head and neck local infections such as sinusitis and dental infections, along with cases of systemic infection such as influenza and recorded sepsis. Further, we excluded records that lacked documentation of a neurological exam, headache characterization, or overall lacked data for >= XX% variables of interest. For analysis of a single variable, we excluded records with missing data if the variable's missingness in the dataset did not exceed 10% across age and sex strata. In cases where a variable's missingness rested between 10% and 20%, we used data imputation with the median for a continuous value by age and sex strata. Missingness that exceeded 20% was evaluated on a case-by-case basis to assess the value of and ramifications of analysis with investigation of nonrandom patterns.
+
+Data analysis was done using `r R.version.string` [@RCoreTeam2020]. The dataset was divided into 3 parts for descriptive analyses and logistic regression modeling, creation of a predictive model for case classification, and testing of predictive model performance. The exploratory analyses on the first third of the dataset were completed using binomial logistic regression modeling provided by base R and visualization done using the *gtsummary* package and *tidyverse* package collection [@DanielDSjoberg2020; @Wickham2019]. For descriptive purposes, data was represented using the median and interquartile ranges for continuous variables and counts and proportions for categorical data. In order to create a model capable of predicting case severity by clinical presentation, the random forests method was used to design a set of decision trees based on randomly generated subsets of cases and predictors from the middle third of the dataset using the *randomForest* R package based on Leo Breiman's machine learning method [@AndyLiaw2002; @Breiman2001]. The ensemble predictive model was then simplified into a single decision tree using the *inTrees* package and tested against the final third of the dataset [@Deng2014].
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+
+# References
