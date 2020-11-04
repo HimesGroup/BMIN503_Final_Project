@@ -10,9 +10,9 @@ output:
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
+# commonly-used packages
 library(ggplot2)
 library(dplyr)
-library(leaflet)
 library(magrittr)
 ```  
 ***
@@ -41,30 +41,85 @@ Describe the data used and general methodological approach. Subsequently, incorp
 ###
 Download and install Rtools40 to use the BLS api: https://cran.r-project.org/bin/windows/Rtools/
 
-## Reading and Cleaning Datasets
+### Reading and Cleaning Datasets
 ```{r, eval=TRUE}
 # tools for accessing BLS data
 library(devtools)
 library(blsAPI)
 library(rjson)
-install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI
+install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI by Mike Silva
+```
+
+
+```{r, eval=TRUE}
+# query data from BLS.gov
+
+# load api key (must have the txt file)
+api_key <-  read.csv("bls_api_key.txt", header=FALSE)[[1]]
 
 # signatures to be queried from BLS.gov, 10-year CPI data from major metropolitan areas
-payload <-list('seriesid'=c('CUURS35ESA0'),'startyear'=2010,'endyear'=2020)
+signatures <- read.csv("metro_area_cpi_signatures.csv") 
 
-# query CPI data from major metropolitan areas from BLS 
-response <- blsAPI(payload, return_data_frame = TRUE) 
+# payload signatures to query BLS 
+month_payload <- list('seriesid'= signatures$signature_monthly) #2018-2020 monthly CPI 
+annual_payload <- list('seriesid'= signatures$signature_annual) #2018-2020 annual CPI
 
+# query CPI 2018-2020 data from major metropolitan areas from BLS 
+months_cpi <- blsAPI(month_payload, return_data_frame = TRUE) # monthly CPI dataframe
+annual_cpi <- blsAPI(annual_payload, return_data_frame = TRUE) # annual CPI dataframe
 ```
 
 ```{r, eval=TRUE}
-# read in the housing cost: fair market rates (2017-2020)
+# format the data
+
+# add columns to join region labels by
+months_cpi$signature_monthly <- months_cpi$seriesID
+annual_cpi$signature_annual <- annual_cpi$seriesID
+
+# join region and state labels to the cpi data
+# complete monthly dataframe for 2018-2020 regional metro cpi data
+months_cpi %<>%
+  left_join(signatures[, c("signature_monthly","state","area")],by="signature_monthly") %>%
+  dplyr::select(-seriesID)
+
+# complete annual dataframe for 2018-2020 regional metro cpi data
+annual_cpi %<>%
+  left_join(signatures[, c("signature_annual","state","area")],by="signature_annual") %>%
+  dplyr::select(-seriesID)
+
+
+head(months_cpi)
+head(annual_cpi)
+
+```
+```{r, eval=TRUE}
+# Further format dataframes
+# pivot data by metro area and years, add column for change in cpi over 2 years
+
+# annual cpi 
+a_cpi <- annual_cpi %>% 
+  pivot_wider(id_cols = c("area","year"),names_from = "periodName",
+              values_from = "value")%>% # pivot on area and year using values from period
+  mutate_at(vars(3:4), as.numeric) %>% # change CPI values to numeric
+  mutate(annual = rowMeans(select(., c("1st Half", "2nd Half")), na.rm= TRUE)) # mean cpi
+
+m_cpi <- months_cpi %>%
+  dplyr::select(-period) %>%
+  pivot_wider(id_cols = c("area","year"), names_from = "periodName", 
+              values_from = "value") %>% # pivot on area and year using values from period
+  mutate_at(vars(2:14), as.numeric) %>% # change CPI values to numeric
+  mutate(annual = rowMeans(select(.,-c("area", "year")), na.rm = TRUE)) # mean cpi
+
+```
+
+
+```{r, eval=TRUE}
+# read in the housing costs: fair market rates (2017-2020)
 fmr_2017 <- read.csv("FY2017_50_County_FMR.csv")
 fmr_2018 <- read.csv("FY2018_50_County_FMR.csv")
 fmr_2019 <- read.csv("FY2019_50_County_FMR.csv")
 fmr_2020 <- read.csv("FY2020_50_County_FMR.csv")
 fmr_2021 <- read.csv("FY2021_50_County_FMR.csv")
-
 
 ```
 
