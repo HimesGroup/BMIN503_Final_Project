@@ -12,21 +12,273 @@ output:
 options(width = 400)
 ```  
 ***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
-
 ### Overview
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+*Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.*
 
+Over the last decade, hospital readmissions have become a major focus area of healthcare policy and research, and many initiatives to understand, reduce, and prevent future readmissions have emerged. While these initiatives have helped decrease readmissions in certain groups like Medicare patients, readmission rates have remained stable among Medicaid and privately insured patients, and even increased among uninsured patients (Bailey et al, 2019). To date, most prediction models for hospital readmissions have focused on important clinical factors like medications, lab values, and comorbidities (Zhou et al, 2016). Newer research suggests that social determinants of health impact hospital readmissions (CDC, 2020), so the goals of this project are to describe characteristics of readmitted patients and explore factors associated with 30-day readmissions with an emphasis on social factors. 
+
+####Aims:
+* Conduct an exploratory analysis comparing patients with 30-day readmissions to those wtihout
+* ?Among readmitted patients, compare characteristics among 7-, 14-, and 30-day readmissions?
+      could look at correlations with comorbidity score at each of the timepoints
+* Identify factors early in the hospitalization associated with readmission 
+
+This project will use MIMIC-III, an openly available dataset developed by MIT with de-identified data for approximately 60,000 intensive care unit hospitalizations including demographics, vital signs, laboratory data, medications, and unstructured notes. I would like to acknowledge this wonderful database. 
+
+[Github Repository](https://github.com/erinken/BMIN503_Final_Project)
+[MIMIC-III](https://mimic.physionet.org/)
+
+I would also like to acknowledge the contributions of several experts who assisted with the design and analysis process
+* Danielle Mowery: study design, MIMIC data extraction, formulating processes of data wrangling, interpretation of results 
+* Blanca Himes: Identifying a dataset and data extraction procedures 
+* Anahita Davoudi and Sy Hwang: expertise in extracting and analyzing MIMIC data
+* Emily Schriver: expertise in biostatistics using R. Assisted with several packages including ggplot and elixhauser comorbidity
+* Gary Weissman: Expertise in wrangling MIMIC data 
 
 ### Introduction 
-Describe the problem addressed, its significance, and some background to motivate the problem.
+*Describe the problem addressed, its significance, and some background to motivate the problem.Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.*
 
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+In 2017 alone, 3.5 million potentially preventable readmissions cost 33.7 billion (McDermott & Jiang, 2020). Implementation of readmission-risk prediction models at the point of care is an evidence-based strategy to reduce readmissions, but only 34% of hospitals enrolled in the National Hospital-to-Home quality initiative formally estimate patients' readmission risk (Bradley et al, 2014). In 2019, the president of the American Hospital association encouraged policymakers to dedicate more resources towards understanding the discharge planning process and post-acute care trajectory (Pollack, 2019).According to a recent systematic review of readmission prediction models, most existing models have focused on important acute clinical data to predict readmission risk (Zhou et al, 2016). Recent literature suggests that social determinants of health could play an important role in hospital readmissions, and this information is starting to become more prevalent in structured EHR data (CDC, 2020). Therefore, the aim of this project is to explore the role of social factors in prediction of 30-day hospital readmissions.
+
+A recent human factors study found that most patients have 1-6 different people involved in the discharge planning process, making it a truly interdisciplinary endeavor as different specialties bring different expertise to the team (Prusaczyk et al, 2019). Groups interested in building readmission prediction models should include a holistic mix of both technical and clinical experts such as biostatisticians, informaticians, data scientists, physicians, nurses, case managers, and even other ancillary clinicians like physical therapists. Since I come from a clinical background, my goal was to connect with the technical experts so my main collaborators included a biostatistician (Emily Schriver) and informaticians (Danielle Mowery, Sy Hwang, Anahita Davoudi). Danielle Mowery assisted me with overall study design and workflow for my data cleaning. Sy Hwang and Anahita Davoudi have experiences with general databases and the MIMIC database and helped me determine the appropriate way to extract data and join tables. Emily Schriver has extensive experience analyzing EHR data in R and pointed me to some helpful packages for my analysis. 
 
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+*Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.* 
 
+The dataset used for this project was obtained from MIMIC-III, an openly available dataset of nearly 60,000 intensive care admissions including demographics, vital signs, laboratory data, medications, and notes. The database can be accessed [here](https://mimic.physionet.org/). Although there are a myriad of tables available in MIMIC, this dataset will focus on the patients, admissions, services, diagnoses, and diagnoses_icd tables. More information about the tables and schema can be found [here](https://mimic.physionet.org/mimicdata/schema/). These tables contain important demographic, comorbidity, and what types of services the patients received during their hospitalization.
+
+The main goal is to define a readmissions cohort and analyze the data with exploratory analysis to build a simple readmissions prediction model. 
+
+
+First, packages will be loaded for organizational purposes
+```{r}
+# load packages
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+
+```
+
+##Preprocessing
+The MIMIC-III database offers several strategies for pulling the data including SQL, google cloud platform, and I chose to download the csv files of the tables I was interested them and pre-process the data using the dplyr package. 
+
+First, read in the necessary tables and perform some basic cleaning to focus on the variables of interest. 
+```{r}
+# admissions table
+admissions <- read.csv(file = 'ADMISSIONS.csv.gz')
+
+# selecting only variables of interest
+admissions <- admissions %>%
+  select(SUBJECT_ID, HADM_ID, ADMITTIME, DISCHTIME, ADMISSION_TYPE, ADMISSION_LOCATION, DISCHARGE_LOCATION, INSURANCE, LANGUAGE, RELIGION, MARITAL_STATUS, ETHNICITY, DIAGNOSIS, HOSPITAL_EXPIRE_FLAG)
+
+# patients table 
+patients <- read.csv(file = 'PATIENTS.csv.gz')
+
+# selecting only variables of interest
+patients <- patients %>%
+  select(SUBJECT_ID, GENDER, DOB)
+
+#services
+#services <- read.csv(file = 'SERVICES.csv.gz')
+
+# selecting only variables of interest
+#services <- services %>%
+#  select(SUBJECT_ID, HADM_ID, TRANSFERTIME, PREV_SERVICE, CURR_SERVICE)
+
+#head(services$HADM_ID)
+#diagnoses_icd
+
+#d_icd_diagnoses
+
+```
+
+Merging the tables
+```{r}
+# Joining the Admission and patients table into the larger mimic table on the SUBJECT_ID
+mimic <- inner_join(patients, admissions, by = "SUBJECT_ID")
+
+#Joining the services table onto the mimic table on the HADM_ID
+#mimic <- inner_join(mimic, services, by = "HADM_ID")
+
+```
+
+Next, identifying patients discharged ALIVE 
+```{r}
+#code to filter out those with disposition death and non-newborn 
+mimic <- mimic %>%
+  filter(HOSPITAL_EXPIRE_FLAG == 0 & DISCHARGE_LOCATION != "DEAD/EXPIRED")
+
+#confirming exclusion of patients who died in the hospital
+table(mimic$DISCHARGE_LOCATION)
+
+#extra step to confirm that the hospital expire flag = 0 
+table(mimic$HOSPITAL_EXPIRE_FLAG)
+
+unique(admissions$DISCHARGE_LOCATION)
+unique(admissions$hospital_expire_flag)
+```
+Next, calculating age and excluding those over 90 because their DOBs have been shifted, as well as those <18. For creating the age variable I found this [Stack Overflow Thread](https://stackoverflow.com/questions/31126726/efficient-and-accurate-age-calculation-in-years-months-or-weeks-in-r-given-b) very helpful. I also created a length of stay (in days) variable in this step
+```{r}
+# converting the dob, admittime, and dischargetime to dates
+mimic <- mimic %>%
+  mutate(DOB = as.Date(DOB, format = "%Y-%m-%d")) %>%
+  mutate(ADMITTIME = as.Date(ADMITTIME, format = "%Y-%m-%d")) %>%
+  mutate(DISCHTIME = as.Date(DISCHTIME, format = "%Y-%m-%d"))
+
+# checking to make sure the conversion worked
+class(mimic$DOB)
+class(mimic$ADMITTIME)
+class(mimic$DISCHTIME)
+
+# calculating age and length of stay
+mimic <- mimic %>%
+  mutate(AGE = as.period(interval(start = DOB, end = ADMITTIME))$year) %>%
+  mutate(LOS = as.period(interval(start = ADMITTIME, end = DISCHTIME))$day)
+
+summary(mimic$AGE)
+summary(mimic$LOS)
+
+#filtering age to only those who are 55-90 (a limitation of the study with the upper age limit). Now we can see there are substantially less patients in the dataset
+mimic <- mimic %>%
+  filter(between(AGE, 55, 89))
+
+summary(mimic$AGE)
+```
+
+Next identifying the 30-day readmissions cohort and creating a variable for it
+Interesting stack overflow thread https://stackoverflow.com/questions/44508585/calculate-readmission-rate
+```{r}
+mimic2 <- mimic %>% 
+  arrange(SUBJECT_ID, ADMITTIME) %>% #Arrange?? 
+  group_by(SUBJECT_ID) %>%
+  mutate(time_to_readmission = ADMITTIME - lag(DISCHTIME, 1), readmission30_flag = if_else(time_to_readmission <= 30, 1, 0))
+
+mimic2 <- mimic2 %>%
+  group_by(SUBJECT_ID) %>%
+  filter(n()>=2)
+mimic2
+```
+
+
+
+
+```{r}
+# for each patient, identify # unique encounter ids
+# for those with >1 encounter, compare datetime on encounter object
+#     order encounters by start dates
+#     on each pateint's encounter list, for each encounter and encounter +1 in range length (list-1), pull start & end dates and compare discharge date of encounter       to admission date of encounter +1 
+# make a list with the number 
+# if any are <= 30, include those 
+# only include the first and second encounter (if second <30 days)
+
+
+# cases = anyone with multiple readmissions (focus on 30 day)
+#     encounters in which readmission between day 1 and 7
+#     encounters between day 8 and 14
+#     encounters between day 15 and 30
+# control-1 = anyone who's never had a readmission 
+# control -2 = anyone who's had readmissions but interval >30 days 
+```
+
+Creating a new variable to split readmissions into 7, 14, and 30-day cohorts
+```{r}
+
+```
+
+Filtering to index admission only but keeping the 2 readmissions variables
+```{r}
+
+```
+Descriptive statistics
+```{r}
+#insurance, language, religion, marital_status, ethnicity, gender, discharge disposition, procedure?, diagnosis?
+```
+
+Descriptive statistics comparing readmissions cohort to non-readmissions cohort
+```{r}
+
+```
+
+Descriptive statistics comparing AMONG readmissions, the 3 time points (or trim down to 7 vs 30 to make it bivariate?)
+```{r}
+
+```
+
+Univariate tests of CLINICALLY significant social variables
+```{r}
+
+```
+
+Logistic model?
+```{r}
+
+```
+
+Some type of cross validation?? I might just have to identify factors 
+```{r}
+#make sure to compare the 2 cohorts in a results table
+```
+
+AUC
+```{r}
+
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+Creating a theme for visualizations
+```{r}
+
+```
+
+
+Table comparing readmission to non-readmission cohort
+```{r}
+
+```
+
+Table comparing levels within readmission
+```{r}
+
+```
+
+Table showing the logistic regression model and the performance details
+```{r}
+
+```
+
+Training vs cross validation Table
+```{r}
+
+```
+
+AUC
+```{r}
+
+```
+
+Calibration?
+```{r}
+
+```
+
+References:
+Bailey, M. K., Weiss, A. J., Barret, M. L., & Jiang, H. J. (2019). Statistical Brief #248: Characteristics of 30-Day All-Cause Hospital Readmissions, 2010-2016. Retrieved from https://www.hcup-us.ahrq.gov/reports/statbriefs/sb248-Hospital-Readmissions-2010-2016.pdf
+
+Bradley, E. H., Sipsma, H., Horwitz, L. I., Curry, L., & Krumholz, H. M. (2014). Contemporary Data About Hospital Strategies to Reduce Unplanned Readmissions: What Has Changed? JAMA Internal Medicine, 174(1), 154-156. doi:10.1001/jamainternmed.2013.11574
+
+Healthy People 2020. (2020). Social Determinants of Health. Retrieved from https://www.healthypeople.gov/2020/topics-objectives/topic/social-determinants-of-health
+
+McDermott, K. W., & Jiang, H. J. (2020). Characteristics and Costs of Potentially Preventable Inpatient Stays, 2017. Retrieved from https://www.hcup-us.ahrq.gov/reports/statbriefs/sb259-Potentially-Preventable-Hospitalizations-2017.pdf
+
+MIMIC-III, a freely accessible critical care database. Johnson AEW, Pollard TJ, Shen L, Lehman L, Feng M, Ghassemi M, Moody B, Szolovits P, Celi LA, and Mark RG. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available from: http://www.nature.com/articles/sdata201635
+
+Pollack, R. (2019). Perspective: Post-acute care is a vital part of health care delibery. Retrieved from https://www.aha.org/news/perspective/2019-07-12-perspective-post-acute-care-vital-part-health-care-delivery
+
+Prusaczyk, B., Kripalani, S., & Dhand, A. (2019). Networks of hospital discharge planning teams and readmissions. Journal of Interprofessional Care, 33(1), 85-92. doi:10.1080/13561820.2018.1515193
+
+Zhou, H., Della, P. R., Roberts, P., Goh, L., & Dhaliwal, S. S. (2016). Utility of models to predict 28-day or 30-day unplanned hospital readmissions: an updated systematic review. BMJ Open, 6(6), e011060. doi:10.1136/bmjopen-2016-011060
+
