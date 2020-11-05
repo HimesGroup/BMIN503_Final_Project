@@ -131,22 +131,27 @@ fmr_2017$ID2 <- str_replace(as.character(fmr_2017$fips2000),
                             "")
 
 # read in the housing costs: fair market rates (2017-2020)
-# format the columns
+# format relevent columns into a standard form
 fmr_2017 <- read.csv("FY2017_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
   mutate_at(c("fmr0", "fmr1", "fmr2", "fmr3", "fmr4"), as.numeric)
 fmr_2018 <- read.csv("FY2018_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
   mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub")
+  rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+         "fmr3" = "fmr_3", "fmr4" = "fmr_4")
 fmr_2019 <- read.csv("FY2019_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
   mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub") 
+  rename("CouSub" = "cousub","fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+         "fmr3" = "fmr_3", "fmr4" = "fmr_4") 
 fmr_2020 <- read.csv("FY2020_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
   mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub") 
+  rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+         "fmr3" = "fmr_3", "fmr4" = "fmr_4") 
 fmr_2021 <- read.csv("FY2021_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
   mutate_at(c("rent50_0", "rent50_1", "rent50_2", "rent50_3", "rent50_4"),
             as.numeric) %>%
-  rename("CouSub" = "cousub") 
+  rename("CouSub" = "cousub", "fmr0" = "rent50_0",
+         "fmr1" = "rent50_1","fmr2" = "rent50_0", 
+         "fmr3" = "rent50_0", "rent50_0" = "rent50_0") 
 
 # format geographical ids for all FMRs
 fmr_2017 <- format_id(fmr_2017)
@@ -157,33 +162,83 @@ fmr_2021 <- format_id(fmr_2021)
 
 # read in shape file of US counties
 counties <- readRDS(gzcon(url('https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds'))) # decompress  rds file and read in shape file
-
 counties$GEO_ID <- as.character(counties$GEO_ID)#change geo id to characters in counties df
-counties$ID <- gsub("US","", counties$GEO_ID)  # remove US from ID
+counties$ID <- gsub("US","", counties$GEO_ID)  #remove US from ID
 
 fmr_2017_geo <- counties %>%
   dplyr::select(c("NAME", "ID", "geometry")) %>%
   left_join(fmr_2017[,c("ID","fmr0", "fmr1", "fmr2", "fmr3", "fmr4",
-                        "Metro_code", "areaname")], by="ID")
+                        "Metro_code", "areaname", "countyname")],
+            by="ID")
+
+
 
 ```
 
 ```{r, eval=TRUE}
 # geographic visualizations of housing costs
 library(sf)
+cpi_by_year <- read.csv("annual_cpi_us.csv", fileEncoding = "UTF-8-BOM")
+cpi_by_year$adjust <- cpi_by_year$cpi/218.0555 # adjustment factor
+
+# use the cpi_by_year adjustment to adjust rents to 2010 dollars
+# rent in y year = (rent in current year) X (CPI y year/CPI current year)
 
 fmr1_2017_map <- ggplot() +
-  geom_sf(data=fmr_2017_geo,lwd=0, aes(fill = fmr1)) +
+  geom_sf(data=fmr_2017_geo,lwd=0, 
+          aes(fill = fmr1/1.124116)) + # adjust factor included
   ggtitle("2017 Median Rent for 1-bed") + 
-  scale_fill_gradientn(name = "Rent ($)", colours = myPalette2(100),
-                       limits = c(0,3000),
-                       breaks = c(500,1000,1500,2000,2500,3000)) +    # add limits and breaks to normalize scaling between years  
+  scale_fill_gradientn(name = "Rent (2010 $)", 
+                       colours = myPalette2(100),
+                       limits = c(0,2000),
+                       breaks = c(500,1000,1500,2000)) + # add limits and breaks to normalize scaling between years  
   north(data = combined, symbol = 12, anchor = c(x = -25, y = 39.93)) +
   scalebar(data = combined, dist = 500, dist_unit = 'mi', transform = TRUE, location = "bottomleft",
            st.dist = 0.1) +
   my_theme()
 
 fmr1_2017_map
+```
+```{r, eval=TRUE}
+# an interactive map of rent prices
+
+library(leaflet)
+library(RColorBrewer)
+library(htmlwidgets)
+
+pal_fun <- colorNumeric("YlOrRd", NULL)    # Yellow-Orange-Red from RColorBrewer
+
+# ------------------------------------------------- #
+# Code to fix misaligned "na" in map legend
+# ------------------------------------------------- #
+css_fix <- "div.info.legend.leaflet-control br {clear: both;}" # CSS to correct spacing
+html_fix <- htmltools::tags$style(type = "text/css", css_fix)  # Convert CSS to HTML
+
+# Pop-up message
+pu_message <- paste0("County: ", fmr_2017_geo$countyname,  
+                     "<br>Rent 1-bed: ", floor(fmr_2017_geo$fmr1/1.124116))
+
+
+# Adding more customization 
+fmr_2017_mapi <- leaflet(fmr_2017_geo) %>%
+  addPolygons(stroke = FALSE,                        # remove polygon borders
+              fillColor = ~pal_fun(fmr1/1.124116),
+              fillOpacity = 0.5, smoothFactor = 0.5, # increase opacity and resolution
+              popup = ~pu_message) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%   # add third party provider tile
+  #addProviderTiles(providers$Stamen.Toner) %>%
+  #addProviderTiles(providers$Esri.NatGeoWorldMap)
+  addLegend("bottomright",                           # location of legend
+            pal=pal_fun,                             # palette function
+            values=~fmr1/1.124116,                 # variable to be passed to palette function
+            title = 'Median Rent 1-bed in 2010 $',  # legend title
+            opacity = 1) %>%
+  addScaleBar()  # legend opacity (1 = completely opaque)
+
+# Insert fix to legend into leaflet HTML code
+fmr_2017_mapi %<>% htmlwidgets::prependContent(html_fix)
+
+fmr_2017_mapi # display leaflet map
 ```
 
 ### Results
