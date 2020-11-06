@@ -44,10 +44,11 @@ Download and install Rtools40 to use the BLS api: https://cran.r-project.org/bin
 ### Reading and Cleaning Datasets
 ```{r, eval=TRUE}
 # tools for accessing BLS data
+install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI by Mike Silva
 library(devtools)
 library(blsAPI)
 library(rjson)
-install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI by Mike Silva
+library(blsAPI)
 ```
 
 
@@ -115,6 +116,11 @@ head(m_cpi)
 
 
 ```{r, eval=TRUE}
+library(sf)
+library(ggsn)
+library(stringr)
+library(grid)
+
 # function to format the geo id column of FMR dataframes
 format_id <- function(df){
   
@@ -151,42 +157,70 @@ fmr_2021 <- read.csv("FY2021_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
          "Metro_code" = "cbsasub21", "areaname" = "areaname21",
          "countyname" = "cntyname") 
 
-
 # read in shape file of US counties
 counties <- readRDS(gzcon(url('https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds'))) # decompress  rds file and read in shape file
 counties$GEO_ID <- as.character(counties$GEO_ID)#change geo id to characters in counties df
 counties$ID <- gsub("US","", counties$GEO_ID)  #remove US from ID
 
+# read in metro area shape file and convert into spatial components
+setwd("tl_2017_us_cbsa")
+cbsa.sf <- st_read("tl_2017_us_cbsa.shp")
+cbsa.sf %<>%
+  select(GEOID, geometry,NAME, NAMELSAD) %>%
+  rename(ID2 = GEOID, Metro = NAMELSAD)
+
+
 # function to merge FMR dataframes with county geometries 
-geo_format <- function(df){
+geo_format <- function(geo_df){
   fmr_geo <- counties %>%
     dplyr::select(c("NAME", "ID", "geometry")) %>%
-    left_join(df[,c("ID","fmr0", "fmr1", "fmr2", "fmr3", "fmr4",
-                        "Metro_code", "areaname", "countyname")],
-              by="ID")
+    left_join(geo_df[,c("ID","fmr0", "fmr1", "fmr2", "fmr3", "fmr4",
+                        "Metro_code", "areaname", "countyname")], by="ID") %>%
+    distinct(Metro_code, .keep_all = TRUE)
 }
 
-# format geographical ids for all FMRs
+# function to merge FMR dataframes with metro area geometries 
+geo_format2 <- function(geo_df){
+  
+  geo_df %<>%
+    dplyr::select(ID,fmr0,fmr1,fmr2, fmr3, fmr4, Metro_code, areaname, countyname)%>%
+    distinct(Metro_code, .keep_all = TRUE) %>% # removed repeated counties
+    mutate(ID2 = substr(Metro_code, 12,16)) # metro IDs
+  
+  fmr_geo <- cbsa.sf %>%
+    dplyr::select(c("NAME", "ID2", "geometry", "Metro")) %>%
+    left_join(geo_df, by="ID2") # join by metro area
+
+}
+
+# format geographical IDs for all FMRs
 fmr_2017 <- format_id(fmr_2017)
 fmr_2018 <- format_id(fmr_2018)
 fmr_2019 <- format_id(fmr_2019)
 fmr_2020 <- format_id(fmr_2020)
 fmr_2021 <- format_id(fmr_2021)
 
-# add geographical data to all FMRs 
+# add county geographical data to all FMRs 
 fmr_2017_geo <- geo_format(fmr_2017)
 fmr_2018_geo <- geo_format(fmr_2018)
 fmr_2019_geo <- geo_format(fmr_2019)
 fmr_2020_geo <- geo_format(fmr_2020)
 fmr_2021_geo <- geo_format(fmr_2021)
 
+# add metro area geographical data to all FMRs 
+fmr_2017_geo2 <- geo_format2(fmr_2017)
+fmr_2018_geo2 <- geo_format2(fmr_2018)
+fmr_2019_geo2 <- geo_format2(fmr_2019)
+fmr_2020_geo2 <- geo_format2(fmr_2020)
+fmr_2021_geo2 <- geo_format2(fmr_2021)
+
+
 ```
 
 ```{r, eval=TRUE}
 # geographic visualizations of housing costs
-library(sf)
 cpi_by_year <- read.csv("annual_cpi_us.csv", fileEncoding = "UTF-8-BOM")
-cpi_by_year$adjust <- cpi_by_year$cpi/218.0555 # adjustment factor
+cpi_by_year$adjust <- cpi_by_year$cpi/258.2937 # adjustment factor to 2020 dollars
 
 # use the cpi_by_year adjustment to adjust rents to 2010 dollars
 # rent in y year = (rent in current year) X (CPI y year/CPI current year)
@@ -198,7 +232,7 @@ map_rent <- function(df, year){
     geom_sf(data=df,lwd=0, 
             aes(fill = fmr1/correction)) + # adjust factor included
     ggtitle(paste(year, "Median Rent for 1-bed")) + 
-    scale_fill_gradientn(name = "Rent (2010 $)", 
+    scale_fill_gradientn(name = "Rent (2020 $)", 
                          colours = myPalette2(100),
                          limits = c(0,2000),
                          breaks = c(500,1000,1500,2000)) + # add limits and breaks to normalize scaling between years  
@@ -209,11 +243,16 @@ map_rent <- function(df, year){
     my_theme()
 }
 
-fmr1_2017_map <- map_rent(fmr_2017_geo, 2018) # generate static rent map
+# call static map function and display
+fmr1_2017_map <- map_rent(fmr_2017_geo, 2017) # generate static rent map
 fmr1_2017_map # display rent map
 
+# call static map function and display
+fmr1_2017_map2 <- map_rent(fmr_2017_geo2, 2017) # generate static rent map
+fmr1_2017_map2 # display rent map
 
 ```
+
 ```{r, eval=TRUE}
 # an interactive map of rent prices
 
@@ -222,10 +261,18 @@ library(RColorBrewer)
 library(htmlwidgets)
 library(htmltools)
 
-pal_fun <- colorNumeric("YlOrRd", NULL)    # Yellow-Orange-Red from RColorBrewer
+pal_fun <- colorNumeric("YlOrRd", NULL)  # Yellow-Orange-Red from RColorBrewer
 
 
-# this funciton allows you to plot interactive leaflet maps of median US rents by year
+# ------------------------------------------------- #
+# HTML code to fix misaligned "na" in map legend
+# ------------------------------------------------- #
+library(htmlwidgets)
+css_fix <- "div.info.legend.leaflet-control br {clear: both;}" # CSS to correct spacing
+html_fix <- htmltools::tags$style(type = "text/css", css_fix)  # Convert CSS to HTML
+
+
+# Funciton allows to plot interactive leaflet maps of median US rents by year
 map_rent_i <- function(df, year){
 
 #---------------------------------------------------#
@@ -268,17 +315,20 @@ title <- tags$div(
     addLegend("bottomright",                           # location of legend
               pal=pal_fun,                             # palette function
               values=~fmr1/correction,                  # variable to be passed to palette function
-            title = paste("Rent",1,"bed (2010 $)"),  # legend title
+            title = paste("Rent",1,"bed (2020 $)"),  # legend title
             opacity = 1) %>% # legend opacity (1 = completely opaque)
     addScaleBar() %>%
     addTiles() %>%
     addControl(title, position = "topleft", className="map-title") #add title panel
   
-  return(interactive_map)
+  return(interactive_map %<>% htmlwidgets::prependContent(html_fix))
 }
 
-fmr_2017_mapi <- map_rent_i(fmr_2017_geo, 2017) # display leaflet map
-fmr_2017_mapi
+
+# Call interactive map function and display 
+fmr_2020_mapi <- map_rent_i(fmr_2020_geo, 2020) 
+fmr_2020_mapi
+
 
 ```
 
