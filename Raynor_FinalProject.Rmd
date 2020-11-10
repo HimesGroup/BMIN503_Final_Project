@@ -49,13 +49,13 @@ Data files will not be made publically available as they contain confidential in
 1. Load libraries needed to clean and analyze data.
 ```{r}
 #Load libaries
-library(deSolve)    #diff eqns
-library(ggplot2)    #pretty figures
-library(dplyr)      #tidy
-library(data.table) #counts
-library(MASS)    #Stats
-library(rgdal)   #shapefiles
-library(stringr) #work with strings
+suppressMessages(suppressWarnings(library(deSolve)))
+suppressMessages(suppressWarnings(library(ggplot2)))
+suppressMessages(suppressWarnings(library(dplyr)))
+suppressMessages(suppressWarnings(library(stringr)))
+suppressMessages(suppressWarnings(library(rgdal)))
+suppressMessages(suppressWarnings(library(MASS)))
+#suppressMessages(suppressWarnings(library(data.table)))
 ```
 
 2. Read in and clean data on rabies cases. Data come from collaborators at the Ministry of Health and from case reports from Elvis working in the field. 
@@ -99,8 +99,8 @@ df_2016 <- subset(dogs1, !is.na(dogs1$EDAD_M16)) %>%
          Vaccine = VACUNADO16,
          Date = FECHA_VAC16,
          Restriction = ACCESO_CALLE16) %>%
-  mutate(Date= str_sub(df_2016$Date, end=-6),
-         Date= as.Date(df_2016$Date, "%d/%m/%y"))
+  mutate(Date= str_sub(Date, end=-6),
+         Date= as.Date(Date, "%d/%m/%y"))
 
 #2017 survey data
 df_2017 <- subset(dogs1, !is.na(dogs1$EDAD_MESES17))%>%
@@ -147,22 +147,135 @@ df_2019 <-df_2019%>%
          Years = as.numeric(as.character(Years)))
 ```
 
-#### Model description
-
 #### Parameters
-1. $\mu$ (background death rate)
+1. Known parameters
 ```{r}
-df_2019 <- df_2019 %>%
+DOG_POPN= 264550.2646 #Peru Ministry of Health estimate
+GAMMA= 1/50 #Hampson 2009
+NU2 = 1/365 #vaccine label
+ETA = 0 #initial vaccination coverage, setting to 0 for simplicity and will have first vancan on day 1
+RHO = 0.1 #assumption- reporting rate
+MODEL_TYPE= 1 #frequeny dependent
+```
+
+2. $\mu$ (background death rate)
+```{r}
+df_2019 <- df_2019 %>% 
   mutate(Age = Years*365.25 + Months*30.4375)
-
-MU <- 1/t.test(df_2019$Age)$estimate[[1]] #mean: 1099.203 [1063.]
+MU <- 1/t.test(df_2019$Age)$estimate[[1]] #Mean: 1099.203 [1063.346, 1135.060] 
 ```
 
-2. $\gamma$ (latency rate)
+3. $\alpha$	(infectious period)
 ```{r}
-df$Incubation <- df$Symptoms_date - df$DateCaseBitten
-GAMMA <- t.test(df$Incubation) #mean: 60.7272 [-17.72904, 139.18359] days
+df$Infectious <- df$Death_date - df$Symptoms_date
+ALPHA <- 1/t.test(df$Infectious)$estimate[[1]] #2.534247 [1.931721, 3.136772]
+#Infectious dates reasonable, faily good data, matches with Katie Hampson's findings
 ```
+
+4. $\nu$ vaccination coverage
+```{r}
+#2016 
+plyr::count(df_2016$Vaccine) #0.6147823
+plyr::count(df_2016$Date) #Mode= June 12
+
+#2017
+plyr::count(df_2017$Vaccine) #0.4989594
+plyr::count(df_2017$Date) #Mode= September 22
+
+#2018
+plyr::count(df_2018$Vaccine) #0.5285256
+plyr::count(df_2018$Date) #Mode= August 6
+
+#2019
+plyr::count(df_2019$Vaccine) #0.5850053
+plyr::count(df_2019$Date) #Mode= October 2
+
+#Build table
+NU1 <- data.frame(year=c(2016,2017,2018,2019), 
+                 date=as.Date(c("2016-06-12", "2017-09-22", "2018-08-06", "2019-10-02")),
+                 vax=c(0.615, 0.499, 0.529, 0.585))
+
+```
+
+5. $R_{0}$
+```{r}
+#fit to epidemic data
+R_NAUGHT=1.44 #Ref paper
+```
+
+#### Deterministic Model
+```{r}
+#Parameters
+params <- c(R0= R_NAUGHT, #Bite: 1.366061, #Age:2.487201
+            m = MU,#mu (normal death rate)
+            g = GAMMA, #gamma (latency rate)
+            a = ALPHA, #alpha (death rate attributable to rabies)
+            u = NU2, #1 yr vaccine
+            eta= ETA, #initial vaccine coverage --- (have vancan start at d1)
+            N =DOG_POPN, #2645.503, #Do we want this to be density (per km2) or total
+            rho = RHO, #Reporting rate
+            d2= 1) #delta2, density dependency weight [1 (freq), 0 (dens)] 
+params["d"] <- 1/params["N"] + params["d2"]*((params["N"]-1)/params["N"]) #model type weight: frequency vs density dependent
+params["beta"] <-params["R0"]*params["d"]*(params["g"]+params["m"])*(params["a"]+params["m"])/params["g"]
+
+#Initial conditions
+init <- NULL # popn initial values
+init["S"] <- (params["N"]-1)*(1-params["eta"]) 
+init["E"] <- 1
+init["I"] <- 0
+init["R"] <- (params["N"]-1)*params["eta"]
+init["H"] <- 0 #Accumulator variable
+
+#Time dependent vaccination pulses for the yearly vaccination campaign
+times <- seq(0, 2557, by = 1) #time series for model
+signal <- data.frame(times = times, vax = rep(0, length(times))) #artificial time series
+
+#####FIX THIS PART######
+#specify vaccination coverage
+signal$vax[1]    <- -log(1-0.4898) #2014-03-16 ***Earliest year we have data from Sergio
+signal$vax[366]  <- -log(1-0.4898) #2015-03-16 ***Reproted 92.54% coverage ---> don't believe, using 2014
+signal$vax[820]  <- -log(1-0.6148) #2016-06-12
+signal$vax[1287] <- -log(1-0.4990) #2017-09-22
+signal$vax[1605] <- -log(1-0.5285) #2018-08-06
+signal$vax[2049] <- -log(1-0.5850) #2019-10-24
+########################
+input <- approxfun(signal)#Interpolating fx
+
+#deterministic model description
+disease_dynamics <- function(times, state, params) {
+  with(
+    as.list(c(state, params)), {
+      vax <- input(times)
+      
+      ##Equations (easy to read)
+      dS <- (m*N + a*I) - beta*I*S/(d*N) - m*S -vax*S + u*R
+      dE <- beta*S*I/(d*N) - g*E - m*E
+      dI <- g*E -a*I - m*I
+      dR <- vax*S - u*R - m*R
+      dH <- beta*S*I/(d*N) #Acummulator variable- just a count of all cases moving into I
+      return(list(c(dS, dE, dI, dR, dH), signal=vax))
+    }
+  )
+}
+
+#Run model
+out <- as.data.frame(ode(y = init, times = times, func = disease_dynamics, parms = params))
+RESULTS<-data.frame(out$S, out$E, out$I, out$R, out$H) #results
+RESULTS$date <-seq(as.Date("2014/03/16"), as.Date("2021/03/16"), "days")
+
+#Convert model results to accumulated incidence
+RESULTS <- RESULTS %>%
+  mutate(diffH = out.H - lag(out.H))
+RESULTS$diffH[is.na(RESULTS$diffH)] <- 0 #set dates don't have date for as 0 (I.e beginning and end)
+RESULTS$Date <- seq(as.Date("2014/03/16"), as.Date("2021/03/16"), "days") #Create ref of days
+rabies.stim <- data.table::setDT(RESULTS)[, .(Incidence = sum(diffH)), by = .(yr = data.table::year(Date), mon = months(Date))] #count incidence by month
+rabies$stim <- rabies.stim$Incidence #Match stim incidence with actual incidence df
+rabies$stim_reports <- rabies$stim#*params["rho"] #scale down stim reports by reporting percent
+
+
+```
+
+#### Stochastic model
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
@@ -181,3 +294,50 @@ fig1 <- ggplot() +
 fig1
 
 ```
+
+#### Deterministic model results
+```{r}
+#plot whole system dynamics
+p1 <- ggplot()+
+  theme_classic()+ #white background w/ out grid
+  geom_line(data=RESULTS, aes(x=date, y=out.S, color="Susceptible"))+
+  geom_line(data=RESULTS, aes(x=date, y=out.E, color="Exposed"))+
+  geom_line(data=RESULTS, aes(x=date, y=out.I, color="Infectious"))+
+  geom_line(data=RESULTS, aes(x=date, y=out.R, color="Vaccinated"))+
+  scale_x_date(date_breaks= "1 year", date_labels="%Y", limits=c(as.Date("2014-03-16", "%Y"), as.Date("2020", "%Y")))+
+   scale_y_continuous(labels = function(l) {
+     trans = l / 1000
+     paste0(trans, "k")
+     })+
+  ggtitle(" ") + #title label
+  scale_color_manual(values = c(
+    'Susceptible' = 'gold',
+    'Exposed' = 'pink',
+    'Infectious' = 'red',
+    'Vaccinated' = 'blue'),
+    name= "Diease state") +
+  labs(y= "Number of dogs", x = "Time (days)") #axis labels
+p1
+
+#Plot of incidence real vs stim
+p2 <- ggplot()+
+  theme_classic()+ #white background w/ out grid
+  geom_col(data = rabies, aes(x=month, y=reports, fill="Reported rabies cases", alpha="Reported rabies cases"), width=0.75)+
+  geom_col(data = rabies, aes(x=month, y=stim_reports, fill="Simulated cases reported", alpha="Simulated cases reported"),  width= 0.75)+
+  ggtitle("Rabies cases") + #title label
+  #scale_x_date(date_breaks= "2 months", date_labels="%Y", limits=c(as.Date("2014-03-16", "%Y"), as.Date("2020", "%Y")))+
+  scale_fill_manual(values = c(
+      'Reported rabies cases' = 'red',
+      'Simulated cases reported' = 'blue'),
+       name= "Reported cases") +
+  scale_alpha_manual(values = c(
+    'Reported rabies cases' = 0.5,
+    'Simulated cases reported' = 0.5),
+    name= "Reported cases") +
+  labs(y= "Number of reports", x = "Time (month)") #axis labels
+p2
+
+
+```
+
+#### Stochastic model results
