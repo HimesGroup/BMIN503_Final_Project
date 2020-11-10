@@ -18,6 +18,31 @@ library(randomForest)
 library(inTrees)
 library(glue)
 library(fabricatr)
+library(mgcv)
+library(ranger)
+
+Ranger2List <- function(rf_ranger)
+{
+  formatRanger <- function(tree){
+    rownames(tree) <- 1:nrow(tree)
+    tree$`status` <- ifelse(tree$`terminal`==TRUE,-1,1)
+    tree$`left daughter` <- tree$`leftChild` + 1
+    tree$`right daughter` <- tree$`rightChild` + 1
+    tree$`split var` <- tree$`splitvarID`
+    tree$`split point` <- tree$`splitval`
+    tree$`prediction` <- tree$`prediction`
+    tree <- tree[,c("left daughter","right daughter","split var","split point","status")]
+    tree <- data.matrix(as.data.frame(tree))
+    return(tree)
+  }
+  treeList <- NULL
+  treeList$ntree <- rf_ranger$num.trees
+  treeList$list <- vector("list",rf_ranger$num.trees)
+  for(i in 1:rf_ranger$num.trees){
+    treeList$list[[i]] <- formatRanger( treeInfo(rf_ranger, tree = i) )
+  }
+  return(treeList)
+}
 
 ```  
 ***
@@ -58,11 +83,11 @@ nobs <- 6000
 
 dt <- fabricate(N = nobs,
                 age = runif(N, min = 3, max = 17),
-                female = correlate(given = age, rho = 0.2, draw_binary, prob = 0.55),
-                outcome = correlate(given = age, rho = -0.6, draw_binary, prob = outcome_freq[[1]]),
-                image = correlate(given = outcome, rho = 0.9, draw_binary, prob = image_freq[[1]]),
-                symptoms_mu = pmin(pmax(rnorm(N, mean = 0.05 + 0.2*image + 0.7*outcome - 0.1*age, 
-                                              sd = 0.05 + 0.05*image + 0.05*outcome),0),1))
+                sex = correlate(given = age, rho = 0.2, draw_binary, prob = 0.55),
+                outcome_true = correlate(given = age, rho = -0.6, draw_binary, prob = outcome_freq[[1]]),
+                image = correlate(given = outcome_true, rho = 0.8, draw_binary, prob = image_freq[[1]]),
+                symptoms_mu = pmin(pmax(rnorm(N, mean = 0.05 + 0.2*image + 0.7*outcome_true - 0.05*age, 
+                                              sd = 0.05 + 0.05*image + 0.05*outcome_true),0),1))
 
 rmat <- matrix(rnorm(nsymptoms^2),nsymptoms,nsymptoms)
 cov_mat <- rmat%*%t(rmat)
@@ -75,59 +100,14 @@ dt_symptoms <- cbind(genData(nobs, id = "ID"), "symptoms_mu" = dt$symptoms_mu) %
 
 dt <- bind_cols(dt, dt_symptoms) %>% 
   dplyr::select(-symptoms_mu) %>%
-  dplyr::mutate(across(c("image", "outcome"), as.factor))
+  dplyr::mutate(outcome_measured = ifelse(image == 0, NA, outcome_true),
+                sex = factor(sex, levels = 0:1, labels = c("Male", "Female")),
+                image = factor(image, levels = 0:1, labels = rev(image_types)),
+                across(starts_with("outcome"), ~factor(.x, levels = 0:1, labels = rev(outcome_types))))
 
 dt_assignments <- sample(1:2, size = nobs, replace = T, prob = c(0.8, 0.2))
 ```
 
-
-```{r table-1}
-
-set.seed(12345)
-
-dt %>%
-  group_by(image, outcome) %>%
-  summarise(n_total = n(),
-            n_girls = sum(female == 1),
-            n_boys = sum(female == 0),
-            across(starts_with("symptom"), mean))
-
-
-```
-
-```{r}
-
-set.seed(12345)
-
-dt_train <- filter(dt, dt_assignments == 1)
-dt_test <- filter(dt, dt_assignments == 2)
-
-trim_vars <- c("ID", "image", "outcome")
-
-dt_rf_predictors <- select(dt_train, -trim_vars) %>% data.matrix()
-
-dt_rf <- randomForest(x = dt_rf_predictors, y = dt_train$outcome, ntree = 500, 
-                      importance = TRUE, cutoff = c(0.95, 0.05), nodesize = 3)
-
-dt_rf_pred <- predict(dt_rf, select(dt_test, -trim_vars), type = "response")
-
-table(Outcome = dt_test$outcome, Predicted = dt_rf_pred)
-
-ruleExec <- extractRules(RF2List(dt_rf), X = dt_rf_predictors, digits = 2)
-
-ruleMetric <- getRuleMetric(ruleExec, X = dt_rf_predictors, target = dt_train$outcome) %>%
-  pruneRule(., X = dt_rf_predictors, target = dt_train$outcome)
-
-learner <- buildLearner(ruleMetric, X = dt_rf_predictors, target = dt_train$outcome, minFreq = 0.05)
-
-pretty_learner <- presentRules(learner, colnames(dt_rf_predictors))
-
-bind_cols(true = dt_test$outcome, pred = applyLearner(learner, X = select(dt_test, -trim_vars))) %>%
-  group_by(true, pred) %>%
-  summarise(n = n())
-
-
-```
 
 # Methods
 
@@ -145,5 +125,117 @@ Data analysis was done using `r R.version.string` [@RCoreTeam2020]. The dataset 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
+```{r table-1}
+
+set.seed(12345)
+
+dt %>%
+  select(age, sex, outcome_measured, starts_with("symptom")) %>%
+  mutate(outcome_measured = fct_explicit_na(outcome_measured, na_level = "Not imaged")) %>%
+  tbl_summary(by = outcome_measured)
+
+
+```
+
+```{r propensity}
+
+prop_formula <- str_c("image ~ s(age) + sex + ", paste0("symptom_", 1:10, collapse = " + "))
+propensity_mod <- gam(as.formula(prop_formula), family = binomial(), data = dt)
+
+dt <- dt %>%
+  mutate(propensity_score = predict(propensity_mod, type = "response"),
+         propensity_weight = case_when(
+           image == 0 ~ (1 /(1-propensity_score)),
+           image == 1 ~ (1 /(propensity_score))
+         ))
+
+```
+
+
+```{r}
+
+set.seed(12345)
+
+dt_train <- filter(dt, dt_assignments == 1)
+dt_test <- filter(dt, dt_assignments == 2)
+
+trim_vars <- c("ID", "image", "outcome_measured", "outcome_true", "propensity_score", "propensity_weight")
+
+dt_predictors <- select(dt_train, -all_of(trim_vars)) %>% data.matrix()
+
+dt_predictors_noNA <- dt_predictors[!is.na(dt_train$outcome_measured), ]
+outcome_measured_noNA <- dt_train$outcome_measured[!is.na(dt_train$outcome_measured)]
+propensity_weight_noNA <- dt_train$propensity_weight[!is.na(dt_train$outcome_measured)]
+
+```
+
+
+
+```{r randomForest}
+
+set.seed(12345)
+num_trees <- 500
+
+dt_randomForest <- randomForest(x = dt_predictors_noNA, y = outcome_measured_noNA, 
+                                ntree = num_trees, importance = TRUE, cutoff = c(0.95, 0.05), nodesize = 3)
+
+dt_randomForest_pred <- dt_test %>%
+  select(-all_of(trim_vars)) %>%
+  data.matrix() %>%
+  predict(dt_randomForest, ., type = "response")
+
+table(Outcome = dt_test$outcome_true, Predicted = dt_randomForest_pred)
+
+treeList_randomForest <- RF2List(dt_randomForest)
+ruleExec_randomForest <- extractRules(treeList_randomForest, X = dt_predictors_noNA, digits = 2)
+
+ruleMetric <- getRuleMetric(ruleExec_randomForest, X = dt_predictors_noNA, target = outcome_measured_noNA) %>%
+  pruneRule(., X = dt_predictors_noNA, target = outcome_measured_noNA, maxDecay = 0.2)
+
+learner_randomForest <- buildLearner(ruleMetric, X = dt_predictors_noNA, target = outcome_measured_noNA, minFreq = 0.05)
+
+prettyLearner_randomForest <- presentRules(learner_randomForest, colnames(dt_predictors_noNA))
+
+bind_cols(true = dt_test$outcome_true, 
+          pred = applyLearner(learner_randomForest, 
+                              X = select(dt_test, -trim_vars))) %>%
+  group_by(true, pred) %>%
+  summarise(n = n())
+
+
+```
+
+
+```{r ranger}
+
+set.seed(12345)
+
+dt_ranger_noweight <- ranger(x = dt_predictors_noNA, y = outcome_measured_noNA, 
+                          num.trees = num_trees, importance = "impurity",
+                          class.weights = c(0.95, 0.05), min.node.size = 3,
+                          seed = 12345, classification = TRUE)
+
+dt_ranger_invweight <- ranger(x = dt_predictors_noNA, y = outcome_measured_noNA, 
+                          num.trees = num_trees, importance = "impurity",
+                          class.weights = c(0.95, 0.05), min.node.size = 3,
+                          case.weights = propensity_weight_noNA,
+                          seed = 12345, classification = TRUE)
+
+dt_ranger_pred <- dt_test %>%
+  select(-all_of(trim_vars)) %>%
+  data.matrix() %>%
+  predict(dt_ranger_invweight, data = ., type = "response", seed = 12345)
+
+table(Outcome = dt_test$outcome_true, Predicted = dt_ranger_pred$predictions)
+
+treeList_ranger <- Ranger2List(dt_ranger_invweight)
+
+debug_treeList_ranger <- list()
+debug_treeList_ranger$ntree <- 1
+debug_treeList_ranger$list[[1]] <- treeList_ranger$list[[1]]
+ruleExec_ranger <- extractRules(treeList_ranger,dt_predictors_noNA,digits=10) 
+rule_metric <- getRuleMetric(ruleExec_ranger[1,,drop=FALSE],dt_predictors_noNA,outcome_measured_noNA)
+
+```
 
 # References
