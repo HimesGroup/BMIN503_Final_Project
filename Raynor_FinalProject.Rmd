@@ -19,7 +19,6 @@ options(width = 400)
 
 Over the summer of 2020, I worked to create a compartmental SEIR model of rabies in Arequipa, Peru investigating how COVID-19 control measures effected canine rabies dynamics. As an extension of the project, I am implementing a stochastic model as well as streamlining my old code using dplyr. 
 
-
 Data was collected from several sources. Information on positive cases comes from collaboration with the Peru Ministry of Health. Demographic data used to paramaterize the model comes from 5 years worth of survey data collected after the vaccination campaign by the Castillo team. 
 
 Ricardo Castillo-Neyra is a veterinarian and epidemiologist who is an expert in canine rabies in Peru. From Ricardo, I learned a lot about the social context of rabies in Arequipa, about the types of restrictions that occured due to COVID and about rabies dynamics.
@@ -43,8 +42,142 @@ Peru, and the rest of Latin America, has made enormous strides towards the OIE g
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+
 #### Data
-Data files are not submitted to f
+Data files will not be made publically available as they contain confidential information.
+
+1. Load libraries needed to clean and analyze data.
+```{r}
+#Load libaries
+library(deSolve)    #diff eqns
+library(ggplot2)    #pretty figures
+library(dplyr)      #tidy
+library(data.table) #counts
+library(MASS)    #Stats
+library(rgdal)   #shapefiles
+library(stringr) #work with strings
+```
+
+2. Read in and clean data on rabies cases. Data come from collaborators at the Ministry of Health and from case reports from Elvis working in the field. 
+```{r}
+#Load data
+df      <- read.csv("~/Rabies/models/Data/RabiesCaseData_7May2020.csv")  #Rabies case report
+df <- df %>%
+  rename(LabID = ï..LabID) %>%
+  mutate(
+    Symptoms_date         = as.Date(Symptoms_date,         "%d/%m/%Y"),
+    Complaint_date        = as.Date(Complaint_date,        "%d/%m/%Y"),
+    Death_date            = as.Date(Death_date,            "%d/%m/%Y"),
+    Obtained_date         = as.Date(Obtained_date,         "%d/%m/%Y"),
+    Received_date         = as.Date(Received_date,         "%d/%m/%Y"),
+    Result_date           = as.Date(Result_date,           "%d/%m/%Y"),
+    ContainmentStart_date = as.Date(ContainmentStart_date, "%d/%m/%Y"),
+    ContainmentOther_date = as.Date(ContainmentOther_date, "%d/%m/%Y"),
+    MedicalAttention_date = as.Date(MedicalAttention_date, "%d/%m/%Y"),
+    DateCaseBitten        = as.Date(DateCaseBitten,        "%d/%m/%Y"), 
+    NumDogsCaseBit        = as.numeric(as.character(NumDogsCaseBit)),
+    Month                 = as.numeric(as.character(Month)), #Format as number
+    Years                 = as.numeric(as.character(Years)), #Format as number
+    Age                   = Years*365.25 + Month*30.4375     #Calculate age in days
+  )
+
+rabies  <- read.csv("~/Rabies/models/Data/Rabies_IncidenceTable.csv")   #Rabies incidence table
+```
+
+3. Read in and clean data dog population data from 4 years of longitudinal surveys conducted by the team in Arequipa
+```{r}
+dogs1   <- read.csv("~/Rabies/rabia_ASA_encuesta_2017/resultados/dogs2016_2017_10Abr18.csv") #2016 & 2017 data
+
+#2016 survey data
+df_2016 <- subset(dogs1, !is.na(dogs1$EDAD_M16)) %>%
+  dplyr::select(UNICODE, NOMBRE, SEXO, EDAD_A16, EDAD_M16, VACUNADO16, FECHA_VAC16, ACCESO_CALLE16) %>%
+  rename(Unicdoe = UNICODE,
+         Name = NOMBRE,
+         Sex = SEXO,
+         Years = EDAD_A16,
+         Months = EDAD_M16,
+         Vaccine = VACUNADO16,
+         Date = FECHA_VAC16,
+         Restriction = ACCESO_CALLE16) %>%
+  mutate(Date= str_sub(df_2016$Date, end=-6),
+         Date= as.Date(df_2016$Date, "%d/%m/%y"))
+
+#2017 survey data
+df_2017 <- subset(dogs1, !is.na(dogs1$EDAD_MESES17))%>%
+  dplyr::select(UNICODE, NOMBRE, SEXO, EDAD_ANIO17, EDAD_MESES17, ESTE_ANIO_VACUNARON17, FECHA17) %>%
+  rename(Unicdoe = UNICODE,
+         Name = NOMBRE,
+         Sex = SEXO,
+         Years = EDAD_ANIO17,
+         Months = EDAD_MESES17,
+         Vaccine = ESTE_ANIO_VACUNARON17,
+         Date = FECHA17) 
+
+#2018 survey data
+df_2018 <- read.csv("~/Rabies/rabia_ASA_encuesta_2018/resultados/PERRO_CLEAN_2018-08-31.csv") #2018 data
+df_2018 <-df_2018%>%
+  dplyr::select(PERRO_UNICODE, PERRO_NOMBRE, PERRO_SEXO, PERRO_EDAD_ANIO, 
+                PERRO_EDAD_MES, PERRO_ESTE_ANIO_VACUNARON, PERRO_COMO_PERMANECE_CASA, PERRO_DATETIME) %>%
+  rename(Unicode = PERRO_UNICODE, 
+         Name = PERRO_NOMBRE, 
+         Sex = PERRO_SEXO, 
+         Years = PERRO_EDAD_ANIO, 
+         Months = PERRO_EDAD_MES, 
+         Vaccine = PERRO_ESTE_ANIO_VACUNARON, 
+         Restriction = PERRO_COMO_PERMANECE_CASA,
+         Date = PERRO_DATETIME) %>%
+  mutate(Date = substr(as.character(Date), 1, 10))
+
+
+#2019 survey data
+df_2019 <- read.csv("~/Rabies/rabia_ASA_encuesta_2019/resultados/PERRO2019VANCAN_CLEAN_2019-12-10.csv") 
+df_2019 <-df_2019%>%
+  dplyr::select(PERRO_UNICODE, PERRO_NOMBRE, PERRO_SEXO, PERRO_EDAD_ANIO, 
+                PERRO_EDAD_MES, PERRO_ESTE_ANIO_VACUNARON, PERRO_COMO_PERMANECE_CASA, PERRO_DATETIME) %>%
+  rename(Unicode = PERRO_UNICODE, 
+         Name = PERRO_NOMBRE, 
+         Sex = PERRO_SEXO, 
+         Years = PERRO_EDAD_ANIO, 
+         Months = PERRO_EDAD_MES, 
+         Vaccine = PERRO_ESTE_ANIO_VACUNARON, 
+         Restriction = PERRO_COMO_PERMANECE_CASA,
+         Date = PERRO_DATETIME) %>%
+  mutate(Date = substr(as.character(Date), 1, 10),
+         Months = as.numeric(as.character(Months)),
+         Years = as.numeric(as.character(Years)))
+```
+
+#### Model description
+
+#### Parameters
+1. $\mu$ (background death rate)
+```{r}
+df_2019 <- df_2019 %>%
+  mutate(Age = Years*365.25 + Months*30.4375)
+
+MU <- 1/t.test(df_2019$Age)$estimate[[1]] #mean: 1099.203 [1063.]
+```
+
+2. $\gamma$ (latency rate)
+```{r}
+df$Incubation <- df$Symptoms_date - df$DateCaseBitten
+GAMMA <- t.test(df$Incubation) #mean: 60.7272 [-17.72904, 139.18359] days
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+#### Epidemiologic  data exploration
+```{r}
+fig1 <- ggplot() +
+  theme_classic()+
+  geom_col(data = rabies, aes(x=month, y=reports))+
+  scale_x_discrete(breaks=seq(0, max(rabies$month)+1, 1),
+                   limits=seq(0, max(rabies$month)+1, 4))+
+  scale_y_discrete(breaks=seq(0, max(rabies$reports)+1, 1),
+                   limits=seq(0, max(rabies$reports)+1, 1))+
+  xlab("Month") + ylab("New rabies cases")+
+  ggtitle("Arequipa rabies epi curve")
+fig1
+
+```
