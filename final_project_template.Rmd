@@ -11,8 +11,6 @@ output:
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
-***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
 
 ### Overview
 
@@ -63,6 +61,183 @@ Brain 136.1 (2013): 43-64.
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+```{r data_prep, echo = FALSE, cache = TRUE, message=FALSE}
+library(dplyr)
+library(moments)
+library(ggplot2)
+
+# home <- "/Users/elizabethmamourian/Box/mamourie/ISTAGING/TBI/"
+# dir <- "/Users/elizabethmamourian/Box/mamourie/project_copies/ClinicalDataConsolidation_201911/"
+
+fromBeginning <- FALSE
+if (fromBeginning==TRUE) {
+df <- read.csv(paste0(home,"df.csv"), stringsAsFactors = FALSE)
+u.batch.orig <- read.csv(paste0(dir,"Protocols/UKBiobank_Consolidated/ukbiobank_batch0-10.csv"), stringsAsFactors=FALSE)
+u.batch <- u.batch.orig %>%
+  mutate(PTID=as.character(eid)) %>%
+  mutate(Visit_Code=case_when(VISIT==2 ~ '2_0')) %>%
+  select(-c(BMI,DSST,TMT_A,TMT_B,eid))
+
+##### - select TBI subjects from self report (N=3) and ICD10 codes (N=40)
+# select TBI subjects from self-report f20002 -> (tbi.sr) ####
+sr <- u.batch %>%
+  select(c(names(u.batch)[startsWith(names(u.batch),"noncancer_illness_code_selfreported_f20002")],"PTID")) %>%
+  filter(!is.na(noncancer_illness_code_selfreported_f20002_0_0))            # select columns containing self-report data
+emptycols <- sapply(sr, function (k) all(is.na(k)))                         # select empty columns
+sr <- sr[!emptycols]                                                        # remove empty columns
+temp = sapply(sr[1:17],function(x) grepl("1240", x, ignore.case = TRUE))    # select for TBI self-report (1240)
+sr$x1240 = rowSums(temp) > 0
+tbi.sr <- sr[sr$x1240==TRUE,"PTID"]                                         # select PTID of subjects self-reporting
+rm(temp,sr,emptycols)                                                       # remove temporary data
+
+# select TBI subjects from ICD10 -> (tbi.icd) ####
+icd <- u.batch %>%
+  select(c(names(u.batch)[startsWith(names(u.batch),"diagnoses_icd10")],    # select columns containing ICD codes
+         names(u.batch)[startsWith(names(u.batch),"diagnoses_icd9")],"PTID")) %>%
+  filter(!is.na(diagnoses_icd10_f41270_0_0)) %>%                            # remove subjects/timwpoints with no reported ICD-10 codes
+  filter(PTID %in% df$PTID)                                                 # selectsubjects included in the ROI dataset
+emptycols <- sapply(icd, function (k) all(is.na(k)))                        # select empty columns
+icd <- icd[!emptycols]                                                      # remove empty columns
+temp = sapply(icd[1:length(icd)-1],function(x) grepl("S06", x, ignore.case = TRUE))
+icd$S06 = rowSums(temp) > 0
+tbi.icd <- icd[icd$S06==TRUE,"PTID"]
+rm(temp,emptycols)                                                          # remove temporary data
+
+# combine list of subjects from self-report and ICD10 -> (tbi.sub) -> (df$TBI) ####
+tbi.sub <- c(tbi.sr,tbi.icd)                                                # combine TBI subjects from self-report and ICD-10 definitions
+tbi.sub <- tbi.sub[!duplicated(tbi.sub)]                                    # remove duplicates
+df <- df %>%
+  mutate(TBI=ifelse(PTID%in%tbi.sub,1,0))
+
+##### - select subjects with other pathologies from control group (ICD10 codes beginning with F&G) -> (icd.sub) ####
+temp = sapply(icd[1:(length(icd)-2)], function(x) grepl("G", x, ignore.case = TRUE))
+icd$G = rowSums(temp) > 0
+icd.G <- icd[icd$G==TRUE,"PTID"]    # N=1576
+temp = sapply(icd[1:(length(icd)-3)],function(x) grepl("F", x, ignore.case = TRUE))
+icd$xF = rowSums(temp) > 0
+icd.F <- icd[icd$xF==TRUE,"PTID"]   # N=1229
+icd.sub <- c(icd.G,icd.F)
+icd.sub <- icd.sub[!duplicated(icd.sub)]   # N=2568
+rm(icd.F,icd.G,tbi.sr,tbi.icd,temp)
+
+##### - age/sex match controls to cases, calculate z-scores for each ROI
+# prepare datasets ####
+ctrl <- df %>% 
+  filter(TBI!=1) %>%
+  filter(!PTID %in% icd.sub)
+case <- df %>% filter(TBI==1) %>%
+  mutate(range.low= Age_At_Visit -1) %>%
+  mutate(range.high= Age_At_Visit +1)
+
+# select age/sex matched controls and calculate z-score -> (df.z) ####
+for (row in 1:nrow(case)) {
+  sub_data <- case[row,]
+  sub_data.muse <- sub_data %>%
+    select(c(names(df)[startsWith(names(df),"MUSE")]))
+  controls <- ctrl %>%
+    filter(Age_At_Visit>=sub_data$range.low) %>%
+    filter(Age_At_Visit<=sub_data$range.high) %>%
+    filter(Sex== sub_data$Sex)
+  sub_controls <- controls %>% 
+    select(PTID)
+  muse_controls <- controls %>%
+    select(c(names(df)[startsWith(names(df),"MUSE")]))
+  mean <- sapply(muse_controls, function(k) mean(k))
+  sd <- apply(muse_controls, 2, sd)
+  nm <- rbind(mean,sd)
+  nm.d <- as.data.frame(nm)
+  z <- rbind(nm.d,sub_data.muse)
+  zz <- sapply(names(z), function(x) (z[3,x] -z[1,x])/z[2,x])
+  names(zz) <- paste0(names(z),"_z")
+  zz <- as.data.frame(t(zz))
+  PTID <- sub_data[,"PTID"]
+  age <- sub_data %>% select(Age_At_Visit)
+  sex <- sub_data %>% select(Sex)
+  N.controls <- nrow(sub_controls)
+  if (row==1) {
+    df.z <- data.frame(PTID, age, sex, N.controls, zz)
+  } else {
+    df.z <- rbind(df.z,data.frame(PTID, age, sex, N.controls, zz))
+  }
+  z_ctrl <- controls %>%
+    select(c(PTID, names(df)[startsWith(names(df),"MUSE")]))
+  z_ctrl[cols <- c(names(df)[startsWith(names(df),"MUSE")])] <- 
+    scale(z_ctrl[cols <- c(names(df)[startsWith(names(df),"MUSE")])])
+  z_ctrl$sbj.info <- paste0(sub_data$PTID,"_control")
+  names(z_ctrl)[startsWith(names(z_ctrl),"MUSE")] <- paste0(names(z_ctrl)[startsWith(names(z_ctrl),"MUSE")],"_z")
+  if (row==1) {
+    df.z_ctrl <- data.frame(z_ctrl)
+  } else {
+    df.z_ctrl <- rbind(df.z_ctrl,z_ctrl)
+  }
+}
+ rm(nm,age,muse_controls,nm.d,sub_data,sub_data.muse,z,zz,PTID,sd,mean,N.controls,row,sub_controls,controls,sex, z_ctrl)
+
+# select age/sex matched controls and calculate icv corrected z-score -> (df.z) ####
+for (row in 1:nrow(case)) {
+  sub_data <- case[row,]
+  sub_data.muse <- sub_data %>%
+    select(c(names(df)[startsWith(names(df),"MUSE")]))
+  sub_data.muse.icv <- as.data.frame(t(sapply(names(sub_data.muse), function(x) sub_data.muse[,x]/sub_data.muse[,"MUSE_Volume_702"])))
+  controls <- ctrl %>%
+    filter(Age_At_Visit>=sub_data$range.low) %>%
+    filter(Age_At_Visit<=sub_data$range.high) %>%
+    filter(Sex== sub_data$Sex)
+  sub_controls <- controls %>% 
+    select(PTID)
+  muse_controls <- controls %>%
+    select(c(names(df)[startsWith(names(df),"MUSE")]))
+  muse_controls.icv <- as.data.frame(sapply(names(muse_controls), function(x) muse_controls[,x]/muse_controls[,"MUSE_Volume_702"]))
+  mean <- sapply(muse_controls.icv, function(k) mean(k))
+  sd <- sapply(muse_controls.icv, function(m) sd(m))
+  nm <- rbind(mean,sd)
+  nm.d <- as.data.frame(nm)
+  z <- rbind(nm.d,sub_data.muse.icv)
+  zz <- sapply(names(z), function(x) (z[3,x] -z[1,x])/z[2,x])
+  names(zz) <- paste0(names(z),"_z")
+  zz <- as.data.frame(t(zz))
+  PTID <- sub_data[,"PTID"]
+  age <- sub_data %>% select(Age_At_Visit)
+  sex <- sub_data %>% select(Sex)
+  N.controls <- nrow(sub_controls)
+  if (row==1) {
+    df.z.icv <- data.frame(PTID, age, sex, N.controls, zz)
+  } else {
+    df.z.icv <- rbind(df.z.icv,data.frame(PTID, age, sex, N.controls, zz))
+  }
+  z_ctrl <- controls %>%
+    select(c(PTID, names(df)[startsWith(names(df),"MUSE")]))
+  z_ctrl.icv_tmp <- as.data.frame(sapply(names(df)[startsWith(names(df),"MUSE")], 
+                                                      function(x) z_ctrl[,x]/z_ctrl[,"MUSE_Volume_702"]))
+  z_ctrl.icv <- cbind(PTID= z_ctrl$PTID, z_ctrl.icv_tmp)
+  z_ctrl.icv[cols <- c(names(df)[startsWith(names(df),"MUSE")])] <- 
+    scale(z_ctrl.icv[cols <- c(names(df)[startsWith(names(df),"MUSE")])])
+  z_ctrl.icv$sbj.info <- paste0(sub_data$PTID,"_control")
+  names(z_ctrl.icv)[startsWith(names(z_ctrl.icv),"MUSE")] <- paste0(names(z_ctrl.icv)[startsWith(names(z_ctrl.icv),"MUSE")],"_z")
+    if (row==1) {
+    df.z_ctrl.icv <- data.frame(z_ctrl.icv)
+  } else {
+    df.z_ctrl.icv <- rbind(df.z_ctrl.icv,z_ctrl.icv)
+  }
+}
+
+df.z.icv$MUSE_Volume_702_z <- 0
+df.z_ctrl.icv$MUSE_Volume_702_z <- 0
+
+
+} else {
+
+df.z <- read.csv(paste0(home,"df_z.csv"), stringsAsFactors = FALSE)
+df.z.icv <- read.csv(paste0(home,"df_z_icv.csv"), stringsAsFactors = FALSE)
+df.z_ctrl <- read.csv(paste0(home,"df_z_ctrl.csv"), stringsAsFactors = FALSE)
+df.z_ctrl.icv <- read.csv(paste0(home,"df_z_ctrl_icv.csv"), stringsAsFactors = FALSE)
+}
+
+
+
+
+
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
