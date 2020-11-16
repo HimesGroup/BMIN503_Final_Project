@@ -10,11 +10,17 @@ output:
     highlight: tango
 ---
 
+```r
+options(width = 400)
+library(data.table)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+```
 ***
 
 ### Overview
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
-
+Clinical Genetics consultation during hospitalization attempts to identify an underlying cause of a patient’s multiple medical problems and may include genetic testing which takes many weeks or months to complete. Because the patient may be discharged from the hospital before the testing results become available, ensuring that the results are effectively communicated to the patient or family and their healthcare team is challenging. I used data extracted from the Children’s Hospital of Philadelphia electronic health record to identify factors which increase the risk of failed follow up. I used this information to inform implementation of a system including clinical decision support in an attempt to improve timely delivery of care.
 
 ### Introduction 
 Genetic testing has the ability to provide an overarching reason for a patient’s medical problems. Likewise, it can inform prognosis, management, surveillance and recurrence risk. However, to be useful, the testing must be reviewed and interpreted by professionals that can implement care based on the knowledge gained and inform the patient or their family members of its meaning. Too frequently, genetic testing is sent and never followed up on by a provider. When sent as an inpatient, this testing is often performed at the expense of the hospital. If the patient or family member never realizes the benefit of the testing, there is the potential that this hospital resource could be wasted. 
@@ -209,3 +215,13 @@ ggplot(aes(x = ConsultMonth, fill = FollowUpType)) +
 ```
 
 ![](Campbell_Final_Project_files/figure-html/unnamed-chunk-6-1.png)<!-- -->
+
+Notably, **58%** of patients with completed consults during the study period had no subsequent clinical note documented by any member of the Genetics healthcare team. The rate appeared to remain relatively stable over time.
+
+I hypothesized that a number of consultations actually require no further follow up:
+
+* The patient was evaluated but the clinician felt that no genetic testing nor further follow up was warranted
+* The patient previously underwent genetic testing and the Genetics team is being consulted for management during hospitalization
+* The patient previously underwent genetic testing and was diagnosed with a specific condition, the family desires further counseling from the CHOP Genetics team, but no long-term follow up is required
+
+In other cases, I hypothesized that genetic testing was recommended, but the results of that testing was either never reviewed or the interpretation and follow up plan was not documented in the patient's chart.
