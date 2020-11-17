@@ -16,10 +16,10 @@ Using the publically available RNASeq dataset [GSE132761]("https://www-ncbi-nlm-
 
 
 ## GEO Accession
-![Dataset GSE132761 on the Gene Expression Omnibus (GEO) public repository]C:\Users\ceire\Box Sync\Coursework\Fall 2020\BMIN503\BMIN503_Final_Project\images\GSE132761_GEO.JPG)
+![Dataset GSE132761 on the Gene Expression Omnibus (GEO) public repository](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/GSE132761_GEO.JPG)
 
 ## Experimental Design
-![Overview of the experimental model used by the authors of this dataset](C:\Users\ceire\Box Sync\Coursework\Fall 2020\BMIN503\BMIN503_Final_Project\images\ExpOverview.png)
+![Overview of the experimental model used by the authors of this dataset](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/ExpOverview.png)
 
 # Introduction
 I am interested in understanding inflammatory pathways common to both obesity and asthma. As a graduate student in the Immunology Graduate Group (IGG), my research focuses on understanding the mechanisms of immunological and metabolic dysregulation in pediatric patients with obese asthma (OA). OA is unique disease entity at the intersect of the two most commonly occurring chronic inflammatory disorders in children. Both adults and children with OA experience increased frequency and severity of asthma exacerbation and are typically refractory to treatment. While there is an overwhelming amount or research that the two inflammatory disorders are closely *associated*, the *mechanistic relationship* between asthma and obesity is yet to be determined. 
