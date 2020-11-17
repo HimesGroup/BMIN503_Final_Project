@@ -16,3 +16,15 @@ DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+Important definitions
+
+For regional residence (variable 'resregion'), states fall into the following categories:
+
+Northeast: New England Division (Maine, New Hampshire, Vermont, Massachusetts, Rhode Island, and Connecticut) and Middle Atlantic Division (New York, New Jersey, and Pennsylvania)
+
+North Central/Midwest: East North Central Division (Michigan, Ohio, Indiana, Illinois, Wisconsin) and West North Central Division (Minnesota, Iowa, Missouri, North Dakota, South Dakota, Kansas, and Nebraska)
+
+South: South Atlantic Division (Delaware, Maryland, District of Columbia, Virginia, West Virginia, North Carolina, South Carolina, Georgia, and Florida), East South Central Division (Kentucky, Tennessee, Mississippi, and Alabama), and West South Central Division (Texas, Arkansas, Oklahoma, and Louisiana)
+
+West: Pacific Division (Washington, Alaska, Oregon, California, and Hawaii) and Mountain Division (Montana, Idaho, Wyoming, Colorado, New Mexico, Arizona, Utah, and Nevada).
+
