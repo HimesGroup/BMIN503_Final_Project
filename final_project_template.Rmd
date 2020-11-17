@@ -35,8 +35,12 @@ Haochang Shou, Assistant Professor of Biostatistics in Biostatistics and Epidemi
 of the University of Pennsylvania       
 Danielle Sandsmark, Assistant Professor of Neurology at the Hospital of the University of Pennsylvania       
 
+_____________________________________________________________________________________________________       
+
 > add a brief summary of what you learned from each person. 
 
+_____________________________________________________________________________________________________       
+ 
 https://github.com/mamourie/BMIN503_Final_Project
 
 
@@ -53,20 +57,31 @@ This project takes advantage of computer vision to address a clinical problem. U
 extraction from medical image analysis, it is possible to use a data-driven approach to evaluate 
 abnormal regions of interest and to calculate a non-specific measure of disease-related brain change.
 
-[1] https://www.cdc.gov/traumaticbraininjury/pubs/tbi_report_to_congress.html
+[1] https://www.cdc.gov/traumaticbraininjury/pubs/tbi_report_to_congress.html       
 [2] McKee, Ann C., et al. “The spectrum of disease in chronic traumatic encephalopathy.” 
 Brain 136.1 (2013): 43-64.
 
 
 ### Methods
+The data used are volumetric measurements of brain regions of interest, based on a multi atlas 
+segmentation method [3]. All results are shown based on the absolute volumetric measure
+and the volume normalized by intracranial volume. Z-scores for each ROI are calculated using
+and age and sex matched normal control group, and applied to the case subjects, to see how
+the disease affects cases in comparison to normal controls. 
+
+
+[3] Doshi, Jimit, et al. "MUSE: MUlti-atlas region Segmentation utilizing Ensembles of 
+registration algorithms and parameters, and locally optimal atlas selection." Neuroimage 127 
+(2016): 186-195.        
+
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
-```{r data_prep, echo = FALSE, cache = TRUE, message=FALSE}
+```{r data_prep, echo = TRUE, cache = TRUE, message=FALSE}
 library(dplyr)
 library(moments)
 library(ggplot2)
 
-# home <- "/Users/elizabethmamourian/Box/mamourie/ISTAGING/TBI/"
+home <- "/Users/elizabethmamourian/Box/mamourie/ISTAGING/TBI/"
 # dir <- "/Users/elizabethmamourian/Box/mamourie/project_copies/ClinicalDataConsolidation_201911/"
 
 fromBeginning <- FALSE
@@ -79,7 +94,8 @@ u.batch <- u.batch.orig %>%
   mutate(Visit_Code=case_when(VISIT==2 ~ '2_0')) %>%
   select(-c(BMI,DSST,TMT_A,TMT_B,eid))
 
-##### - select TBI subjects from self report (N=3) and ICD10 codes (N=40)
+##### - select TBI subjects from self report (N=3) and ICD10 codes (N=40) #####
+
 # select TBI subjects from self-report f20002 -> (tbi.sr) ####
 sr <- u.batch %>%
   select(c(names(u.batch)[startsWith(names(u.batch),"noncancer_illness_code_selfreported_f20002")],"PTID")) %>%
@@ -118,21 +134,21 @@ df <- merge(df, icv)
 
 ##### - select subjects with other pathologies from control group (ICD10 codes beginning with F&G) -> (icd.sub) ####
 temp = sapply(icd[1:(length(icd)-2)], function(x) grepl("G", x, ignore.case = TRUE))
-icd$G = rowSums(temp) > 0
-icd.G <- icd[icd$G==TRUE,"PTID"]    # N=1576
+icd$G = rowSums(temp) > 0                  # sums all ICD-10 codes containing "G" for each subject
+icd.G <- icd[icd$G==TRUE,"PTID"]           # N = 1576 subjects have an ICD-10 code containing "G"
 temp = sapply(icd[1:(length(icd)-3)],function(x) grepl("F", x, ignore.case = TRUE))
-icd$xF = rowSums(temp) > 0
-icd.F <- icd[icd$xF==TRUE,"PTID"]   # N=1229
-icd.sub <- c(icd.G,icd.F)
-icd.sub <- icd.sub[!duplicated(icd.sub)]   # N=2568
-rm(icd.F,icd.G,tbi.sr,tbi.icd,temp)
+icd$xF = rowSums(temp) > 0                 # sums all ICD-10 codes containing "F" for each subject
+icd.F <- icd[icd$xF==TRUE,"PTID"]          # N = 1229 subjects have an ICD-10 code containing "F"
+icd.sub <- c(icd.G,icd.F)                  # combines subjects with "G" and "F" ICD-10 diagnoses
+icd.sub <- icd.sub[!duplicated(icd.sub)]   # N = 2568 unique subjects have ICD-10 diagnoses containging "G" or "F"
+rm(icd.F,icd.G,tbi.sr,tbi.icd,temp)        # removes temporary datas
 
 ##### - age/sex match controls to cases, calculate z-scores for each ROI
 
 # prepare datasets, selecting controls in (ctrl) and cases in (case) ####
 ctrl <- df %>% 
   filter(TBI!=1) %>%
-  filter(!PTID %in% icd.sub)
+  filter(!PTID %in% icd.sub)                # removes subjecrs with other pathologies from control group
 case <- df %>% filter(TBI==1) %>%
   mutate(range.low= Age_At_Visit -1) %>%
   mutate(range.high= Age_At_Visit +1)
@@ -308,3 +324,102 @@ top40 <- muse.dict[muse.dict$ROI%in%roi40, "ROI_NAME_INDEX"]
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+```{r results_1, echo = TRUE, cache = TRUE, message=FALSE}
+plot_roi_icv <- function(data, inp) {
+  ggplot(data, aes(inp)) +
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored ICV-corrected ROI volumes in TBI case subjects", x= paste0("z-score of ",inp)) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "midnightblue", fill = "midnightblue", alpha = 0.7)}
+
+plot_roi <- function(inp) {
+  ggplot(df.z, aes(inp)) + 
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored absolute ROI volumes in TBI case subjects", x= paste0("z-score of ",inp)) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "blue", fill = "blue", alpha = 0.7)}
+
+print("Top 40 ROIs with Most Outliers among Case Subjects")
+roi40
+
+ggplot(df.z.icv, aes(MUSE_Volume_414_z)) +
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored ICV-corrected ROI volumes in TBI case subjects", x= paste0("z-score of ICV-corrected Deep Gray Matter (left hemisphere)")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "midnightblue", fill = "midnightblue", alpha = 0.7)
+
+ggplot(df.z, aes(MUSE_Volume_414_z)) + 
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored absolute ROI volumes in TBI case subjects", x= paste0("z-score of Deep Gray Matter (left hemisphere)")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "blue", fill = "blue", alpha = 0.7)
+
+ggplot(df.z.icv, aes(MUSE_Volume_60_z)) +
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored ICV-corrected ROI volumes in TBI case subjects", x= paste0("z-score of ICV-corrected Left Thalamus")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "midnightblue", fill = "midnightblue", alpha = 0.7)
+
+ggplot(df.z, aes(MUSE_Volume_60_z)) + 
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored absolute ROI volumes in TBI case subjects", x= paste0("z-score of Left Thalamus")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "blue", fill = "blue", alpha = 0.7)
+
+ggplot(df.z.icv, aes(MUSE_Volume_504_z)) +
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored ICV-corrected ROI volumes in TBI case subjects", x= paste0("z-score of ICV-corrected Frontal Lobe")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "midnightblue", fill = "midnightblue", alpha = 0.7)
+
+ggplot(df.z, aes(MUSE_Volume_504_z)) + 
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored absolute ROI volumes in TBI case subjects", x= paste0("z-score of Frontal Lobe")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "blue", fill = "blue", alpha = 0.7)
+
+ggplot(df.z.icv, aes(MUSE_Volume_523_z)) +
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored ICV-corrected ROI volumes in TBI case subjects", x= paste0("z-score of ICV-corrected Right Parietal Lobe")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "midnightblue", fill = "midnightblue", alpha = 0.7)
+
+ggplot(df.z, aes(MUSE_Volume_523_z)) + 
+                ylim(0, 15) +
+                labs(title = "Histograms: z-scored absolute ROI volumes in TBI case subjects", x= paste0("z-score of Right Parietal Lobe")) +
+                geom_histogram(breaks = seq(-3.5, 3.5, .5), color = "blue", fill = "blue", alpha = 0.7)
+
+```
+
+```{r results_2, echo = FALSE, cache = TRUE, message=FALSE}
+df.z.o <- df.z
+df.z.icv.o <- df.z.icv
+df.z_ctrl.o <- df.z_ctrl 
+df.z_ctrl.icv.o <- df.z_ctrl.icv 
+
+select_outlier <- 2
+
+outlier_function <- function(inp) {
+  outliers_negative <- inp[sapply(inp, function(x) x<= -select_outlier)]
+  N_outliers_neg <- length(outliers_negative)
+  outliers_positive <- inp[sapply(inp, function(x) x>= select_outlier)]
+  N_outliers_pos <- length(outliers_positive)
+  
+  o_pos <- sum(outliers_positive)
+  o_neg <- abs(sum(outliers_negative))
+  o <- o_neg + o_pos
+  N_sbj <- nrow(inp)
+  p_pos <- o_pos/N_sbj
+  p_neg <- o_neg/N_sbj
+  p <- o/N_sbj
+
+  out <- format(c(N_sbj, p_pos, p_neg, p), scientific=FALSE,drop0trailing = TRUE)
+  return(out)
+}
+
+case <- outlier_function(inp= df.z.o)
+case.icv <- outlier_function(inp= df.z.icv.o)
+ctrl <- outlier_function(inp= df.z_ctrl.o)
+ctrl.icv <- outlier_function(inp= df.z_ctrl.icv.o)
+
+names <- c("N", "z-scores greater than 2, subject average","z-scores less than 2, subject average", "z-scores outside +/- 2, subject average")
+outliers <- cbind(names, case, ctrl)
+outliers.icv <- cbind(names, case.icv, ctrl.icv)
+
+print("")
+outliers.icv
+outliers
+
+```
