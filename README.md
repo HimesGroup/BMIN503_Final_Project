@@ -29,3 +29,6 @@ published earlier this year by the Littman lab, the authors found the SAA altere
 
 I chose this data set because SAA is associated with increased risk of asthma incidence and increased risk of obesity. Moreover, because Th17 cells are the major effector cells in severe, treatment resistant asthma, I was especially excited to find this paper. 
 
+## Final Project Link
+[Link to my final project repo](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/Hay_BMIN503_FinalProject.Rmd)
+
