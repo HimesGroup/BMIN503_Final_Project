@@ -1,18 +1,9 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project - Jacqueline Soegaard
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+Thyroid cancer is a relatively uncommon cancer, with an estimated incidence of 52,890 cases per year in the United States [American Cancer Society: Cancer Facts and Figures 2020]. It carries a favorable prognosis, with a disease-related 5-year survival of 98% overall and of 56% in patients with distant disease at the time of diagnosis. Thyroid cancer can be divided into several pathologic subtypes. The epithelial subtypes comprise three main categories: papillary (85% of cases), follicular (12%), and anaplastic or undifferentiated cancer (<3%). 
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+While it is a relatively rare tumor, at Penn Medicine we have a large amount of experience and tumor registry data for patients with this disease. Given our local experience, this project seeks to examine our dataset to understand summary statistics for our local population and their tumors (particularly fousing on the medullary thyroid cancer population) to evaluate parameters for location and timing of evaluation and treatment, and identify characteristics associated with tumor upstaging, tumor recurrence, and death. 
 
 DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
 
