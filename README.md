@@ -1,18 +1,26 @@
-# BMIN503/EPID600 Final Project
+# EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+Author: Tuhina Srivastava
+Date: November 17, 2020
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Data file containing all County Presidential Election Returns 2000-2016 downloaded from MIT Election Data Science Lab: countypres_2000-2016.csv
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+R Markdown file: Final_Project_SRIVASTAVA.rmd
 
-DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+Updates:
 
++ I'm having a lot of trouble importing data directly from the MIT Elections + Data Science Lab. Their "elections" R package is not directly pulling the data based on the commands on their GitHub so I have uploaded a dataset I downloaded directly from their site.
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
++ I've also uploaded a preliminary NYTimes Pennsylvania data set for 2020. I'm going to wait another week or so to see if I can get updated 2020 results for these analyses.
 
++ I'm working on finding county-level voter turnout. Currently, I only have state-level data.
+
++ I'm hoping to use a zip code level Area Deprivation Index (ADI) data file. ADI is an aggregate measures based on the domains of income, education, employment, and housing quality. However GitHub keeps telling me that this is way too big to upload. Working on a solution, but would love any tips anyone has!
+
++ I added the Social Vulnerability Index at the census tract level in PA as a SES measure.
+
++ I've imported NYTimes COVID-19 data for county-level cases and deaths.
+
+Next Steps:
+
++ Data cleaning and merging it all together in decipherable dataset.
