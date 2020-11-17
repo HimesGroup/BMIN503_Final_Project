@@ -1,3 +1,4 @@
+
 # BMIN503/EPID600 Final Project
 **Project Title**: Serum Amyloid A promotes Th17 responses in murine models of colitis and multiple sclerosis
 
@@ -10,12 +11,12 @@ Using the publically available RNASeq dataset [GSE132761]("https://www-ncbi-nlm-
 
 2. **Mengyuan Kan, Ph.D:** Postdoctoral Researcher in Blanca Himes' lab. 
   
-3. **Chao Di, Ph.D:** Bioinformatics Scientis at CHOP.
+3. **Chao Di, Ph.D:** Bioinformatics Scientist at CHOP.
 
 
 
 ## GEO Accession
-![Dataset GSE132761 on the Gene Expression Omnibus (GEO) public repository](C:\Users\ceire\Box Sync\Coursework\Fall 2020\BMIN503\BMIN503_Final_Project\images\GSE132761_GEO.JPG)
+![Dataset GSE132761 on the Gene Expression Omnibus (GEO) public repository]C:\Users\ceire\Box Sync\Coursework\Fall 2020\BMIN503\BMIN503_Final_Project\images\GSE132761_GEO.JPG)
 
 ## Experimental Design
 ![Overview of the experimental model used by the authors of this dataset](C:\Users\ceire\Box Sync\Coursework\Fall 2020\BMIN503\BMIN503_Final_Project\images\ExpOverview.png)
