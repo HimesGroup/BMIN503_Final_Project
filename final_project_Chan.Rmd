@@ -1,5 +1,5 @@
 ---
-title: "Title Here"
+title: "Combining aggregate food and housing costs with individual factors for BRFSS Health Outcomes"
 author: "Alexander Chan"
 output: 
   html_document:
@@ -10,10 +10,7 @@ output:
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
-# commonly-used packages
-library(ggplot2)
-library(dplyr)
-library(magrittr)
+
 ```  
 ***
 Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
@@ -23,28 +20,41 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ### Overview
 Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
-```{r, eval=TRUE}
 
-```
+This project aims at identifying predictors of health outcomes using socioeconomic factors. Specifically, income, housing costs, food security, and food costs will be tested for association with surveyed outocmes from Behavioral Risk Factor Surveillance System (BRFSS) epidemiologic data. Measures of mental and physical health will be analyzed using secondary data from the American Community Survey (ACS), Housing Urban Development (HUD) fair market rent (fmr) data, Feeding America dataset. The main faculty for this project is Blanca Himes and Sherry Xie, who assisted with geospatial plotting and formatting.  
 
 ### Introduction 
 Describe the problem addressed, its significance, and some background to motivate the problem.
 
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
-```{r, eval=TRUE}
+Do aggregate factors compare well to individual factors? This would be particularly useful since census data is extensive. 
 
-```
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. Use 5-year ACS data from 2014-2018 for poverty rate and median income. Collect HUD fmr rate for the past from 2017-2020. Finally I use the  "Map the Gap" calculated county-level meal cost to estimate food expense. The cost-of-food index is calculated by applying county-level sales tax rates to Nielsen basket-of-goods based on actual pounds purchased. This value was last calculated in 2010 by Feeding America. Necessary corrections to nominal housing costs for inflation were corrected using CPI values from 2010-2020. BRFSS data is ta
+
+
+factors: poverty rate, median income,  median income spent on food, median income spent on rent, race, sex, education level. Look into high versus low cost-of-living metropolitan areas. 
+
+
+
+
+### Exploratory Analyses
 
 ###
 Download and install Rtools40 to use the BLS api: https://cran.r-project.org/bin/windows/Rtools/
 
 ### Reading and Cleaning Datasets
 ```{r, eval=TRUE}
+# commonly-used packages
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(tidyr)
+library(gtsummary)
+
 # tools for accessing BLS data
-install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI by Mike Silva
+# install_github("mikeasilva/blsAPI", force = TRUE) # Install the blsAPI by Mike Silva
 library(devtools)
 library(blsAPI)
 library(rjson)
@@ -52,6 +62,7 @@ library(blsAPI)
 ```
 
 
+### Query CPI data from BLS
 ```{r, eval=TRUE}
 # query data from BLS.gov
 
@@ -114,7 +125,22 @@ head(a_cpi)
 head(m_cpi)
 ```
 
+# Now let's visualize economic growth in various metropolitan areas around the US
+```{r, eval=TRUE}
+a_cpi_growth_rate <- as.data.frame(a_cpi) %>%
+  dplyr::select(area, annual) %>%
+  dplyr::group_by(area) %>%
+  dplyr::summarise(growth = (max(annual)-min(annual))/min(annual)*100) #growth from 2018-2020
 
+ggplot(a_cpi_growth_rate, aes(x = reorder(area, -growth), y = growth))+
+  geom_col() + 
+  theme(axis.text.x = element_text(angle = 45))
+
+```
+
+
+
+### Query Fair market rent (FMR) data from HUD
 ```{r, eval=TRUE}
 library(sf)
 library(ggsn)
@@ -135,23 +161,23 @@ format_id <- function(df){
 # read in the housing costs: fair market rates (2017-2020)
 # format relevent columns into a standard form
 fmr_2017 <- read.csv("FY2017_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
-  mutate_at(c("fmr0", "fmr1", "fmr2", "fmr3", "fmr4"), as.numeric)
+  dplyr::mutate_at(c("fmr0", "fmr1", "fmr2", "fmr3", "fmr4"), as.numeric)
 fmr_2018 <- read.csv("FY2018_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
-  mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+  dplyr::mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
+  dplyr::rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
          "fmr3" = "fmr_3", "fmr4" = "fmr_4", "Metro_code" = "metro_code")
 fmr_2019 <- read.csv("FY2019_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
-  mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub","fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+  dplyr::mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
+  dplyr::rename("CouSub" = "cousub","fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
          "fmr3" = "fmr_3", "fmr4" = "fmr_4", "Metro_code" = "metro_code") 
 fmr_2020 <- read.csv("FY2020_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
-  mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
-  rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
+  dplyr::mutate_at(c("fmr_0", "fmr_1", "fmr_2", "fmr_3", "fmr_4"), as.numeric) %>%
+  dplyr::rename("CouSub" = "cousub", "fmr0" = "fmr_0","fmr1" = "fmr_1","fmr2" = "fmr_2", 
          "fmr3" = "fmr_3", "fmr4" = "fmr_4", "Metro_code" = "metro_code") 
 fmr_2021 <- read.csv("FY2021_50_County_FMR.csv", fileEncoding = "UTF-8-BOM") %>%
-  mutate_at(c("rent50_0", "rent50_1", "rent50_2", "rent50_3", "rent50_4"),
+  dplyr::mutate_at(c("rent50_0", "rent50_1", "rent50_2", "rent50_3", "rent50_4"),
             as.numeric) %>%
-  rename("CouSub" = "cousub", "fmr0" = "rent50_0",
+  dplyr::rename("CouSub" = "cousub", "fmr0" = "rent50_0",
          "fmr1" = "rent50_1","fmr2" = "rent50_2", 
          "fmr3" = "rent50_3", "fmr4" = "rent50_4",
          "Metro_code" = "cbsasub21", "areaname" = "areaname21",
@@ -166,8 +192,8 @@ counties$ID <- gsub("US","", counties$GEO_ID)  #remove US from ID
 setwd("tl_2017_us_cbsa")
 cbsa.sf <- st_read("tl_2017_us_cbsa.shp")
 cbsa.sf %<>%
-  select(GEOID, geometry,NAME, NAMELSAD) %>%
-  rename(ID2 = GEOID, Metro = NAMELSAD)
+  dplyr::select(GEOID, geometry,NAME, NAMELSAD) %>%
+  dplyr::rename(ID2 = GEOID, Metro = NAMELSAD)
 
 
 # function to merge FMR dataframes with county geometries 
@@ -185,7 +211,7 @@ geo_format2 <- function(geo_df){
   geo_df %<>%
     dplyr::select(ID,fmr0,fmr1,fmr2, fmr3, fmr4, Metro_code, areaname, countyname)%>%
     distinct(Metro_code, .keep_all = TRUE) %>% # removed repeated counties
-    mutate(ID2 = substr(Metro_code, 12,16)) # metro IDs
+    dplyr::mutate(ID2 = substr(Metro_code, 12,16)) # metro IDs
   
   fmr_geo <- cbsa.sf %>%
     dplyr::select(c("NAME", "ID2", "geometry", "Metro")) %>%
@@ -193,21 +219,21 @@ geo_format2 <- function(geo_df){
 
 }
 
-# format geographical IDs for all FMRs
+# format geographical IDs for all FMRs 2017-20201
 fmr_2017 <- format_id(fmr_2017)
 fmr_2018 <- format_id(fmr_2018)
 fmr_2019 <- format_id(fmr_2019)
 fmr_2020 <- format_id(fmr_2020)
 fmr_2021 <- format_id(fmr_2021)
 
-# add county geographical data to all FMRs 
+# add county geographical data to all FMRs 2017-20201
 fmr_2017_geo <- geo_format(fmr_2017)
 fmr_2018_geo <- geo_format(fmr_2018)
 fmr_2019_geo <- geo_format(fmr_2019)
 fmr_2020_geo <- geo_format(fmr_2020)
 fmr_2021_geo <- geo_format(fmr_2021)
 
-# add metro area geographical data to all FMRs 
+# add metro area geographical data to all FMRs 2017-20201
 fmr_2017_geo2 <- geo_format2(fmr_2017)
 fmr_2018_geo2 <- geo_format2(fmr_2018)
 fmr_2019_geo2 <- geo_format2(fmr_2019)
@@ -218,15 +244,45 @@ fmr_2021_geo2 <- geo_format2(fmr_2021)
 ```
 
 ```{r, eval=TRUE}
+library(RColorBrewer)
+library(leaflet)
+
+my_theme <- function() {
+  theme_minimal() +                                  # shorthand for white background color
+  theme(axis.line = element_blank(),                 # further customization of theme components
+        axis.text = element_blank(),                 # remove x and y axis text and labels
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  # make grid lines invisible
+        legend.key.size = unit(0.8, "cm"),           # increase size of legend
+        legend.text = element_text(size = 16),       # increase legend text size
+        legend.title = element_text(size = 16),
+        plot.title = element_text(hjust = 0.5))      # increase legend title size
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "BuPu"))    # Blue-Purple
+myPalette2 <- colorRampPalette(brewer.pal(9, "YlOrRd")) # Yellow-Orange-Red
+myPalette3 <- colorRampPalette(brewer.pal(9, "YlGnBu")) # Yellow-Green-Blue
+
 # geographic visualizations of housing costs
 cpi_by_year <- read.csv("annual_cpi_us.csv", fileEncoding = "UTF-8-BOM")
-cpi_by_year$adjust <- cpi_by_year$cpi/258.2937 # adjustment factor to 2020 dollars
+cpi_by_year$adjust <- cpi_by_year$cpi/258.2937 # adjustment factor into 2020 dollars
 
 # use the cpi_by_year adjustment to adjust rents to 2010 dollars
 # rent in y year = (rent in current year) X (CPI y year/CPI current year)
 
+# Select a color palette with which to run the palette function
+pal_fun  <- colorNumeric("BuPu", NULL)      # Blue-Purple from RColorBrewer
+pal_fun2 <- colorNumeric("YlOrRd", NULL)    # Yellow-Orange-Red from RColorBrewer
+
+# function to get inflation correction factor for a given year into 2020 dollars
+i_factor <- function(year){
+  c_factor <- cpi_by_year$adjust[which(cpi_by_year$year == year)]
+  return(c_factor)
+}
+
+# function to generate static map of rent costs by year across all coutnies in US
 map_rent <- function(df, year){
-    correction = cpi_by_year$adjust[which(cpi_by_year$year == year)] # find correction factor
+    correction = i_factor(year)
  
   fmr_map = ggplot() +
     geom_sf(data=df,lwd=0, 
@@ -236,28 +292,25 @@ map_rent <- function(df, year){
                          colours = myPalette2(100),
                          limits = c(0,2000),
                          breaks = c(500,1000,1500,2000)) + # add limits and breaks to normalize scaling between years  
-    north(data = df, symbol = 12, anchor = c(x = -25, y = 39.93)) +
-    scalebar(data = combined, dist = 500, dist_unit = 'mi', transform = TRUE,
+    north(data = df, symbol = 12, location = "bottomright") +
+    scalebar(data = df, dist = 500, dist_unit = 'mi', transform = TRUE,
              location = "bottomleft",
              st.dist = 0.1) +
     my_theme()
 }
 
 # call static map function and display
-fmr1_2017_map <- map_rent(fmr_2017_geo, 2017) # generate static rent map
+fmr1_2017_map <- map_rent(fmr_2017_geo, 2017) # generate static rent map for counties
 fmr1_2017_map # display rent map
 
 # call static map function and display
-fmr1_2017_map2 <- map_rent(fmr_2017_geo2, 2017) # generate static rent map
+fmr1_2017_map2 <- map_rent(fmr_2017_geo2, 2017) # generate static rent map for metro areas
 fmr1_2017_map2 # display rent map
 
 ```
 
 ```{r, eval=TRUE}
 # an interactive map of rent prices
-
-library(leaflet)
-library(RColorBrewer)
 library(htmlwidgets)
 library(htmltools)
 
@@ -297,7 +350,7 @@ title <- tags$div(
   tag.map.title, HTML(paste(year, "Median Rent:", 1, "Bed"))
 )  
     
-  correction <- cpi_by_year$adjust[which(cpi_by_year$year == year)] # find correction factor
+  correction = i_factor(year)# find correction factor
   
   # Pop-up message
   pu_message <- paste0("County: ", df$countyname,  
@@ -329,6 +382,744 @@ fmr_2020_mapi <- map_rent_i(fmr_2020_geo, 2020)
 fmr_2020_mapi
 
 
+```
+
+
+### ACS poverty and income data
+
+```{r, eval=TRUE}
+library(tidycensus)
+library(tidyr)
+
+census_key <- read.delim("census_key.txt", header=FALSE)[1,1] # read in api key from local
+census_api_key(census_key,install=TRUE)
+
+```
+
+```{r, eval=TRUE}
+acs.data <- get_acs(geography = "county",       # query data at the county level 
+                   year = 2018,                 # end year (these will give us ACS 5-year estimates for 2014-2018)
+                   variables = c("B17010_002",  # number of families falling below the poverty threshold
+                                 "B17010_001",  #total number of families for which poverty was determined
+                                 "B19013_001"), # median household income
+                   key = census_key) 
+acs.data %<>%
+  dplyr::select(-moe) #remove the margin of error
+
+# pivot on both estimate and total variables
+acs.data <- pivot_wider(data=acs.data, names_from="variable", values_from="estimate")
+
+acs.data %<>%
+  dplyr::rename(poverty_total = B17010_001, 
+         poverty_estimate = B17010_002,
+         med_house_income = B19013_001)  %>% # give vars meaningful names
+  dplyr::mutate(ID = paste0("0", as.character(050000000000 + as.numeric(GEOID)))) #create ID column to merge on
+
+
+```
+
+```{r, eval=TRUE}
+# geospatial exploration of ACS median income from 2014-2018 by county 
+
+# join acs data
+acs.data.geo <- left_join(counties, acs.data[,c("ID", "poverty_total",
+                                                "poverty_estimate", "med_house_income")],
+                          by = "ID") # merge to counties
+
+acs.data.geo %<>% # clean up the dataframe
+  dplyr::select(GEO_ID, ID, COUNTY, poverty_total, poverty_estimate,
+         med_house_income,geometry)
+
+# plot income map
+income_map <- ggplot() +
+  geom_sf(data=acs.data.geo,lwd=0, 
+          aes(fill = med_house_income)) + # adjust factor included
+  ggtitle("Median Household Income (2014-2018)") + 
+  scale_fill_gradientn(name = "Income", 
+                       colours = myPalette2(100)) + # add limits and breaks to normalize scaling between years  
+  north(data = acs.data.geo, location = "bottomright", symbol = 12) +
+  scalebar(data = acs.data.geo, dist = 500, dist_unit = 'mi', transform = TRUE,
+           location = "bottomleft",
+           st.dist = 0.1) +
+  my_theme()
+
+income_map # show the median income map
+```
+
+
+```{r, eval=TRUE}
+library(ggpubr)
+options(scipen=10000)
+
+# joins acs data and fmr data for any given fmr year
+acs_join <- function(acs.geo.df, fmr.geo.df){
+  acs.df <- dplyr::select(as.data.frame(acs.data.geo), -geometry)
+  acs_fmr <- left_join(fmr.geo.df, acs.df, by = "ID")
+  return(acs_fmr)
+}
+
+# combine acs data with fmr data
+acs.fmr.2017 <- acs_join(acs.data.geo, fmr_2017_geo) 
+acs.fmr.2018 <- acs_join(acs.data.geo, fmr_2018_geo) 
+acs.fmr.2019 <- acs_join(acs.data.geo, fmr_2019_geo) 
+acs.fmr.2020 <- acs_join(acs.data.geo, fmr_2020_geo) 
+acs.fmr.2021 <- acs_join(acs.data.geo, fmr_2021_geo) 
+
+```
+
+
+```{r, eval=TRUE}
+# calculate poverty rate and percent spent on housing by county for one year
+
+thresh <- 0 # threshold for filtering poverty estimates
+
+acs.fmr.2017 %<>%
+  dplyr::filter(poverty_estimate > thresh) %>%
+  dplyr::mutate(poverty_percent = poverty_estimate/poverty_total) %>%
+  dplyr::mutate(housing_percent = (fmr1*12)/med_house_income)
+acs.fmr.2018 %<>%
+  dplyr::filter(poverty_estimate > thresh) %>%
+  dplyr::mutate(poverty_percent = poverty_estimate/poverty_total) %>%
+  dplyr::mutate(housing_percent = (fmr1*12)/med_house_income)
+acs.fmr.2019 %<>%
+  dplyr::filter(poverty_estimate > thresh) %>%
+  dplyr::mutate(poverty_percent = poverty_estimate/poverty_total) %>%
+  dplyr::mutate(housing_percent = (fmr1*12)/med_house_income)
+acs.fmr.2020 %<>%
+  dplyr::filter(poverty_estimate > thresh) %>%
+  dplyr::mutate(poverty_percent = poverty_estimate/poverty_total) %>%
+  dplyr::mutate(housing_percent = (fmr1*12)/med_house_income)
+
+
+# plot map of percentage spent on median 1-bed apartment by median income
+rent_income_map <- ggplot() +
+  geom_sf(data=acs.fmr.2017,lwd=0, 
+          aes(fill = housing_percent)) + # adjust factor included
+  ggtitle("Percent of income spent on rent (2017 1-Bed)") + 
+  scale_fill_gradientn(name = "% spent on rent", 
+                       colours = myPalette2(100)) + # add limits and breaks to normalize scaling between years  
+  north(data = acs.fmr.2017, location = "bottomright", symbol = 12) +
+  scalebar(data = acs.fmr.2017, dist = 500, dist_unit = 'mi', transform = TRUE,
+           location = "bottomleft",
+           st.dist = 0.1) +
+  my_theme()
+
+rent_income_map # show the median income map
+
+# relationship between amount spent on housing and poverty rate 
+# FMR 1-bed data from 2017-2020
+# Median income estimated from 2014-2018 ACS data
+# generate linear regression fits for the relationship between housing burdern and poverty 
+
+# looking at income alone across US counties
+
+income_2017 <- ggplot(data = acs.fmr.2017, aes(x=med_house_income, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Income ($)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2017 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+
+income_2018 <- ggplot(data = acs.fmr.2018, aes(x=med_house_income, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Income ($)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2018 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+income_2019 <- ggplot(data = acs.fmr.2019, aes(x=med_house_income, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Income ($)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2019 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+income_2020 <- ggplot(data = acs.fmr.2020, aes(x=med_house_income, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Income ($)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2020 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+combined_income <- cowplot::plot_grid(income_2017,income_2018,
+                                      income_2019,income_2020)
+
+combined_income
+
+# looking at housing cost alone across US counties
+
+housing_2017 <- ggplot(data = acs.fmr.2017, aes(x=fmr1, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Rent (1-Bed)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2017 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+housing_2018 <- ggplot(data = acs.fmr.2018, aes(x=fmr1, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Rent (1-Bed)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2018 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+housing_2019 <- ggplot(data = acs.fmr.2019, aes(x=fmr1, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Rent (1-Bed)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2019 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+housing_2020 <- ggplot(data = acs.fmr.2020, aes(x=fmr1, y=poverty_percent))+
+  geom_point() +
+  xlab("Median Rent (1-Bed)") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2020 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+combined_housing <- cowplot::plot_grid(housing_2017, housing_2018,
+                                      housing_2019, housing_2020)
+
+combined_housing
+
+# looking at income and housing cost combined across US counties
+
+h_burden_2017 <- ggplot(data = acs.fmr.2017, aes(x=housing_percent, y=poverty_percent))+
+  geom_point() +
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Percent Spent on Rent") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2017 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+h_burden_2018 <- ggplot(data = acs.fmr.2018, aes(x=housing_percent, y=poverty_percent))+
+  geom_point() +
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Percent Spent on Rent") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2018 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+h_burden_2019 <-ggplot(data = acs.fmr.2019, aes(x=housing_percent, y=poverty_percent))+
+  geom_point() +
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Percent Spent on Rent") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2019 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+h_burden_2020 <-ggplot(data = acs.fmr.2020, aes(x=housing_percent, y=poverty_percent))+
+  geom_point() +
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Percent Spent on Rent") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2020 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+combined_h_burden <- cowplot::plot_grid(h_burden_2017, h_burden_2018,
+                                        h_burden_2019, h_burden_2020) 
+
+combined_h_burden # display the combined graph
+
+```
+
+# mapthegap data
+```{r, eval=TRUE}
+setwd("Map the Meal Gap data")
+
+# map the gap county data 2010
+food <- read.csv("MMG2012_2010Data_ToShare.csv", fileEncoding = "UTF-8-BOM") 
+
+food %<>%
+  dplyr::select(FIPS, State,County..State,X2010.Food.Insecurity.Rate,X2010.Cost.Per.Meal) %>%
+  dplyr::rename(County = County..State, food_insecure = X2010.Food.Insecurity.Rate, 
+         meal_cost = X2010.Cost.Per.Meal) %>%
+  dplyr::mutate(ID = paste0("0", as.character(050000000000 + as.numeric(FIPS)))) 
+  
+food$meal_cost = as.numeric(gsub("[$]","",food$meal_cost))
+
+
+```
+
+```{r, eval=TRUE}
+# join map the gap data to acs/fmr data
+acs.fmr.food.2017 <- left_join(acs.fmr.2017, food[,c("ID","food_insecure", 
+                                                     "meal_cost")], by = "ID") %>%
+  dplyr::mutate(meal_percent = meal_cost*3*365/med_house_income)
+acs.fmr.food.2018 <- left_join(acs.fmr.2018, food[,c("ID","food_insecure", 
+                                                     "meal_cost")], by = "ID") %>%
+  dplyr::mutate(meal_percent = meal_cost*3*365/med_house_income)
+acs.fmr.food.2019 <- left_join(acs.fmr.2019, food[,c("ID","food_insecure", 
+                                                     "meal_cost")], by = "ID") %>%
+  dplyr::mutate(meal_percent = meal_cost*3*365/med_house_income)
+acs.fmr.food.2020 <- left_join(acs.fmr.2020, food[,c("ID","food_insecure", 
+                                                     "meal_cost")], by = "ID") %>%
+  dplyr::mutate(meal_percent = meal_cost*3*365/med_house_income)
+
+
+# look at food costs in isolation 
+food_cost <- ggplot(acs.fmr.food.2017, aes(x=meal_cost, y=poverty_percent))+
+  geom_point()+
+  xlab("Meal Cost") +
+  ylab("Poverty Rate %") +
+  ggtitle("Meal Cost") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+
+# look at food cost as percent of median income
+food_burden <- ggplot(acs.fmr.food.2017, aes(x=meal_percent, y=poverty_percent))+
+  geom_point()+  
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Percent Spent on Food") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("Income spent on Food") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+combined_food_burden <- cowplot::plot_grid(food_cost, food_burden) 
+
+combined_food_burden # display the combined graph
+
+
+```
+
+```{r, eval=TRUE}
+# generate a two-factor cost of living index by adding food and housing costs
+
+acs.fmr.food.2017 %<>%
+  mutate(COL = meal_percent + housing_percent)
+
+acs.fmr.food.2018 %<>%
+  mutate(COL = meal_percent + housing_percent)
+
+acs.fmr.food.2019 %<>%
+  mutate(COL = meal_percent + housing_percent)
+
+acs.fmr.food.2020 %<>%
+  mutate(COL = meal_percent + housing_percent)
+
+COL_2017 <- ggplot(acs.fmr.food.2017, aes(x=COL, y=poverty_percent))+
+  geom_point()+  
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Combined food and housing costs") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2017 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+COL_2018 <- ggplot(acs.fmr.food.2018, aes(x=COL, y=poverty_percent))+
+  geom_point()+  
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Combined food and housing costs") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2018 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+COL_2019 <- ggplot(acs.fmr.food.2019, aes(x=COL, y=poverty_percent))+
+  geom_point()+  
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Combined food and housing costs") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2019 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+COL_2020 <- ggplot(acs.fmr.food.2020, aes(x=COL, y=poverty_percent))+
+  geom_point()+  
+  geom_smooth(method = "lm", formula = y~x) +
+  xlab("Combined food and housing costs") + 
+  ylab("Poverty Rate %") + 
+  ggtitle("2020 US Counties ") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_regline_equation() 
+
+combined_COL <- cowplot::plot_grid(COL_2017,COL_2018,COL_2019,COL_2020) 
+
+combined_COL # display the combined graph
+
+```
+
+
+Based on these analyses, poverty rate and income are directly correlated as expected. However, median housing cost and food expenses alone do not seem to be directly associated with the poverty rate. Furthermore, calculated variables such as percent-spent-on-housing and percent-spent-on-food do not seem to give better correlations to poverty rate compared to median income alone, From these results I will use housing costs, food costs, and either poverty rate or median income from aggreate county data to predict health outcomes from BRFSS data. 
+
+```{r, eval=TRUE}
+library(gtools)
+library(plyr)
+
+pov_quant_2017 <- acs.fmr.food.2017 %>%
+  mutate(pov_quant = quantcut(poverty_percent, q=4,by=0.25, na.rm=TRUE))
+
+pov_meal_quart <- ggplot(data=pov_quant_2017, aes(x=med_house_income, 
+                                                  y=meal_cost,
+                                                  color = pov_quant))+
+  geom_point() +
+  xlab("Median Household Income ($)") +
+  ylab("Meal Cost ($)") +
+  ggtitle("US Counties 2017") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+pov_meal_quart
+
+pov_house_quart <- ggplot(data=pov_quant_2017, aes(x=med_house_income, 
+                                                  y=fmr1,
+                                                  color = pov_quant))+
+  geom_point() +
+  xlab("Median Household Income ($)") +
+  ylab("Median Rent ($)")  +
+  ggtitle("US Counties 2017") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+pov_house_quart
+
+```
+
+# Get BRFSS data
+```{r, eval=TRUE}
+library(foreign)
+setwd("MMSA2017_XPT")
+brfss2017_raw <- read.xport("MMSA2017.xpt")
+```
+
+```{r, eval=TRUE}
+# select variables of interest
+# clean BRFSS 2017 dataframe
+
+brfss2017 <- brfss2017_raw %>%
+  dplyr::select('MMSANAME', 'X_MMSA', 'X_RACE', 'SEX', 'X_AGEG5YR','EDUCA','INCOME2',
+                'ADDEPEV2', 'CHCCOPD1', 'X_RFHLTH') %>%
+  dplyr::rename('Metro Area'='MMSANAME','Metro_ID'='X_MMSA','age'='X_AGEG5YR','race'='X_RACE', 
+         'sex'='SEX', 'education'='EDUCA','income'='INCOME2',
+         'depression'='ADDEPEV2','copd'='CHCCOPD1', 'health'='X_RFHLTH') %>%
+  dplyr::filter(race %in%  c(1,2,3,5,8)) %>%
+  dplyr::filter(sex %in% c(1,2)) %>%
+  dplyr::filter(age %in% seq(13)) %>%
+  dplyr::filter(education %in%  c(1,2,3,4,5,6)) %>%
+  dplyr::filter(income %in% c(1,2,3,4,5,6,7,8)) %>%
+  dplyr::filter(depression %in%  c(1,2)) %>%
+  dplyr::filter(copd %in% c(1,2)) %>%
+  dplyr::filter(health %in% c(1,2))
+
+brfss2017 %<>%
+  dplyr::mutate('Metro_ID' = as.character(brfss2017$'Metro_ID')) %>%
+  dplyr::mutate(race = factor(race, levels = c(1,2,3,5,8), 
+                        labels = c( "White", "Black", "American Indian", 
+                                    "Asian", "Hispanic"))) %>%
+  dplyr::mutate(sex = factor(sex, levels = c(1,2), 
+                        labels = c("Male", "Female"))) %>%
+  
+  dplyr::mutate(age = factor(age, levels = seq(13), 
+                        labels = c("18-24","25-29","30-34","35-39","40-44","45-49","50-54",
+                                   "55-59","60-64","65-69","70-74","75-29",">79"))) %>%
+  dplyr::mutate(education = factor(education, levels = c(1,2,3,4,5,6), 
+                        labels = c("None","Elementary", "Some HS", "HS",
+                                   "Some College", "College"))) %>%
+  dplyr::mutate(income = factor(income, levels = c(1,2,3,4,5,6,7,8), 
+                        labels = c("10k","15k", "20k", "25k", "35k", "50k", "75k","> 75k"))) %>%
+  dplyr::mutate(depression = factor(depression, levels = c(1,2), 
+                        labels = c("yes", "no"))) %>%
+  dplyr::mutate(copd = factor(copd, levels = c(1,2), 
+                        labels = c("yes", "no"))) %>%
+  dplyr::mutate(health = factor(health, levels = c(1,2), 
+                        labels = c("good", "poor"))) 
+
+```
+
+
+Let's look at the summary of the clean 2017 data frame. I am interested in sex, age, income, education, and race as demographic factors. I am interested in previous depression, COPD, and general health as outcomes. From the summary, there is a bias in sex and age. This might be explained by the fact that BRFSS is a phone based survey. It seems that income and education is skewed twoards highly educated, high earning individuals as well. The BRFSS might be biased towards home-owners and landline users over cell-phone users.
+```{r, eval=TRUE}
+summary(brfss2017, maxsum = 15)
+```
+
+```{r, eval=TRUE}
+cbsa2fips <- read.csv("cbsa2fipsxw.csv") 
+
+cbsa2fips %<>%
+  dplyr::mutate(fipsstatecode = as.character(cbsa2fips$fipsstatecode)) %>%
+  dplyr::mutate(fipscountycode = as.character(cbsa2fips$fipscountycode)) %>%
+  dplyr::mutate(fips_state = ifelse(nchar(fipsstatecode) == 1, paste0("0",fipsstatecode),
+         fipsstatecode)) %>%
+  dplyr::mutate(fips_county = ifelse(nchar(fipscountycode) == 2, paste0("0",fipscountycode),
+         ifelse(nchar(fipscountycode) == 1, paste0("00",fipscountycode), fipscountycode))) %>%
+  dplyr::mutate(ID = paste0("0", as.character(050000000000 + as.numeric(paste0(fips_state,fips_county))))) %>%
+  dplyr::rename('Metro_ID' = cbsacode) %>%
+  dplyr::select(ID, 'Metro_ID')
+
+cbsa2fips$`Metro_ID` = as.character(cbsa2fips$`Metro_ID`)
+
+# associate all counties to given metro area
+acs.fmr.food.2017 %<>% 
+  left_join(cbsa2fips, by="ID")
+
+```
+
+```{r, eval=TRUE}
+# function to aggregate all acs.fmr.food cost of living data by metro area
+# returns mean for all counties in a given metro area
+metro_costs <- function(df){
+  df %<>%
+    dplyr::select(fmr0, fmr1, fmr2, fmr3, fmr4, Metro_ID, poverty_percent,
+                  housing_percent, meal_cost, meal_percent, med_house_income)
+  
+  df = as.data.frame(df) 
+  
+  df %<>%
+    dplyr::select(-geometry) %>%
+    group_by(Metro_ID) %>%
+    summarise_at(vars('fmr0', 'fmr1', 'fmr2', 'fmr3', 'fmr4', 'poverty_percent',
+                  'housing_percent', 'meal_cost', 'meal_percent',
+                  'med_house_income'), mean)
+  return(df)
+}
+
+col_2017 <- metro_costs(acs.fmr.food.2017)
+
+# join 2017 metro cost of living to BRFSS2017 dataframe
+brfss2017 %<>%
+  left_join(col_2017, by = "Metro_ID")
+
+```
+
+Look at how aggregate costs/income data and individual income data affect health outcomes
+
+```{r, eval=TRUE}
+metro_income_ghealth <- ggplot(data=brfss2017, aes(x=health, y = med_house_income))+
+  geom_boxplot() +
+  xlab("General Health") +
+  ylab("Median Household Income ($)")  +
+  ggtitle("BRFSS2017 General Health") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+
+metro_income_copd <- ggplot(data=brfss2017, aes(x=copd, y = med_house_income))+
+  geom_boxplot() +
+  xlab("COPD History") +
+  ylab("Median Household Income ($)")  +
+  ggtitle("BRFSS2017 COPD History") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_income_depression <- ggplot(data=brfss2017, aes(x=depression, y = med_house_income))+
+  geom_boxplot() +
+  xlab("Depression History") +
+  ylab("Median Household Income ($)")  +
+  ggtitle("BRFSS2017 Depression") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_income_health_outcomes <- cowplot::plot_grid(metro_income_ghealth,metro_income_copd,
+                                                   metro_income_depression) 
+
+metro_income_health_outcomes
+```
+
+Rent effects on health outcomes
+```{r, eval=TRUE}
+metro_fmr1_ghealth <- ggplot(data=brfss2017, aes(x=health, y = fmr1))+
+  geom_boxplot() +
+  xlab("General Health") +
+  ylab("Median 1-Bed Rent ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_fmr1_copd <- ggplot(data=brfss2017, aes(x=copd, y = fmr1))+
+  geom_boxplot() +
+  xlab("COPD History") +
+  ylab("Median 1-Bed Rent ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_fmr1_depression <- ggplot(data=brfss2017, aes(x=depression, y = fmr1))+
+  geom_boxplot() +
+  xlab("Depression History") +
+  ylab("Median 1-Bed Rent ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_rent_health_outcomes <- cowplot::plot_grid(metro_fmr1_ghealth,metro_fmr1_copd,
+                                                   metro_fmr1_depression) 
+
+metro_rent_health_outcomes
+```
+
+```{r, eval=TRUE}
+metro_food_ghealth <- ggplot(data=brfss2017, aes(x=health, y = meal_cost))+
+  geom_boxplot() +
+  xlab("General Health") +
+  ylab("Cost of Meal ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_food_copd <- ggplot(data=brfss2017, aes(x=copd, y = meal_cost))+
+  geom_boxplot() +
+  xlab("COPD History") +
+  ylab("Cost of Meal ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_food_depression <- ggplot(data=brfss2017, aes(x=depression, y = meal_cost))+
+  geom_boxplot() +
+  xlab("Depression History") +
+  ylab("Cost of Meal ($)")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+metro_food_health_outcomes <- cowplot::plot_grid(metro_food_ghealth,metro_food_copd,
+                                                   metro_food_depression) 
+
+metro_food_health_outcomes
+
+```
+
+Individual income associations with health visualizations
+
+```{r, eval=TRUE}
+
+# income and general health 
+ggplot(data=brfss2017, aes(x=income,  fill=health)) + 
+  geom_bar(position="dodge") +
+  ggtitle('Individual Income and General Health')+
+  xlab('Income')+
+  ylab('Count')  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+# income and depression
+ggplot(data=brfss2017, aes(x=income,  fill=depression)) + 
+  geom_bar(position="dodge") +
+  ggtitle('Individual Income and Depression History')+
+  xlab('Income')+
+  ylab('Count')  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+# income and COPD
+ggplot(data=brfss2017, aes(x=income,  fill=copd)) + 
+  geom_bar(position="dodge") +
+  ggtitle('Individual Income and COPD History')+
+  xlab('Income')+
+  ylab('Count')  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+Now we will run chi-square tests to see if income is indepdent from chosen 
+health outcomes
+```{r, eval=TRUE}
+
+# chi-square test for individual income and general health
+brfss2017_health_table <- table(brfss2017$health, brfss2017$income)
+brfss2017_health_table
+chisq.test(brfss2017_health_table)
+
+# chi-square test for individual income and depression history
+brfss2017_depression_table <- table(brfss2017$depression, brfss2017$income)
+brfss2017_depression_table
+chisq.test(brfss2017_depression_table)
+
+# chi-square test for individual income and COPD history
+brfss2017_COPD_table <- table(brfss2017$copd, brfss2017$income)
+brfss2017_COPD_table
+chisq.test(brfss2017_COPD_table)
+
+```
+
+Based on visualizaitons and chi-squared tests, it seems that there is an association between income and general health and history of both COPD and depression 
+
+
+Test logistic regression model on 2016 BRFSS data
+
+```{r, eval=TRUE}
+# read in 2016 BRFSS data
+setwd("MMSA2016_XPT")
+brfss2016_raw <- read.xport("MMSA2016.xpt")
+```
+
+
+# Exploring the health outcomes (depression, COPD, general health) using all individual demographic factors only by logistic regression.
+
+```{r, eval=TRUE}
+
+# Train a logistic regression model using BRFSS2017 data
+
+depression_glm <- glm(formula=depression ~ race + sex + age + education + income,
+                      data=brfss2017, family = binomial())
+
+
+health_glm <- glm(formula=health ~ race + sex + age + education + income, 
+                  data=brfss2017, family = binomial(logit))
+
+copd_glm <- glm(formula=copd ~ race + sex + age + education + income, 
+                  data=brfss2017, family = binomial(logit))
+
+```
+
+
+# Check model accuracy using individual demographics alone
+
+```{r, eval=TRUE}
+library(PRROC)
+
+# ROC for depression logistic regression
+depression_pred <- predict(depression_glm, data=brfss2017, type="response")
+
+depression_glm_roc <- roc.curve(depression_pred[brfss2017$depression == "no"],
+                                depression_pred[brfss2017$depression == "yes"], curve=TRUE)
+
+# ROC for general health logistic regression
+health_pred <- predict(health_glm, data=brfss2017, type="response")
+health_glm_roc <- roc.curve(health_pred[brfss2017$health == "poor"],
+                                health_pred[brfss2017$health == "good"], curve=TRUE)
+
+# ROC for COPD logistic regression
+copd_pred <- predict(copd_glm, data=brfss2017, type="response")
+copd_glm_roc <- roc.curve(copd_pred[brfss2017$copd == "no"],
+                                copd_pred[brfss2017$copd == "yes"], curve=TRUE)
+
+plot(depression_glm_roc)
+plot(health_glm_roc)
+plot(copd_glm_roc)
+
+```
+
+# Exploring the health outcomes (depression, COPD, general health) using both individual demographic factors and aggregate metropolitan factors by logistic regression.
+
+```{r, eval=TRUE}
+
+# Train a logistic regression model using BRFSS2017 data
+
+depression_glm2 <- glm(formula=depression ~ race + sex + age + education + income +
+                         med_house_income + fmr1 + meal_cost,
+                      data=brfss2017, family = binomial(logit))
+
+
+health_glm2 <- glm(formula=health ~ race + sex + age + education + income + med_house_income
+                      + fmr1 + meal_cost,
+                  data=brfss2017, family = binomial(logit))
+
+copd_glm2 <- glm(formula=copd ~ race + sex + age + education + income + med_house_income
+                      + fmr1 + meal_cost, 
+                  data=brfss2017, family = binomial(logit))
+
+
+```
+
+# check model accuracy using individual demographics and aggregate metro data
+
+```{r, eval=TRUE}
+# ROC for depression logistic regression
+depression_pred2 <- predict(depression_glm2, data=brfss2017, type="response")
+
+depression_glm_roc2 <- roc.curve(depression_pred2[brfss2017$depression == "no"],
+                                depression_pred2[brfss2017$depression == "yes"], curve=TRUE)
+head(depression_pred2)
+# ROC for general health logistic regression
+health_pred2 <- predict(health_glm2, data=brfss2017, type="response")
+health_glm_roc2 <- roc.curve(health_pred2[brfss2017$health == "poor"],
+                                health_pred2[brfss2017$health == "good"], curve=TRUE)
+
+# ROC for COPD logistic regression
+copd_pred2 <- predict(copd_glm2, data=brfss2017, type="response")
+copd_glm_roc2 <- roc.curve(copd_pred2[brfss2017$copd == "no"],
+                                copd_pred2[brfss2017$copd == "yes"], curve=TRUE)
+
+plot(depression_glm_roc2)
+plot(health_glm_roc2)
+plot(copd_glm_roc2)
 ```
 
 ### Results
