@@ -20,6 +20,10 @@ library(glue)
 library(fabricatr)
 library(mgcv)
 library(ranger)
+library(tidytext)
+
+refresh = F
+source("load_data.R") #Loads in records from outpatient visits from a folder not included in git repository
 
 Ranger2List <- function(rf_ranger)
 {
@@ -108,6 +112,61 @@ dt <- bind_cols(dt, dt_symptoms) %>%
 dt_assignments <- sample(1:2, size = nobs, replace = T, prob = c(0.8, 0.2))
 ```
 
+```{r}
+
+nobs <- 200
+
+dt_demo <- demo_data %>%
+  filter(record_id <= nobs)
+
+ha_factor_names <- str_subset(names(ha_data),".factor") %>% str_remove(., ".factor")
+
+image_factor_names <- str_subset(names(imaging_data),".factor") %>% str_remove(., ".factor")
+
+dt_ha_data <- ha_data %>%
+  filter(record_id <= nobs) %>%
+  select(-all_of(ha_factor_names)) %>%
+  rename_with(~str_remove(.x, ".factor"))
+
+dt_imaging <- imaging_data %>% 
+  filter(record_id <= nobs & redcap_repeat_instrument == "imaging") %>%
+  group_by(record_id) %>%
+  filter(img_ord_dt == first(img_ord_dt)) %>% 
+  mutate(finding = case_when(
+    str_detect(img_impression,
+               regex("(?!(?:no|none)).*[\\w\\s]{0,15}(?:sequelae|infarct|tortuous|ectopi|heterotopi|prominen|anomalous)", 
+                     ignore_case = TRUE)) ~ 1,
+    str_detect(img_impression,
+               regex("(?:chronic|prior).*infarct", 
+                     ignore_case = TRUE)) ~ 1,
+    str_detect(img_impression,
+               regex("otherwise[\\s,]{0,3}(?:unremarkable|normal)", 
+                     ignore_case = TRUE)) ~ 1,
+    str_detect(img_impression,
+               regex("volume loss", 
+                     ignore_case = TRUE)) ~ 1,
+    str_detect(img_impression,
+               regex("(?!(?:otherwise)).*[\\s,]{0,3}(?:unremarkable|normal)",
+                     ignore_case = TRUE)) ~ 0,
+    str_detect(img_impression,
+               regex("(?:nonspecific).*[\\s,]{0,3}finding", 
+                     ignore_case = TRUE)) ~ 0,
+    str_detect(img_impression, 
+               regex("\\bno[\\w\\s]{0,20}(?:finding|abnormality|mass|hydrocephalus)", 
+                     ignore_case = TRUE)) ~ 0,
+    TRUE ~ NA_real_
+  )) %>%
+  summarise(finding = sum(finding, na.rm=T),
+            img_ord_dt = first(img_ord_dt),
+            img_impression = first(img_impression),
+            .groups = 'drop')
+
+dt <- dt_demo %>%
+  select(-redcap_repeat_instrument, -redcap_repeat_instance) %>%
+  left_join(dt_ha_data %>% select(-redcap_repeat_instance), by = "record_id") %>%
+    left_join(dt_imaging, by = "record_id")
+
+```
 
 
 # Methods

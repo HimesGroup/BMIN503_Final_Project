@@ -1,5 +1,14 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project (Danielle Kellier)
 
+This repository contains code for a predictive model for abnormal findings on imaging based on symptom profile.
+
+There is a sub-folder labeled "raw_data" which contains sensitive health information and has been added to .gitignore as a result. .RData was also added to .gitignore to reduce chances of sensitive data being pushed to GitHub
+
+load_data.R is a script with code generated from RedCap that reads and processes CSV data stored in a RedCap database and saves data as feather files due to their size.
+
+renv.lock specifies the packages that were installed and used. This involves the (`renv` package)[https://cran.r-project.org/web/packages/renv/index.html] which can be installed and used to recreate the package environment
+
+references.bib contains references to journal articles mentioned within the report
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.

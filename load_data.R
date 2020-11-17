@@ -2,8 +2,6 @@
 library(Hmisc)
 library(feather)
 
-refresh <- TRUE
-
 if (refresh){
   load_demo_data <- function(csv){
     data=read.csv(csv)
