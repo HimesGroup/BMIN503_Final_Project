@@ -26,13 +26,16 @@ options(width = 400)
 
 ### Methods
 
-The primary datasets used in this project are the longitudinal files for surgical discharges offered by the Dartmouth Atlas website, containing county-level information on the number of surgical discharges per 1,000 Medicare enrollees in a given year, and the MIT Election Lab datasets offering county-level Presidential election results from 2000-2016. Subset analyses were performed for back surgeries and coronary artery bypass graft (CABG) surgeries given their hypothetical levels of aggression: back surgeries being a potentially more aggressive treatment option while CABG, although severe, being a more regulated, less variant treatment option. These data are augmented by other county-level factors that have either been used in prior literature or suggested by my project advisors for inclusion in the multivariable linear regression models. Before loading the data, first I load all the packages necessary to run the commands in this Markdown file:
+#### Data Sources
+
+The primary datasets used in this project are the longitudinal files for surgical discharges offered by the Dartmouth Atlas website, containing county-level information on the number of surgical discharges per 1,000 Medicare enrollees in a given year, and the MIT Election Lab datasets offering county-level Presidential election results from 2000-2016. Subset analyses were performed for back surgeries and coronary artery bypass graft (CABG) surgeries given their hypothetical levels of aggression: back surgeries being a potentially more aggressive treatment option while CABG, although severe, being a more regulated, less variant treatment option. These data are augmented by other county-level factors that have either been used in prior literature or suggested by my project advisors for inclusion in the multivariable linear regression models. Before loading the data, first I loaded all the packages necessary to run the commands in this Markdown file:
 
 ```{r, warning=FALSE, message=FALSE, error=FALSE}
 library(rbbt)
 library(tidyverse)
 library(usmap)
 library(ggplot2)
+library(reshape2)
 library(dplyr)
 library(stringr)
 library(modelsummary)
@@ -46,8 +49,8 @@ library(sjmisc)
 library(sjlabelled)
 library(gtsummary)
 library(table1)
-library(sf)
 library(gt)
+library(ggpubr)
 theme_gtsummary_compact(set_theme = TRUE)
 
 ```
@@ -88,7 +91,10 @@ rural_atlas_income<-read.csv("income.csv", header=TRUE)
 gdp<-read.csv("gdp_bea_county_12_16.csv", header=TRUE, skip=4)
 ```
 
-After importing the raw CSV files, each dataset was cleaned and prepped for linkage. The final analytical cohort contains two records per county (i.e., FIPS code), one for 2012 and another for 2016. Due to a lack of 2016 surgical data available on the Dartmouth Atlas website, the surgical discharge data was lagged by one year (i.e., surgical discharges from 2011 were linked to election results from 2012, and similarly 2015 surgical discharges linked to 2016 election). Therefore, the surgical discharges represent surgical utilization in the year prior to each Presidential election. The variables used from each data source are listed below, followed by the R code used to clean the datasets:
+
+#### Variables
+
+After importing the raw CSV files, each dataset was cleaned and prepped for linkage. The final analytical cohort contains two records per county (i.e., FIPS code), one for 2012 and another for 2016. Due to a lack of 2016 surgical data available on the Dartmouth Atlas website, the surgical discharge data was lagged by one year (i.e., surgical discharges from 2011 were linked to election results from 2012, and similarly 2015 surgical discharges linked to 2016 election). Therefore, the surgical discharges represent surgical utilization in the year prior to each Presidential election. Normality of confounding variables was checked and log-transformed, as necessary. The variables used from each data source are listed below, followed by the R code used to clean the datasets:
 
   **Dartmouth Atlas** (Key independent variables of interest)  
     * AS_DIS: Adjusted Rate of Surgical Discharges per 1,000 Medicare Enrollees  
@@ -143,6 +149,7 @@ surg_dis<-dartmouth %>%
          merge_year=ifelse(surg_year==2011,2012,2016)) %>%
   mutate_at(vars(adj_surg_rate, adj_back_surg_rate, adj_cabg_surg_rate), ~ replace(., . == 99999, NA)) %>%
   filter(adj_surg_rate>=0)
+
 
 # ELECTION
 # Pull 2008, 2012, and 2016 Presidential Election data and generate Republican percent (r_pct) values for each year
@@ -237,53 +244,112 @@ analytical_cohort<-surg_dis %>%
   left_join(cty_rank_all_clean) %>%
   left_join(rural_atlas_income_clean) %>%
   left_join(gdp_clean) %>%
-  mutate(merge_year=as.factor(merge_year), log_pop=log(tot_pop), log_med_inc=log(med_income))
+  filter(!is.na(r_pct))
 ```
 
 
-For now I currently have calculated means of the surgical discharges and Republican %'s across the two election years and fed into US maps, but I plan to separate them and look at each year individually.
+To assess normality of the confounding variables, I generated yearly histograms for each one and transformed as necessary.
 
 ```{r}
+analytical_cohort_hist<-analytical_cohort %>% select("merge_year","pct_gdp_chg","pct_fairpoor","pct_hsgrad","pct_unemp","pct_nhblack","pct_rural","pct_uninsured","tot_pop","med_income","PovertyAllAgesPct")
+
+colNames <- names(analytical_cohort_hist[-1])
+for(i in colNames){
+    plot<-ggplot(data=analytical_cohort, aes_string(x=i)) +
+    geom_histogram(bins=20, aes(y=..density..), colour="black", fill="white") +
+    geom_density(alpha=.3, fill="lightgreen") +
+    facet_grid(~merge_year)
+    print(plot)
+}
+
+```
 
 
-tm_shape(shp) +
-  tm_polygons()
+Visually it looks like % Change in GDP, % H.S Grads, % Non-Hispanic Black, % Rural, Total Population, and Median Income are the biggest offenders. So 
 
-collapse1 <- summaryBy(r_pct + adj_surg_rate + tot_pop ~ fips, FUN=c(mean), data=analytical_cohort)
-collapse1<- collapse1 %>% mutate(log_adj_surg_rate=log(adj_surg_rate.mean))
+```{r}
+# Perform log transformation for selected variables
+# Note that % GDP Change contains negative values so I added a constant of 56 to each value (-56 is the largest negative value) to bring it to all positives
+analytical_cohort<-analytical_cohort %>%
+    mutate(merge_year=as.factor(merge_year), log_gdp=log(pct_gdp_chg+56), log_hsgrad=log(pct_hsgrad), log_nhblack=log(pct_nhblack), log_rural=log(pct_rural), log_pop=log(tot_pop), log_med_inc=log(med_income))
 
-usplot_surg<-plot_usmap(data=collapse1, values="adj_surg_rate.mean", regions = "counties", exclude=c("HI","AK")) + 
-  labs(title = "Adjusted Rate of Surgical Discharges per 100K Medicare Enrollees by US County",
-       subtitle="(Mean of 2012 & 2016)") + 
+colNames2 <- names(analytical_cohort[24:29])
+for(i in colNames2){
+    plot<-ggplot(data=analytical_cohort, aes_string(x=i)) +
+    geom_histogram(bins=20, aes(y=..density..), colour="black", fill="white") +
+    geom_density(alpha=.3, fill="lightgreen") +
+    facet_grid(~merge_year)
+    print(plot)
+}
+```
+
+
+The distributions for Total Population and Median Income look better after log transformation so they were used in the statistical modeling.
+
+
+#### Statistical Analysis
+Multivariable linear regression was conducted using the following formula:
+
+$$\Large RPct_{ij}=f(SU_{i,j-1},\ PVS_{j-4},\ GDP_{ij},\ Pov_i,\ CR_{ij},\ \eta_j,\ FIPS_{i})$$  
+
+where $RPct_{ij}$ represents the Republican voting share (expressed as a proportion) in county $i$ and year $j$, $SU_{i,j-1}$ refers to the surgical utilization rate in the year prior to the election, $PVS_{j-4}$ represents a county's past voting share from the prior presidential election, $GDP_{ij}$ represents a measure of economic growth, $USDA_i$ is the % Poverty, $CR_{i,j}$ are the Country Rankings predictors for the year of the election, $\eta_j$ is a binary indicator for year, and $\FIPS_{i}$ represents the fixed effect for each FIPS county . The analysis will be repeated for the other surgical utilization variables. 
+
+
+
+
+### Results
+
+Results are below but need to flesh out with text.
+
+```{r}
+surg_dis_2012 <- surg_dis %>% filter(merge_year==2012, adj_surg_rate<160)
+surg_dis_2016 <- surg_dis %>% filter(merge_year==2016)
+
+usplot_surg_2012<-plot_usmap(data=surg_dis_2012, values="adj_surg_rate", regions = "counties", exclude=c("HI","AK")) + 
+  labs(title = "Adjusted Rate of Surgical Discharges per 100K Medicare Enrollees by US County (2012)") + 
   theme(panel.background = element_rect(color=NA, fill = "white"), 
         plot.title = element_text(hjust = 0.5),
         plot.subtitle=element_text(hjust=0.5)) + 
-  scale_fill_gradient2(low="#2E74C0",
-                       mid="#D3D3D3",
-                       high="#CB454A",
-                       midpoint=81.55,
-                       name="Rate",
-                       na.value="white")
+  scale_fill_gradientn(colors=rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")))
 
-usplot_elect<-plot_usmap(data=collapse1, values="r_pct.mean", regions = "counties", exclude=c("HI","AK")) +
-  labs(title = "Republican Voting % in the 2012 & 2016 Presidential Elections by County") +
-  theme(panel.background = element_rect(color=NA, fill = "white"),
-        plot.title = element_text(hjust = 0.5)) +
-  scale_fill_gradient2(low="#2E74C0",
-                       mid="#D3D3D3",
-                       high="#CB454A",
-                       midpoint=50,
-                       name="Republican %",
-                       na.value="white")
+usplot_surg_2016<-plot_usmap(data=surg_dis_2016, values="adj_surg_rate", regions = "counties", exclude=c("HI","AK")) + 
+  labs(title = "Adjusted Rate of Surgical Discharges per 100K Medicare Enrollees by US County (2016)") + 
+  theme(panel.background = element_rect(color=NA, fill = "white"), 
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle=element_text(hjust=0.5)) + 
+  scale_fill_gradientn(colors=rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")))
 
-usplot_surg
-usplot_elect
+
+usplot_elect_2012<-plot_usmap(data=elect_2012,
+                              values="r_pct",
+                              regions = "counties",
+                              exclude=c("HI","AK")) +
+                   labs(title = "Republican Voting % by US County (2012)") +
+                   theme(panel.background = element_rect(color=NA, fill = "white"),
+                   plot.title = element_text(hjust = 0.5)) +
+                   scale_fill_gradientn(colors=rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")),
+                                        name="Reublican %")
+
+usplot_elect_2016<-plot_usmap(data=elect_2016,
+                              values="r_pct",
+                              regions = "counties",
+                              exclude=c("HI","AK")) +
+                   labs(title = "Republican Voting % by US County (2016)") +
+                   theme(panel.background = element_rect(color=NA, fill = "white"),
+                   plot.title = element_text(hjust = 0.5)) +
+                   scale_fill_gradientn(colors=rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")),
+                                        name="Reublican %")
+
+usplot_surg_2012
+usplot_elect_2012
+usplot_surg_2016
+usplot_elect_2016
+
 
 
 ```
 
-
-```{r tab.cap="This is a caption"}
+```{r}
 
 label(analytical_cohort$adj_surg_rate)    <- "Surgical Discharges per 1,000 Medicare Enrollees"
 label(analytical_cohort$past_vote_share)  <- "% Republican Vote Share (Prior Election)"
@@ -300,7 +366,9 @@ label(analytical_cohort$med_income)       <- "Median Income"
 label(analytical_cohort$PovertyAllAgesPct)<- "% Poverty"
 label(analytical_cohort$r_pct)            <- "% Republican Vote Share"
 
-ac2 <- analytical_cohort %>% dplyr::select(adj_surg_rate , r_pct , past_vote_share , pct_gdp_chg , pct_fairpoor , pct_hsgrad , pct_unemp , pct_nhblack , pct_rural , pct_uninsured , tot_pop , med_income , PovertyAllAgesPct, merge_year)
+ac2 <- analytical_cohort %>% dplyr::select(adj_surg_rate, r_pct, past_vote_share, pct_gdp_chg, pct_fairpoor, 
+                                           pct_hsgrad, pct_unemp, pct_nhblack, pct_rural, pct_uninsured, tot_pop, 
+                                           med_income, PovertyAllAgesPct, merge_year)
 
 ac2 %>%
   tbl_summary(
@@ -309,23 +377,23 @@ ac2 %>%
                      all_categorical() ~ "{n} / {N} ({p}%)"),
     digits = all_continuous() ~ 1,
     missing="no"
-  ) %>% add_overall() %>% modify_spanning_header((c("stat_1", "stat_2") ~ "**Year**")) %>% as_gt() %>% gt::tab_header("Table 1. County-Level Characteristics by Year") %>% opt_align_table_header(align = "left")
-
+  ) %>%
+  add_overall() %>%
+  modify_spanning_header((c("stat_1", "stat_2") ~ "**Year**")) %>% 
+  as_gt() %>% 
+  gt::tab_header("Table 1. County-Level Characteristics by Year") %>% 
+  opt_align_table_header(align = "left")
 
 ```
-  
-    
-    
-```{r, message=FALSE, warning=FALSE, eval=FALSE}
 
+```{r, message=FALSE, warning=FALSE}
 
-if(exists("models") == FALSE) {
 models<-list()
 models[['Univariate']] <-lm(data=analytical_cohort, r_pct ~ adj_surg_rate)
 models[['Multivariable']] <-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_fairpoor + pct_hsgrad + pct_unemp + pct_nhblack + pct_rural + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + merge_year)
 models[['Multivariable w/FIPS FE']]<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_fairpoor + pct_hsgrad + pct_unemp + pct_nhblack + pct_rural 
               + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + factor(merge_year) + factor(fips))
-}
+
 
 modelsummary(models,
              statistic = 'p.value',
@@ -343,40 +411,7 @@ modelsummary(models,
                         'log_med_inc'="Log(Median Income)",
                         'PovertyAllAgesPct'="Poverty Rate, All Ages",
                         'merge_year'="Election Year"), title="Linear Regression Results")
-# 
-# lmodel_uni<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate)
-# summ(lmodel_uni, confint=TRUE)
-# # Initial multivariable model
-# lmodel<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_fairpoor + pct_hsgrad + pct_unemp + pct_nhblack + pct_rural + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + merge_year)
-# modelsummary(lmodel)
-# summary(lmodel)
-# summ(lmodel, confint=TRUE)
-# 
-# # Secondary multivariable model with county FE
-# 
-# 
-# 
-# lmodel_fe<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_unemp + pct_nhblack + pct_rural 
-#               + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + factor(merge_year) + factor(fips))
-# summary(lmodel_fe)
-# modelsummary(lmodel_fe,  statistic = 'p.value', coef_omit = 'fips')
-# 
-# #modelsummary(lmodel, lmodel_fe)
-# 
-# tab_model(lmodel_fe, terms = c("adj_surg_rate","past_vote_share","pct_gdp_chg","pct_unemp", "pct_nhblack","pct_rural","pct_uninsured","log_pop","log_med_inc","PovertyAllAgesPct","merge_year"))
-# 
-# # Model with fairpoor health and hsgrad removed due to large #'s of missing data
-# lmodel2<-lm(data=analytical_cohort, r_pct ~ adj_surg_rate + past_vote_share + pct_gdp_chg + pct_unemp + pct_nhblack + pct_rural + pct_uninsured + log_pop + log_med_inc + PovertyAllAgesPct + merge_year)
-# summ(lmodel2, confint=TRUE)
-# ggplot(data=analytical_cohort, aes(y=r_pct, x=crude_surg_rate, group=merge_year)) + geom_smooth(method="lm")
-# analytical_cohort %>% filter(merge_year==2012) %>% ggplot(aes(y=r_pct, x=crude_surg_rate)) + geom_point() + geom_smooth(method="lm")
-# analytical_cohort %>% filter(merge_year==2016) %>% ggplot(aes(y=r_pct, x=crude_surg_rate)) + geom_point() + geom_smooth(method="lm")
-# ggplot(data=analytical_cohort, aes(y=adj_surg_rate, x=merge_year)) + geom_boxplot()
 ```
-
-
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 
 ### References
