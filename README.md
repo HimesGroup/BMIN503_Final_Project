@@ -3,7 +3,7 @@
 **Project Title**: Serum Amyloid A promotes Th17 responses in murine models of colitis and multiple sclerosis
 
 # Overview
-Using the publically available RNASeq dataset [GSE132761]("https://www-ncbi-nlm-nih-gov.proxy.library.upenn.edu/geo/query/acc.cgi?acc=GSE132761") from the Gene Expression Omnibus (GEO) repository, my goal was to understand transcriptomic changes in naive CD4 T cells in response to the acute phase protein Serum Amyloid A (SAA). 
+Using the publically available RNASeq dataset [GSE132761](https://www-ncbi-nlm-nih-gov.proxy.library.upenn.edu/geo/query/acc.cgi?acc=GSE132761) from the Gene Expression Omnibus (GEO) repository, my goal was to understand transcriptomic changes in naive CD4 T cells in response to the acute phase protein Serum Amyloid A (SAA). 
 
 **Faculty mentors**:
 
