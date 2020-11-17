@@ -72,6 +72,7 @@ library(ggplot2)
 fromBeginning <- FALSE
 if (fromBeginning==TRUE) {
 df <- read.csv(paste0(home,"df.csv"), stringsAsFactors = FALSE)
+icv.orig <- read.csv(paste0(home,"UKB_DLICV_Vol.csv"),stringsAsFactors = FALSE)
 u.batch.orig <- read.csv(paste0(dir,"Protocols/UKBiobank_Consolidated/ukbiobank_batch0-10.csv"), stringsAsFactors=FALSE)
 u.batch <- u.batch.orig %>%
   mutate(PTID=as.character(eid)) %>%
@@ -109,6 +110,12 @@ tbi.sub <- tbi.sub[!duplicated(tbi.sub)]                                    # re
 df <- df %>%
   mutate(TBI=ifelse(PTID%in%tbi.sub,1,0))
 
+# add deep-learning based ICV calculation ####
+icv <- icv.orig %>%
+  mutate(ID= substr(ID, 1, 7)) %>%
+  dplyr::rename(BATCH= Batch)
+df <- merge(df, icv)
+
 ##### - select subjects with other pathologies from control group (ICD10 codes beginning with F&G) -> (icd.sub) ####
 temp = sapply(icd[1:(length(icd)-2)], function(x) grepl("G", x, ignore.case = TRUE))
 icd$G = rowSums(temp) > 0
@@ -121,7 +128,8 @@ icd.sub <- icd.sub[!duplicated(icd.sub)]   # N=2568
 rm(icd.F,icd.G,tbi.sr,tbi.icd,temp)
 
 ##### - age/sex match controls to cases, calculate z-scores for each ROI
-# prepare datasets ####
+
+# prepare datasets, selecting controls in (ctrl) and cases in (case) ####
 ctrl <- df %>% 
   filter(TBI!=1) %>%
   filter(!PTID %in% icd.sub)
@@ -129,7 +137,7 @@ case <- df %>% filter(TBI==1) %>%
   mutate(range.low= Age_At_Visit -1) %>%
   mutate(range.high= Age_At_Visit +1)
 
-# select age/sex matched controls and calculate z-score -> (df.z) ####
+# select age/sex matched controls and calculate z-scores -> (df.z) and (df.z_ctrl) ####
 for (row in 1:nrow(case)) {
   sub_data <- case[row,]
   sub_data.muse <- sub_data %>%
@@ -173,12 +181,12 @@ for (row in 1:nrow(case)) {
 }
  rm(nm,age,muse_controls,nm.d,sub_data,sub_data.muse,z,zz,PTID,sd,mean,N.controls,row,sub_controls,controls,sex, z_ctrl)
 
-# select age/sex matched controls and calculate icv corrected z-score -> (df.z) ####
+# select age/sex matched controls and calculate icv corrected z-scores -> (df.z.icv) and (df.z_ctrl.icv) ####
 for (row in 1:nrow(case)) {
   sub_data <- case[row,]
   sub_data.muse <- sub_data %>%
-    select(c(names(df)[startsWith(names(df),"MUSE")]))
-  sub_data.muse.icv <- as.data.frame(t(sapply(names(sub_data.muse), function(x) sub_data.muse[,x]/sub_data.muse[,"MUSE_Volume_702"])))
+    select(c(names(df)[startsWith(names(df),"MUSE")], DLICV))
+  sub_data.muse.icv <- as.data.frame(t(sapply(names(sub_data.muse), function(x) sub_data.muse[,x]/sub_data.muse[,"DLICV"])))
   controls <- ctrl %>%
     filter(Age_At_Visit>=sub_data$range.low) %>%
     filter(Age_At_Visit<=sub_data$range.high) %>%
@@ -186,8 +194,8 @@ for (row in 1:nrow(case)) {
   sub_controls <- controls %>% 
     select(PTID)
   muse_controls <- controls %>%
-    select(c(names(df)[startsWith(names(df),"MUSE")]))
-  muse_controls.icv <- as.data.frame(sapply(names(muse_controls), function(x) muse_controls[,x]/muse_controls[,"MUSE_Volume_702"]))
+    select(c(names(df)[startsWith(names(df),"MUSE")], DLICV))
+  muse_controls.icv <- as.data.frame(sapply(names(muse_controls), function(x) muse_controls[,x]/muse_controls[,"DLICV"]))
   mean <- sapply(muse_controls.icv, function(k) mean(k))
   sd <- sapply(muse_controls.icv, function(m) sd(m))
   nm <- rbind(mean,sd)
@@ -206,9 +214,9 @@ for (row in 1:nrow(case)) {
     df.z.icv <- rbind(df.z.icv,data.frame(PTID, age, sex, N.controls, zz))
   }
   z_ctrl <- controls %>%
-    select(c(PTID, names(df)[startsWith(names(df),"MUSE")]))
+    select(c(PTID, names(df)[startsWith(names(df),"MUSE")], DLICV))
   z_ctrl.icv_tmp <- as.data.frame(sapply(names(df)[startsWith(names(df),"MUSE")], 
-                                                      function(x) z_ctrl[,x]/z_ctrl[,"MUSE_Volume_702"]))
+                                                      function(x) z_ctrl[,x]/z_ctrl[,"DLICV"]))
   z_ctrl.icv <- cbind(PTID= z_ctrl$PTID, z_ctrl.icv_tmp)
   z_ctrl.icv[cols <- c(names(df)[startsWith(names(df),"MUSE")])] <- 
     scale(z_ctrl.icv[cols <- c(names(df)[startsWith(names(df),"MUSE")])])
@@ -220,23 +228,82 @@ for (row in 1:nrow(case)) {
     df.z_ctrl.icv <- rbind(df.z_ctrl.icv,z_ctrl.icv)
   }
 }
+rm(nm,age,muse_controls,nm.d,sub_data,sub_data.muse,z,zz,PTID,sd,mean,N.controls,row,sub_controls,controls,sex, z_ctrl)
 
-df.z.icv$MUSE_Volume_702_z <- 0
-df.z_ctrl.icv$MUSE_Volume_702_z <- 0
+# remove any subject-specific identifiers
+df.z_503 <- df.z[,c(names(df.z)[startsWith(names(df.z),"MUSE")])]
+df.z.icv_503 <- df.z.icv[,c(names(df.z.icv)[startsWith(names(df.z.icv),"MUSE")])]
+df.z_ctrl_503 <- df.z_ctrl[,c(names(df.z_ctrl)[startsWith(names(df.z_ctrl),"MUSE")])]
+df.z_ctrl.icv_503 <- df.z_ctrl.icv[,c(names(df.z_ctrl.icv)[startsWith(names(df.z_ctrl.icv),"MUSE")])]
 
-
+# write z-score datasets, to be used in Final Project
+write.csv(df.z_503, paste0(home,"df_z_503.csv"), row.names=FALSE)
+write.csv(df.z.icv_503, paste0(home,"df_z_icv_503.csv"), row.names=FALSE)
+write.csv(df.z_ctrl_503, paste0(home,"df_z_ctrl_503.csv"), row.names=FALSE)
+write.csv(df.z_ctrl.icv_503, paste0(home,"df_z_ctrl_icv_503.csv"), row.names=FALSE)
+ 
 } else {
-
-df.z <- read.csv(paste0(home,"df_z.csv"), stringsAsFactors = FALSE)
-df.z.icv <- read.csv(paste0(home,"df_z_icv.csv"), stringsAsFactors = FALSE)
-df.z_ctrl <- read.csv(paste0(home,"df_z_ctrl.csv"), stringsAsFactors = FALSE)
-df.z_ctrl.icv <- read.csv(paste0(home,"df_z_ctrl_icv.csv"), stringsAsFactors = FALSE)
+# read z-score datasets, to be used in Final Project
+df.z <- read.csv(paste0(home,"df_z_503.csv"), stringsAsFactors = FALSE)
+df.z.icv <- read.csv(paste0(home,"df_z_icv_503.csv"), stringsAsFactors = FALSE)
+df.z_ctrl <- read.csv(paste0(home,"df_z_ctrl_503.csv"), stringsAsFactors = FALSE)
+df.z_ctrl.icv <- read.csv(paste0(home,"df_z_ctrl_icv_503.csv"), stringsAsFactors = FALSE)
 }
 
+##### select most affected absolute ROIs by looking z-scores less than -2, skewness, kurtosis
+df.z.o <- df.z
+temp <- colSums(sapply(df.z.o, function(x) x<=-2))
+skew <- sapply(df.z.o, moments::skewness)
+kurt <- sapply(df.z.o, moments::kurtosis)
 
+##### select most affected ICV-corrected ROIs by looking z-scores less than -2, skewness, kurtosis
+df.z.icv.o <- df.z.icv
+temp.icv <- colSums(sapply(df.z.icv.o, function(x) x<=-2))
+skew.icv <- sapply(df.z.icv.o, moments::skewness)
+kurt.icv <- sapply(df.z.icv.o, moments::kurtosis)
 
+#ROI summary measures: N.outliers, skewness, kurtosis
+roi_summary <- rbind(temp, skew, kurt, temp.icv, skew.icv, kurt.icv)
 
+# read MUSE ROI dictionary (muse.dict.t) ####
+muse.dict <- read.csv(paste0(home,"doc_MUSE_ROI_Dictionary.csv"),stringsAsFactors = FALSE)
+muse.dict$ROI_NAME_INDEX <- paste0(muse.dict$ROI_INDEX,"-",muse.dict$ROI_NAME)
+muse.dict.t <- as.data.frame(t(muse.dict))
+names(muse.dict.t) <- paste0(muse.dict.t["ROI_COL",],"_z")
+muse.dict.t <- muse.dict.t %>%
+  select(-c(names(muse.dict.t)[!names(muse.dict.t)%in%names(df.z)]))
 
+df.z.dict <- rbind(df.z,muse.dict.t)
+df.z.icv.dict <- rbind(df.z.icv,muse.dict.t) 
+
+roi.sel <- df.z.dict[df.z.dict$PTID=="ROI_NAME_INDEX",]
+rename <- as.data.frame(c(roi.sel[,1:ncol(roi.sel)]))
+df_z <- rbind(df.z, rename)
+names(df_z) <- df_z[44,]
+df_z <- df_z[-44,] %>%
+  sapply(as.numeric) 
+df_z.icv <- rbind(df.z.icv, rename)
+names(df_z.icv) <- df_z.icv[44,]
+df_z.icv <- df_z.icv[-44,] %>%
+  sapply(as.numeric)
+df_z <- as.data.frame(df_z)
+df_z.icv <- as.data.frame(df_z.icv)
+
+roi_summary_ <- rbind(roi_summary,ROI= rename[1:ncol(rename)])
+roi.nm <- colnames(roi_summary)
+roi_summary_a <- rbind(roi_summary, roi.nm)
+
+roi <- as.data.frame(t(roi_summary_a)) %>%
+  arrange(desc(temp.icv)) %>%
+  mutate(ROI= roi.nm, N_outliers= as.numeric(temp.icv), Skew= as.numeric(skew.icv), Kurtosis= as.numeric(kurt.icv)) %>% 
+  select(ROI, N_outliers, Skew, Kurtosis)
+  
+roi[,3] <- round(roi[,3], 3)
+roi[,4] <- round(roi[,4], 3)
+
+muse.dict$ROI <- paste0(muse.dict$ROI_COL,"_z")
+roi40 <- roi[1:40, "ROI"]
+top40 <- muse.dict[muse.dict$ROI%in%roi40, "ROI_NAME_INDEX"]
 ```
 
 ### Results
