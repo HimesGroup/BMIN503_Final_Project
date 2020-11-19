@@ -1,5 +1,13 @@
 # BMIN503/EPID600 Final Project
 
+This project is on the chILD Registry, a national multi-center registry for subjects with childhood interstitial lung disease (chILD).The intent of this project is to explore general demographics of subjects enrolled in the registry, and to conduct further analysis by diagnosis. A more in-depth analysis is performed on disorders with early presentations: neuroendocrine cell hyperplasia of infancy (NEHI), growth abnormalities, and surfactant dysfunction disorders, with a focus on diagnostics. The intent is to increase knowledge of important factors for diagnosis in theses cases, to help guide workup and management for children with suspected interstitial lung disease in the neonatal/infant period.
+
+Special thanks is given to the Children’s Interstitial and Diffuse Lung Disease Research Network (chILDRN) and Dr. Lisa Young for the opportunity to work on this project.
+
+
+
+
+Original instructions:
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
@@ -16,5 +24,5 @@ DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
-This project is on the chILD Registry, a national multi-center registry for subjects with childhood interstitial lung disease.
+
 
