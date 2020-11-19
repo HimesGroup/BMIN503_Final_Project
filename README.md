@@ -1,22 +1,14 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+The purpose of this project is to describe the differences in reporting of cost-related nonadherence by geographic distribution. Data come from the 2019 National Health Interview Survey (https://www.cdc.gov/nchs/nhis/index.htm)
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+All necessary files to replicate this project are included in this repository.
 
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
 
 Important definitions
+
+Urban/Rural classifications are defined by the 2013 NCHS Urban-Rural Classification Scheme for Counties
 
 For regional residence (variable 'resregion'), states fall into the following categories:
 
