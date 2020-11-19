@@ -28,10 +28,10 @@ Explain why your problem is interdisciplinary, what fields can contribute to its
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 ```{r}
 library(tidyverse)
-
+#load raw dataset
 seer <- read.csv("C:/Users/kmroh/Desktop/BMIN503/dataset1.csv", header = T)
+#view column names and rename variables of interest
 colnames(seer)
-
 seer <- seer %>%
   rename(patid = Patient.ID, 
          sex = Sex, 
@@ -42,35 +42,81 @@ seer <- seer %>%
          cod.site = COD.to.site.recode,
          cod = SEER.cause.specific.death.classification,
          vital.status = Vital.status.recode..study.cutoff.used.,
-         age.dx = Age.at.diagnosis,
          yob = Year.of.birth,
-         prim.site = Primary.Site...labeled) %>% 
-  select(patid, sex, year.dx, mstatus, race, surv.months, cod.site, cod, vital.status, age.dx,
-         yob, prim.site)
+         prim.site = Primary.Site...labeled) 
 seer$surv.months <- as.integer(seer$surv.months)
-
+#see possible marital statuses
 table(seer$mstatus)
-nrow(seer)
+#remove entries which are not married, partnered, or single at time of diagnosis
 seer <- seer %>%
-  filter(mstatus != "Unknown")
+  filter(mstatus == "Married (including common law)" |
+         mstatus == "Unmarried or Domestic Partner" |
+         mstatus == "Single (never married)")
+#recode to those who are partnered or not at the time of diagnosis
+seer$part <- ifelse(seer$mstatus != "Single (never married)",
+                    1,
+                    0)
+seer$part <- factor(seer$part, labels = c("Single","Partnered"))
+#recode race variable
+table(seer$race)
+seer$race <- ifelse(seer$race == "Other (American Indian/AK Native, Asian/Pacific Islander)",
+                    "Other", ifelse(seer$race == "White",
+                                    "White", ifelse(seer$race == "Black",
+                                                    "Black", ifelse(seer$race == "Unknown",
+                                                                    "Unknown", 0))))
+#remove those of unknown race 
+seer <- seer %>%
+  filter(race != "Unknown")
+#remove those whose cause of death is unknown, or whose tumor is not the first
+table(seer$cod)
+seer <- seer %>%
+  filter(cod == "Alive or dead of other cause" |
+         cod == "Dead (attributable to this cancer dx)")
+#remove observations with unknown primary site
+seer <- seer %>%
+  filter(prim.site != "C80.9-Unknown primary site")
 
-seer$mar <- as.factor(ifelse(seer$mstatus == "Married (including common law)",1,0))
+#create group average of survival month by mar variable
+seer <- seer %>%
+  group_by(part) %>%
+  mutate(avg.pstatus = mean(surv.months, na.rm = T))
+#plot survival months by recoded marital status
+ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot() +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis \nAll Sexes", 
+       x = "Relationship status", 
+       y = "Survival Months")
 
-table(seer$mar)
-
-seer2 <- seer %>%
-  group_by(mar) %>%
-  mutate(avg.mar = mean(surv.months, na.rm = T))
-
-ggplot(seer2, aes(x=mar, y=surv.months)) +
-  geom_boxplot()
-
-seer2 <- seer2 %>%
+seer <- seer %>%
   group_by(sex) %>%
-  mutate(avg.mar.sex = mean(surv.months, na.rm = T))
+  mutate(avg.part.sex = mean(surv.months, na.rm = T))
 
-ggplot(seer2, aes(x=mar, y=surv.months)) +
-  geom_boxplot(aes(color = sex))
+ggplot(seer, aes(x=as.factor(sex), y=surv.months)) +
+  geom_boxplot() +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Sex", 
+       x = "Sex", 
+       y = "Survival Months")
+
+ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis \nand Sex", 
+       x = "Relationship status", 
+       y = "Survival Months")
 #
 ```
 
