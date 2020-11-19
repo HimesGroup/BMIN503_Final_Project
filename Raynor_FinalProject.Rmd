@@ -276,30 +276,69 @@ rabies$stim_reports <- rabies$stim#*params["rho"] #scale down stim reports by re
 ```
 
 #### Stochastic model
-``{r}
-SIR.onestep <- function (x, params) { #function to calculate one step of stochastic SIR
-+ X <- x[2] #local variable for susceptibles
-+ Y <- x[3] #local variable for infecteds
-+ Z <- x[4] #local variable for recovereds
-+ N <- X+Y+Z #total population size (subject to demographic change)
-+ with( #use with as in deterministic model to simplify code
-+ as.list(params),
-+ {
-+ total.rate <- mu*N+beta*X*Y/N+mu*X+mu*Y+gamma*Y+mu*Z #calculate ``total rate''
-+ tau <- rexp(n=1,rate=total.rate) #inter-event time
-+ new.xyz <- c(X,Y,Z) #initialize a local variable at previous state variable values
-+ U <- runif(1) #uniform random deviate
-+ new.xyz<-c(X,Y,Z-1) #death of recovered id ``default''
-+ if (U<=(mu*N+beta*X*Y/N+mu*X+gamma*Y+mu*Y)/total.rate) new.xyz<-c(X,Y-1,Z) #death of infected
-+ if (U<=(mu*N+beta*X*Y/N+mu*X+gamma*Y)/total.rate) new.xyz<-c(X,Y-1,Z+1) #recovery of infected
-+ if (U<=(mu*N+beta*X*Y/N+mu*X)/total.rate) new.xyz<-c(X-1,Y,Z) #death of a susceptible
-+ if (U<=(mu*N+beta*X*Y/N)/total.rate) new.xyz<-c(X-1,Y+1,Z) #transmission event
-+ if (U<=(mu*N/total.rate)) new.xyz<-c(X+1, Y, Z) #birth of susceptible
-+ c(tau,new.xyz) #store result
-+ }
-+ )
-+ }
-``
+
+1. code based on: https://daphnia.ecology.uga.edu/drakelab/wp-content/uploads/2016/07/sismid-stochastic-lecture.pdf
+
+TO DO:
+- adjust models to fit rabies system
+-
+
+```{r}
+#function to calculate one step of stochastic SIR
+SIR.onestep <- function (x, params) { 
+  X <- x[2] #local variable for susceptibles
+  Y <- x[3] #local variable for infecteds
+  Z <- x[4] #local variable for recovereds
+  N <- X+Y+Z #total population size (subject to demographic change) 
+  with( #use with as in deterministic model to simplify code
+    as.list(params),
+      {
+      total.rate <- mu*N+beta*X*Y/N+mu*X+mu*Y+gamma*Y+mu*Z #calculate ``total rate''
+      tau <- rexp(n=1,rate=total.rate) #inter-event time
+      new.xyz <- c(X,Y,Z) #initialize a local variable at previous state variable values
+      U <- runif(1) #uniform random deviate
+      new.xyz<-c(X,Y,Z-1) #death of recovered id ``default''
+      if (U<=(mu*N+beta*X*Y/N+mu*X+gamma*Y+mu*Y)/total.rate) new.xyz<-c(X,Y-1,Z) #death of infected
+      if (U<=(mu*N+beta*X*Y/N+mu*X+gamma*Y)/total.rate) new.xyz<-c(X,Y-1,Z+1) #recovery of infected
+      if (U<=(mu*N+beta*X*Y/N+mu*X)/total.rate) new.xyz<-c(X-1,Y,Z) #death of a susceptible
+      if (U<=(mu*N+beta*X*Y/N)/total.rate) new.xyz<-c(X-1,Y+1,Z) #transmission event
+      if (U<=(mu*N/total.rate)) new.xyz<-c(X+1, Y, Z) #birth of susceptible
+      c(tau,new.xyz) #store result
+    }
+  )
+}
+
+#function to simulate stochastic SIR
+SIR.model <- function (x, params, nstep) { 
+  output <- array(dim=c(nstep+1,4)) #set up array to store results
+  colnames(output) <- c("time","X","Y","Z") #name variables
+  output[1,] <- x #first record of output is initial condition
+  for (k in 1:nstep) { #iterate for nstep steps
+    output[k+1,] <- x <- SIR.onestep(x,params)
+  }
+output #return output
+}
+
+#Call SIR model to simulate
+set.seed(1234) #set seed
+
+nsims <- 10 #number of simulations
+pop.size <- 10000 #total population size
+Y0 <- 50 #initial number infected
+X0 <- round(0.98*pop.size) #initial number suscepitlble (~98% of population)
+
+nstep <- 16000 #number of events to simulate
+xstart <- c(time=0,X=X0,Y=Y0,Z=pop.size-X0-Y0) #initial conditions
+params <- list(mu=0.00001,beta=60,gamma=365/13)#parameters
+data <- vector(mode='list',length=nsims) #initialize list to store the output
+for (k in 1:nsims) { #simulate nsims times
+  data[[k]] <- as.data.frame(SIR.model(xstart,params,nstep))
+  data[[k]]$cum.time <- cumsum(data[[k]]$time)
+}
+max.time<-data[[1]]$cum.time[max(which(data[[1]]$Y>0))] #maximum time in first simulation
+max.y<-1.8*max(data[[1]]$Y) #find max infected in run 1 and increase by 80% for plot
+
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
@@ -365,3 +404,19 @@ p2
 ```
 
 #### Stochastic model results
+
+TO DO:
+-convert plots to ggplot
+-add in background incidence 
+
+
+```{r}
+#plot
+plot(Y~cum.time,data=data[[1]],xlab='Time',ylab='Incidence',col=1,xlim=c(0,max.time),ylim=c(0,max.y), type='l', axes=FALSE)
+box()
+axis(2, cex.axis=0.8, las=2)
+for (k in 1:nsims) { #add multiple epidemics to plot
+  lines(Y~cum.time,data=data[[k]],col=k,type='l')
+}
+
+```
