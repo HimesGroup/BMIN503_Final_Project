@@ -1,18 +1,14 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project: Air Quality in American Communities
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+These are the materials for my project building models from census data to determine how well they predict air quality and its health effects.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Contents: 
+- final_project_Bayes.Rmd:  RMarkdown file to run and generate the report
+- final_project_Bayes.html: The report itself
+- all2019dailyPM25.RDS:     The 2019 file with daily PM2.5 EPA data for the "lower 48" states.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+The .RDS file would also be produced by the R chunk near the start of the RMarkdown file; however, it typically takes 1-2 hours to execute, and it requires that the user (1) possess active credentials for the EPA Air Quality System API and (2) has them stored them as appropriately-named environment variables.
 
+Notes to self:
 DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+**Create a pull request on the original BMIN503_Final_Project repository to turn in your final project.**
