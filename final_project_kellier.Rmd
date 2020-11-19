@@ -9,7 +9,16 @@ output:
     theme: paper 
     highlight: tango
 ---
-```{r set-options, echo=FALSE, cache=FALSE}
+
+```{r install-packages, eval=FALSE}
+
+install.packages("renv")
+renv::restore()
+
+```
+
+
+```{r set-options, message=FALSE, cache=FALSE}
 options(width = 400)
 library(tidyverse)
 library(gtsummary)
@@ -22,7 +31,13 @@ library(mgcv)
 library(ranger)
 library(tidytext)
 
-refresh = F
+# Settings
+refresh = F #When true, reads in raw CSV files and processes. When false, loads in already-processed feather files
+nobs <- 4000 #num of observations included in dataset
+missing_threshold <- 0.05 # level of missingness acceptable for an individual variable
+test_to_train <- c(0.8, 0.2) #ratio of data used from training dataset compared to testing data set
+num_randomforest_trees <- 500 # number of randomForest trees
+
 source("load_data.R") #Loads in records from outpatient visits from a folder not included in git repository
 
 Ranger2List <- function(rf_ranger)
@@ -73,66 +88,107 @@ Describe the data used and general methodological approach. Subsequently, incorp
 
 
 ```{r simulate-data}
+# 
+# set.seed(12345)
+# 
+# image_types <- c("Imaged", "Not imaged")
+# image_freq <- c(0.2, 0.8)
+# outcome_types <- c("Abnormality", "No abnormality")
+# outcome_freq <- c(0.05, 0.95)
+# 
+# nsymptoms <- 10
+# symptom_corr <- genCorMat(nsymptoms)
+# nobs <- 6000
+# 
+# dt <- fabricate(N = nobs,
+#                 age = runif(N, min = 3, max = 17),
+#                 sex = correlate(given = age, rho = 0.2, draw_binary, prob = 0.55),
+#                 outcome_true = correlate(given = age, rho = -0.6, draw_binary, prob = outcome_freq[[1]]),
+#                 image = correlate(given = outcome_true, rho = 0.8, draw_binary, prob = image_freq[[1]]),
+#                 symptoms_mu = pmin(pmax(rnorm(N, mean = 0.05 + 0.2*image + 0.7*outcome_true - 0.05*age, 
+#                                               sd = 0.05 + 0.05*image + 0.05*outcome_true),0),1))
+# 
+# rmat <- matrix(rnorm(nsymptoms^2),nsymptoms,nsymptoms)
+# cov_mat <- rmat%*%t(rmat)
+# corr_mat <- cov_mat/sqrt(diag(cov_mat)%*%t(diag(cov_mat)))
+# 
+# dt_symptoms <- cbind(genData(nobs, id = "ID"), "symptoms_mu" = dt$symptoms_mu) %>%
+#   addCorGen(., nvars = nsymptoms, idvar = "ID", param1 = "symptoms_mu", dist = "binary", 
+#             corMatrix = corr_mat, cnames = paste("symptom", 1:nsymptoms, sep = "_")) %>% 
+#   dplyr::select(-ID, -symptoms_mu)
+# 
+# dt <- bind_cols(dt, dt_symptoms) %>% 
+#   dplyr::select(-symptoms_mu) %>%
+#   dplyr::mutate(outcome_measured = ifelse(image == 0, NA, outcome_true),
+#                 sex = factor(sex, levels = 0:1, labels = c("Male", "Female")),
+#                 image = factor(image, levels = 0:1, labels = rev(image_types)),
+#                 across(starts_with("outcome"), ~factor(.x, levels = 0:1, labels = rev(outcome_types))))
+# 
+# dt_assignments <- sample(1:2, size = nobs, replace = T, prob = c(0.8, 0.2))
 
-set.seed(12345)
-
-image_types <- c("Imaged", "Not imaged")
-image_freq <- c(0.2, 0.8)
-outcome_types <- c("Abnormality", "No abnormality")
-outcome_freq <- c(0.05, 0.95)
-
-nsymptoms <- 10
-symptom_corr <- genCorMat(nsymptoms)
-nobs <- 6000
-
-dt <- fabricate(N = nobs,
-                age = runif(N, min = 3, max = 17),
-                sex = correlate(given = age, rho = 0.2, draw_binary, prob = 0.55),
-                outcome_true = correlate(given = age, rho = -0.6, draw_binary, prob = outcome_freq[[1]]),
-                image = correlate(given = outcome_true, rho = 0.8, draw_binary, prob = image_freq[[1]]),
-                symptoms_mu = pmin(pmax(rnorm(N, mean = 0.05 + 0.2*image + 0.7*outcome_true - 0.05*age, 
-                                              sd = 0.05 + 0.05*image + 0.05*outcome_true),0),1))
-
-rmat <- matrix(rnorm(nsymptoms^2),nsymptoms,nsymptoms)
-cov_mat <- rmat%*%t(rmat)
-corr_mat <- cov_mat/sqrt(diag(cov_mat)%*%t(diag(cov_mat)))
-
-dt_symptoms <- cbind(genData(nobs, id = "ID"), "symptoms_mu" = dt$symptoms_mu) %>%
-  addCorGen(., nvars = nsymptoms, idvar = "ID", param1 = "symptoms_mu", dist = "binary", 
-            corMatrix = corr_mat, cnames = paste("symptom", 1:nsymptoms, sep = "_")) %>% 
-  dplyr::select(-ID, -symptoms_mu)
-
-dt <- bind_cols(dt, dt_symptoms) %>% 
-  dplyr::select(-symptoms_mu) %>%
-  dplyr::mutate(outcome_measured = ifelse(image == 0, NA, outcome_true),
-                sex = factor(sex, levels = 0:1, labels = c("Male", "Female")),
-                image = factor(image, levels = 0:1, labels = rev(image_types)),
-                across(starts_with("outcome"), ~factor(.x, levels = 0:1, labels = rev(outcome_types))))
-
-dt_assignments <- sample(1:2, size = nobs, replace = T, prob = c(0.8, 0.2))
 ```
+
+
+```{r}
+# Pull in data from outpatient redcap database
+
+# Select names of columns that end in ".factor"
+demo_factor_names <- str_subset(names(demo_data),".factor") %>% 
+  str_remove(., ".factor") 
+
+# Select names of factors with only two levels
+ #Can keep binary integer columns instead
+ha_factor_names_binary <- ha_data %>% 
+  select(matches("^p_.*\\.factor$")) %>%
+  select_if(~ nlevels(.) == 2) %>%
+  names(.)
+
+# Select names of factors with more than two factors.
+# Remove integer column counterparts
+ha_factor_names_nonbinary <- ha_data %>% 
+  select(matches("^p_.*\\.factor$")) %>%
+  select_if(~ nlevels(.) != 2) %>%
+  names(.) %>%
+  str_remove(., ".factor")
+
+# Select subset of demographic data based on number of observations
+# Select patients that completed headache questionnaire
+# Clean up columns and remove duplicates (keep factor counterparts)
+dt_demo <- demo_data %>%
+  filter(record_id <= nobs & pt_ha_quest_yn  == 1) %>%
+  select(-all_of(demo_factor_names)) %>%
+  rename_with(~str_remove(.x, ".factor"))
+
+# Select subset of headache questionnaire data based on number of observations
+# Clean up columns and remove duplicates (keep factor counterparts nonbinary, keep integer counterparts if binary)
+dt_ha_data <- ha_data %>%
+  filter(record_id <= nobs ) %>%
+  select(-all_of(c("redcap_repeat_instrument", "redcap_repeat_instance"))) %>%
+  select(-starts_with("c_")) %>%
+  select(-all_of(ha_factor_names_binary)) %>%
+  select(-all_of(ha_factor_names_nonbinary)) %>%
+  select(record_id, p_age_first_ha:p_assoc_sx_pul_ear___oth, p_prob_preg_birth:p_fam_hist_med___oth, p_ha_in_lifetime.factor:p_preg_full_term.factor) %>%
+  select_if(~is.factor(.) | is.numeric(.)) %>%
+  rename_with(~str_remove(.x, ".factor"))
+
+
+```
+
 
 ```{r}
 
-nobs <- 200
+# Select names of columns that end in ".factor"
+image_factor_names <- str_subset(names(imaging_data),".factor") %>% 
+  str_remove(., ".factor")
 
-dt_demo <- demo_data %>%
-  filter(record_id <= nobs)
-
-ha_factor_names <- str_subset(names(ha_data),".factor") %>% str_remove(., ".factor")
-
-image_factor_names <- str_subset(names(imaging_data),".factor") %>% str_remove(., ".factor")
-
-dt_ha_data <- ha_data %>%
-  filter(record_id <= nobs) %>%
-  select(-all_of(ha_factor_names)) %>%
-  rename_with(~str_remove(.x, ".factor"))
-
+# Select subset of imaging data based on number of observations
+# Select any imaging done on the first day (trying to exclude prior findings)
+# Rough regex searches for key words to flag if impression mentioned a finding
 dt_imaging <- imaging_data %>% 
   filter(record_id <= nobs & redcap_repeat_instrument == "imaging") %>%
   group_by(record_id) %>%
   filter(img_ord_dt == first(img_ord_dt)) %>% 
-  mutate(finding = case_when(
+  mutate(finding = case_when( 
     str_detect(img_impression,
                regex("(?!(?:no|none)).*[\\w\\s]{0,15}(?:sequelae|infarct|tortuous|ectopi|heterotopi|prominen|anomalous)", 
                      ignore_case = TRUE)) ~ 1,
@@ -156,18 +212,45 @@ dt_imaging <- imaging_data %>%
                      ignore_case = TRUE)) ~ 0,
     TRUE ~ NA_real_
   )) %>%
-  summarise(finding = sum(finding, na.rm=T),
-            img_ord_dt = first(img_ord_dt),
-            img_impression = first(img_impression),
-            .groups = 'drop')
+  summarise(
+    finding = case_when(
+      any(finding == 1) ~ 1,
+      all(finding == 0) ~ 0,
+      all(is.na(finding)) ~ NA_real_
+    ),
+    img_ord_dt = first(img_ord_dt),
+    img_impression = first(img_impression),
+    .groups = 'drop')
 
-dt <- dt_demo %>%
-  select(-redcap_repeat_instrument, -redcap_repeat_instance) %>%
-  left_join(dt_ha_data %>% select(-redcap_repeat_instance), by = "record_id") %>%
-    left_join(dt_imaging, by = "record_id")
 
 ```
 
+
+```{r}
+
+# Merge datasets
+# Mark if patient was imaged based on date of imaging 
+# (not all kids imaged had conclusive findings)
+dt <- dt_demo %>%
+  select(record_id, age, gender, ethnicity, race) %>%
+  left_join(dt_ha_data, by = "record_id") %>%
+    left_join(dt_imaging, by = "record_id") %>%
+  mutate(imaging = ifelse(!is.na(img_ord_dt), 1, 0))
+
+# Select names of columns with missingness above a threshold
+# Exclude columns from imaging dataset as not all kids were imaged
+dt_missing <- dt %>%
+  select(-any_of(names(dt_imaging))) %>%
+  summarise(across(everything(), ~sum(is.na(.x))/length(.x))) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "prop") %>%
+  filter(prop >= missing_threshold) %>%
+  pull(column)
+
+#Exclude variables with missingness above a certain variable
+dt <- dt %>%
+  select(-any_of(dt_missing))
+
+```
 
 # Methods
 
@@ -187,27 +270,41 @@ Describe your results and include relevant tables, plots, and code/comments used
 
 ```{r table-1}
 
-set.seed(12345)
-
+#Table 1 to describe patient characteristics
 dt %>%
-  select(age, sex, outcome_measured, starts_with("symptom")) %>%
-  mutate(outcome_measured = fct_explicit_na(outcome_measured, na_level = "Not imaged")) %>%
-  tbl_summary(by = outcome_measured)
+  mutate(
+    finding = factor(case_when(
+      finding == 0 ~ "No abnormality",
+      finding == 1 ~ "Abnormality",
+      is.na(finding) & imaging == 1 ~ "Inconclusive findings",
+      is.na(finding) & imaging == 0 ~ "Not imaged"
+    ))) %>%
+  select(age, gender, race, ethnicity, finding) %>%
+  rename_with(stringr::str_to_title) %>%
+  tbl_summary(by = Finding)
 
 
 ```
 
 ```{r propensity}
 
-prop_formula <- str_c("image ~ s(age) + sex + ", paste0("symptom_", 1:10, collapse = " + "))
-propensity_mod <- gam(as.formula(prop_formula), family = binomial(), data = dt)
+# Calculates propensity scores for imaging selection based on demographics and symptoms
+prop_formula <- str_c("imaging ~ s(age) + ", paste0(names(select(dt, -record_id, -age, -finding:-imaging)), collapse = " + "))
 
-dt <- dt %>%
-  mutate(propensity_score = predict(propensity_mod, type = "response"),
-         propensity_weight = case_when(
-           image == 0 ~ (1 /(1-propensity_score)),
-           image == 1 ~ (1 /(propensity_score))
-         ))
+propensity_mod <- gam(as.formula(prop_formula), 
+                      family = binomial(), data = dt)
+# Create curated dataset for machine learning
+# Select kids with imaging and conclusive findings
+# Select kids with no NAs
+# Predict propensity score and inverse weight
+dt_propensity <- dt %>%
+  filter(imaging == 1 & !is.na(finding)) %>%
+  modelr::add_predictions(propensity_mod, 
+                          var = "propensity_score", type = "response") %>%
+  filter(complete.cases(.)) %>%
+  mutate(propensity_weight = (1 /(propensity_score)),
+         finding = factor(finding))
+
 
 ```
 
@@ -216,46 +313,112 @@ dt <- dt %>%
 
 set.seed(12345)
 
-dt_train <- filter(dt, dt_assignments == 1) %>% filter(!is.na(outcome_measured))
-dt_test <- filter(dt, dt_assignments == 2) %>% filter(!is.na(outcome_measured))
+# Create random assignments for test and training datasets
+dt_assignments <- sample(1:2, size = nrow(dt_propensity), 
+                         replace = T, prob = test_to_train)
 
-trim_vars <- c("ID", "image", "outcome_measured", "outcome_true", "propensity_score", "propensity_weight")
+dt_train <- filter(dt_propensity, dt_assignments == 1) 
 
+dt_test <- filter(dt_propensity, dt_assignments == 2) 
+
+#Select variables not to include in machine learning 
+trim_vars <- dt_propensity %>%
+  select(record_id, finding:imaging, starts_with("propensity")) %>%
+  names(.) 
+
+#Convert predictor variables into a matrix
 dt_predictors <- select(dt_train, -all_of(trim_vars)) %>% data.matrix()
 
 
 ```
 
 
+```{r randomForest-cutoffs}
+
+pred_normal_cutoff_seq <- seq(0.5,0.99, 0.05)
+cutoff_performance <- tibble()
+
+for (curr_cutoff in pred_normal_cutoff_seq){
+  
+  curr_rf <- randomForest(
+    x = dt_predictors, y = dt_train$finding, ntree = num_randomforest_trees,
+    importance = TRUE, cutoff = c(curr_cutoff, 1-curr_cutoff), nodesize = 3
+  )
+  
+  curr_pred <- dt_test %>%
+    select(-all_of(trim_vars)) %>%
+    data.matrix() %>%
+    predict(curr_rf, ., type = "response")
+  
+  curr_perform <- tibble(cutoff = curr_cutoff,
+            true = dt_test$finding, 
+            pred = curr_pred) %>%
+    group_by(cutoff, true, pred) %>%
+    summarise(n = n(), .groups = 'drop')
+  
+  cutoff_performance <- bind_rows(cutoff_performance, curr_perform)
+}
+
+cutoff_performance %>%
+  mutate(outcome = case_when(
+    true == 1 & pred == 1 ~ "TP",
+    true == 1 & pred == 0 ~ "FN",
+    true == 0 & pred == 0 ~ "TN",
+    true == 0 & pred == 1 ~ "FP",
+  )) %>%
+  pivot_wider(id_cols = cutoff, names_from = outcome, 
+              values_from = n, values_fill = 0) %>%
+  mutate(Sensitivity = TP/(TP+FN),
+         Specificity = TN/(TN+FP)) %>%
+  select(cutoff, Sensitivity, Specificity) %>%
+  pivot_longer(-cutoff, names_to = "measure", values_to = "score") %>%
+  ggplot(aes(x = cutoff, y = score, group = measure, color = measure)) +
+  geom_line() +
+  scale_y_continuous(name = "Proportion", limits = c(0,1), breaks = seq(0,1,0.25)) +
+  scale_x_continuous(name = "Cutoff for predicting 'no finding'", limits = c(0.5, 1), breaks = seq(0.5, 1, 0.1)) +
+  ggtitle("Random Forest Performance\nwith varying cutoffs") +
+  cowplot::theme_half_open() +
+  theme(legend.title = element_blank())
+
+```
 
 ```{r randomForest}
 
 set.seed(12345)
-num_trees <- 500
 
-dt_randomForest <- randomForest(x = dt_predictors_noNA, y = outcome_measured_noNA, 
-                                ntree = num_trees, importance = TRUE, cutoff = c(0.95, 0.05), nodesize = 3)
+rf_normal_cutoff <- 0.85
+  
+
+dt_randomForest <- randomForest(
+  x = dt_predictors, y = dt_train$finding, ntree = num_randomforest_trees,
+  importance = TRUE, cutoff = c(rf_normal_cutoff, 1-rf_normal_cutoff), nodesize = 3
+  )
+
+as_tibble(dt_randomForest$importance, rownames = "Variable Name") %>%
+  arrange(desc(MeanDecreaseAccuracy)) %>%
+  select(`Variable Name`, starts_with("Mean")) %>%
+  filter(row_number() <= 20)
 
 dt_randomForest_pred <- dt_test %>%
   select(-all_of(trim_vars)) %>%
   data.matrix() %>%
   predict(dt_randomForest, ., type = "response")
 
-table(Outcome = dt_test$outcome_true, Predicted = dt_randomForest_pred)
+table(Outcome = dt_test$finding, Predicted = dt_randomForest_pred)
 
 treeList_randomForest <- RF2List(dt_randomForest)
-ruleExec_randomForest <- extractRules(treeList_randomForest, X = dt_predictors_noNA, digits = 2)
+ruleExec_randomForest <- extractRules(treeList_randomForest, X = dt_predictors, digits = 2)
 
-ruleMetric <- getRuleMetric(ruleExec_randomForest, X = dt_predictors_noNA, target = outcome_measured_noNA) %>%
-  pruneRule(., X = dt_predictors_noNA, target = outcome_measured_noNA, maxDecay = 0.2)
+ruleMetric <- getRuleMetric(ruleExec_randomForest, X = dt_predictors, target = dt_train$finding) %>%
+  pruneRule(., X = dt_predictors, target = dt_train$finding, maxDecay = 0.2)
 
-learner_randomForest <- buildLearner(ruleMetric, X = dt_predictors_noNA, target = outcome_measured_noNA, minFreq = 0.05)
+learner_randomForest <- buildLearner(ruleMetric, X = dt_predictors, target = dt_train$finding, minFreq = 0.05)
 
-prettyLearner_randomForest <- presentRules(learner_randomForest, colnames(dt_predictors_noNA))
+prettyLearner_randomForest <- presentRules(learner_randomForest, colnames(dt_predictors))
 
-bind_cols(true = dt_test$outcome_true, 
+bind_cols(true = dt_test$finding, 
           pred = applyLearner(learner_randomForest, 
-                              X = select(dt_test, -trim_vars))) %>%
+                              X = select(dt_test, -any_of(trim_vars)))) %>%
   group_by(true, pred) %>%
   summarise(n = n())
 
@@ -263,17 +426,17 @@ bind_cols(true = dt_test$outcome_true,
 ```
 
 
-```{r ranger}
+```{r ranger, eval = FALSE}
 
 set.seed(12345)
 
 dt_ranger_noweight <- ranger(x = dt_predictors_noNA, y = outcome_measured_noNA, 
-                          num.trees = num_trees, importance = "impurity",
+                          num.trees = num_randomforest_trees, importance = "impurity",
                           class.weights = c(0.95, 0.05), min.node.size = 3,
                           seed = 12345, classification = TRUE)
 
 dt_ranger_invweight <- ranger(x = dt_predictors_noNA, y = outcome_measured_noNA, 
-                          num.trees = num_trees, importance = "impurity",
+                          num.trees = num_randomforest_trees, importance = "impurity",
                           class.weights = c(0.95, 0.05), min.node.size = 3,
                           case.weights = propensity_weight_noNA,
                           seed = 12345, classification = TRUE)

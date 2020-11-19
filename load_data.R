@@ -42,7 +42,7 @@ if (refresh){
     data$demographics_complete.factor = factor(data$demographics_complete,levels=c("0","1","2"))
     
     levels(data$redcap_repeat_instrument.factor)=c("Visit Diagnoses","Lab","Prior Labs","All Problems","Imaging")
-    levels(data$gender.factor)=c("Female","Male","Unknown")
+    levels(data$gender.factor)=c("Female","Male","Other")
     levels(data$ethnicity.factor)=c("Hispanic or Latino","Not Hispanic or Latino","Dont know","Prefer not to answer")
     levels(data$race.factor)=c("American Indian or Alaska Native","Asian","Black or African-American","Native Hawaiian or Other Pacific Islander","White","Multiple Races","Dont know","Prefer not to answer")
     levels(data$pt_ha_quest_yn.factor)=c("Yes","No")
