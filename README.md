@@ -1,18 +1,15 @@
-# BMIN503/EPID600 Final Project
+# EPID600 Final Project: The effects of COVID-19 on rabies dynamics in Arequipa, Peru
+#### Brinkley Raynor
+#### December 11, 2020
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains code used to parameterize and construct a mathematical SEIR model to investigate rabies dynamics in Arequipa, Peru.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This repo contains:
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+1. Raynor_FinalProject.Rmd: An R markdown file containing code, comments and explanation of project
+2. Raynor_FinalProject.html: a polished print out of the R markdown file
 
-DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+NOT INCLUDED:
+Date used to parameterize models is not included due to containing protected information. 
 
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+Any questions on code, please contact me (Brinkley Raynor) at bhraynor@vet.upenn.edu
