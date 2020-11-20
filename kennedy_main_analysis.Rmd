@@ -1,0 +1,1005 @@
+---
+title: "BMIN503 Final Project: Predicting Readmissions Among Older ICU Patients"
+author: "Erin Kennedy "
+output: 
+  html_document:
+    toc: TRUE
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+# Overview
+Over the last decade, hospital readmissions have become a major focus area of healthcare policy and research, and many initiatives to understand, reduce, and prevent future readmissions have emerged. These initiatives are especially important for older adult patients, who tend to have more chronic, complex health conditions than younger patients. While these initiatives have helped begin to decrease readmissions in among Medicare patients, there is still progress to be made (Bailey et al, 2019). To date, most prediction models for hospital readmissions have focused on important clinical factors like medications, lab values, and comorbidities (Zhou et al, 2016). Newer research suggests that social determinants of health impact hospital readmissions (CDC, 2020), so the goals of this project are to describe characteristics of readmitted patients and explore factors associated with 30-day readmissions with an emphasis on social factors. This project will focus on an older adult population. 
+
+## Aims:
+* Conduct an exploratory analysis comparing older adult patients who experienced 30-day readmissions to those who were not readmitted
+* Identify clinical and social factors  associated with readmission 
+
+This project will use MIMIC-III, an openly available dataset developed by MIT with de-identified data for approximately 60,000 intensive care unit hospitalizations including demographics, vital signs, laboratory data, medications, and unstructured notes. I would like to acknowledge this wonderful database. 
+
+[Github Repository](https://github.com/erinken/BMIN503_Final_Project)  
+
+[MIMIC-III](https://mimic.physionet.org/)
+
+# Introduction  
+
+In 2017 alone, 3.5 million potentially preventable readmissions cost $33.7 billion (McDermott & Jiang, 2020). Implementation of readmission-risk prediction models at the point of care is an evidence-based strategy to reduce readmissions, but only 34% of hospitals enrolled in the National Hospital-to-Home quality initiative formally estimate patients' readmission risk (Bradley et al, 2014). In 2019, the president of the American Hospital association encouraged policymakers to dedicate more resources towards understanding the discharge planning process and post-acute care trajectory (Pollack, 2019).According to a recent systematic review of readmission prediction models, most existing models have focused on important acute clinical data to predict readmission risk (Zhou et al, 2016). Recent literature suggests that social determinants of health could play an important role in hospital readmissions, and this information is starting to become more prevalent in structured EHR data (CDC, 2020). Therefore, the aim of this project is to explore the role of social factors in prediction of 30-day hospital readmissions.
+
+A recent human factors study found that most patients have 1-6 different people involved in the discharge planning process, making it a truly interdisciplinary endeavor as different specialties bring different expertise to the team (Prusaczyk et al, 2019). Groups interested in building readmission prediction models should include a holistic mix of both technical and clinical experts such as biostatisticians, informaticians, data scientists, physicians, nurses, case managers, and even other ancillary clinicians like physical therapists. Since I come from a clinical background, my goal was to connect with the technical experts so my main collaborators included a biostatistician (Emily Schriver) and informaticians (Danielle Mowery, Sy Hwang, Anahita Davoudi). I would like to acknowledge all of their meaningful contributions to my project.  
+
+* Danielle Mowery: study design, MIMIC data extraction, formulating processes of data wrangling, interpretation of results 
+* Blanca Himes: Identifying a dataset and data extraction procedures 
+* Anahita Davoudi and Sy Hwang: expertise in extracting and analyzing MIMIC data, using databases
+* Emily Schriver: expertise in biostatistics using R. Assisted with several packages including ggplot and elixhauser comorbidity package, and indentifying the readmissions cohort
+* Gary Weissman: Expertise in wrangling MIMIC data 
+
+
+# Methods  
+
+The dataset used for this project was obtained from MIMIC-III, an openly available dataset of nearly 60,000 intensive care admissions including demographics, vital signs, laboratory data, medications, and notes. The database can be accessed [here](https://mimic.physionet.org/). Although there are a myriad of tables available in MIMIC, this dataset will focus on the patients, admissions, services, diagnoses, and diagnoses_icd tables. More information about the tables and schema can be found [here](https://mimic.physionet.org/mimicdata/schema/). These tables contain important demographic, comorbidity, and what types of services the patients received during their hospitalization. My variable selection is rooted in the literature for readmissions prediction models (Zhou et al 2016).
+
+The main goal is to define a readmissions cohort and analyze the data with exploratory analysis to build a simple readmissions prediction model. 
+
+## Loading Packages 
+```{r Load Packages, results = 'hide', message = FALSE}
+library(tidyverse) 
+library(comorbidity) # For Elixhauser comorbidity scores
+library(ggplot2) # For graphs
+library(lubridate) # For manipulating dates
+library(gtsummary) #Summary statistics
+library(RColorBrewer) # For coloring the plots
+library(cowplot) # For combining multiple plots into one
+library(ggpubr) # Combining multiple graphs into one figure 
+library(pROC) # For cross-validation
+library(dplyr) # For data cleaning
+```
+
+## Reading in the Data
+The MIMIC-III database offers several strategies for pulling the data including SQL, google cloud platform, and I chose to download the csv files of the tables I was interested in and pre-process the data using the dplyr package. 
+
+First, read in the necessary tables. I chose to focus on the patients, admissions, services, and ICD diagnosis tables. 
+```{r Importing Tables, results='hide'}
+# admissions table
+admissions <- read.csv(file = 'ADMISSIONS.csv.gz')
+
+# selecting only variables of interest in the admissions table
+admissions <- admissions %>%
+  select(SUBJECT_ID, HADM_ID, ADMITTIME, DISCHTIME, ADMISSION_TYPE, ADMISSION_LOCATION, DISCHARGE_LOCATION, INSURANCE, LANGUAGE, RELIGION, MARITAL_STATUS, ETHNICITY, DIAGNOSIS, HOSPITAL_EXPIRE_FLAG)
+
+# patients table 
+patients <- read.csv(file = 'PATIENTS.csv.gz')
+
+# selecting only variables of interest in the patients table
+patients <- patients %>%
+  select(SUBJECT_ID, GENDER, DOB)
+
+#services
+services <- read.csv(file = 'SERVICES.csv.gz')
+
+# selecting only variables of interest in the services table
+services <- services %>%
+  select(SUBJECT_ID, HADM_ID, TRANSFERTIME, CURR_SERVICE)
+
+#diagnoses_icd
+icd <- read.csv(file = 'DIAGNOSES_ICD.csv.gz')
+
+```
+## Preliminary Table Manipulation
+
+Before I join the service table onto the main table that will be used for analysis, I'm going to collapse the services into surgical vs. non-surgical for my analysis. The list of service lines is very long so please see the [data dictionary](https://mimic.physionet.org/mimictables/services/) for more information on these codes.   
+
+Although I chose a slightly different method, I found this stack overflow [thread](https://stackoverflow.com/questions/44508585/calculate-readmission-rate) helpful for collapsing categorical variables. 
+```{r Clean Services Table}
+# First, removing duplicates in the service dataset to ensure that only the admission service is documented (because we want to know if the patient was addmitted for a surgery or not)
+sum(duplicated(services$HADM_ID))
+services<- services %>%
+  #group_by(HADM_ID, TRANSFERTIME) %>%
+  distinct(HADM_ID, .keep_all=TRUE) 
+sum(duplicated(services$HADM_ID))
+
+# Next dichotomizing the service categories and ensuring that no values are missing
+sum(is.na(services$CURR_SERVICE))
+table(services$CURR_SERVICE)
+
+surgical <- c("CSURG", "NSURG", "ORTHO", "PSURG", "SURG", "TSURG", "VSURG")
+non_surgical <-c("CMED", "DENT", "ENT", "GU", "GYN", "MED", "NB", "NBB", "NMED", "OBS", "OMED", "PSYCH", "TRAUM")
+
+services <- services%>%
+  mutate(service = case_when(
+    CURR_SERVICE %in% non_surgical ~ "NON-SURGICAL",
+    CURR_SERVICE %in% surgical ~ "SURGICAL"
+  )) %>% select(HADM_ID, service)
+
+sum(is.na(services$service))
+table(services$service)
+
+```
+
+I am also going to clean the ICD codes and calculate Elixhauser comorbidity scores . I figured out how to manipulate the rows using this [Stack Overflow Thread](https://stackoverflow.com/questions/49225596/merge-multiple-rows-into-one-using-r). I used the [comorbidity package](https://cran.r-project.org/web/packages/comorbidity/comorbidity.pdf) to create the scores. I chose to use the Elixhauser score because it outperforms the Charlson score in readmission models (Menendez 2014)
+```{r Clean ICD Table, warning = FALSE, error = FALSE}
+# Manipulating the ICD dataset to put all ICD codes for a patient into one row
+icd <- icd %>%
+  group_by(HADM_ID) %>%
+  summarize(ICD9_CODE = paste(ICD9_CODE,collapse=" "))
+
+#Creating the dataframe with the scoring
+comorbidities <- comorbidity(x = icd, id = "HADM_ID", code="ICD9_CODE", score = "elixhauser", assign0=FALSE, icd= "icd9")
+
+# Selecting only the HADM_ID and the windex_ahrq which has the elixhauser groupings
+comorbidities <- comorbidities %>%
+  rename(elixhauser_categories=windex_ahrq) %>%
+  select(HADM_ID, elixhauser_categories)
+
+# Removing the icd table to clean up the environment
+rm(icd)
+```
+
+## Joining the Tables
+Merging the tables into one main MIMIC dataset
+```{r Joining Tables}
+# Joining the Admission and patients table into the larger mimic table on the SUBJECT_ID
+mimic <- inner_join(patients, admissions, by = "SUBJECT_ID")
+
+#Joining the services table onto the mimic table on the HADM_ID
+mimic <- inner_join(mimic, services, by = "HADM_ID")
+
+# Joining the comorbidities table onto the mimic table on the HADM_ID
+mimic<- inner_join(mimic, comorbidities, by = "HADM_ID")
+```
+
+## Cohort Identification 
+
+Next, identifying patients discharged ALIVE 
+```{r Filtering Patients Discharged Alive}
+#code to filter out those with disposition death and non-newborn 
+mimic <- mimic %>%
+  filter(HOSPITAL_EXPIRE_FLAG == 0 & DISCHARGE_LOCATION != "DEAD/EXPIRED")
+
+#confirming exclusion of patients who died in the hospital
+table(mimic$DISCHARGE_LOCATION)
+
+#extra step to confirm that the hospital expire flag = 0 
+table(mimic$HOSPITAL_EXPIRE_FLAG)
+
+unique(admissions$DISCHARGE_LOCATION)
+unique(admissions$hospital_expire_flag)
+```
+Next, calculating age and excluding those over 90 because their DOBs have been shifted, as well as those <18. For creating the age variable I found this [Stack Overflow Thread](https://stackoverflow.com/questions/31126726/efficient-and-accurate-age-calculation-in-years-months-or-weeks-in-r-given-b) very helpful. I also created a length of stay (in days) variable in this step.
+```{r Cleaning and Filtering Age/LOS}
+# Clearing dataframes we no longer need
+rm(admissions)
+rm(patients)
+rm(services)
+rm(comorbidities)
+
+head(mimic$DOB)
+# converting the dob, admittime, and dischargetime to dates
+mimic <- mimic %>%
+  mutate(DOB = as.Date(DOB, format = "%Y-%m-%d")) %>%
+  mutate(ADMITTIME = as.Date(ADMITTIME, format = "%Y-%m-%d")) %>%
+  mutate(DISCHTIME = as.Date(DISCHTIME, format = "%Y-%m-%d"))
+
+head(mimic$DOB)
+
+# checking to make sure the conversion worked
+class(mimic$DOB)
+class(mimic$ADMITTIME)
+class(mimic$DISCHTIME)
+
+# calculating age and length of stay
+mimic <- mimic %>%
+  mutate(AGE = as.period(interval(start = DOB, end = ADMITTIME))$year) %>%
+  mutate(LOS = as.period(interval(start = ADMITTIME, end = DISCHTIME))$day)
+
+summary(mimic$AGE)
+summary(mimic$LOS)
+
+#Checking to see the number of patients <55 or >89
+sum(mimic$AGE > 90)
+sum(mimic$AGE < 55)
+
+#filtering age to only those who are 55-90 (a limitation of the study with the upper age limit). Now we can see there are substantially less patients in the dataset
+mimic <- mimic %>%
+  filter(between(AGE, 55, 89))
+
+# Checking to make sure age is properly filtered
+summary(mimic$AGE)
+```
+
+Next, we will sort the dataframe by patient ID and ADMITTIME to determine the times to readmission and create a flag to identify the 30-day readmission cohort.  
+
+**How I created time_to_readmission:** new variable subtracts NEXT admission date minus CURRENT discharge date  
+**How I created readmitted_30:** new variable coded as 1 (readmission within 30 days) or 0 (no readmission or future admission beyond 30 days). Same concepts were used to create the 7-day and 14-day readmissions variables. 
+
+*Note: I also created 7- and 14- day readmissions variables for future analysis*
+```{r Creating Readmissions Variables}
+mimic <- mimic %>% 
+  arrange(SUBJECT_ID, ADMITTIME, by_group = TRUE) %>% 
+  group_by(SUBJECT_ID) %>%
+  mutate(count=1:n()) %>% #added a counter variable so I can see how many times each patient was hospitalized
+  mutate(time_to_readmission = as.numeric(lead(ADMITTIME, 1) - DISCHTIME)) %>%
+  mutate(readmitted_30 = if_else(time_to_readmission<=30, 1,0)) %>%
+  mutate(readmitted_14 = if_else(time_to_readmission<=14, 1,0)) %>%
+  mutate(readmitted_7 = if_else(time_to_readmission<=7, 1,0))
+
+table(mimic$count)
+
+# Converting all of the NA's to 0, because those patients only had 1 admission in the entire dataset and weren't captured by that mutate command
+mimic[["readmitted_30"]][is.na(mimic[["readmitted_30"]])] <- 0
+mimic[["readmitted_14"]][is.na(mimic[["readmitted_14"]])] <- 0
+mimic[["readmitted_7"]][is.na(mimic[["readmitted_7"]])] <- 0
+
+#Checking to see the number of readmissions in each group
+table(mimic$readmitted_30)
+table(mimic$readmitted_14)
+table(mimic$readmitted_7)
+
+#Changing readmitted_30 to factor since this will be important
+mimic$readmitted_30 <- factor(mimic$readmitted_30, levels = c(0,1), labels = c("Non-Readmission", "Readmission"))
+
+#Creating a new readmission categories variable for nice visualizations in the exploratory analysis part
+mimic$readmission_cat <-cut(mimic$time_to_readmission, c(-Inf,7,14,30))
+
+#Checking to see if this new categorical variable aligns with 
+table(mimic$readmission_cat)
+```
+## Additional Cleaning
+
+Next, collapsing the ethnicity categories, religion categories, marriage categories, and discharge disposition categories.Note that results are set to false in order to save space but you can run the chunk to make sure the categories are error-free. The categorization methods were based in the literature as well as frequencies of each group. As much as we would like to keep all categories, some groups only had 1 patient. These are the collapsing steps that I chose to pursue:  
+
+* Ethnicity categories: ASIAN (any group containing "Asian"), BLACK (any group containing "Black"), HISPANIC (any group containing "Hispanic"), WHITE (any group containing "White"), and OTHER/UNKNOWN (combination of all other groups including multi-race, Carribean island, Portuguese, Middle Eastern, South American, American Indian/Alaska Native, Native Hawaiian or other Pacific Islander, and other variables to indicate unknown status)
+* Religious categories: JEWISH (any group containing "Jewish"), BUDDHIST (any group containing "Buddhist"), CATHOLIC (any group containing "Catholic"), HINDU (any group containing "Hindu"), MUSLIM (any group containing "Muslim"), Christian (Christian scientist, Episcopalian, Baptist, Lutheran, Protestant Quaker, Methodist), OTHER/UNKNOWN ("NOT SPECIFIED", "UNOBTAINABLE", "7TH DAY ADVENTIST", "OTHER", "HEBREW", "ROMANIAN EAST. ORTH", "GREEK ORTHODOX", "UNITARIAN-UNIVERSALIST", "JEHOVAH'S WITNESS", "Unknown")
+* Marital Status Categories: MARRIED/LIFE PARTNER (Married or Life Partner), NOT MARRIED ("DIVORCED", "SEPARATED", "SINGLE", "UNKNOWN (DEFAULT)", "WIDOWED")
+* Discharge Location: HOME (Home), HHC- home health care ("HOME HEALTH CARE", "HOME WITH HOME IV PROVIDR"), TRANSFER("DISC-TRAN CANCER/CHLDRN H", "DISC-TRAN TO FEDERAL HC", "DISCH-TRAN TO PSYCH HOSP"), HOSPICE ("HOSPICE-HOME", "HOSPICE-MEDICAL FACILITY"), AMA- against medical advice, SNF- skilled nursing facility("SNF", "SNF-MEDICAID ONLY CERTIF"), IRF- inpatient rehabilitation facility ("REHAB/DISTINCT PART HOSP"), OTHER ("ICF", "LONG TERM CARE HOSPITAL", "OTHER FACILITY", "SHORT TERM HOSPITAL")
+
+```{r Recoding Categorical Variables - 1, results='hide'}
+# Starting with Ethnicity
+table(mimic$ETHNICITY) # Before
+sum(is.na(mimic$ETHNICITY)) # Checking for missing values- none
+
+unknown_ethnicity <- c("UNKNOWN/NOT SPECIFIED", "PATIENT DECLINED TO ANSWER", "UNABLE TO OBTAIN", "OTHER", "MULTI RACE ETHNICITY", "UNKNOWN/NOT SPECIFIED", "CARIBBEAN ISLAND", "PORTUGUESE", "MIDDLE EASTERN", "SOUTH AMERICAN", "AMERICAN INDIAN/ALASKA NATIVE", "AMERICAN INDIAN/ALASKA NATIVE FEDERALLY RECOGNIZED TRIBE", "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER") # Making a list of the unknowns that we can combine 
+
+mimic <- mimic %>%
+  mutate(ethnicity_categories = case_when(
+    str_detect(ETHNICITY, "^ASIAN") ~ "ASIAN",
+    str_detect(ETHNICITY, "^BLACK") ~ "BLACK",
+    str_detect(ETHNICITY, "^HISPANIC") ~ "HISPANIC",
+    str_detect(ETHNICITY, "^WHITE") ~ "WHITE",
+    ETHNICITY %in% unknown_ethnicity ~ "OTHER/UNKNOWN"
+  ))
+
+#Changing to factor to make analysis easier
+mimic$ethnicity_categories <- as.factor(mimic$ethnicity_categories)
+
+table(mimic$ethnicity_categories) # After
+sum(is.na(mimic$ethnicity_categories)) # No missing values
+
+# Next, Religion 
+table(mimic$RELIGION) # Before
+sum(is.na(mimic$RELIGION))
+
+christian <- c("CHRISTIAN SCIENTIST", "EPISCOPALIAN", "BAPTIST", "LUTHERAN", "PROTESTANT QUAKER", "METHODIST")
+unknown_religion <-c("NOT SPECIFIED", "UNOBTAINABLE", "7TH DAY ADVENTIST", "OTHER", "HEBREW", "ROMANIAN EAST. ORTH", "GREEK ORTHODOX", "UNITARIAN-UNIVERSALIST", "JEHOVAH'S WITNESS", "Unknown")
+
+mimic <-mimic %>%
+  mutate(religion_categories = case_when(
+    str_detect(RELIGION, "^JEWISH") ~ "JEWISH",
+    str_detect(RELIGION, "^BUDDHIST") ~ "BUDDHIST",
+    str_detect(RELIGION, "^CATHOLIC") ~ "CATHOLIC",
+    str_detect(RELIGION, "^HINDU") ~ "HINDU",
+    str_detect(RELIGION, "^MUSLIM") ~ "MUSLIM",
+    RELIGION %in% christian ~ "CHRISTIAN",
+    RELIGION %in% unknown_religion ~ "OTHER/UNKNOWN",
+    TRUE ~ "OTHER/UNKNOWN"
+  ))
+
+table(mimic$religion_categories) # After
+sum(is.na(mimic$religion_categories)) # No missing values 
+
+# Marital status categories - This is more for the regression
+table(mimic$MARITAL_STATUS) #before
+sum(is.na(mimic$MARITAL_STATUS)) #Looking for missing values
+
+married <- c("MARRIED", "LIFE PARTNER")
+not_married <- c(" ", "", "DIVORCED", "SEPARATED", "SINGLE", "UNKNOWN (DEFAULT)", "WIDOWED")
+
+mimic <- mimic %>%
+  mutate(marital_dichotomous = case_when(
+    MARITAL_STATUS %in% married ~ "MARRIED/LIFE PARTNER",
+    MARITAL_STATUS %in% not_married ~ "NOT MARRIED"
+  ))
+
+table(mimic$marital_dichotomous) # After
+sum(is.na(mimic$marital_dichotomous)) # No Missing values
+
+# Discharge disposition categories
+table(mimic$DISCHARGE_LOCATION)
+sum(is.na(mimic$DISCHARGE_LOCATION))
+
+home <- c("HOME")
+home_health <- c("HOME HEALTH CARE", "HOME WITH HOME IV PROVIDR")
+transfer <- c("DISC-TRAN CANCER/CHLDRN H", "DISC-TRAN TO FEDERAL HC", "DISCH-TRAN TO PSYCH HOSP")
+hospice <- c("HOSPICE-HOME", "HOSPICE-MEDICAL FACILITY")
+ama <- c("LEFT AGAINST MEDICAL ADVI")
+snf <- c("SNF", "SNF-MEDICAID ONLY CERTIF")
+rehab<- c("REHAB/DISTINCT PART HOSP")
+other_facility <- c("ICF", "LONG TERM CARE HOSPITAL", "OTHER FACILITY", "SHORT TERM HOSPITAL")
+
+mimic <- mimic %>%
+  mutate(discharge_categories = case_when(
+    DISCHARGE_LOCATION %in% home ~ "HOME",
+    DISCHARGE_LOCATION %in% home_health ~ "HHC",
+    DISCHARGE_LOCATION %in% transfer ~ "TRANSFER",
+    DISCHARGE_LOCATION %in% hospice ~ "HOSPICE",
+    DISCHARGE_LOCATION %in% ama ~ "AMA",
+    DISCHARGE_LOCATION %in% snf ~ "SNF",
+    DISCHARGE_LOCATION %in% rehab ~ "IRF",
+    DISCHARGE_LOCATION %in% other_facility ~ "OTHER",
+  ))
+
+table(mimic$discharge_categories)
+sum(is.na(mimic$discharge_categories))
+```
+
+## Filtering to Index Admission
+ The goal of this study is to determine factors in the FIRST hospitalization that could be predictive of future readmissions, which is why we excluded the later hospitalizations.
+```{r Filtering Index Admission}
+mimic <- mimic %>%
+  filter(count<2) %>%
+  ungroup()
+
+write.csv(mimic, "mimic.csv", row.names=TRUE)
+```
+
+## Writing Final Dataset to file
+```{r Write to File, eval=FALSE}
+write.csv(mimic, "mimic.csv", row.names=TRUE)
+```
+
+
+Picking the Color Palate-- These tell me which colors to select when I make my graphs 
+```{r Brewer Color Palate}
+colors <- brewer.pal(9, "RdBu")
+```
+
+## Dichotomizing Variables
+
+**It is common for categorical and continuous variables to be collapsed into smaller categories or dichotomous variables to improve model performance. Although there is inherent risk of bias in dichotomization, I chose to use data-driven methods to try to achieve more balance between groups. After initial review I chose to explore this path with variables in the dataset**  
+
+Note that the results are hidden to save space but you can run the chunk to make sure the results are error-free
+
+* Admission categories dichotomized to ELECTIVE (elective) vs. EMERGENCY/URGENT(emergency/urgent) 
+* Discharge disposition dichotomized to HOME (home health care or home) vs. NON-HOME (against medical advice, hospice, other, rehabilitation, skilled nursing facility, transfer)
+* Insurance categorized to 3 levels: Private (private), Self pay(Self Pay), and Public (Government, Medicaid, Medicare)
+* Ethnicity dichotomized to WHITE (white) vs. NON-WHITE (ASIAN, BLACK, HISPANIC, OTHER/UNKNOWN)
+* Continuous age variable dichotomized at the median to ages 55-70 and 71-89
+* Continuous length of stay variable dichotomized at the median to 0-7 days and 8 or more days 
+```{r Recoding Categorical Variables - 2, results='hide'}
+# Admission Type
+table(mimic$ADMISSION_TYPE)
+emergency_other <- c("EMERGENCY", "URGENT")
+
+mimic <- mimic %>%
+  mutate(admission_dichotomous = case_when(
+    str_detect(ADMISSION_TYPE, "^ELECTIVE") ~ "ELECTIVE",
+    ADMISSION_TYPE %in% emergency_other ~ "EMERGENCY/URGENT"
+  ))
+table(mimic$admission_dichotomous)
+sum(is.na(mimic$admission_dichotomous)) # No missing values
+
+# Discharge Disposition
+table(mimic$discharge_categories)
+non_home <- c("AMA", "HOSPICE", "OTHER", "IRF", "SNF", "TRANSFER")
+home_discharge<-c("HHC", "HOME")
+
+mimic <- mimic %>%
+  mutate(discharge_dichotomous = case_when(
+    discharge_categories %in% home_discharge ~ "HOME",
+    discharge_categories %in% non_home ~ "NON-HOME"
+  ))
+table(mimic$discharge_dichotomous)
+sum(is.na(mimic$discharge_dichotomous)) # no missing values! 
+
+# Insurance
+table(mimic$INSURANCE)
+gov_insurance <- c("Government", "Medicaid", "Medicare")
+
+mimic <- mimic %>%
+  mutate(insurance_categories = case_when(
+    str_detect(INSURANCE, "^Private") ~ "Private",
+    str_detect(INSURANCE, "Self Pay") ~ "Self Pay",
+    INSURANCE %in% gov_insurance ~ "Public"
+  ))
+table(mimic$insurance_categories)
+sum(is.na(mimic$insurance_categories)) # No missing values
+
+# Ethnicity
+table(mimic$ethnicity_categories)
+non_white <- c("ASIAN", "BLACK", "HISPANIC", "OTHER/UNKNOWN")
+
+mimic <- mimic %>%
+  mutate(ethnicity_dichotomous = case_when(
+    str_detect(ethnicity_categories, "^WHITE") ~ "WHITE",
+    ethnicity_categories %in% non_white ~ "NON-WHITE"
+  ))
+mimic$ethnicity_dichotomous<- as.factor(mimic$ethnicity_dichotomous)
+
+table(mimic$ethnicity_dichotomous)
+sum(is.na(mimic$ethnicity_dichotomous)) # No missing values
+
+# Elixhauser
+fct_count(mimic$elixhauser_categories)
+
+mimic$elixhauser_dichotomous<-fct_collapse(mimic$elixhauser_categories,
+                   zero_or_less = c("<0", "0"),
+                   one_or_more = c("1-4", ">=5"))
+fct_count(mimic$elixhauser_dichotomous)
+
+# Age - Splitting at the median and mean (both 70)
+summary(mimic$AGE)
+mimic$age_dichotomous <-cut(mimic$AGE, c(54,70,89))
+
+table(mimic$age_dichotomous)
+sum(is.na(mimic$age_dichotomous)) # No missing values
+
+# LOS - dichotomizing at the median (7 days)
+summary(mimic$LOS)
+mimic$los_dichotomous <- cut(mimic$LOS, c(-Inf, 7, 30))
+table(mimic$los_dichotomous)
+sum(is.na(mimic$los_dichotomous)) # no missing values
+```
+
+# Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+## Summary Statistics- Overall
+This section contains descriptive statistics for the overall cohort (See details on the [gtsummary package](http://www.danieldsjoberg.com/gtsummary/)). This chunk begins with a summary table and then visualizations for the overall sample. Not all of these variables are included in the logistic model. 
+
+The final sample had 22,350 unique patients. It was 57% male, 75% white, mean age 70 years old (range 55-89), majority insured by Medicare (66%), 53% were Catholic or Christian religion, and 55% were married. In terms of clinical characteristics, the cohort was 64% non-surgical, 76% were admitted through the emergency department, 82% had Elixhauser Comorbidity scores (ARHQ) of 0 or less, average length of stay was 7 days. Discharge disposition was 31% home health care, 23% home, 20% skilled nursing facility, 16% inpatient rehabilitation facility, 6% other, 1.8% transfer to another acute facility, 1.3% hospice, and 0.3% against medical advice. Only 1,083 patients were readmitted in 30 days or less (4.8% so the cohort is skewed towards the non-readmissions cohort). Among those who experienced readmissions, 41% occured within 7 days, 24% occurred within 8-14 days, and 34% occured within 15-30 days. 
+```{r Overall Descriptive Statistics}
+
+mimic_summary <- mimic %>%
+  select(GENDER, AGE, INSURANCE, religion_categories, MARITAL_STATUS, ethnicity_categories, ADMISSION_TYPE, service, elixhauser_categories, LOS, discharge_categories, time_to_readmission, readmission_cat, readmitted_30)
+
+table1<- tbl_summary(
+  mimic_summary, 
+  missing = "no",
+) %>%
+  modify_header(label = "**Variable**") %>%
+  bold_labels()
+table1
+
+# Gender
+table(mimic$GENDER)
+
+gender_total<- ggplot(data = mimic, aes(x=GENDER))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Gender")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=8),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Admission Type
+table(mimic$ADMISSION_TYPE)
+
+admission_total <- ggplot(data = mimic, aes(x=ADMISSION_TYPE))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Admission Type")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=8),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+
+# Discharge Location
+table(mimic$discharge_categories)
+
+discharge_total <- ggplot(data = mimic, aes(x=discharge_categories))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Discharge Location")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=4), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8),
+        axis.text = element_text(angle=90))
+
+# Insurance
+table(mimic$INSURANCE)
+
+insurance_total <- ggplot(data = mimic, aes(x=INSURANCE))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Insurance")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+
+# Religion
+table(mimic$religion_categories)
+
+religion_total <- ggplot(data = mimic, aes(x=religion_categories))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Religion")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=4), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Marital Status
+table(mimic$marital_dichotomous)
+
+marital_total <- ggplot(data = mimic, aes(x=marital_dichotomous))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Marital Status")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Ethnicity
+table(mimic$ethnicity_categories)
+
+ethnicity_total <- ggplot(data = mimic, aes(x=ethnicity_categories))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Ethnicity")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=4), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Service
+table(mimic$service)
+
+service_total <- ggplot(data = mimic, aes(x=service))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Surgical Vs. Non-Surgical")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Elixhauser categories
+table(mimic$elixhauser_categories)
+
+elixhauser_total <- ggplot(data = mimic, aes(x=elixhauser_categories))+
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#4393C3") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Elixhauser Categories (AHRQ)")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=4),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Age 
+summary(mimic$AGE)
+age_total <- ggplot(data = mimic, aes(y=AGE)) + 
+  geom_boxplot(fill = "#D6604D") +
+  labs(title = "Age") +
+  theme_minimal()
+
+# LOS
+summary(mimic$LOS)
+los_total <- ggplot(data = mimic, aes(y=LOS)) + 
+  geom_boxplot(fill = "#D6604D") +
+  labs(title = "Length of Stay") +
+  theme_minimal()
+
+# Summary Graphs 1
+ggdraw() +
+  draw_plot(ethnicity_total, x=0, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(age_total, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(marital_total, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(gender_total, x=0.5, y=0, width = 0.5, height = 0.5)+
+  theme_minimal()
+
+# Summary Graphs 2
+ggdraw() +
+  draw_plot(admission_total, x=0, y=0.5, width = 0.5, height = 0.5)+ #legend and x labels smaller
+  draw_plot(discharge_total, x=0.5, y=0.5, width = 0.5, height = 0.5)+ #same
+  draw_plot(los_total, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(insurance_total, x=0.5, y=0, width = 0.5, height = 0.5)+ #same
+  theme_minimal()
+
+# Summary Graphs 3:
+ggdraw() +
+  draw_plot(service_total, x=0, y=0.5, width = 0.5, height = .5)+
+  draw_plot(elixhauser_total, x=0.5, y=0.5, width=0.5, height=.5)+
+  draw_plot(religion_total, x=0.25, y=0, width=0.5, height=0.5)+
+  theme_minimal()
+```
+
+## Summary Statistics- Between Groups
+This section contains descriptive statistics comparing the readmissions to non-readmissions cohorts. Only variables included in the logistic model are included in these descriptive statistics. There is a summary table as well as visualizations to compare between groups. 
+```{r Descriptive Statistics- by Group, results='hide'}
+# Summary table (by group)
+table2<- tbl_summary(
+  mimic_summary,
+  by = readmitted_30,
+  missing = "no",
+) %>%
+  add_n() %>%
+  modify_header(label = "**Variable**") %>%
+  bold_labels() %>% 
+  italicize_levels()%>%
+  add_overall()
+table2
+
+# Gender
+table(mimic$GENDER, mimic$readmitted_30)
+
+gender_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = GENDER)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Gender")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=8),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8))
+
+# Admission Type
+table(mimic$ADMISSION_TYPE, mimic$readmitted_30)
+
+admission_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = ADMISSION_TYPE)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Admission Type")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Discharge Location
+table(mimic$discharge_categories, mimic$readmitted_30)
+
+discharge_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = discharge_categories)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Discharge Location")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Insurance
+table(mimic$INSURANCE, mimic$readmitted_30)
+
+insurance_split<- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = INSURANCE)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Insurance")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Religion
+table(mimic$religion_categories, mimic$readmitted_30)
+
+religion_split<- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = religion_categories)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Religion")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()
+
+# Marital Status
+table(mimic$marital_dichotomous, mimic$readmitted_30)
+
+marital_split<- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = marital_dichotomous)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Marital Status")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Ethnicity
+table(mimic$ethnicity_categories, mimic$readmitted_30)
+
+ethnicity_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = ethnicity_categories)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Ethnicity")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Service
+table(mimic$service, mimic$readmitted_30)
+
+service_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = service)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Surgical vs. Non-Surgical")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Elixhauser Categories
+table(mimic$elixhauser_categories, mimic$readmitted_30)
+
+elixhauser_split <- ggplot(data = mimic, aes(x = factor(readmitted_30), fill = elixhauser_categories)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Elixhauser Categories")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Age 
+tapply(mimic$AGE, mimic$readmitted_30, summary)
+
+age_split <- ggplot(data = mimic, aes(readmitted_30, AGE)) +
+  geom_boxplot(fill=c("#D6604D", "#B2182B")) +
+  labs(title = "Age") +
+  ylab("Years")+
+  xlab("")+
+  theme_minimal()
+
+# LOS
+tapply(mimic$LOS, mimic$readmitted_30, summary)
+los_split <- ggplot(data = mimic, aes(readmitted_30, LOS)) +
+  geom_boxplot(fill=c("#D6604D", "#B2182B")) +
+  labs(title = "Length of Stay") +
+  ylab("Days")+
+  xlab("")+
+  theme_minimal()
+
+# Summary Graphs 1: Demographics between group comparison
+ggdraw() +
+  draw_plot(ethnicity_split, x=0, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(age_split, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(marital_split, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(gender_split, x=0.5, y=0, width = 0.5, height = 0.5)+
+  theme_minimal()
+
+#Summary graphs 2: Clinical between groups comparison 
+ggdraw() +
+  draw_plot(admission_split, x=0, y=0.5, width = 0.5, height = 0.5)+ #legend and x labels smaller
+  draw_plot(discharge_split, x=0.5, y=0.5, width = 0.5, height = 0.5)+ #same
+  draw_plot(los_split, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(insurance_split, x=0.5, y=0, width = 0.5, height = 0.5)+ #same
+  theme_minimal()
+
+# Summary Graphs 3: More Analysis
+ggdraw() +
+  draw_plot(service_split, x=0, y=0, width = 0.5, height = 1)+
+  draw_plot(elixhauser_split, x=0.5, y=0, width=0.5, height=1)
+  theme_minimal()
+```
+## Preliminary Analyses  
+
+A series of univariable analyses were conducted to explore clinically significant variables to be incorporated into the final model. Those analyses are included in the kennedy_preliminary_statistics.rmd file. The goal of the univariable analysis was not to eliminate variables (since that could create a high risk of bias), but rather to explore the idea of categorized vs. dichotomized variables. Please see that file in the repository for more detail. 
+
+## Initial Multivariable Logistic Model
+My initial multivariable logistic regression contained all of the clinically and socially relevant variables (based in the literature and clinical expertise). Some variables were preserved in their initial categories from the raw data (insurance, gender, admission type, age, length of stay), while others were collapsed into smaller categories (discharge disposition, marital status, ethnicity, service type, elixhauser categories).
+
+In this model. Few variables were significant at the 0.05 level. These variables included admission type (emergency admission p=0.001, OR 1.36), surgical population (p=0.002, OR 1.26), and length of stay (p<0.001, OR 1.02). Although these are technically statistically significant, the odds ratios are fairly low and don't hold much clinical significance. 
+```{r Initial Multivariate Model}
+model1 <- glm(readmitted_30 ~ GENDER + ADMISSION_TYPE + discharge_categories + INSURANCE + marital_dichotomous + ethnicity_categories + service+ elixhauser_categories + AGE + LOS, data = mimic, 
+                  family = binomial())
+summary(model1)
+exp(cbind(OR = coef(model1), CI = confint(model1))) #OR and 95%CI
+
+# Creating a nice summary table
+t3 <- tbl_regression(model1, exponentiate = TRUE) %>%
+  bold_p(t = 0.10) %>%
+  bold_labels() %>%
+  italicize_levels()
+t3
+```
+
+## Final Logistic Regression Results
+Next, we will create a logistic regression model with the dichotomized (final) variables. First, we will do another summary table to compare between the dichotomized groups. There are some statistically significant difference between groups- this is a limitation of the study. Those variables include: admission type (p=0.007), discharge location (p<0.001), insurance categories (p=0.014), ethnicity (p=0.005), surgical population (p=0.03), elixhauser score (p<0.001), and length of stay (p<0.001). 
+```{r By Group Comparison Dichotomized Variables}
+mimic_regression_summary <- mimic %>%
+  select(readmitted_30, GENDER, admission_dichotomous, discharge_dichotomous, insurance_categories, marital_dichotomous, ethnicity_dichotomous, service, elixhauser_dichotomous, age_dichotomous, los_dichotomous)
+
+table3<- tbl_summary(
+  mimic_regression_summary,
+  by = readmitted_30,
+  missing = "no",
+) %>%
+  add_n() %>%
+  modify_header(label = "**Variable**") %>%
+  bold_labels() %>% 
+  italicize_levels()%>%
+  add_p() %>%
+  bold_p() %>%
+  add_overall()
+table3
+```
+
+Then, we will create a logistic regression model of the dichotomized variables. Significant variables included emergency/urgent admission (p<0.001, OR 1.43- 95%CI 1.19-1.73), non-home discharge disposition (p<0.001, OR 1.47- 95% CI 1.28-1.68), public insurance (p=0.015, OR 1.22- 95% CI 1.04-1.44), white ethnicity (p=0.005, OR 1.24- 95% CI 1.07-1.43), elixhauser comorbidity score >=1 (p<0.001, OR 1.36- 95% CI 1.17-1.57), and length of stay >7 days (p<0.001, OR 1.25- 95%CI 1.10-1.42). 
+```{r Final Logistic Model}
+model2 <- glm(readmitted_30 ~ GENDER + admission_dichotomous + discharge_dichotomous + insurance_categories + marital_dichotomous + ethnicity_dichotomous + service + elixhauser_dichotomous+ age_dichotomous + los_dichotomous, data = mimic, 
+                  family = binomial())
+summary(model2)
+exp(cbind(OR = coef(model1), CI = confint(model1))) #OR and 95%CI
+
+# Creating a nice summary table for better visualization
+t4 <- tbl_regression(model2, exponentiate = TRUE) %>%
+  bold_p(t = 0.10) %>%
+  bold_labels() %>%
+  italicize_levels()
+t4
+```
+
+
+## Cross Validation Procedure
+Next, I cross-validated the logistic model as a form of internal validation. I used k-fold sampling with 10 folds. Model performance on the training and testing datasets are included in the next section.
+```{r}
+glm.pred <- predict(model2, mimic, type = "response")
+head(glm.pred)
+
+#K Fold Cross Validation
+N = nrow(mimic)
+K = 10
+set.seed(48585)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.glm <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset<- 0 
+
+for (i in 1:K){
+  train <- filter(mimic, s != i)
+  test <- filter(mimic, s == i)
+  obs.outputs[1:length(s[s == i]) + offset] <- test$readmitted_30
+  
+  # GLM train/test
+  glm <- glm(readmitted_30 ~ GENDER + admission_dichotomous + discharge_dichotomous + insurance_categories + marital_dichotomous + ethnicity_dichotomous + service + elixhauser_dichotomous+ age_dichotomous + los_dichotomous, data = train, family = binomial(logit))
+  glm.pred.curr <- predict(glm, test, type = "response")
+  pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.pred.curr
+  
+  offset <- offset + length(s[s == i])
+}
+head(cbind(pred.outputs.glm, obs.outputs))
+```
+
+## Model Performance: Area Under the Curve
+
+As we can see from the AUC calculations and the ROC curve, the logistic model demonstrated poor performance. AUC in the training datset was 59.8% and AUC in the testing dataset was only 58.9%. This is marginally better than a coin flip. 
+```{r}
+roc(mimic$readmitted_30, glm.pred, ci = TRUE) #predicted data, ci is confidence interviews
+plot.roc(mimic$readmitted_30, glm.pred, percent = TRUE, col = "salmon", print.auc= TRUE, ci = TRUE) #graph that corresponds to that 
+plot.roc(obs.outputs, pred.outputs.glm, percent = TRUE, print.auc = TRUE, print.auc.y = 40, ci = TRUE, col = "lightsteelblue", add = TRUE) #observed data. cross validation curve is almost the same
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("salmon", "lightsteelblue"), lwd = 2)
+title(main="Logistic Model Performance")
+```
+
+# Conclusion
+Our final sample included 22,350 ICU patients, with a 4.8% 30-day readmission rate. This unbalanced sample is a limitation of the study that is often encountered in similar studies (Zhou et al, 2016). Nearly half of the readmission cohort was readmitted within the first 7 days of discharge. Usually readmissions within this time frame could indicate that the patient was not ready for discharge, and readmissions within this time frame are considered to be more preventable than later readmissions (Graham et al, 2018). My goal was to build a model focused on clinical and social factors based in the literature from previous systematic reviews (Zhou et al, 2016). All variables initially selected for clinical relevance were maintained in the final models in order to reduce potential bias, but I did dichotomize variables for the final model to improve performance which is a limitation. 
+
+The final model included 10 variables that are available in most EHRs, which is relatively parsimonious and good for generalizability. There were some statistically significant difference between groups, which is another limitation of the study. Those variables include: admission type (p=0.007), discharge location (p<0.001), insurance categories (p=0.014), ethnicity (p=0.005), surgical population (p=0.03), elixhauser score (p<0.001), and length of stay (p<0.001). Out of the 10 variables in the final model, 6 were statistically significant at the 0.05 level. Significant variables included emergency/urgent admission (p<0.001, OR 1.43- 95%CI 1.19-1.73), non-home discharge disposition (p<0.001, OR 1.47- 95% CI 1.28-1.68), public insurance (p=0.015, OR 1.22- 95% CI 1.04-1.44), white ethnicity (p=0.005, OR 1.24- 95% CI 1.07-1.43), elixhauser comorbidity score >=1 (p<0.001, OR 1.36- 95% CI 1.17-1.57), and length of stay >7 days (p<0.001, OR 1.25- 95%CI 1.10-1.42). AUC <70% is typically considered poor, 70-79% is considered fair, and above 80% is considered good performance (Zhou et al, 2016). After 10-fold cross validation, the model's area under the curve (AUC) performance was poor in both the training and testing datasets, which were 59.8% and 58.9% respectively. As stated in the introduction, readmissions are a complex phenomenon to understand and predict because many reasons for readmissions cannot be explained in the patient's index hospitalization. This model relied heavily on social factors and demographic variables, which may not be appropriate for a critical care populations, where clinical values like laboratory values, vital signs, and procedures might be more indicative of readmissions. However, most readmissions prediction models for the ICU population in the literature also perform poorly, with AUCs around 65% (Rojas et al, 2018) and 66% (Xue et al, 2019). These better-performing models included medication and lab values, which is an area for future exploration. Other future goals including using natural language processing to extract variables from unstructured texts to improve the model.
+
+# References
+Bailey, M. K., Weiss, A. J., Barret, M. L., & Jiang, H. J. (2019). Statistical Brief #248: Characteristics of 30-Day All-Cause Hospital Readmissions, 2010-2016. Retrieved from https://www.hcup-us.ahrq.gov/reports/statbriefs/sb248-Hospital-Readmissions-2010-2016.pdf
+
+BBC (2020). BBPlot. Github Repository. Retrieved from https://github.com/bbc/bbplot/. 
+
+Bradley, E. H., Sipsma, H., Horwitz, L. I., Curry, L., & Krumholz, H. M. (2014). Contemporary Data About Hospital Strategies to Reduce Unplanned Readmissions: What Has Changed? JAMA Internal Medicine, 174(1), 154-156. doi:10.1001/jamainternmed.2013.11574
+
+Graham, K. L., Auerbach, A. D., Schnipper, J. L., Flanders, S. A., Kim, C. S., Robinson, E. J., Ruhnke, G. W., Thomas, L. R., Kripalani, S., Vasilevskis, E. E., Fletcher, G. S., Sehgal, N. J., Lindenauer, P. K., Williams, M. V., Metlay, J. P., Davis, R. B., Yang, J., Marcantonio, E. R., & Herzig, S. J. (2018). Preventability of Early Versus Late Hospital Readmissions in a National Cohort of General Medicine Patients. Annals of internal medicine, 168(11), 766–774. https://doi.org/10.7326/M17-1724
+
+Healthy People 2020. (2020). Social Determinants of Health. Retrieved from https://www.healthypeople.gov/2020/topics-objectives/topic/social-determinants-of-health
+
+McDermott, K. W., & Jiang, H. J. (2020). Characteristics and Costs of Potentially Preventable Inpatient Stays, 2017. Retrieved from https://www.hcup-us.ahrq.gov/reports/statbriefs/sb259-Potentially-Preventable-Hospitalizations-2017.pdf
+
+Menendez, M. E., Neuhaus, V., van Dijk, C. N., & Ring, D. (2014). The Elixhauser comorbidity method outperforms the Charlson index in predicting inpatient death after orthopaedic surgery. Clinical orthopaedics and related research, 472(9), 2878–2886. https://doi.org/10.1007/s11999-014-3686-7
+
+Moore, B. J., White, S., Washington, R., Coenen, N., & Elixhauser, A. (2017). Identifying Increased Risk of Readmission and In-hospital Mortality Using Hospital Administrative Data: The AHRQ Elixhauser Comorbidity Index. Medical care, 55(7), 698–705. https://doi.org/10.1097/MLR.0000000000000735
+
+MIMIC-III, a freely accessible critical care database. Johnson AEW, Pollard TJ, Shen L, Lehman L, Feng M, Ghassemi M, Moody B, Szolovits P, Celi LA, and Mark RG. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available from: http://www.nature.com/articles/sdata201635
+
+Pollack, R. (2019). Perspective: Post-acute care is a vital part of health care delibery. Retrieved from https://www.aha.org/news/perspective/2019-07-12-perspective-post-acute-care-vital-part-health-care-delivery
+
+Prusaczyk, B., Kripalani, S., & Dhand, A. (2019). Networks of hospital discharge planning teams and readmissions. Journal of Interprofessional Care, 33(1), 85-92. doi:10.1080/13561820.2018.1515193
+
+Rojas, J. C., Carey, K. A., Edelson, D. P., Venable, L. R., Howell, M. D., & Churpek, M. M. (2018). Predicting Intensive Care Unit Readmission with Machine Learning Using Electronic Health Record Data. Annals of the American Thoracic Society, 15(7), 846–853. https://doi.org/10.1513/AnnalsATS.201710-787OC
+
+Xue, Y., Klabjan, D., & Luo, Y. (2019). Predicting ICU readmission using grouped physiological and medication trends. Artificial intelligence in medicine, 95, 27–37. https://doi.org/10.1016/j.artmed.2018.08.004
+
+Zhou, H., Della, P. R., Roberts, P., Goh, L., & Dhaliwal, S. S. (2016). Utility of models to predict 28-day or 30-day unplanned hospital readmissions: an updated systematic review. BMJ Open, 6(6), e011060. doi:10.1136/bmjopen-2016-011060
+
