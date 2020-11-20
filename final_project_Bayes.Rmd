@@ -18,6 +18,8 @@ library(jsonlite)
 library(tidyverse)
 library(dplyr)
 library(ggplot2)
+library(tigris)
+library(sf)
 ```
 
 ***
@@ -37,7 +39,7 @@ Poor air quality can have a substantial negative influence on health and quality
 
 Retrieve daily PM2.5 pollutant data for the lower 48 states for 2019 from the EPA's Air Quality System database via their API.
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 # Retrieve environment variables with EPA AQS API credentials
 api.email <- Sys.getenv("EPA_AQS_EMAIL")
 api.key   <- Sys.getenv("EPA_AQS_KEY")
@@ -61,7 +63,9 @@ list.states <- download.AQS("list/states",list())
 list.states.lower48 <- list.states %>% filter(!(code %in% c("02","15","66","72","78","80","CC")))
 list.states.lower48
 lower48.codes <- as.vector(as.matrix(list.states.lower48[,1]))
+```
 
+```{r eval=FALSE}
 # Pull daily PM2.5 (parameter 88101) data for these states, with arguments for date range
 get.daily.lower48 <- function(b,e){
 collector <- data.frame()
@@ -134,6 +138,153 @@ testing.sites %>% select(state_code,county_code,site_number) %>% unique() %>% di
 
 clean.2019.dailyPM2.5 <- all.2019.dailyPM2.5 %>%
   mutate(site_id = paste0(state_code,county_code,site_number))
+
+```
+
+```{r eval=FALSE}
+# Prepare for spatial merge. Create sf file from testing site coordinates
+testing.sites.sf.points <- st_as_sf(testing.sites, coords = c('longitude','latitude'), crs = 4269)
+
+# Download census tract sf shapefiles, one state at a time.
+# Perform spatial joins one state at a time to avoid having to build the national tract shapefile.
+for (s in seq_along(lower48.codes)) {
+  newstate <- lower48.codes[s]
+  newtracts <- tracts(newstate)
+  newjoin <- st_join(newtracts, testing.sites.sf.points, join = st_contains, left=FALSE)
+  if (s==1){
+    testing.sites.tracts <- newjoin
+  } else {
+    testing.sites.tracts <- bind_rows(testing.sites.tracts,newjoin)
+  }
+}
+
+# Save file with testing sites <> census tract
+saveRDS(testing.sites.tracts, file = "testing_sites_tracts.RDS")
+```
+
+```{r eval=TRUE}
+testing.sites.tracts <- readRDS("testing_sites_tracts.RDS")
+tail(testing.sites.tracts)
+View(testing.sites.tracts)
+View(lower48.codes)
+  
+sf.AL <- tracts('01')
+st_crs(sf.AL) # NAD83, 4269
+
+sf.16 <- tracts('16')
+getwd()
+
+
+sf.AL.join <- st_join(sf.AL, testing.sites.sf.points, join = st_contains, left=FALSE)
+testing.sites %>% filter(state_code == '01')
+
+
+head(sf.AL.join)
+
+?st_join
+
+testing.sites.sf.xform  <- st_transform(testing.sites.sf.points, 4269)
+st_crs(testing.sites.sf.points) # WGS84, 4326 
+st_crs(testing.sites.sf.xform)  # NAD83, 4269
+
+?st_transform
+
+
+
+
+
+
+?tracts
+
+install.packages('tigris')
+library(tigris)
+
+?st_as_sf
+
+
+
+get.daily.lower48 <- function(b,e){
+collector <- data.frame()
+for (s in seq_along(lower48.codes)) {
+  newstate <- download.AQS("dailyData/byState", list(param="88101", bdate=b, edate=e, state=list.states.lower48[s,1]))
+  collector <- bind_rows(collector,newstate)
+  }
+  return(collector)
+}
+
+?tracts
+https://rdrr.io/cran/tigris/man/tracts.html
+
+
+
+head(testing.sites)
+head(testing.sites.sf.points)
+
+#Instead of data.frame of class "sp", create "simple features"-data.frame 
+
+sf_df = st_as_sf(df, coords = c("longitude", "latitude"), crs = 4326)
+
+#You'll have to convert your shapefile to sf, too. 
+#Depending what class it is you can use "st_as_sf()"
+
+
+#Then join the shapefile with sf_df via the "st_contains" which merges two rows 
+#if a point from sf_df falls within a polygon from the shapefile.
+
+shape_df <- st_join(shapefile, sf_df , join = st_contains)
+
+
+
+?st_join
+
+
+
+View(testing.sites)
+
+
+
+
+cbsa.counts <- testing.sites %>% group_by(cbsa) %>% summarise(obs=n(),.groups="keep") %>% arrange(-obs)
+View(cbsa.counts)
+
+??tigris
+
+
+testme <- testing.sites[1:2,]
+
+testme.out <- testme %>%
+                mutate(census.block = call_geolocator_latlon(latitude, longitude))
+
+
+install.packages('tidygeocoder')
+library('tidygeocoder')
+?tidygeocoder::geocode
+
+full <- some_addresses %>%
+  geocode(addr, method = 'census', full_results = TRUE, return_type = 'geographies')
+
+
+testing.sites.geocode1 <- testing.sites %>%
+                            geocode(site_address
+                                  ,method = 'census'
+                                  ,full_results = TRUE
+                                  ,return_type = 'geographies')
+
+View(testing.sites.geocode1)
+
+
+testing.sites.geocode2 <- testing.sites %>%
+                            rename(latitude.orig = latitude, longitude.orig = longitude) %>%
+                            filter(county_code == '001') %>%
+                            geocode(street = site_address
+                                  ,city = city
+                                  ,state = state
+                                  # ,lat = latitude.orig
+                                  # ,long = longitude.orig
+                                  ,method = 'census'
+                                  ,full_results = TRUE
+                                  ,return_type = 'geographies')
+
 ```
 
 
