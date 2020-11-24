@@ -15,7 +15,7 @@ This project will use MIMIC-III, an openly available dataset developed by MIT wi
 
 ### Files in the Repository  
 
-* kennedy_main_analysis.Rmd ---------------> Project overview, introduction, methods, results, adn conclusions. Main analytic file  
+* kennedy_main_analysis.Rmd ---------------> Project overview, introduction, methods, results, and conclusions. Main analytic file  
 * kennedy_main_analysis.html --------------> HTML version for easier reading
 * kennedy_preliminary_statistics.Rmd ------> Univariable analysis for all predictors in the logistic regression models that led to the creation of the final models. Aligns with the middle section of the kennedy_main_analysis files 
 * kennedy_preliminary_statistics.html -----> HTML version for easier reading
