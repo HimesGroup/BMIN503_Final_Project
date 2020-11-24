@@ -1,3 +1,9 @@
+# Description
+
+This project examines the connection between crime rates and healthcare access. It assesses whether the expansion of Medicaid under the Affordable Care Act (ACA) has led to an increase or decrease in crime rates. This involves comparing crime rates in expansion states before and after Medicaid expansion and comparing those changes to the changes seen in non-expansion states.
+
+The data used for this project are the ICPSR_35019 and ICPSR_37059 files in this repo. These come from the Department of Justice's Uniform Crime Reporting Program: County-Level Detailed Arrest and Offense Data. These two sets of files are the UCRP data for 2012 and 2016 and are available [here for 2012](https://www.icpsr.umich.edu/web/NACJD/studies/35019) and [here for 2016](https://www.icpsr.umich.edu/web/NACJD/studies/37059).
+
 # BMIN503/EPID600 Final Project
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
@@ -15,7 +21,3 @@ DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in w
 
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
-
-# Description
-
-This project examines the connection between crime rates and healthcare access. It assesses whether the expansion of Medicaid under the Affordable Care Act (ACA) has led to an increase or decrease in crime rates. This involves comparing crime rates in expansion states before and after Medicaid expansion and comparing those changes to the changes seen in non-expansion states. The files used in this repository are two sets of data from the Department of Justice's Uniform Crime Reporting Program: County-Level Detailed Arrest and Offense Data for 2012 and 2016, available [here for 2012](https://www.icpsr.umich.edu/web/NACJD/studies/35019) and [here for 2016](https://www.icpsr.umich.edu/web/NACJD/studies/37059).
