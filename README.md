@@ -42,13 +42,13 @@ My final project focuses on transcriptomic
 Methodology described by the Himes Lab in the [RAVED](https://github.com/HimesGroup/raved) and [taffeta](https://github.com/HimesGroup/taffeta) pipelines
 
 ### I. Obtain Raw Data
-The following steps were completed in a lab server that behaves similiarly to a HPC
+*The following steps were completed in a lab server that behaves similarly to a HPC*
 
 1. Download raw data files using the SRA Toolkit, explained [here](https://wikis.utexas.edu/display/bioiteam/SRA+toolkit)
 2. Preform prelimary quality control of raw fastq files with [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/)
 
-### II. Quality Control of Raw Data
-The following steps were completed in a lab server that behaves similiarly to a HPC
+### II. Align Reads to Reference Genome
+*The following steps were completed in a lab server that behaves similarly to a HPC*
 
 1. Create a data-set specific phenotype file
 2. Align raw reads to reference genome using the [STAR aligner](https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf) and the [mm10](https://www.ncbi.nlm.nih.gov/assembly/GCF_000001635.20/) mouse reference genome
@@ -56,14 +56,14 @@ The following steps were completed in a lab server that behaves similiarly to a 
 4. Preform QC on aligned reads using samtools, bamtools and picardtools
 
 ### III. Determine Differentially Expressed Genes (DEGs)
-The following steps were completed in a lab server that behaves similiarly to a HPC
+*The following steps were completed in a lab server that behaves similarly to a HPC*
 
 1. Create a dataframe ([comp_file]()) that lists the pairwise comparisons of interest 
 2. Use [DESeq2](https://bioc.ism.ac.jp/packages/2.14/bioc/vignettes/DESeq2/inst/doc/beginner.pdf)to determine the differtially expressed genes between each pairwise condition specified in the above file
 3. QC and normalizaiton of DEGs
 
 ### IV. Functional Enrichment Analysis Using DEG Results
-The following steps were completed in my local environment
+*The following steps were completed in my local environment*
 
 
 # Results
