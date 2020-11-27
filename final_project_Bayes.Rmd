@@ -51,7 +51,7 @@ download.AQS <- function(whichData,customParams) {
   morepath <- paste0(rootpath,whichData)
   fullParams <- append(list(email = api.email, key = api.key),customParams)
   step1.json <- httr::GET(url = morepath, query = fullParams)
-  step2.parsed <- jsonlite::fromJSON(content(step1.json, "text"), simplifyVector = FALSE)
+  step2.parsed <- jsonlite::fromJSON(httr::content(step1.json,"text"), simplifyVector = FALSE)
   step3.df <- tibble(Data = step2.parsed$Data) %>% unnest_wider(.,Data)
   return(step3.df)
 }
@@ -186,7 +186,7 @@ View(census.1yr.vars)
 # .. % Rental
 # .. Monthly rent
 # .. Monthly mortgage
-# 11. Highest degree education
+# .. Highest degree education
 # 12. % Currently married
 # 13. % any military service
 # 14. % worked for pay last week (at a job or otherwise)
@@ -223,20 +223,119 @@ View(census.1yr.concept.counts)
 Test pulling and linking 1 census variable to the testing site file. 
 
 ```{r eval=TRUE}
+head(testing.sites.tracts)
+
+# Keep only what is needed to make the ACS calls in a small data frame
+tst.minimal <- testing.sites.tracts %>% 
+                mutate(site_id = paste0(state_code,county_code,site_number)) %>%
+                dplyr::select(site_id, GEOID, STATEFP, COUNTYFP)
+st_geometry(tst.minimal) <- NULL
+
+# Loop through existing list of state codes
+lower48.codes
+
+# Make ACS calls one state at a time, only for counties with AQS testing sites
+# Preserve estimate columns, ditch MOE
+# Join to testing site list
+# Stack ACS data together in a single data frame
+
+acs.loop <- function(){
+  for (st in seq_along(lower48.codes)) {
+    
+    newstate <- lower48.codes[st]
+    
+    county.list <- tst.minimal %>% 
+                  filter(STATEFP==newstate) %>% 
+                  dplyr::select(COUNTYFP) %>%
+                  arrange(COUNTYFP) %>%
+                  as.matrix() %>% as.vector() %>% as.list()
+    
+    results.acs <- get_acs( geography = "tract"
+                          ,variables=c("B08101_001","B08101_002")
+                          ,state = newstate
+                          ,county = county.list
+                          ,output = "wide")
+    
+    smaller.acs <- results.acs %>% dplyr::select(GEOID,matches(".*_.*E$"))
+  
+    linked.acs <- tst.minimal %>% 
+                filter(STATEFP==newstate) %>%
+                left_join(.,smaller.acs,by="GEOID")
+    
+    if (st==1){
+      collect <- linked.acs
+    } else {
+      collect <- bind_rows(collect,linked.acs)
+    }
+  }
+  return(collect)
+}
+
+testing.sites.acs <- acs.loop()
+testing.sites.acs
+
+```
+
+```{r eval=TRUE}
+dim(testing.sites.acs)
+summary(testing.sites.acs)
+table(testing.sites.acs$STATEFP)
+testing.sites.acs
+
+sites.acs
+  
+  
+smaller.acs
+?seq_along
+for (i in 1:49) {
+  newstate <- lower48.codes[i]
+  if (i==1){
+    t <- c(i,newstate)
+  } else {
+    t <- c(t,i,newstate)
+  }
+}
+
+# Keep only the GEOID and Estimate columns
+manipulate <- test.get.acs %>% dplyr::select(GEOID,matches(".*_.*E$"))
+manipulate
+
+manipulate %>% filter(GEOID=="01055001600")
+
+just.my.tracts <- left_join(testing.sites.tracts[1:5,],manipulate,by="GEOID")
+just.my.tracts
 
 head(testing.sites.tracts)
-tail(testing.sites.tracts)
+head(test.get.acs)
 
 
+
+
+get.daily.lower48 <- function(b,e){
+collector <- data.frame()
+for (s in seq_along(lower48.codes)) {
+  newstate <- download.AQS("dailyData/byState", list(param="88101", bdate=b, edate=e, state=list.states.lower48[s,1]))
+  collector <- bind_rows(collector,newstate)
+  }
+  return(collector)
+}
+
+
+states %>%
 
 statevec5  <- as.vector(testing.sites.tracts$STATEFP[1:5])
 countyvec5 <- as.vector(testing.sites.tracts$COUNTYFP[1:5])
 # B08101_001  - Means of transportation to work by age
 
-test.get.acs <- get_acs(geography = "tract",variables=c("B08101_001"),year=2018,
-                        state = statevec5, county = countyvec5)
+statevec5
+countyvec5
 
 
+
+```
+
+
+```{r eval=TRUE}
 census.1yr.vars %>% filter(str_detect(concept,"MEDIAN AGE")) %>% View()
 census.1yr.vars %>% filter(str_detect(concept,"LATINO ORIGIN")) %>% View()
 census.1yr.vars %>% filter(str_detect(concept,"RACE")) %>% View()
@@ -259,6 +358,13 @@ census.1yr.vars %>% filter(str_detect(label,"anufact")) %>% View()
 
 census.1yr.vars %>% filter(str_detect(concept,"INDUSTRY")) %>% View()
 
+
+census.1yr.vars %>% filter(str_detect(concept,"EDUCATIONAL ATTAINMENT")) %>% View()
+census.1yr.vars %>% filter(str_detect(label,"Estimate!!Total:!!Bachelor's degree")) %>% View()
+
+
+census.1yr.vars %>% filter(str_detect(label,"Married")) %>% View()
+
 # B25024_001
 # Estimate!!Total:
 # UNITS IN STRUCTURE
@@ -278,6 +384,9 @@ literal.test <- get_acs(geography = "tract"
                             # ,"B03001_003","B03001_002","B03001_001" # Hisp/Latino // Non // Denom
                             ,"B03002_003","B03002_001" # Hon-Hisp-White-alone // Denom
                             ,"B02009_001","B02001_001" # Black race, alone or in combination // Denom
+                            
+                            ,"B15003_022","B15003_023","B15003_024","B15003_025","B15003_001" 
+                            # Bachelors // Masters // Professional // Doctorate // Denom
                             
                             ,"B08126_004","B08126_002","B08126_001" # INDUSTRY: Manufacturing // Agriculture, fishing, mining // Denom
                             ,"B08006_003","B08006_001" # Drove to work alone // Denom
