@@ -37,22 +37,25 @@ Childhood interstitial lung disease (chILD) encompasses a variety of lung diseas
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
 
-```{r, include=FALSE, echo = FALSE}
+
+
+```{r, include=FALSE, echo = TRUE}
 # loading RedCAP data
 setwd("C:/Users/tsukaharak/Documents/R files/BMIN503_Final_Project")
-source("CHOPChildhoodILDNati-110620BMIN_R_2020-11-19_1124.R", local = knitr::knit_global())
+source("CHOPChildhoodILDNati-110620BMIN_R_2020-11-27_1739.R", local = knitr::knit_global())
 # or sys.source("your-script.R", envir = knitr::knit_global())
 
 # checking for duplicate entries
-str(unique(data$child_registry_id))
-str(data$child_registry_id)
+length(unique(data$child_registry_id))
+length(data$child_registry_id)
 
 child <- data
+
 ```
 
 
 ```{r, echo = FALSE, warning = FALSE, message = FALSE}
-# loading libraries
+# loading libraries for data cleaning and graphics
 library(tidyr)
 library(dplyr)
 library(ggplot2)
@@ -65,6 +68,62 @@ library(cowplot)
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
+```{r, warning = FALSE, message = FALSE, eval = TRUE}
+library(maps)
+
+head(us.cities)
+DAG.df <- data.frame(
+  name = c("Boston MA", "Atlanta GA", "Philadelphia PA", "Cleveland OH", "Queens NY", "Aurora CO", "Indianapolis IN", "Kansas City MO", "Chicago IL", "Ann Arbor MI", "Columbia MO", "Bronx NY", "Portland OR", "Pittsburgh PA", "San Diego CA", "Seattle WA", "Palo Alto CA", "Chapel Hill NC", "Nashville TN", "Saint Louis MO"),
+  prefix = c(704,720,712,709,702,703,718,711,717,716,715,708,713,705,706,710,707,719,701,714),
+  stringsAsFactors = FALSE
+)
+
+DAG.df <- DAG.df %>% 
+  arrange(prefix) %>%
+  left_join(us.cities, by = "name") %>%
+  mutate(prefix = as.character(prefix))
+
+# latitude and longitude for NY boroughs
+# Queens 40.728, -73.795
+# Bronx 40.845, -73.865
+DAG.df[which(grepl("Queens",DAG.df$name)), ]$lat <- 40.7282
+DAG.df[which(grepl("Queens",DAG.df$name)), ]$long <- -73.7949
+DAG.df[which(grepl("Bronx",DAG.df$name)), ]$lat <- 40.8448
+DAG.df[which(grepl("Bronx",DAG.df$name)), ]$long <- -73.8648
+DAG.df
+
+DAG.child <- child %>%
+  select(child_registry_id) %>%
+  mutate(prefix = substr(child_registry_id, 0, 3)) %>%
+  count(prefix) %>%
+  mutate(prefix = as.character(prefix)) %>%
+  left_join(DAG.df, by = "prefix")
+
+USA <- map_data("world") %>% filter(region=="USA")
+
+
+# Create breaks for the color scale
+mybreaks <- c(20,40,60,80,100)
+
+# Build the map
+ggplot() +
+    geom_polygon(data = USA, aes(x=long, y = lat, group = group), fill="grey", alpha=0.4) +
+    geom_point(data = DAG.child, aes(x=long, y=lat, size=n), color = "#2b8cbe", shape=20, stroke=FALSE) +
+    scale_size_continuous(name="Number of Enrolled \nSubjects", trans="identity", range=c(0,12), breaks = mybreaks) +
+    theme_void() +
+    coord_map() + ylim(25,50) + xlim(-130, -60) +
+    guides(colour = guide_legend()) +
+    ggtitle("Subject Enrollment by Center") +
+    theme(
+      legend.position = c(0.85, 0.15),
+      text = element_text(color = "#22211d"),
+      plot.title = element_text(size= 16, hjust=0.1, color = "#4e4d47", margin = margin(b = -0.1, t = 0.4, l = 2, unit = "cm")),
+    )
+
+```
+
+
+
 
 ```{r, warning = FALSE, message = FALSE}
 # enrollment statistics
@@ -72,16 +131,59 @@ summary(child$age_studyentry)
 ggplot(data = child, aes(x = age_studyentry)) + 
   geom_histogram(color = "black", fill = "white", binwidth=3) +
   labs(x = "Age (in months)", title = "Age at Study Entry in chILD Registry")
+summary(child$age_diagnosis)
 ggplot(data = child, aes(x = age_diagnosis)) + 
   geom_histogram(color = "black", fill = "white", binwidth=3) +
   labs(x = "Age (in months)", title = "Age at Diagnosis")
 
-#ggplot(child, aes(age_diagnosis, age_studyentry)) + 
- # geom_jitter() +
-  #labs(x = "Age at Diagnosis (in months)", y = "Age at Study Entry (in months)", title = "chILD Regsitry: Timing of Diagnosis vs Study Entry")
+```
+
+
+```{r}
+# race across the registry
+
+race___1.factor:race___6.factor
+
 
 
 ```
+
+
+
+```{r}
+# attempt at a Table 1
+# not able to download ethnicity data
+library(gtsummary)
+library(gt)
+
+table.data <- child %>%
+  dplyr::select(age_studyentry, age_diagnosis, patient_gender.factor,  relative_in_registry.factor, fibrosis.factor, airway.factor, home_o2.factor, mech_vent___1.factor, mech_vent___2.factor, transplant_yn.factor) 
+levels(table.data$mech_vent___1.factor)=c("No","Yes")
+levels(table.data$mech_vent___2.factor)=c("No","Yes")
+
+table.data <- table.data %>%
+  rename("Patient Gender" = patient_gender.factor) %>%
+  rename("Relative in Registry" = relative_in_registry.factor) %>%
+  rename("Pulmonary Fibrosis" = fibrosis.factor) %>%
+  rename("Airway Disease" = airway.factor) %>%
+  rename("Past or Current Home Supplemental Oxygen" = home_o2.factor) %>%
+  rename("Past or Current Noninvasive Ventilation (>3 weeks)" = mech_vent___1.factor) %>%
+  rename("Past or Current Invasive Ventilation (>3 weeks)" = mech_vent___2.factor) %>%
+  rename("Lung Transplant" = transplant_yn.factor) %>%
+  mutate(Death = ifelse(!is.na(child$death_age), "Yes", "No"))
+
+table.one <- tbl_summary(table.data,  missing = "no") %>%
+as_gt() %>%
+gt::tab_header("Table 1. Summary of Clinical Characteristics of the Study Cohort") %>%
+opt_align_table_header(align = "left") %>%
+gt::tab_options(table.font.size = 'small')
+
+table.one
+
+```
+
+
+
 
 
 ```{r, warning = FALSE, message = FALSE}
@@ -108,7 +210,7 @@ ggplot(data = child, aes(x = diagnosis.factor, fill = patient_gender.factor)) +
 
 ```{r, echo = TRUE, warning = FALSE, message = FALSE}
 
-
+# will add in analysis of race - over whole database and by diagnosis
 
 
 ```
@@ -218,6 +320,31 @@ img <- magick::image_read('C:/Users/tsukaharak/Documents/R files/BMIN503_Final_P
 plot(img) # or print(img)
 
 ```
+
+
+```{r}
+# will look at genetic testing - which genes tested, if rate of genetic testing has increased compared to consent date
+
+```
+
+
+```{r}
+
+# will look at 3 earlier-onset diagnoses: NEHI, growth abnormalities, surfactant dysfunction
+# clinical characteristics
+# diagnostics
+
+
+```
+
+
+```{r}
+
+# will look at cohort by 3 month intervals of presentation - 0-3 mo, 3-6 mo, 6-9 mo, 9-12 mo and which diagnostics contributed to diagnosis
+
+
+```
+
 
 
 ### Acknowledgements
