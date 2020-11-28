@@ -210,54 +210,12 @@ final.acs.var.list <- census.1yr.vars %>% filter(name %in% c(
 
 final.acs.var.list
 
-literal.test <- get_acs(geography = "tract"
-                          ,variables = as.list(final.acs.var.list$name)
-                          ,state = "AL"
-                          ,county = "Etowah"
-                          ,output = "wide")
-literal.test
-
-literal.test <- get_acs(geography = "tract"
-                          ,variables = c(
-                             "B01002_001" # median age
-                                  # ,"B03001_003","B03001_002","B03001_001" # Hisp/Latino // Non // Denom
-                            ,"B03002_003","B03002_001" # Hon-Hisp-White-alone // Denom
-                            ,"B02009_001","B02001_001" # Black race, alone or in combination // Denom
-                            
-                            ,"B06008_003","B06008_001" # Now married // Denom
-                            ,"C23007_002","C23007_001" # Children under 18yrs in household
-                            
-                            ,"B15003_022","B15003_023","B15003_024","B15003_025","B15003_001" 
-                                # Bachelors // Masters // Professional // Doctorate // Denom
-                            ,"C23004_002","C23004_001" # Worked in past 12 months // Denom
-                            # ,"B23025_002","B23025_001" # In labor force // Denom
-                            ,"B21001_002","B21001_001" # Veteran // Denom
-                            
-                          
-                            
-                            ,"B17001_002","B17001_001" # Past 12mo income at or below poverty level, Denom
-                            ,"B22010_002","B22010_001" # Received SNAP in past 12mo, Denom
-                            ,"B22008_001"  # Median household income, past 12mo
-                            ,"B19301E_001" # Per capita income in past 12mo
-                            ,"B25008_003","B25008_001" # Renter occupied, Denom
-                            ,"B25024_002","B25024_003","B25024_001" # Single-fam, detached // single-fam, attached // Denom
-                            ,"B25064_001" # Median gross rent
-                            ,"B25088_002" # Median monthly owner costs for households with a mortgage
-                            
-                            ,"B08126_004","B08126_002","B08126_001" # INDUSTRY: Manufacturing // Agriculture, fishing, mining // Denom
-                            ,"B08006_003","B08006_001" # Drove to work alone // Denom
-                            ,"B08013_001" # Aggregate travel time to work in minutes
-                          )
-                          ,state = "AL"
-                          ,county = "Etowah"
-                          ,output = "wide"
-                          ,geometry = FALSE)
 
 ```
 
-Test pulling and linking 1 census variable to the testing site file. 
+Retrieve and linking census variables of interest to the testing site file. 
 
-```{r eval=TRUE}
+```{r eval=FALSE, echo=TRUE}
 head(testing.sites.tracts)
 
 # Keep only what is needed to make the ACS calls in a small data frame
@@ -268,6 +226,14 @@ st_geometry(tst.minimal) <- NULL
 
 # Loop through existing list of state codes
 lower48.codes
+
+# Test using the full variable list in the ACS call
+# literal.test <- get_acs(geography = "tract"
+#                           ,variables = as.list(final.acs.var.list$name)
+#                           ,state = "AL"
+#                           ,county = "Etowah"
+#                           ,output = "wide")
+
 
 # Make ACS calls one state at a time, only for counties with AQS testing sites
 # Preserve estimate columns, ditch MOE
@@ -286,7 +252,7 @@ acs.loop <- function(){
                   as.matrix() %>% as.vector() %>% as.list()
     
     results.acs <- get_acs( geography = "tract"
-                          ,variables=c("B08101_001","B08101_002")
+                          ,variables=as.list(final.acs.var.list$name)
                           ,state = newstate
                           ,county = county.list
                           ,output = "wide")
@@ -309,6 +275,59 @@ acs.loop <- function(){
 testing.sites.acs <- acs.loop()
 testing.sites.acs
 
+saveRDS(testing.sites.acs, file = "testing_sites_acs.RDS")
+```
+
+Compute versions of ACS variables to use in modeling. 
+
+```{r eval=TRUE}
+testing.sites.acs <- readRDS("testing_sites_acs.RDS")
+head(testing.sites.acs)
+
+testing.sites.acs.ready <- testing.sites.acs %>%
+  dplyr::rename( age.median       = B01002_001E
+                ,income.hh.median = B22008_001E 
+                ,rent.median      = B25064_001E
+                ,home.pmt.median  = B25088_002E
+                ,commute.time.agg = B08013_001E) %>%
+  mutate( race.black.any          = 100*B02009_001E/B02001_001E
+         ,ethn.nhisp.white.alone  = 100*B03002_003E/B03002_001E
+         ,married                 = 100*B06008_003E/B06008_001E
+         ,kids                    = 100*B23007_002E/B23007_001E
+         ,bachelor.plus           = 100*(B15003_022E + B15003_023E + B15003_024E + B15003_025E)/B15003_001E
+         ,veteran                 = 100*B21001_002E/B21001_001E
+         ,manufacturing           = 100*B08126_004E/B08126_001E
+         ,farm.fish.mining        = 100*B08126_002E/B08126_001E
+         ,commutes.car.alone      = 100*B08006_003E/B08006_001E
+         ,renter                  = 100*B25008_003E/B25008_001E
+         ,single.fam.home         = 100*(B25024_002E + B25024_003E)/B25024_001E
+         ,worked.12mo             = 100*(B23022_027E + B23022_003E)/(B23022_026E + B23022_002E) 
+         ,poverty.12mo            = 100*B17001_002E/B17001_001E
+         ,snap.12mo               = 100*B22010_002E/B22010_001E
+         ,denominator             = B02001_001E) %>%
+  dplyr::select(-matches("^B[012].*"))
+
+head(testing.sites.acs.ready)
+summary(testing.sites.acs.ready)
+# testing.sites.acs.ready %>% dplyr::filter(denominator < 1000) %>% View()
+# testing.sites.acs.ready %>% dplyr::filter(denominator < 500 | !complete.cases(.)) %>% View()
+
+# 34 tracts to exclude based on incomplete data and total denominator
+# Bring the aggregates and medians to a comparable scale
+testing.sites.acs.complete <- 
+  testing.sites.acs.ready %>% 
+  mutate(commute.time.agg  = commute.time.agg/10000
+         ,income.hh.median = income.hh.median/10000
+         ,rent.median      = rent.median/100
+         ,home.pmt.median  = home.pmt.median/100
+         ) %>%
+  dplyr::rename(commute.time.agg.10k  = commute.time.agg
+                ,income.hh.median.10k = income.hh.median
+                ,rent.median.100      = rent.median
+                ,home.pmt.median.100  = home.pmt.median) %>%
+  dplyr::filter(denominator >= 500 & complete.cases(.))
+
+summary(testing.sites.acs.complete)
 ```
 
 ```{r eval=TRUE}
