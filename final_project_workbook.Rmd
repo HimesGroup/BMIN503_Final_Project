@@ -142,8 +142,38 @@ ggplot(data = child, aes(x = age_diagnosis)) +
 ```{r}
 # race across the registry
 
-race___1.factor:race___6.factor
+library(dplyr)
+child.race <- child %>%
+  select(child_registry_id, race___1:race___6, race___1.factor:race___6.factor, diagnosis.factor) %>%
+  mutate(race.sum = rowSums(select(child.race, race___1:race___6), na.rm = TRUE)) %>%
+  mutate(race.text = NA)
 
+table(child.race$race.sum)
+
+N = nrow(child.race)
+for(i in 1:N){
+  if(child.race[i,"race.sum"] == 0){
+    child.race[i,"race.text"] <- "Unknown"
+  }else if(child.race[i,"race.sum"] == 2){
+    child.race[i,"race.text"] <- "Two or more races"
+  }else{
+    if(child.race[i,"race___1"] == 1){
+      child.race[i,"race.text"] <- "White"
+    }else if(child.race[i,"race___2"] == 1){
+      child.race[i,"race.text"] <- "Black"
+    }else if(child.race[i,"race___3"] == 1){
+      child.race[i,"race.text"] <- "Asian"
+    }else if(child.race[i,"race___4"] == 1){
+      child.race[i,"race.text"] <- "Native Hawaiian/Pacific Islander"
+    }else if(child.race[i,"race___5"] == 1){
+      child.race[i,"race.text"] <- "American Indian or Alaska Native"
+    }else if(child.race[i,"race___6"] == 1){
+      child.race[i,"race.text"] <- "Other"
+    }else{print(i)}
+  }
+}
+child.race <- child.race %>%
+  mutate(race.text = factor(race.text, levels = c("White", "Black", "Asian", "Native Hawaiian/Pacific Islander", "American Indian or Alaska Native", "Other", "Two or more races", "Unknown")))
 
 
 ```
@@ -157,7 +187,7 @@ library(gtsummary)
 library(gt)
 
 table.data <- child %>%
-  dplyr::select(age_studyentry, age_diagnosis, patient_gender.factor,  relative_in_registry.factor, fibrosis.factor, airway.factor, home_o2.factor, mech_vent___1.factor, mech_vent___2.factor, transplant_yn.factor) 
+  dplyr::select(child_registry_id, age_studyentry, age_diagnosis, patient_gender.factor,  relative_in_registry.factor, fibrosis.factor, airway.factor, home_o2.factor, mech_vent___1.factor, mech_vent___2.factor, transplant_yn.factor) 
 levels(table.data$mech_vent___1.factor)=c("No","Yes")
 levels(table.data$mech_vent___2.factor)=c("No","Yes")
 
@@ -172,13 +202,26 @@ table.data <- table.data %>%
   rename("Lung Transplant" = transplant_yn.factor) %>%
   mutate(Death = ifelse(!is.na(child$death_age), "Yes", "No"))
 
-table.one <- tbl_summary(table.data,  missing = "no") %>%
+
+table.one <- tbl_summary(select(table.data, -child_registry_id),  missing = "no") %>%
 as_gt() %>%
 gt::tab_header("Table 1. Summary of Clinical Characteristics of the Study Cohort") %>%
 opt_align_table_header(align = "left") %>%
 gt::tab_options(table.font.size = 'small')
-
 table.one
+
+
+table.data.race <- left_join(table.data, select(child.race, child_registry_id, race.text), by = "child_registry_id") %>%
+  relocate(race.text, .after = "Patient Gender") %>%
+  rename("Patient Race" = race.text)
+  
+
+table.two <- tbl_summary(select(table.data.race, -child_registry_id),  missing = "no") %>%
+as_gt() %>%
+gt::tab_header("Table 1. Summary of Clinical Characteristics of the Study Cohort") %>%
+opt_align_table_header(align = "left") %>%
+gt::tab_options(table.font.size = 'small')
+table.two
 
 ```
 
@@ -187,14 +230,16 @@ table.one
 
 
 ```{r, warning = FALSE, message = FALSE}
-# gender across diagnosis
-
-
+# Breakdown of primary diagnoses
 ggplot(data = child, aes(x = diagnosis.factor)) + 
   geom_bar() + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Primary Diagnosis", y = "Number of Subjects", title = "Primary Diagnoses in chILD Registry")
+```
 
+
+```{r, warning = FALSE, message = FALSE}
+# Analysis of gender across diagnoses - chi square test and visualization
 p1chi <- chisq.test(table(child$diagnosis.factor, child$patient_gender.factor))
 p1chi
 
@@ -204,14 +249,21 @@ ggplot(data = child, aes(x = diagnosis.factor, fill = patient_gender.factor)) +
   labs(x = "Primary Diagnosis", y = "Proportion of Total", title = "Gender by Diagnosis in chILD Registry", fill = "Gender",subtitle = paste("Chi-squared p value =", format(p1chi$p.value, digits = 3)))
 
 
-
 ```
 
 
 ```{r, echo = TRUE, warning = FALSE, message = FALSE}
+# Analysis of race across diagnoses
+# Adding the race as factor column if it has not already been added
+if(!"race.text" %in% colnames(child)){
+child <- left_join(child, select(child.race, child_registry_id, race.text), by = "child_registry_id")
+}
+head(child$race.text)
 
-# will add in analysis of race - over whole database and by diagnosis
-
+ggplot(data = child, aes(x = diagnosis.factor, fill = race.text)) + 
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Primary Diagnosis", y = "Proportion of Total", title = "Race by Diagnosis in chILD Registry", fill = "Race")
 
 ```
 
@@ -241,21 +293,31 @@ child.mod <- child.mod %>%
   mutate(modality = ifelse(child.mod$child_dia2___1 == 1 & child.mod$child_dia2___2 == 0 & child.mod$child_dia2___3 == 0 & child.mod$child_dia2___4 == 0, "CT only", NA)) %>%
   mutate(modality = ifelse(child.mod$child_dia2___2 == 1 & child.mod$child_dia2___1 == 0 & child.mod$child_dia2___3 == 0 & child.mod$child_dia2___4 == 0, "Biopsy only", modality)) %>%
   mutate(modality = ifelse(child.mod$child_dia2___3 == 1 & child.mod$child_dia2___1 == 0 & child.mod$child_dia2___2 == 0 & child.mod$child_dia2___4 == 0, "Genetic only", modality)) %>%
-  mutate(modality = ifelse(child.mod$child_dia2___2 == 0 & child.mod$child_dia2___1 == 0 & child.mod$child_dia2___3 == 0 & child.mod$child_dia2___4 == 0, "No Diagnositc Modality Listed", modality)) %>%
+  mutate(modality = ifelse(child.mod$child_dia2___2 == 0 & child.mod$child_dia2___1 == 0 & child.mod$child_dia2___3 == 0 & child.mod$child_dia2___4 == 0, "No Diagnostic Modality Listed", modality)) %>%
   mutate(modality = ifelse(child.mod$child_dia2___4 == 1 & child.mod$child_dia2___1 == 0 & child.mod$child_dia2___2 == 0 & child.mod$child_dia2___3 == 0, "Other", modality)) %>%
   mutate(modality = ifelse(is.na(modality) == "TRUE", "Multiple", modality)) %>%
-  mutate(modality.factor = as.factor(modality)) 
-  
+  mutate(modality.factor = as.factor(modality))
+child.mod <- rename(child.mod, "Modality" = modality.factor)
 
-table(child.mod$modality)
+tbl_summary(select(child.mod, "Modality"),  missing = "no") %>%
+as_gt() %>%
+gt::tab_header("Table 2. How was the diagnosis made?") %>%
+opt_align_table_header(align = "left") %>%
+gt::tab_options(table.font.size = 'small')
 
 
-ggplot(data = filter(child.mod, !is.na(diagnosis)), aes(x = diagnosis.factor, fill = modality.factor)) +
+ggplot(data = filter(child.mod, !is.na(diagnosis)), aes(x = diagnosis.factor, fill = Modality)) +
   geom_bar(position = position_dodge(preserve = "single")) + 
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(size=14, vjust=3),
+  axis.text.x = element_text(angle = 45, hjust = 1, size = 8), 
+  legend.title = element_text(size = 10), 
+  legend.text = element_text(size = 8)) +
   labs(x = "Primary Diagnosis", fill = "Diagnostic Modality", title = "The chILD Registry: How was the diagnosis made?")
 
 ```
+
+
+
 
 ```{r, warning = FALSE, message = FALSE}
 child.surf <- filter(child, diagnosis.factor == "Surfactant dysfunction disorder")
@@ -267,11 +329,6 @@ ggplot(data = filter(child.mod, diagnosis.factor == "Surfactant dysfunction diso
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Diagnostic Modality", title = "The chILD Registry: Diagnosis of Surfactant Dysfunction Disorders")
 
-ggplot(data = filter(child.mod, diagnosis.factor == "Surfactant dysfunction disorder"), aes(x = modality.factor)) +
-  geom_bar() + 
-  scale_x_discrete(drop=FALSE) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Diagnostic Modality", title = "The chILD Registry: Diagnosis of Surfactant Dysfunction Disorders")
 
 # colSums(select(child.surf, child_dia2___1:child_dia2___4), na.rm = TRUE)
 # head(filter(child.surf, child_dia2___4 == 1) %>% select(child_registry_id:child_dia2___4)) - shows only 1 entry
@@ -283,10 +340,6 @@ venn.ct <- child.surf %>% filter(child_dia2___4 == 0) %>% select(child_registry_
 venn.bx <- child.surf %>% filter(child_dia2___4 == 0) %>% select(child_registry_id, child_dia2___2) %>% filter(child_dia2___2 == 1) %>% mutate(venn.modality = "Biopsy") %>% select(child_registry_id, venn.modality)
 venn.gen <- child.surf %>% filter(child_dia2___4 == 0) %>% select(child_registry_id, child_dia2___3) %>% filter(child_dia2___3 == 1) %>% mutate(venn.modality = "Genetic Testing") %>% select(child_registry_id, venn.modality)
 venn <- rbind(venn.ct, venn.bx, venn.gen)
-
-#child.surf %>% filter(child_dia2___4 == 0 & child_dia2___1 == 0 & child_dia2___3 == 0) %>% head()
-#child.surf %>% filter(child_dia2___4 == 0 & child_dia2___2 == 0 & child_dia2___3 == 0) %>% head()
-#child.surf %>% filter(child_dia2___4 == 0 & child_dia2___1 == 0 & child_dia2___3 == 0) %>% head()
 
 venn.diagram(
   x = list(
@@ -324,6 +377,39 @@ plot(img) # or print(img)
 
 ```{r}
 # will look at genetic testing - which genes tested, if rate of genetic testing has increased compared to consent date
+child.surf.gen <- child %>%
+  filter(diagnosis.factor == "Surfactant dysfunction disorder") %>%
+  filter(genetics.factor == "Yes")
+child.surf.gen <- child.surf.gen %>%
+  mutate(date_genetics.date = as.Date(child.surf.gen$date_genetics))
+if(!"race.text" %in% colnames(child.surf.gen)){
+child.surf.gen <- left_join(child.surf.gen, select(child, child_registry_id, race.text), by = "child_registry_id")
+}
+
+ggplot(child.surf.gen, aes(x=date_genetics.date)) +
+  geom_histogram(binwidth = 365) +
+  ggtitle("Genetic Testing over Time in the chILD Registry") +
+  ylab("Number of Subjects with Genetic Tests") +
+  xlab("Approximate Time of Genetic Testing (Date-Shifted)") +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+gg.gen <- child.surf.gen %>%
+  select(child_registry_id, type_genetic_test___1.factor:type_genetic_test___4.factor) %>%
+  rename("Single Gene" = type_genetic_test___1.factor) %>%
+  rename("Gene Panel" = type_genetic_test___2.factor) %>%
+  rename("Whole Exome Sequencing (WES)" = type_genetic_test___3.factor) %>%
+  rename("Whole Genome Sequencing (WGS)" = type_genetic_test___4.factor)
+gg.gen <- tidyr::pivot_longer(gg.gen, cols = "Single Gene":"Whole Genome Sequencing (WGS)", names_to = "type_genetic_test.long")
+gg.gen <- filter(gg.gen, value == "Checked")
+
+ggplot(gg.gen, aes(x = type_genetic_test.long)) +
+  geom_bar() +
+  ggtitle("Type of Genetic Testing in Surfactant Dysfunction Disorder") +
+  ylab("Number of Subjects with Genetic Tests") +
+  xlab("Type of Genetic Testing") +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) 
+
 
 ```
 
@@ -345,6 +431,9 @@ plot(img) # or print(img)
 
 ```
 
+Limitations - recruitment biases, availability of data, variability in data entry, i.e., when is a patient considered to have their diagnosis? This could be when they are determined to have ILD, or when they undergo BAL and discover pulmonary hemorrhage, or it could be weeks to months later when they undergo a lung biopsy to determine whether there is capillaritis. The database is fairly granular, however, many fields are unstructured data and thus present a challenge when trying to synthesize data on a large scale. There are certain areas of data collection that may be beneficial to study that have not been included, for example, administration of systemic steroids, which can greatly affect outcomes in certain disease processes. As chILD is a rapidly changing area of study, diagnostic tools and classification systems continue to evolve, which introduces increased variance in the dataset. Nevertheless, this is a large dataset on a group of diseases with significant morbidity and mortality, and it proves an invaluable tool in gaining further insight into workup and management.
+
+Future directions - 
 
 
 ### Acknowledgements
