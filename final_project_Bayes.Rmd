@@ -12,7 +12,7 @@ output:
 options(width = 400)
 ```  
 
-```{r eval=TRUE}
+```{r all-libraries, eval=TRUE, echo=FALSE}
 library(httr)
 library(jsonlite)
 library(tidyverse)
@@ -40,7 +40,7 @@ Poor air quality can have a substantial negative influence on health and quality
 
 Retrieve daily PM2.5 pollutant data for the lower 48 states for 2019 from the EPA's Air Quality System database via their API.
 
-```{r eval=TRUE}
+```{r AQS-function, eval=TRUE}
 # Retrieve environment variables with EPA AQS API credentials
 api.email <- Sys.getenv("EPA_AQS_EMAIL")
 api.key   <- Sys.getenv("EPA_AQS_KEY")
@@ -66,7 +66,7 @@ list.states.lower48
 lower48.codes <- as.vector(as.matrix(list.states.lower48[,1]))
 ```
 
-```{r eval=FALSE}
+```{r AQS-download-2019, eval=FALSE, echo=TRUE}
 # Pull daily PM2.5 (parameter 88101) data for these states, with arguments for date range
 get.daily.lower48 <- function(b,e){
 collector <- data.frame()
@@ -113,14 +113,14 @@ saveRDS(all.2019.dailyPM2.5, file = "all2019dailyPM25.RDS")
 
 Create a unique list of testing site locations and a corresponding `site_id`. 
 
-```{r eval=TRUE}
+```{r AQS-site-id, eval=TRUE}
 # Load the full 2019 raw file
 all.2019.dailyPM2.5 <- readRDS("all2019dailyPM25.RDS")
 str(all.2019.dailyPM2.5)
 
 # Create a file of all unique combinations of geographic indicators for testing sites
 testing.sites <- all.2019.dailyPM2.5 %>%
-                      select(state_code, state, 
+                      dplyr::select(state_code, state, 
                              county_code, county,
                              city, cbsa_code, cbsa,
                              site_number, local_site_name, site_address,
@@ -131,9 +131,9 @@ dim(testing.sites)
 # 965 combinations
 
 # Create a single unique ID column for site
-testing.sites %>% select(site_number) %>% unique() %>% dim()
-testing.sites %>% select(state_code,site_number) %>% unique() %>% dim()
-testing.sites %>% select(state_code,county_code,site_number) %>% unique() %>% dim()
+testing.sites %>% dplyr::select(site_number) %>% unique() %>% dim()
+testing.sites %>% dplyr::select(state_code,site_number) %>% unique() %>% dim()
+testing.sites %>% dplyr::select(state_code,county_code,site_number) %>% unique() %>% dim()
 # Only 253 unique site numbers. 770 state-site combos. 
 # State + county + site number *is* unique (965 combos)
 
@@ -142,7 +142,9 @@ clean.2019.dailyPM2.5 <- all.2019.dailyPM2.5 %>%
 
 ```
 
-```{r eval=FALSE}
+Get the geometries and tract GEOIDs for the testing sites. 
+
+```{r spatial-join, eval=FALSE, echo=TRUE}
 # Prepare for spatial merge. Create sf file from testing site coordinates
 testing.sites.sf.points <- st_as_sf(testing.sites, coords = c('longitude','latitude'), crs = 4269)
 
@@ -166,7 +168,7 @@ saveRDS(testing.sites.tracts, file = "testing_sites_tracts.RDS")
 
 Get the census variable list and select a range of variables of interest.
 
-```{r eval=TRUE}
+```{r census-var-list, eval=TRUE}
 testing.sites.tracts <- readRDS("testing_sites_tracts.RDS")
 head(testing.sites.tracts)
 
@@ -210,12 +212,11 @@ final.acs.var.list <- census.1yr.vars %>% filter(name %in% c(
 
 final.acs.var.list
 
-
 ```
 
 Retrieve and linking census variables of interest to the testing site file. 
 
-```{r eval=FALSE, echo=TRUE}
+```{r census-download, eval=FALSE, echo=TRUE}
 head(testing.sites.tracts)
 
 # Keep only what is needed to make the ACS calls in a small data frame
@@ -226,14 +227,6 @@ st_geometry(tst.minimal) <- NULL
 
 # Loop through existing list of state codes
 lower48.codes
-
-# Test using the full variable list in the ACS call
-# literal.test <- get_acs(geography = "tract"
-#                           ,variables = as.list(final.acs.var.list$name)
-#                           ,state = "AL"
-#                           ,county = "Etowah"
-#                           ,output = "wide")
-
 
 # Make ACS calls one state at a time, only for counties with AQS testing sites
 # Preserve estimate columns, ditch MOE
@@ -280,7 +273,7 @@ saveRDS(testing.sites.acs, file = "testing_sites_acs.RDS")
 
 Compute versions of ACS variables to use in modeling. 
 
-```{r eval=TRUE}
+```{r census-cleaning, eval=TRUE}
 testing.sites.acs <- readRDS("testing_sites_acs.RDS")
 head(testing.sites.acs)
 
@@ -312,6 +305,9 @@ summary(testing.sites.acs.ready)
 # testing.sites.acs.ready %>% dplyr::filter(denominator < 1000) %>% View()
 # testing.sites.acs.ready %>% dplyr::filter(denominator < 500 | !complete.cases(.)) %>% View()
 
+length(unique(testing.sites.acs.ready$GEOID))
+# 953 - not unique by tract
+
 # 34 tracts to exclude based on incomplete data and total denominator
 # Bring the aggregates and medians to a comparable scale
 testing.sites.acs.complete <- 
@@ -328,288 +324,7 @@ testing.sites.acs.complete <-
   dplyr::filter(denominator >= 500 & complete.cases(.))
 
 summary(testing.sites.acs.complete)
-```
-
-```{r eval=TRUE}
-dim(testing.sites.acs)
-summary(testing.sites.acs)
-table(testing.sites.acs$STATEFP)
-testing.sites.acs
-
-sites.acs
-  
-  
-smaller.acs
-?seq_along
-for (i in 1:49) {
-  newstate <- lower48.codes[i]
-  if (i==1){
-    t <- c(i,newstate)
-  } else {
-    t <- c(t,i,newstate)
-  }
-}
-
-# Keep only the GEOID and Estimate columns
-manipulate <- test.get.acs %>% dplyr::select(GEOID,matches(".*_.*E$"))
-manipulate
-
-manipulate %>% filter(GEOID=="01055001600")
-
-just.my.tracts <- left_join(testing.sites.tracts[1:5,],manipulate,by="GEOID")
-just.my.tracts
-
-head(testing.sites.tracts)
-head(test.get.acs)
-
-
-
-
-get.daily.lower48 <- function(b,e){
-collector <- data.frame()
-for (s in seq_along(lower48.codes)) {
-  newstate <- download.AQS("dailyData/byState", list(param="88101", bdate=b, edate=e, state=list.states.lower48[s,1]))
-  collector <- bind_rows(collector,newstate)
-  }
-  return(collector)
-}
-
-
-states %>%
-
-statevec5  <- as.vector(testing.sites.tracts$STATEFP[1:5])
-countyvec5 <- as.vector(testing.sites.tracts$COUNTYFP[1:5])
-# B08101_001  - Means of transportation to work by age
-
-statevec5
-countyvec5
-
-
-
-```
-
-
-```{r eval=TRUE}
-census.1yr.vars %>% filter(str_detect(concept,"MEDIAN AGE")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"LATINO ORIGIN")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"RACE")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"CHILDREN")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(label,"9.9")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(concept," RENT")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"MONTHLY")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(concept,"POVERTY STATUS")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"SNAP")) %>% View()
-census.1yr.vars %>% filter(str_detect(concept,"HOUSING")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(concept,"UNITS IN STRUCTURE")) %>% View()
-census.1yr.vars %>% filter(str_detect(label,"Boat")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(concept,"MEANS OF TRANSPORTATION")) %>% View()
-census.1yr.vars %>% filter(str_detect(label,"anufact")) %>% View()
-
-census.1yr.vars %>% filter(str_detect(concept,"INDUSTRY")) %>% View()
-
-
-census.1yr.vars %>% filter(str_detect(concept,"EDUCATIONAL ATTAINMENT")) %>% View()
-census.1yr.vars %>% filter(str_detect(label,"Estimate!!Total:!!Bachelor's degree")) %>% View()
-
-
-census.1yr.vars %>% filter(str_detect(label,"Married")) %>% View()
-
-# B25024_001
-# Estimate!!Total:
-# UNITS IN STRUCTURE
-# 21
-# B25024_002
-# Estimate!!Total:!!1, detached
-# UNITS IN STRUCTURE
-# 22
-# B25024_003
-# Estimate!!Total:!!1, attached
-# UNITS IN STRUCTURE
-
-
-literal.test <- get_acs(geography = "tract"
-                          ,variables = c(
-                             "B01002_001" # median age
-                            # ,"B03001_003","B03001_002","B03001_001" # Hisp/Latino // Non // Denom
-                            ,"B03002_003","B03002_001" # Hon-Hisp-White-alone // Denom
-                            ,"B02009_001","B02001_001" # Black race, alone or in combination // Denom
-                            
-                            ,"B15003_022","B15003_023","B15003_024","B15003_025","B15003_001" 
-                            # Bachelors // Masters // Professional // Doctorate // Denom
-                            
-                            ,"B08126_004","B08126_002","B08126_001" # INDUSTRY: Manufacturing // Agriculture, fishing, mining // Denom
-                            ,"B08006_003","B08006_001" # Drove to work alone // Denom
-                            
-                            ,"B17001_002","B17001_001" # Past 12mo income at or below poverty level, Denom
-                            ,"B22010_002","B22010_001" # Received SNAP in past 12mo, Denom
-                            ,"B22008_001"  # Median household income, past 12mo
-                            ,"B19301E_001" # Per capita income in past 12mo
-                            ,"B25008_003","B25008_001" # Renter occupied, Denom
-                            ,"B25024_002","B25024_003","B25024_001" # Single-fam, detached // single-fam, attached // Denom
-                            ,"B25064_001" # Median gross rent
-                            ,"B25088_002" # Median monthly owner costs for households with a mortgage
-                          )
-                          ,state = "AL"
-                          ,county = "Etowah"
-                          ,output = "wide"
-                          ,geometry = FALSE)
-
-head(literal.test)
-
-
-
-
-literal.test <- get_acs(geography = "tract", 
-                variables = "B01002_001",
-                    # c("B01002_001") # Median age
-                    #   ,
-                # variables = c("B08101_001","B19013_001"),
-                year = 2018,
-                survey = "acs1",
-                state = "AL", 
-                # county = "Etowah", 
-                # geometry = FALSE, 
-                output = "wide")
-View(literal.test)
-
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-```{r eval=FALSE}
-# sf.AL <- tracts('01')
-# st_crs(sf.AL) # NAD83, 4269
-# 
-# sf.16 <- tracts('16')
-# getwd()
-# 
-# 
-# sf.AL.join <- st_join(sf.AL, testing.sites.sf.points, join = st_contains, left=FALSE)
-# testing.sites %>% filter(state_code == '01')
-# 
-# 
-# head(sf.AL.join)
-# 
-# ?st_join
-# 
-# testing.sites.sf.xform  <- st_transform(testing.sites.sf.points, 4269)
-# st_crs(testing.sites.sf.points) # WGS84, 4326 
-# st_crs(testing.sites.sf.xform)  # NAD83, 4269
-# 
-# ?st_transform
-
-
-
-
-
-
-?tracts
-
-install.packages('tigris')
-library(tigris)
-
-?st_as_sf
-
-
-
-get.daily.lower48 <- function(b,e){
-collector <- data.frame()
-for (s in seq_along(lower48.codes)) {
-  newstate <- download.AQS("dailyData/byState", list(param="88101", bdate=b, edate=e, state=list.states.lower48[s,1]))
-  collector <- bind_rows(collector,newstate)
-  }
-  return(collector)
-}
-
-?tracts
-https://rdrr.io/cran/tigris/man/tracts.html
-
-
-
-head(testing.sites)
-head(testing.sites.sf.points)
-
-#Instead of data.frame of class "sp", create "simple features"-data.frame 
-
-sf_df = st_as_sf(df, coords = c("longitude", "latitude"), crs = 4326)
-
-#You'll have to convert your shapefile to sf, too. 
-#Depending what class it is you can use "st_as_sf()"
-
-
-#Then join the shapefile with sf_df via the "st_contains" which merges two rows 
-#if a point from sf_df falls within a polygon from the shapefile.
-
-shape_df <- st_join(shapefile, sf_df , join = st_contains)
-
-
-
-?st_join
-
-
-
-View(testing.sites)
-
-
-
-
-cbsa.counts <- testing.sites %>% group_by(cbsa) %>% summarise(obs=n(),.groups="keep") %>% arrange(-obs)
-View(cbsa.counts)
-
-??tigris
-
-
-testme <- testing.sites[1:2,]
-
-testme.out <- testme %>%
-                mutate(census.block = call_geolocator_latlon(latitude, longitude))
-
-
-install.packages('tidygeocoder')
-library('tidygeocoder')
-?tidygeocoder::geocode
-
-full <- some_addresses %>%
-  geocode(addr, method = 'census', full_results = TRUE, return_type = 'geographies')
-
-
-testing.sites.geocode1 <- testing.sites %>%
-                            geocode(site_address
-                                  ,method = 'census'
-                                  ,full_results = TRUE
-                                  ,return_type = 'geographies')
-
-View(testing.sites.geocode1)
-
-
-testing.sites.geocode2 <- testing.sites %>%
-                            rename(latitude.orig = latitude, longitude.orig = longitude) %>%
-                            filter(county_code == '001') %>%
-                            geocode(street = site_address
-                                  ,city = city
-                                  ,state = state
-                                  # ,lat = latitude.orig
-                                  # ,long = longitude.orig
-                                  ,method = 'census'
-                                  ,full_results = TRUE
-                                  ,return_type = 'geographies')
-
+length(unique(testing.sites.acs.complete$GEOID))
 ```
 
 
@@ -617,7 +332,101 @@ Join testing site locations data with census tracts. (Still to come)
 Label the PM2.5 data with census tract. (Still to come)
 Create outcomes summarized by census tract based on PM2.5 readings for the year.
 
-```{r eval=TRUE}
+```{r AQS-outcomes, eval=TRUE}
+summary(clean.2019.dailyPM2.5)
+
+# Create a file of site IDs with GEOIDs that have complete ACS data.
+site_id.GEOID.xwalk <- testing.sites.acs.complete %>%
+                        dplyr::select(site_id,GEOID) %>%
+                        unique()
+
+GEOID.dailyPM2.5 <- inner_join( site_id.GEOID.xwalk
+                               ,clean.2019.dailyPM2.5
+                               ,by="site_id")
+
+dim(GEOID.dailyPM2.5)
+# 1,396,734 rows
+
+dim(unique(GEOID.dailyPM2.5[,c("GEOID","date_local")]))
+# 243,809 tract-days
+
+table(GEOID.dailyPM2.5$event_type, useNA="always")
+# Included, Excluded, None
+table(GEOID.dailyPM2.5$validity_indicator, useNA="always")
+table(GEOID.dailyPM2.5$validity_indicator, GEOID.dailyPM2.5$event_type, useNA="always")
+# Y, N. 4282 x N
+# Excluding validity_indicator == "N" does not get rid of a meaningful % of events
+# GEOID.dailyPM2.5 %>% dplyr::filter(validity_indicator == "N") %>% View()
+
+GEOID.dailyPM2.5 %>% 
+  group_by(method_code, method) %>%
+  summarise(obs = n(), .groups = "keep")
+  
+GEOID.dailyPM2.5 %>% 
+  group_by(aqi, arithmetic_mean) %>%
+  summarise(obs = n(), .groups = "keep")
+  
+# 0 to 50	Good	Green
+# 51 to 100	Moderate	Yellow 
+# >>>>>>>>>>> YELLOW CORRESPONDS TO MEAN > 12 -- https://aqicn.org/faq/2013-09-09/revised-pm25-aqi-breakpoints/
+# 101 to 150	Unhealthy for Sensitive Groups	Orange
+# 151 to 200	Unhealthy	Red
+# 201 to 300	Very Unhealthy	Purple
+# 301 to 500	Hazardous	Maroon
+
+summary(GEOID.dailyPM2.5$arithmetic_mean)
+
+GEOID.daily.summary <-
+  GEOID.dailyPM2.5 %>%
+  dplyr::filter(validity_indicator=="Y") %>%
+  mutate(arithmetic_mean = case_when(arithmetic_mean < 0 ~ 0, TRUE ~ arithmetic_mean)
+        ,event           = case_when(event_type %in% c("Included","Excluded") ~ 1L, TRUE ~ 0L)
+        ) %>%
+  group_by(GEOID,date_local) %>%
+  summarise( mean      = mean(arithmetic_mean)
+            ,any_event = max(event)
+            ,.groups = "keep")
+
+table(GEOID.daily.summary$any_event)
+summary(GEOID.daily.summary$mean)
+
+GEOID.AQI.outcomes <-
+  GEOID.daily.summary %>%
+  mutate(ungreen = case_when(mean > 12.0 ~ 1L, TRUE ~ 0L)) %>%
+  group_by(GEOID) %>%
+  summarise( pm2.5_days         = n()
+            ,pm2.5_p50          = quantile(mean, 0.50)
+            ,pm2.5_p90          = quantile(mean, 0.90)
+            ,pm2.5_ungreen_days = sum(ungreen)
+            ,pm2.5_event_days   = sum(any_event)
+            ,.groups="keep")
+
+head(GEOID.AQI.outcomes)
+summary(GEOID.AQI.outcomes)
+
+table(GEOID.AQI.outcomes$pm2.5_days)
+table(GEOID.AQI.outcomes$pm2.5_ungreen_days)
+table(GEOID.AQI.outcomes$pm2.5_event_days)
+
+AQI.outcomes.final <-
+  GEOID.AQI.outcomes %>%
+  dplyr::filter(pm2.5_days >= 50) %>%
+  mutate( pm2.5_pct_ungreen    = 100 * pm2.5_ungreen_days / pm2.5_days
+         ,pm2.5_flag10_ungreen = case_when(pm2.5_ungreen_days * 10 > pm2.5_days ~ 1L, TRUE ~ 0L)
+         ,pm2.5_flag20_ungreen = case_when(pm2.5_ungreen_days *  5 > pm2.5_days ~ 1L, TRUE ~ 0L)
+         ) %>%
+  dplyr::select(GEOID, pm2.5_p50, pm2.5_pct_ungreen, pm2.5_flag10_ungreen, pm2.5_flag20_ungreen)
+
+head(AQI.outcomes.final)
+summary(AQI.outcomes.final$pm2.5_p50)
+summary(AQI.outcomes.final$pm2.5_pct_ungreen)
+table(AQI.outcomes.final$pm2.5_flag10_ungreen)
+table(AQI.outcomes.final$pm2.5_flag20_ungreen)
+
+```
+
+
+```{r old-AQS-data-cleaning, eval=FALSE, echo=TRUE}
 # Look at attributes of arithmetic_mean
 summary(clean.2019.dailyPM2.5$arithmetic_mean)
 dim(clean.2019.dailyPM2.5)
@@ -654,7 +463,7 @@ tail(site.summary.PM2.5)
 
 Visualizations of 2019 air quality summaries across the U.S.
 
-```{r eval=TRUE}
+```{r simple-outcome-maps, eval=TRUE}
 
 library(maps)
 
@@ -678,7 +487,7 @@ ggplot(data = site.summary.PM2.5, aes(x = longitude, y = latitude, color = pm2.5
 
 
 
-```{r eval=FALSE, echo=FALSE}
+```{r junk-just-in-case, eval=FALSE, echo=FALSE}
 
 #################################################
 # Scraps from previous attempts I'm keeping in case I need them later...
@@ -885,7 +694,7 @@ summary(clean.PA.site.summary$latitude)
 Retrieve a range of census descriptive data by census tract. 
 Join with air quality summary data.
 
-```{r eval=FALSE}
+```{r explore-linked-data, eval=FALSE}
 
 # still to come 
 
@@ -897,7 +706,7 @@ Join with air quality summary data.
 
 Perform bivariate tests of community characteristics vs air quality (continous measures and 1/0 for poor air quality above threshold). Create multivariate models to predict air quality from community characteristics. Construct a classifier using community characteristics and evaluate its performance against the real data. 
 
-```{r eval=FALSE}
+```{r actual-data-science, eval=FALSE}
 
 # still to come
 
