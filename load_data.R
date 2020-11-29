@@ -6,13 +6,17 @@ if (refresh){
   load_demo_data <- function(csv){
     data=read.csv(csv)
     
-    #Setting Labels
     label(data$record_id)="Record ID"
     label(data$redcap_repeat_instrument)="Repeat Instrument"
     label(data$redcap_repeat_instance)="Repeat Instance"
+    label(data$visit_dt)="Visit Date"
     label(data$prov_nm)="Provider name"
     label(data$nt_auth)="Note author"
     label(data$pat_id)="Patient ID"
+    label(data$mrn)="Medical Record Number"
+    label(data$last_name)="Patients Last Name"
+    label(data$first_name)="Patients First Name"
+    label(data$dob)="Patients Birth Date: "
     label(data$gender)="Gender"
     label(data$age)="Age"
     label(data$weight)="Weight in kilograms"
@@ -25,7 +29,6 @@ if (refresh){
     label(data$prob_fill_form_oth)="NEURO WEL HEADACHE - problem with form (comments)"
     label(data$pt_ha_quest_compl_yn)="Did the patient completed the Headache Questionnaire form? (p_current_ha_pattern is filled)"
     label(data$demographics_complete)="Complete?"
-    
     #Setting Units
     
     
@@ -42,7 +45,7 @@ if (refresh){
     data$demographics_complete.factor = factor(data$demographics_complete,levels=c("0","1","2"))
     
     levels(data$redcap_repeat_instrument.factor)=c("Visit Diagnoses","Lab","Prior Labs","All Problems","Imaging")
-    levels(data$gender.factor)=c("Female","Male","Other")
+    levels(data$gender.factor)=c("Female","Male","Unknown")
     levels(data$ethnicity.factor)=c("Hispanic or Latino","Not Hispanic or Latino","Dont know","Prefer not to answer")
     levels(data$race.factor)=c("American Indian or Alaska Native","Asian","Black or African-American","Native Hawaiian or Other Pacific Islander","White","Multiple Races","Dont know","Prefer not to answer")
     levels(data$pt_ha_quest_yn.factor)=c("Yes","No")
@@ -3158,29 +3161,30 @@ if (refresh){
   }
   
   
-  demo_data <- load_demo_data("raw_data/Outpatient_Demographics_2020-11-17_0837.csv")
+  demo_data <- load_demo_data("raw_data/Outpatient_Demographics_2020-11-24_1056.csv")
   ha_data <- load_ha_data("raw_data/Outpatient_HA_DATA_2020-11-17_0840.csv")
-  imaging_data <- load_imaging_data("raw_data/Outpatient_Imaging_2020-11-17_0847.csv")
+  imaging_data <- load_imaging_data("raw_data/Outpatient_Imaging_2020-11-17_0847.csv") %>%
+    left_join(demo_data %>% select(record_id, visit_dt), by = "record_id")
   labs_data <- load_labs_data("raw_data/Outpatient_Labs_2020-11-17_0845.csv")
   pmh_data <- load_pmh_data("raw_data/Outpatient_PMH_2020-11-17_0846.csv")
   visitDx_data <- load_visitdx_data("raw_data/Outpatient_VisitDx_2020-11-17_0844.csv")
   
   
-  write_feather(demo_data, "raw_data/demo_data.feather")
-  write_feather(ha_data, "raw_data/ha_data.feather")
-  write_feather(imaging_data, "raw_data/imaging_data.feather")
-  write_feather(labs_data, "raw_data/labs_data.feather")
-  write_feather(pmh_data, "raw_data/pmh_data.feather")
-  write_feather(visitDx_data, "raw_data/visitDx_data.feather")
+  saveRDS(demo_data, file = "raw_data/demo_data.rds")
+  saveRDS(ha_data, file = "raw_data/ha_data.rds")
+  saveRDS(imaging_data, file = "raw_data/imaging_data.rds")
+  saveRDS(labs_data, file = "raw_data/labs_data.rds")
+  saveRDS(pmh_data, file = "raw_data/pmh_data.rds")
+  saveRDS(visitDx_data, file = "raw_data/visitDx_data.rds")
 
 } else {
   
-  demo_data <- read_feather("raw_data/demo_data.feather")
-  ha_data <- read_feather("raw_data/ha_data.feather")
-  imaging_data <- read_feather("raw_data/imaging_data.feather")
-  labs_data <- read_feather("raw_data/labs_data.feather")
-  pmh_data <- read_feather("raw_data/pmh_data.feather")
-  visitDx_data <- read_feather("raw_data/visitDx_data.feather")
+  demo_data <- readRDS("raw_data/demo_data.rds")
+  ha_data <- readRDS("raw_data/ha_data.rds")
+  imaging_data <- readRDS("raw_data/imaging_data.rds")
+  labs_data <- readRDS("raw_data/labs_data.rds")
+  pmh_data <- readRDS("raw_data/pmh_data.rds")
+  visitDx_data <- readRDS("raw_data/visitDx_data.rds")
   
 }
 
