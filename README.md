@@ -9,6 +9,5 @@ Project overview: Members of Penn Athletics, Penn Sports Medicine, and the Penn 
 This repository contains:
 1. My final project Rmd file (D'Alonzo_final_proj.Rmd) and html file (D'Alonzo_final_proj.html)
 2. README file
-3. My final presentation slides (.ppt)
-4. Some draft code from early in my analysis - R script (Finalproject_Spartacode.R) 
+3. Some draft code from early in my analysis - R script (Finalproject_Spartacode.R) 
 
