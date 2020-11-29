@@ -423,43 +423,137 @@ summary(AQI.outcomes.final$pm2.5_pct_ungreen)
 table(AQI.outcomes.final$pm2.5_flag10_ungreen)
 table(AQI.outcomes.final$pm2.5_flag20_ungreen)
 
+AQI.outcomes.final %>% dplyr::filter(pm2.5_flag10_ungreen==1) %>% summary()
+AQI.outcomes.final %>% dplyr::filter(pm2.5_flag20_ungreen==1) %>% summary()
+
+```
+
+```{r final-linkage-step, eval=TRUE}
+
+str(AQI.outcomes.final)
+str(testing.sites.acs.complete)
+
+acs.joinready <- 
+  testing.sites.acs.complete %>%
+  dplyr::select(-site_id, -STATEFP, -COUNTYFP) %>%
+  unique()
+
+dim(acs.joinready)
+length(unique(acs.joinready$GEOID))
+
+AQI.ACS <- inner_join(AQI.outcomes.final,acs.joinready,by="GEOID")
+head(AQI.ACS)
+
+str(testing.sites.tracts)
+
+geom.joinready <-
+  testing.sites.tracts %>%
+  dplyr::select(GEOID,NAMELSAD,STATEFP,state,COUNTYFP,county,city,cbsa,cbsa_code,geometry) %>%
+  unique()
+
+dim(geom.joinready)
+length(unique(geom.joinready$GEOID))
+
+geom.joinready %>% group_by(GEOID) %>% summarise(obs=n()) %>% arrange(-obs) %>% head()
+geom.joinready %>% dplyr::filter(GEOID=="06079012304")
+
+geom.joinready2 <- 
+  geom.joinready %>%
+  mutate(city = case_when(GEOID=="06079012304" ~ "Arroyo Grande", TRUE ~ city)) %>%
+  unique()
+
+dim(geom.joinready2)
+length(unique(geom.joinready2$GEOID))
+head(geom.joinready2)
+
+AQI.ACS.geom <- inner_join(AQI.ACS,geom.joinready2,by="GEOID") %>% group_by()
+head(AQI.ACS.geom)
 ```
 
 
-```{r old-AQS-data-cleaning, eval=FALSE, echo=TRUE}
-# Look at attributes of arithmetic_mean
-summary(clean.2019.dailyPM2.5$arithmetic_mean)
-dim(clean.2019.dailyPM2.5)
-sum(!is.na(clean.2019.dailyPM2.5$arithmetic_mean))
-sum(clean.2019.dailyPM2.5$arithmetic_mean >= 0)
+Multivariate linear models and logistic regressions for binary outcomes
 
-#################################################
-# More data cleaning and exploration needed here! Including plots
-#################################################
+```{r modeling-1, eval=TRUE}
+lm.p50 <- lm(pm2.5_p50 ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom)
 
-# Create summary metrics
-site.summary.PM2.5 <- clean.2019.dailyPM2.5 %>%
-                        mutate(arithmetic_mean = case_when(arithmetic_mean < 0 ~ 0, TRUE ~ arithmetic_mean)) %>%
-                        group_by(site_id,
-                             state_code, state, 
-                             county_code, county,
-                             city, cbsa_code, cbsa,
-                             site_number, local_site_name, site_address,
-                             latitude, longitude) %>%
-                        summarise(pm2.5_mean = mean(arithmetic_mean),
-                                    pm2.5_p10 = quantile(arithmetic_mean, 0.10), 
-                                    pm2.5_p25 = quantile(arithmetic_mean, 0.25), 
-                                    pm2.5_p50 = quantile(arithmetic_mean, 0.50), 
-                                    pm2.5_p75 = quantile(arithmetic_mean, 0.75), 
-                                    pm2.5_p90 = quantile(arithmetic_mean, 0.90), 
-                                    .groups = "keep") %>%
-                        arrange(-pm2.5_p50)
+lm.pct.ungreen <- lm(pm2.5_pct_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom)
 
-head(site.summary.PM2.5)
-tail(site.summary.PM2.5)
-          
+logit.flag10.ungreen <- glm(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom
+             ,family = binomial())
+
+logit.flag20.ungreen <- glm(pm2.5_flag20_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom
+             ,family = binomial())
+
+summary(lm.p50)
+summary(lm.pct.ungreen)
+summary(logit.flag10.ungreen)
+summary(logit.flag20.ungreen)
+
+ggplot(data = AQI.ACS.geom, aes(x = worked.12mo       , y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining  , y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = race.black.any    , y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = manufacturing     , y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = commutes.car.alone, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = age.median,         y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = veteran,            y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm")
+
+ggplot(data = AQI.ACS.geom, aes(x = worked.12mo           , y = pm2.5_pct_ungreen)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = manufacturing         , y = pm2.5_pct_ungreen)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_pct_ungreen)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm")
+ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining,       y = pm2.5_pct_ungreen)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm")
+
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = manufacturing)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = worked.12mo)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = race.black.any)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = ethn.nhisp.white.alone)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = farm.fish.mining)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = worked.12mo)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = ethn.nhisp.white.alone)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = income.hh.median.10k)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+
 ```
-
 
 Visualizations of 2019 air quality summaries across the U.S.
 
