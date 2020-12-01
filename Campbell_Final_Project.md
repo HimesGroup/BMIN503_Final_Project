@@ -16,6 +16,7 @@ library(data.table)
 library(tidyverse)
 library(magrittr)
 library(lubridate)
+library(texreg)
 ```
 ***
 
@@ -142,7 +143,8 @@ I saved each dataset as a `.csv` file for further analysis in `R`.
 InitialConsult <- fread("~/Penn/BMIN503/Project/Queries/Initial Consults.csv")
 setnames(InitialConsult,
          c("Patient", "ConsultDate", "AgeDays", "GestationalAge","AdmissionService", "HospitalLOS", "PayorGroup",
-           "CriticalCareLOS", "ZipFirstThree", "AdmissionSource", "LegalSex"))
+           "CriticalCareLOS", "Zip", "AdmissionSource", "LegalSex",
+           "Race", "RaceEthnicity","PreferredLanguage"))
 
 SubsequentNotes <- fread("~/Penn/BMIN503/Project/Queries/Subsequent Notes.csv")
 setnames(SubsequentNotes,c("Patient", "InitialDate", "InitialKey", "SubsequentKey", "SubsequentDate", "Type",
@@ -238,9 +240,248 @@ ggplot(aes(x = ConsultMonth, fill = GeneticResults)) +
        x = "Month",
        fill = "Genetic Testing Performed") + 
   ggtitle("Was Genetic Testing Performed for Patients without Follow Up?") +
-  scale_fill_manual(values = c("TRUE" = "firebrick3", 
-                               "FALSE" = "cornflowerblue")) +
+  scale_fill_manual(values = c("TRUE" = "cornflowerblue", 
+                               "FALSE" = "firebrick3"),
+                    labels = c("FALSE" = "No",
+                               "TRUE" = "Yes")) +
   theme_minimal()
 ```
 
 ![](Campbell_Final_Project_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+Interestingly, **78%** of patients with no documented follow up had genetic testing performed.  
+
+
+```r
+GeneticResultsSummary <- GeneticResults %>% 
+  mutate(OrderName = case_when(str_detect(OrderName,regex("xome",ignore_case = TRUE)) ~ "Exome",
+                               str_detect(ResultValue,regex("xome",ignore_case = TRUE)) ~ "Exome",
+                               str_detect(OrderName,regex("MISC",ignore_case = TRUE)) ~ "Miscellaneous",
+                               str_detect(OrderName,regex("MSO",ignore_case = TRUE)) ~ "Miscellaneous",
+                               TRUE ~ OrderName)) %>%
+  dplyr::filter(OrderName %in% names(sort(table(OrderName),TRUE))[1:5]) %>%
+  group_by(Patient) %>% summarise(OrderName = unique(OrderName),
+                                  Value = 1) %>%
+  pivot_wider(id_cols = Patient, names_from = OrderName, values_from = Value, values_fill = 0) %>%
+  rename(Array = `Chromosomal SNP Microarray`,
+         Karyotype = `Karyotype, Constitutional`,
+         MLPA22q = `22q11.2 Del/Dup`)
+
+FilteredConsult %>% 
+  mutate(ConsultMonth = as.Date(cut(ConsultDate, breaks = "month"))) %>%
+  left_join(GeneticResultsSummary) %>%
+  mutate(across(Array:MLPA22q,~recode(., `0` = NA_real_))) %>%
+  dplyr::select(Patient, ConsultMonth, Array:MLPA22q) %>%
+  pivot_longer(-c(Patient,ConsultMonth), names_to = "Test", values_to = "Performed") %>%
+ggplot(aes(y = as.factor(Patient), x = Test, fill = interaction(as.factor(Performed),Test))) +
+  geom_tile() +
+  facet_wrap(. ~ConsultMonth,
+             scales = "free_y",
+             labeller = function(x) format(x, "%b %Y")) +
+  labs(x = "Test",y = "Patient",fill = "Test") + 
+  scale_fill_manual(values = c("1.Array" = "cornflowerblue",
+                               "1.Exome" = "firebrick3",
+                               "1.Karyotype" = "forestgreen",
+                               "1.Miscellaneous" = "darkorchid2",
+                               "1.MLPA22q" = "darkorange"),
+                    labels = c("1.Array" = "Array",
+                               "1.Exome" = "Exome",
+                               "1.Karyotype" = "Karyotype",
+                               "1.Miscellaneous" = "Miscellaneous",
+                               "1.MLPA22q" = "22q11.2 MLPA",
+                               "NA" = "Not Performed"),
+                    na.translate = FALSE) +
+  theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  guides(x = guide_axis(angle = 45))
+```
+
+![](Campbell_Final_Project_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
+
+The most common specific genetic tests sent during the study period were chromosomal microarrays, exome sequencing, karyotypes and multiplex ligation probe amplification for 22q11.2 deltions. Other genetic tests sent to outside reference labs ("Miscellaneous" tests) where also common. The distribution of tests performed did not vary over time.
+
+
+```r
+ADI.2015.DE <- fread("~/Penn/BMIN503/Project/ADI/DE_2015_ADI_9 Digit Zip Code_v2.0.txt")
+ADI.2015.MD <- fread("~/Penn/BMIN503/Project/ADI/MD_2015_ADI_9 Digit Zip Code_v2.0.txt")
+ADI.2015.NJ <- fread("~/Penn/BMIN503/Project/ADI/NJ_2015_ADI_9 Digit Zip Code_v2.0.txt")
+ADI.2015.NY <- fread("~/Penn/BMIN503/Project/ADI/NY_2015_ADI_9 Digit Zip Code_v2.0.txt")
+ADI.2015.PA <- fread("~/Penn/BMIN503/Project/ADI/PA_2015_ADI_9 Digit Zip Code_v2.0.txt")
+ADI <- rbind(ADI.2015.DE,ADI.2015.MD,ADI.2015.NJ,ADI.2015.NY,ADI.2015.PA)
+rm(list = ls(pattern="ADI\\."))
+ADI[,Zip := str_extract(ZIPID,"(?<=G)[0-9]{5}")]
+AggregateADI <- ADI[,.(MedianStateADI = median(as.numeric(ADI_STATERNK),na.rm = TRUE), 
+                       MedianNationalADI = median(as.numeric(ADI_NATRANK),na.rm = TRUE)), by = Zip]
+```
+
+To assess how socioeconomic factors may influence follow up, I relied on a previously developed metric called the Area Deprivation Index. This index attempts to include information about income, education, employment, and housing quality. I downloaded census tract level data for Pennsylvania and surrounding states from the [University of Wisconsin website](https://www.neighborhoodatlas.medicine.wisc.edu/). I aggregated the data to zip code level using the median index for that zip code.   
+
+
+```r
+FilteredConsult %>% 
+    left_join(SummarizedSubsequentNotes) %>%
+    left_join(GeneticResultsSummary) %>%
+    mutate(across(Array:MLPA22q,replace_na,0),
+           FollowUp = recode(FollowUpType, None = 0, .default = 1),
+           AnyTesting = as.integer(Patient %in% GeneticResults$Patient),
+           ArrayOnly = as.logical(Array) & !rowSums(cbind(Exome,Miscellaneous,Karyotype,MLPA22q)),
+           Service = recode(AdmissionService,
+                            "Cardiovascular Surgery" = "Cardiology",
+                            "Cardiac Critical Care" = "Cardiology",
+                            "Cardiology" = "Cardiology",
+                            "Critical Care" = "Critical Care",
+                            "Neonatology" = "Neonatology",
+                            .default = "Other"),
+           ServiceType = recode(Service,
+                                "Other" = "Non-Critical Care",
+                                .default = "Crtical Care"),
+           SDU = fct_other(AdmissionSource, keep = "SDU Neonate",
+                           other_level = "Other"),
+           PayorGroup = fct_other(PayorGroup, keep = "COMMERCIAL",
+                                  other_level = "Other"),
+           PreferredLanguage = fct_other(PreferredLanguage, keep = "ENGLISH",
+                                  other_level = "Other"),
+           Race = fct_other(RaceEthnicity,
+                             keep = c("Non-Hispanic Black","Hispanic or Latino","Non-Hispanic White"),
+                             other_level = "Other"),
+           Zip = str_pad(str_extract(Zip,"^[0-9]{4,5}"), 5,"left","0")) %>%
+    left_join(AggregateADI) %>%
+    assign("ModelData",. ,envir = .GlobalEnv)
+
+NoFollowUpModel <- glm(FollowUp ~ ConsultMonth + AnyTesting + ServiceType + HospitalLOS + GestationalAge + Exome + PayorGroup * MedianStateADI,data = ModelData, family = "binomial")
+summary(NoFollowUpModel)
+```
+
+```
+## 
+## Call:
+## glm(formula = FollowUp ~ ConsultMonth + AnyTesting + ServiceType + 
+##     HospitalLOS + GestationalAge + Exome + PayorGroup * MedianStateADI, 
+##     family = "binomial", data = ModelData)
+## 
+## Deviance Residuals: 
+##     Min       1Q   Median       3Q      Max  
+## -1.9823  -0.9073  -0.6732   1.1000   2.2183  
+## 
+## Coefficients:
+##                                  Estimate Std. Error z value Pr(>|z|)    
+## (Intercept)                    -4.971e+01  1.558e+01  -3.191  0.00142 ** 
+## ConsultMonth                    2.534e-03  8.487e-04   2.986  0.00283 ** 
+## AnyTesting                      8.237e-01  2.883e-01   2.857  0.00428 ** 
+## ServiceTypeNon-Critical Care    4.873e-01  2.362e-01   2.064  0.03906 *  
+## HospitalLOS                     4.220e-03  1.573e-03   2.683  0.00729 ** 
+## GestationalAge                  6.071e-02  3.084e-02   1.969  0.04899 *  
+## Exome                           1.370e+00  2.324e-01   5.896 3.73e-09 ***
+## PayorGroupOther                -9.183e-01  4.326e-01  -2.123  0.03379 *  
+## MedianStateADI                 -7.809e-02  4.833e-02  -1.616  0.10616    
+## PayorGroupOther:MedianStateADI  1.051e-01  6.978e-02   1.507  0.13186    
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+## 
+## (Dispersion parameter for binomial family taken to be 1)
+## 
+##     Null deviance: 816.43  on 603  degrees of freedom
+## Residual deviance: 725.21  on 594  degrees of freedom
+##   (168 observations deleted due to missingness)
+## AIC: 745.21
+## 
+## Number of Fisher Scoring iterations: 4
+```
+
+
+I then developed a generalized linear model for documented follow up based on a number patient demographics.
+
+The model identifies the strongest predictor of documented follow-up as having exome sequencing performed. This is to be expected, as patients and their families undergo an extensive consent process prior to ordering the test. Thus they are expecting the results. Having any genetic testing performed was also associated with increased likelihood of follow up, as expected. Another perhaps unsurprising result was that patients were more likely to have documented follow up if they were hospitalized for longer. Additional research will be required to assess if this is a proxy for medical complexity or if the association is with the state of being admitted when results return. 
+
+More interestingly, there was a significant positive correlation with gestational age at birth and documented follow-up, indicated that premature infants were less likely to have documented follow-up. Patients admitted to a non-critical care service were also more likely to have documented follow up. It may be that healthcare providers in a critical care setting have a lower threshold to consult Genetics, while providers caring for patients admitted to lower levels of care only request evaluation in the cases most likely to have genetic disease. Additionally, the month the initial consult was completed was positively correlated with documented follow-up, potentially indicating a shift following the onset of the SARS-COV-2 pandemic. Additional research will be required to address if this is due to staff changes or differences from off-site work. 
+
+Finally, the model identified having non-commercial insurance as being negatively correlated with documented follow up. It is unclear what this association may be a proxy for. The Area Deprivation Index of the patient's home zip code was not correlated with follow-up.  
+
+Analysis revealed no significant association among sex assigned at birth, age at consult, race, ethnicity, or preferred language (data not shown). Likewise, there was no clear association with delivery in the "Special Delivery Unit" Obstetric floor at CHOP.
+
+
+```r
+names(NoFollowUpModel$coefficients) <- c("(Intercept)","Consult Month","Any Genetic Testing", "Non-Critical Care Service",
+                                 "Hospital Length of Stay","Gestational Age at Birth","Exome Performed",
+                                 "Non-commertial Insurance", "Home Zip Code Median ADI","Insurance : ADI Interaction")
+htmlreg(NoFollowUpModel, single.row = TRUE, digits = 4, type = "html", doctype = FALSE,
+        center = FALSE, html.tag = FALSE, inline.css = TRUE) %>%
+  htmltools::HTML()
+```
+
+<!--html_preserve--><table class="texreg" style="margin: 10px;border-collapse: collapse;border-spacing: 0px;caption-side: bottom;color: #000000;border-top: 2px solid #000000;">
+<caption>Statistical models</caption>
+<thead>
+<tr>
+<th style="padding-left: 5px;padding-right: 5px;">&nbsp;</th>
+<th style="padding-left: 5px;padding-right: 5px;">Model 1</th>
+</tr>
+</thead>
+<tbody>
+<tr style="border-top: 1px solid #000000;">
+<td style="padding-left: 5px;padding-right: 5px;">(Intercept)</td>
+<td style="padding-left: 5px;padding-right: 5px;">-49.7083 (15.5782)<sup>**</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Consult Month</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.0025  (0.0008)<sup>**</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Any Genetic Testing</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.8237  (0.2883)<sup>**</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Non-Critical Care Service</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.4873  (0.2362)<sup>*</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Hospital Length of Stay</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.0042  (0.0016)<sup>**</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Gestational Age at Birth</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.0607  (0.0308)<sup>*</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Exome Performed</td>
+<td style="padding-left: 5px;padding-right: 5px;">1.3704  (0.2324)<sup>***</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Non-commertial Insurance</td>
+<td style="padding-left: 5px;padding-right: 5px;">-0.9183  (0.4326)<sup>*</sup></td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Home Zip Code Median ADI</td>
+<td style="padding-left: 5px;padding-right: 5px;">-0.0781  (0.0483)</td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Insurance : ADI Interaction</td>
+<td style="padding-left: 5px;padding-right: 5px;">0.1051  (0.0698)</td>
+</tr>
+<tr style="border-top: 1px solid #000000;">
+<td style="padding-left: 5px;padding-right: 5px;">AIC</td>
+<td style="padding-left: 5px;padding-right: 5px;">745.2090</td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">BIC</td>
+<td style="padding-left: 5px;padding-right: 5px;">789.2448</td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Log Likelihood</td>
+<td style="padding-left: 5px;padding-right: 5px;">-362.6045</td>
+</tr>
+<tr>
+<td style="padding-left: 5px;padding-right: 5px;">Deviance</td>
+<td style="padding-left: 5px;padding-right: 5px;">725.2090</td>
+</tr>
+<tr style="border-bottom: 2px solid #000000;">
+<td style="padding-left: 5px;padding-right: 5px;">Num. obs.</td>
+<td style="padding-left: 5px;padding-right: 5px;">604</td>
+</tr>
+</tbody>
+<tfoot>
+<tr>
+<td style="font-size: 0.8em;" colspan="2"><sup>***</sup>p &lt; 0.001; <sup>**</sup>p &lt; 0.01; <sup>*</sup>p &lt; 0.05</td>
+</tr>
+</tfoot>
+</table>
+<!--/html_preserve-->
