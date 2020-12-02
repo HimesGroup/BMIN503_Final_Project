@@ -63,10 +63,10 @@ First, load all necessary packages:
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 
 #Data manipulation packages 
-library(tidyverse)
-library(stringr)
-library(dplyr)
-library(forcats)
+library(tidyverse) 
+library(stringr) #for string manipulation
+library(dplyr)   #for data wrangling
+library(forcats) #for factor variable manipulation
 
 #Table package
 library(table1)
@@ -75,6 +75,7 @@ library(table1)
 library(RColorBrewer)
 library(ggplot2)
 library(ggsci)
+library(viridis)
 
 #Load machine learning packages
 library(randomForest)
@@ -82,11 +83,6 @@ library(ggdendro)
 
 #AUC/ROC packages
 library(pROC)
-
-#Load geospatial and census packages 
-#library(sf)
-#library(tidycensus)
-#library(leaflet)
 
 #Create general theme for plots 
 mytheme <- theme(plot.title = element_text(family = "Helvetica", face = "bold", size = (15), hjust = 0.5), 
@@ -97,77 +93,177 @@ mytheme <- theme(plot.title = element_text(family = "Helvetica", face = "bold", 
 
 ``` 
 
-Next, load the dataset into a two dataframe - one called `patients` and another called `tumors`. All missing/empty values will be set to NA
+Next, load the dataset into a two dataframe - one called `patients` and another called `tumors`. The tumor dataset is larger because some patients had multiple tumors. All missing/empty values will be set to NA
 
-```{r, eval=TRUE}
+```{r, eval=TRUE, message=FALSE}
 
 patients <- read.csv("~/Documents/LocalFiles/503_MTC_FinalProject/20232020_ThyroidCancer_RegistryData_2011to2018_Patients_deidentified.csv", na.strings=c("","NA"))
 tumors.sep <- read.csv("~/Documents/LocalFiles/503_MTC_FinalProject/20232020_ThyroidCancer_RegistryData_2011to2018_Tumors_deidentified.csv", na.strings=c("","NA"))
 
 ```
 
-Clean the data to facilitate manipulation and analysis. 
+Clean the data to facilitate manipulation and analysis. This will require joining the two datasets, removing unecessary variables, turning variables into factors or data elements as appropriate, and cleaning up factors that have many levels with low frequencies (and long level names) for ease of data analysis. 
 
-```{r, eval=TRUE}
+```{r, eval=TRUE, message=FALSE, error=FALSE}
 
 #Merge the two datasets based on Patient id - add the patient data to the rows of "tumors" 
-
 tumors <- tumors.sep %>% left_join(patients, by = "PatientSystemId") #add the patient-level data to the appropriate columns in the tumors file, by PatientSystemID
+tumors$index <- seq(from=1, to=nrow(tumors), by=1) #for use with creating outcome variables
+tumors$PathN[tumors$PathN=="c0"] <- "p0" #eliminate the c0 notation from the pathologic staging
 
 #Clean the data - remove unnecessary columns, convert data types as needed
 
 #Remove uneccessary columns (which have the same value for all entries in dataset)
 tumors3 <- tumors %>% 
-  select(-c(AnalyticYn, PrimarySiteCode, PrimarySiteDesc, PrimarySiteCategory, PrimarySiteSubcategory.x, PrimarySiteSubcategory.y)) 
+  select(-c(AnalyticYn, PrimarySiteCode, PrimarySiteDesc, PrimarySiteCategory, PrimarySiteSubcategory.x, PrimarySiteSubcategory.y, HUP_YN, PAH_YN, MCP_YN, PPMC_YN, CCH_YN, LGH_YN)) 
 
 #Convert specific columns into factors
-factor_cols <- c("ReportingHospital", "PrimarySequence", "ClassCaseDesc", "HistologyCode", "HistologyDesc", "Laterality", "Grade", "LvInvasion", 
-                     "ClinT", "ClinN", "ClinM", "ClinStage", "PathT", "PathN", "PathM", "PathStage", "SummaryStage", "SurgeryDesc", "RtDesc", "RtModalityDesc",
-                     "RtVolumeDesc", "ChemoDesc", "HormoneDesc", "HUP_YN", "PAH_YN", "MCP_YN", "PPMC_YN", "CCH_YN", "LGH_YN", "Sex", "Race", "VitalStatus") 
+factor_cols <- c("ReportingHospital", 
+                 "PrimarySequence", 
+                 "ClassCaseDesc", 
+                 "HistologyCode", 
+                 "HistologyDesc", 
+                 "Laterality", 
+                 "Grade", 
+                 "ClinM", 
+                 "PathM", 
+                 "SurgeryDesc", 
+                 "RtDesc", 
+                 "RtModalityDesc",
+                 "RtVolumeDesc", 
+                 "ChemoDesc", 
+                 "HormoneDesc",
+                 "FirstRecurrenceType",
+                 "Sex", 
+                 "Race", 
+                 "VitalStatus") 
 
 tumors3[,factor_cols] <- lapply(tumors3[,factor_cols], factor)
 
+#For the staging variables, manually change into factors with sequence in such a way that the two are comparable (i.e. level 3 corresponds to stage 1A in both clinical and pathologic staging). 
+
+## We will not do this for the M variable since pathologic analysis does not typically change the M variable for thyroid cancer. 
+
+#Tumor Staging
+tumors3$ClinT <- factor(tumors3$ClinT, 
+                        levels = c("c0","c1","c1A","c1B","c2","c3","c4A","c4B","cX","88"))
+tumors3$PathT <- factor(tumors3$PathT, 
+                        levels = c("p0","p1","p1A","p1B","p2","p3","p4A","p4B", "pX","88"))
+
+#Nodal Staging
+tumors3$ClinN <- factor(tumors3$ClinN, levels = c("c0", "c1", "c1A", "c1B",  "cX", "88"))
+tumors3$PathN <- factor(tumors3$PathN, levels = c("p0","p1","p1A", "p1B","pX", "88"))
+
+#Overall Staging
+tumors3$ClinStage <- factor(tumors3$ClinStage, levels = c("1", "2", "3", "4A", "4B", "4C", "N/A", "Unknown"))
+tumors3$PathStage <- factor(tumors3$PathStage, levels = c("1", "2", "3", "4A", "4B", "4C", "N/A", "Unknown"))
+tumors3$SummaryStage <- factor(tumors3$SummaryStage, levels = c("1", "2", "3", "4A", "4B", "4C", "88", "99"))
+
+#Lymphovascular Invasion
+tumors3$LvInvasion <- factor(tumors3$LvInvasion, levels = c("Lymph-vascular Invasion Present/Identified", "Lymph-vascular Invasion stated as Not Present","Unknown/Indeterminate/not mentioned in path report"), labels = c("LVI.Present", "LVI.Not.Present", "LVI.Unknown"))
+
 #Convert date columns from character to date object 
 
-date_cols <- c("DateFirstContact.x", "DateDx.x", "MstDefSurgeryDate", "MstDefRtDate", "MstDefChemoDate", "MstDefHormoneDate", "MstDefImmunoDate", "FirstRecurrenceDate","DateFirstContact.y", "DateDx.y", "LastContactDate", "DeathDate")
+date_cols <- c("DateFirstContact.x", 
+               "DateDx.x", 
+               "MstDefSurgeryDate", 
+               "MstDefRtDate", 
+               "MstDefChemoDate", 
+               "MstDefHormoneDate", 
+               "MstDefImmunoDate", 
+               "FirstRecurrenceDate",
+               "DateFirstContact.y", 
+               "DateDx.y", 
+               "LastContactDate", 
+               "DeathDate")
 
 tumors3[,date_cols] <- lapply(tumors3[,date_cols], function(x) as.Date(x, "%m/%d/%Y"))
 
 sapply(tumors3, class)
 
-#Extract some subsets of data
-mtc <- tumors3 %>% filter(HistologyDesc == "Medullary Carcinoma, NOS") # extract patients with MTC
-nonvital <- tumors3 %>% filter(!is.na(DeathDate)) #extract patients from dataset who have died
-recurred <- tumors3 %>% filter(!is.na(FirstRecurrenceDate)) #extract patients from dataset who have recurred
+#Clean up factor variables
 
-#Make a histogram to identify the distribution of histologies in the dataset 
-histology <- ggplot() + geom_bar(data=tumors3, aes(sort(HistologyDesc)))
+tumors3$HistologyDesc <- fct_lump_n(tumors3$HistologyDesc, n=6) #collapse less frequent histologies into "other"
+#collapse race categories
+tumors3$Race <- fct_collapse(tumors3$Race, White = c("White"), Black = c("Black" , "Black or African American"), American.Indian = c("American Indian or Alaska Native", "American Indian, Aleutian, or Eskimo", "Native Hawaiian or Other Pacific Islander"), Asian.AsianIndian = c("Asian", "Asian Indian ", "Asian Indian or Pakistani, NOS", "Chinese", "Filipino", "Japanese", "Kampuchean (Cambodian)", "Other Asian, including Asian, NOS and Oriental, NO", "Pakistani" ), Other.Unknown = c("Multiple Races", "Other", "Other/Unknown", "Unknown")) 
+#collapse surgeries
+tumors3$SurgeryDesc <- fct_collapse(tumors3$SurgeryDesc, Total.Thyroidectomy = c("Total thyroidectomy"), Less.Than.Total.Thyroidectomy = c("Isthmectomy ONLY", "Lobectomy and/or isthmectomy", "Lobectomy ONLY", "Lobectomy WITH isthmus", "Local tumor destruction, NOS", "Subtotal or near total thyroidectomy","Removal of a lobe and partial removal of the contralateral lobe", "Removal of less than a lobe, Local surgical excision", "Removal of less than a lobe, NOS", "Removal of less than a lobe, Removal of a partial lobe ONLY"), No.Surgery = c("None; no surgery of primary site"), Unknown.Surgery = c("Unknown if surgery performed","Surgery, NOS", "Thyroidectomy, NOS"))
+#collapse treatment course sequence
+tumors3$FirstCourseSummary <-fct_lump_min(tumors3$FirstCourseSummary, min=10) #group all sequences with fewer than 10 patients into "Other" category
+#collapse recurrence type
+tumors3$FirstRecurrenceType <- fct_collapse(tumors3$FirstRecurrenceType, No.Recurrence = c("Patient became disease-free after treatment and has not had a recurrence; leukemia in remission."), Never.Disease.Free = c("Since diagnosis, patient has never been disease-free. This includes cases with distant metastasis at diagnosis, systemic disease, unknown primary, or minimal disease that is not treated."), Locoregional.Recurrence = c("Local recurrence and there is insufficient information available to code to 13-17. Recurrence is confined to the remnant of the organ of origin; to the organ of origin","Local recurrence of an invasive tumor.", "Recurrence of an in situ tumor in adjacent tissue or organ(s) and in regional lymph nodes at the same time.",  "Recurrence of an invasive tumor in adjacent tissue or organ(s) and in regional lymph nodes (both 21 and 22) at the same time.", "Recurrence of an invasive tumor in adjacent tissue or organ(s) only.", "Recurrence of an invasive tumor in regional lymph nodes only.", "Regional recurrence, and there is insufficient information available to code to 21-27.", "Both regional recurrence of an invasive tumor in adjacent tissue or organ(s) and/or regional lymph nodes (20-25) and local and/or trocar recurrence (10, 13, 14, or 15)."), Distant.Recurrence = c("Distant recurrence and there is insufficient information available to code to 46-62.", "Distant recurrence of an invasive tumor in a single distant site (51-58) and local, trocar, and/or regional recurrence (10-15, 20-25, or 30).", "Distant recurrence of an invasive tumor in bone only. This includes bones other than the primary site.", "Distant recurrence of an invasive tumor in lymph node only. Refer to the staging scheme for a description of lymph nodes that are distant for a particular site.", "Distant recurrence of an invasive tumor in multiple sites (recurrences that can be coded to more than one category 51-59).", "Distant recurrence of an invasive tumor in the lung only. Lung includes the visceral pleura.","Distant recurrence of an invasive tumor in the peritoneum only. Peritoneum includes peritoneal surfaces of all structures within the abdominal cavity and/or positive ascitic fluid.","Distant recurrence of an invasive tumor in the skin only. This includes skin other than the primary site.", "Distant systemic recurrence of an invasive tumor only. This includes leukemia, bone marrow metastasis, carcinomatosis, and generalized disease."), Recurrence.NOS  = c("Disease has recurred, but the type of recurrence is unknown."), Recurrence.Unknown = c( "It is unknown whether the disease has recurred or if the patient was ever disease-free." )) 
+
+#Create lag time variables
+tumors3$surgLagTime <- as.numeric(tumors3$MstDefSurgeryDate) - as.numeric(tumors3$DateDx.x)
+tumors3$surgLagTime_2 <- as.numeric(tumors3$MstDefSurgeryDate) - as.numeric(tumors3$DateFirstContact.x)
+tumors3$rtLagTime <- as.numeric(tumors3$MstDefRtDate) - as.numeric(tumors3$MstDefSurgeryDate)
+
+```
+
+Now, we will create several outcome variables to study. These will include: patients with a diagnosis of medullary thyroid cancer, patients who recurred, patients who had upstaging on pathologic analysis of tumor samples, and patients who died. First, we must extract these patients. ?
+
+```{r, eval = TRUE}
 
 #Upstaging - extract cases with know clinical and pathologic staging, then look at cases where upstaging
+
+#T Staging
+t.staged <- tumors3 %>% filter(ClinT != "88") %>% 
+  filter(ClinT != "cX") %>%
+  filter(ClinT != "NA") %>%
+  filter(PathT != "88") %>% 
+  filter(PathT != "pX") %>%
+  filter(PathT != "NA") %>%  
+  select(c(index, PatientSystemId, TumorId, HistologyDesc, ClinT, PathT, ClinN, PathN, ClinM, PathM, ClinStage, PathStage))  %>%
+  filter((as.numeric(PathT) - as.numeric(ClinT)) > 0) 
+
+#N Staging
+nodes.staged <- tumors3 %>% filter(ClinN != "88") %>% 
+  filter(ClinN != "cX") %>%
+  filter(ClinN != "NA") %>%
+  filter(PathN != "88") %>% 
+  filter(PathN != "pX") %>%
+  filter(PathN != "NA") %>%  
+  select(c(index, PatientSystemId, TumorId, HistologyDesc, ClinT, PathT, ClinN, PathN, ClinM, PathM, ClinStage, PathStage)) %>%
+  filter((as.numeric(PathN) - as.numeric(ClinN)) > 0) 
+
+#Complete Staging
 
 tumors.staged <- tumors %>% 
   filter(ClinStage != "Unknown") %>% 
   filter(ClinStage != "NA") %>%
   filter(PathStage != "Unknown") %>%
-  filter(PathStage != "NA")
+  filter(PathStage != "NA") %>% 
+  select(c(index, PatientSystemId, TumorId, HistologyDesc, ClinT, PathT, ClinN, PathN, ClinM, PathM, ClinStage, PathStage)) %>%
+ filter((as.numeric(PathStage) - as.numeric(ClinStage)) > 0) 
+  
+#Add outcome variables to dataset
+tumors3 <- tumors3 %>% 
+  mutate(mtc = if_else(HistologyDesc == "Medullary Carcinoma, NOS", 1, 0)) %>%  # patients with MTC
+  mutate(death = if_else(!is.na(DeathDate),1,0)) %>%  #extract patients dataset who have died
+  mutate(recurred = if_else(!is.na(FirstRecurrenceDate),1,0)) #extract patients from dataset who have recurred
+  
+#Create variables for upstaging
 
-tumors.stageMigration <- tumors.staged %>%
-  filter(tumors.staged$PathStage != tumors.staged$ClinStage) %>%
-  select(c(PatientSystemId, TumorId, HistologyDesc, ClinT, PathT, ClinN, PathN, ClinM, PathM, ClinStage, PathStage))
+blank.vector <- seq(from=0, to=0, length.out= nrow(tumors3))
+tumors3$t.upstaged = blank.vector
+tumors3$t.upstaged[t.staged$index] <- 1
+tumors3$n.upstaged = blank.vector
+tumors3$n.upstaged[nodes.staged$index] <- 1
+tumors3$complete.upstaged = blank.vector
+tumors3$complete.upstaged[tumors.staged$index]<- 1
 
-#Look at the tumors with stage migration by histology type
-table(tumors.staged$HistologyDesc)
 
-#make a histogram of the ages in the dataset
-ages <- ggplot() + geom_histogram(data=tumors3, aes(AgeAtDx.x))
-ages_mtc <- ggplot() + geom_histogram(data=mtc, aes(AgeAtDx.x))
+#Turn all the outcome variables into factors 
 
-#Create lag time variables? 
-surgLagTime <- tumors3$MstDefSurgeryDate - tumors3$DateDx.x
-surgLagTime_2 <- tumors3$MstDefSurgeryDate - tumors3$DateFirstContact.x
-rtLagTime <- tumors3$MstDefRtDate - tumors3$MstDefSurgeryDate
+tumors3$mtc <- factor(tumors3$mtc, levels = c(0,1), labels = c("other histology", "mtc"))
+tumors3$death <- factor(tumors3$death, levels = c(0,1), labels = c("alive", "death"))
+tumors3$recurred <- factor(tumors3$recurred, levels = c(0,1), labels = c("no recurrence", "recurrence"))
+tumors3$t.upstaged <-  factor(tumors3$t.upstaged, levels = c(0,1), labels = c("no.t.upstaging", "t.upstaged"))
+tumors3$n.upstaged <-  factor(tumors3$n.upstaged, levels = c(0,1), labels = c("no.n.upstaging", "n.upstaged"))
+tumors3$complete.upstaged <-  factor(tumors3$complete.upstaged, levels = c(0,1), labels = c("no.complete.upstaging", "complete.upstaged"))
 
 ```
+
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
@@ -179,20 +275,123 @@ table1::label(tumors3$Sex) <- "Sex"
 table1::label(tumors3$Race) <- "Race"
 table1::label(tumors3$ReportingHospital) <- "Reporting Hospital"
 table1::label(tumors3$HistologyDesc) <- "Histologic diagnosis"
-table1::label(tumors3$Grade) <- "Tumor Grade"
 table1::label(tumors3$ClinStage) <- "Clinical Stage"
 table1::label(tumors3$PathStage) <- "Pathologic Stage"
 table1::label(tumors3$SurgeryDesc) <- "Surgery" 
 table1::label(tumors3$RtDesc) <- "Radiation Therapy"
 table1::label(tumors3$HormoneDesc) <- "Hormone Therapy"
 table1::label(tumors3$ChemoDesc) <- "Chemotherapy"
+table1::label(tumors3$FirstRecurrenceType) <- "First Recurrence Type"
 
-
-tumors_summarytable <- table1::table1(~AgeAtDx.x + Sex + Race + ReportingHospital + HistologyDesc + Grade + ClinStage + PathStage + SurgeryDesc + RtDesc | HistologyDesc == "Medullary Carcinoma, NOS", data = tumors3)
+tumors_summarytable <- table1::table1(~AgeAtDx.x + Sex + Race + ReportingHospital + HistologyDesc + ClinStage + PathStage + SurgeryDesc + RtDesc + FirstRecurrenceType | HistologyDesc == "Medullary Carcinoma, NOS", data = tumors3)
 
 tumors_summarytable
 
 ```
+
+
+Plots 
+
+```{r, eval = TRUE}
+
+#make a histogram of the ages in the dataset
+ggplot() + geom_histogram(data=tumors3, aes(AgeAtDx.x), binwidth = 1) +
+      ggtitle("Patient Ages") + 
+      mytheme + labs(y= "Count", x="Age") + 
+      scale_fill_lancet()
+
+#Age by histology
+ggplot() + geom_histogram(data=tumors3, aes(AgeAtDx.x), binwidth = 1) +
+      ggtitle("Age at Diagnosis") + 
+      theme_minimal() + labs(y= "Count", x="Age") + 
+      scale_fill_lancet()
+
+ggplot(data = tumors3, aes(x = AgeAtDx.x, y = factor(HistologyDesc))) + 
+      geom_boxplot() + 
+      ggtitle("Patient Age at Diagnosis by Histology Type") + 
+      mytheme + labs(y= "Histology Type", x="Patient Age at Diagnosis (Yrs)") + theme_minimal() + 
+      scale_fill_lancet()
+
+
+
+
+```
+
+Regression Analyses
+
+```{r, eval = TRUE}
+
+#Factors associated with mtc histology 
+
+    #Multivariate logistic regression analysis for mtc histology (binary outcome)
+    mtc.fit <- glm(mtc ~ AgeAtDx.x + Sex + Race + LvInvasion + ClinStage + PathStage + recurred + death + t.upstaged + n.upstaged, data=tumors3, family = binomial())
+    summary(mtc.fit)
+    exp(coef(mtc.fit)) #Odds ratios.
+    confint(mtc.fit) #Confidence intervals for fit
+    exp(cbind(OR = coef(mtc.fit), CI = confint(mtc.fit))) #OR and 95%CI
+    
+    #Recurred fit
+    recurred.fit <- glm(recurred ~ AgeAtDx.x + Sex + Race + LvInvasion + HistologyDesc + ClinStage + PathStage + death + t.upstaged + n.upstaged, data=tumors3, family = binomial())
+    #recurred.fit <- glm(recurred ~ LvInvasion, data=tumors3, family = binomial())
+    summary(recurred.fit)
+    
+    #Death fit
+   death.fit <- glm(death ~ AgeAtDx.x + Sex + Race + LvInvasion + HistologyDesc + ClinStage + PathStage + recurred + t.upstaged + n.upstaged, data=tumors3, family = binomial())
+    summary(death.fit)
+    
+    #Nodal Upstaging Fit
+    n.upstaging.fit <- glm(n.upstaged ~ AgeAtDx.x + Sex + Race + LvInvasion + HistologyDesc + mtc + recurred + t.upstaged + death, data=tumors3, family = binomial())
+    summary(n.upstaging.fit)    
+    
+    #Tumor Upstaging Fit
+    t.upstaging.fit <- glm(t.upstaged ~ AgeAtDx.x + Sex + Race + LvInvasion + HistologyDesc + mtc + recurred + death + n.upstaged, data=tumors3, family = binomial())
+    summary(t.upstaging.fit)    
+    
+    #Complete upstaging fit
+    complete.upstaging.fit <- glm(complete.upstaged ~ AgeAtDx.x + Sex + Race + LvInvasion + HistologyDesc + mtc + recurred + death, data=tumors3, family = binomial())
+    summary(complete.upstaging.fit)    
+    
+    # Nodal upstaging status (binary) as a function of patient age at diagnosis (continuous), with box plot
+    
+    n.upstaged.age.plot <- ggplot(data = tumors3, aes(x = AgeAtDx.x, y = n.upstaged)) + 
+      geom_boxplot() + 
+      ggtitle("Nodal Upstaging Status by Age at Thyroid Cancer Diagnosis") + 
+      mytheme + labs(y= "Nodal Upstaging Status", x="Patient Age at Diagnosis (Yrs)") + theme_minimal() + 
+      scale_fill_lancet()
+    summary(glm(n.upstaged ~ AgeAtDx.x, data=tumors3, family = binomial()))
+    
+    # Nodal upstaging status (binary) as a function of sex (binary), with bar plot
+    n.upstaged.sex.plot <- ggplot(data = tumors3, aes(x = factor(Sex), fill = n.upstaged)) + 
+      geom_bar(position = "fill") + 
+      ggtitle("Nodal Upstaging Status by Gender") + 
+      mytheme + labs(y= "Percent Nodal Upstaging", x="Gender") + 
+      scale_fill_lancet()
+    summary(glm(n.upstaged ~ Sex, data=tumors3, family = binomial()))
+    
+    # Nodal upstaging status (binary) as a function of Lymphovascular Invasion (categorical), with bar plot
+    n.upstaged.LVI.plot <- ggplot(data = tumors3, aes(x = factor(LvInvasion), fill = n.upstaged)) + 
+      geom_bar(position = "fill") + 
+      ggtitle("Nodal Upstaging Status by Lymphovascular Invasion") + 
+      mytheme + labs(y= "Percent Nodal Upstaging", x="Lymphovascular Invasion Status") + 
+      scale_fill_lancet()
+    summary(glm(n.upstaged ~ LvInvasion, data=tumors3, family = binomial()))
+    
+    #Render the plots
+    n.upstaged.age.plot
+    n.upstaged.sex.plot
+    n.upstaged.LVI.plot
+    
+```
+
+Results: 
+
+Factors with significant associations with the following outcomes (p < 0.05): 
+  + mtc: LVI, recurrence, path staging
+  + recurrence: sex, LVI, ClinStage, PathStage, tumor upstaging (age and sex trend towards significance)
+  + death: age at dx, histology, clinical staging
+  + tumor upstaging: LVI, recurrence, nodal upstaging
+  + nodal upstaging: associated with younger age at diagnosis (p ___ in multivariate and ____ in univariate), male gender (p ___ in multivariate and ____ in univariate), 
+  + cancer upstaging: age at dx and lymphovascular invasion
 
 ### Conclusion
 
