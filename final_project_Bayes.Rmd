@@ -344,6 +344,13 @@ site_id.GEOID.xwalk <- testing.sites.acs.complete %>%
 GEOID.dailyPM2.5 <- inner_join( site_id.GEOID.xwalk
                                ,clean.2019.dailyPM2.5
                                ,by="site_id")
+ggplot(data = AQI.ACS.geom, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
+    geom_point() + 
+    borders("state") + 
+    scale_color_gradient(low = "#ffff00", high = "#0000ff") +
+    labs(title = "Median daily PM2.5 reading for 2019 by testing site") +
+    labs(x = "Longitude", y = "Latitude") + 
+    theme_bw() 
 
 dim(GEOID.dailyPM2.5)
 # 1,396,734 rows
@@ -416,6 +423,12 @@ AQI.outcomes.final <-
          ,pm2.5_flag10_ungreen = case_when(pm2.5_ungreen_days * 10 > pm2.5_days ~ 1L, TRUE ~ 0L)
          ,pm2.5_flag20_ungreen = case_when(pm2.5_ungreen_days *  5 > pm2.5_days ~ 1L, TRUE ~ 0L)
          ) %>%
+  mutate( pm2.5_flag10_ungreen = factor(pm2.5_flag10_ungreen
+                                        ,levels = c(0,1)
+                                        ,labels = c("0-10%",">10%"))
+         ,pm2.5_flag20_ungreen = factor(pm2.5_flag20_ungreen
+                                        ,levels = c(0,1)
+                                        ,labels = c("0-20%",">20%"))) %>%
   dplyr::select(GEOID, pm2.5_p50, pm2.5_pct_ungreen, pm2.5_flag10_ungreen, pm2.5_flag20_ungreen)
 
 head(AQI.outcomes.final)
@@ -424,8 +437,10 @@ summary(AQI.outcomes.final$pm2.5_pct_ungreen)
 table(AQI.outcomes.final$pm2.5_flag10_ungreen)
 table(AQI.outcomes.final$pm2.5_flag20_ungreen)
 
-AQI.outcomes.final %>% dplyr::filter(pm2.5_flag10_ungreen==1) %>% summary()
-AQI.outcomes.final %>% dplyr::filter(pm2.5_flag20_ungreen==1) %>% summary()
+AQI.outcomes.final %>% dplyr::filter(pm2.5_flag10_ungreen==">10%") %>% summary()
+AQI.outcomes.final %>% dplyr::filter(pm2.5_flag20_ungreen==">20%") %>% summary()
+
+
 
 ```
 
@@ -467,8 +482,9 @@ dim(geom.joinready2)
 length(unique(geom.joinready2$GEOID))
 head(geom.joinready2)
 
-AQI.ACS.geom <- inner_join(AQI.ACS,geom.joinready2,by="GEOID") %>% group_by()
+AQI.ACS.geom <- inner_join(geom.joinready2,AQI.ACS,by="GEOID") %>% group_by()
 head(AQI.ACS.geom)
+class(AQI.ACS.geom)
 ```
 
 
@@ -497,16 +513,7 @@ logit.flag10.ungreen <- glm(pm2.5_flag10_ungreen ~
              ,data = AQI.ACS.geom
              ,family = binomial())
 
-rf.flag10.ungreen <- randomForest(
-  factor(pm2.5_flag10_ungreen) ~ 
-    # Create these FLAGs as factors to start
-               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
-             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
-             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
-             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
-             ,data = AQI.ACS.geom
-             ,ntree = 2000
-             ,importance = TRUE)
+
 
 logit.flag20.ungreen <- glm(pm2.5_flag20_ungreen ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
@@ -516,75 +523,137 @@ logit.flag20.ungreen <- glm(pm2.5_flag20_ungreen ~
              ,data = AQI.ACS.geom
              ,family = binomial())
 
-rf.flag20.ungreen <- randomForest(
-  factor(pm2.5_flag20_ungreen) ~ 
-    # Create these FLAGs as factors to start
-               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
-             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
-             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
-             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
-             ,data = AQI.ACS.geom
-             ,ntree = 2000
-             ,importance = TRUE)
 
-summary(lm.p50)
+
+summary(lm.p50)$coefficients
+summary(lm.p50)$coefficients[-1,4]
+
+lm.p50.pval.df <- data.frame(acs.var = names(summary(lm.p50)$coefficients[-1,4])
+                             ,lm.p50.pval  = summary(lm.p50)$coefficients[-1,4])
+lm.p50.pval.df
+
+summary(lm.pct.ungreen)$coefficients
+summary(lm.pct.ungreen)$coefficients[-1,4]
+
+lm.pct.ungreen.pval.df <- data.frame(acs.var = names(summary(lm.pct.ungreen)$coefficients[-1,4])
+                                    ,lm.pct.ungreen.pval   = summary(lm.pct.ungreen)$coefficients[-1,4])
+lm.pct.ungreen.pval.df
+
+
+summary(logit.flag10.ungreen)
+summary(logit.flag10.ungreen)$coefficients
+
+
+logit.flag10.ungreen.pval.df <- data.frame(acs.var = names(summary(logit.flag10.ungreen)$coefficients[-1,4])
+                                    ,logit.flag10.ungreen.pval = summary(logit.flag10.ungreen)$coefficients[-1,4])
+logit.flag10.ungreen.pval.df
+
+summary(logit.flag20.ungreen)
+summary(logit.flag20.ungreen)$coefficients
+
+
+logit.flag20.ungreen.pval.df <- data.frame(acs.var = names(summary(logit.flag20.ungreen)$coefficients[-1,4])
+                                    ,logit.flag20.ungreen.pval = summary(logit.flag20.ungreen)$coefficients[-1,4])
+logit.flag20.ungreen.pval.df
+
+pval1 <- inner_join(lm.p50.pval.df,lm.pct.ungreen.pval.df, by="acs.var")
+pval2 <- inner_join(pval1,logit.flag10.ungreen.pval.df, by="acs.var")
+pval3 <- inner_join(pval2,logit.flag20.ungreen.pval.df, by="acs.var") %>% arrange(lm.p50.pval)
+
+pval3
+
+
+coef(lm.p50)
+summary.lm(lm.p50)
+
+
+
 summary(lm.pct.ungreen)
 
 summary(logit.flag10.ungreen)
-rf.flag10.ungreen
-rf.flag10.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
-
 summary(logit.flag20.ungreen)
-rf.flag20.ungreen
-rf.flag20.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
 
+
+
+```
+
+```{r assoc-plots, eval=TRUE}
 ggplot(data = AQI.ACS.geom, aes(x = worked.12mo       , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining  , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = race.black.any    , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = manufacturing     , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = commutes.car.alone, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = age.median,         y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = veteran,            y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm")
+  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 
 ggplot(data = AQI.ACS.geom, aes(x = worked.12mo           , y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm")
+  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
 ggplot(data = AQI.ACS.geom, aes(x = manufacturing         , y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm")
+  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
 ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm")
+  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
 ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining,       y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm")
+  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = manufacturing)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = worked.12mo)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = race.black.any)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = ethn.nhisp.white.alone)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = farm.fish.mining)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag10_ungreen), y = snap.12mo)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = manufacturing)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = worked.12mo)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = race.black.any)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = ethn.nhisp.white.alone)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = farm.fish.mining)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = snap.12mo)) +
+    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = worked.12mo)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = ethn.nhisp.white.alone)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = income.hh.median.10k)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
-ggplot(data = AQI.ACS.geom, aes(x = factor(pm2.5_flag20_ungreen), y = bachelor.plus)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) 
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = worked.12mo)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = ethn.nhisp.white.alone)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = income.hh.median.10k)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = bachelor.plus)) +
+    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+
+library(ggsn)
+library(maps)
+
+ggplot() +
+  geom_sf(data = AQI.ACS.geom, aes(fill=pm2.5_p50)) +
+  borders("state")
+  
+ggplot() +
+  geom_sf(data = AQI.ACS.geom, aes(fill=pm2.5_p50)) +
+  ggtitle("Median daily PM2.5 reading for 2019 by census tract") + 
+  scale_color_gradient(low = "#ffff00", high = "#0000ff") +
+  borders("state")
+
+class(AQI.ACS.geom)
++
+  my_theme() +    
+  ggtitle("Tract-level poverty rates in Philadelphia") + 
+  scale_fill_gradientn(name = "Poverty \nrate (%)",  
+                    colours = myPalette(100)) +
+  north(x.min = -75.28031, y.min = 39.86747,    # add north bar with north()
+        x.max = -74.95575, y.max = 40.13793,    # set map boundaries with x.min, y.min, etc..      
+        symbol=12,                              # select north arrow symbol
+        anchor = c(x = -75, y = 39.93)) +       # set north bar location
+  scalebar(x.min = -75.28031, y.min = 39.86747, # add scalebar with scalebar()
+           x.max = -74.95575, y.max = 40.13793, # set map boundaries
+           dist = 5, dist_unit = 'km',          # set scalebar segment length = 5km
+           transform = TRUE,                    # TRUE for decimal degree coordinates
+           model = "WGS84")                     # specify CRS
 ```
 
 
@@ -594,7 +663,7 @@ Visualizations of 2019 air quality summaries across the U.S.
 
 library(maps)
 
-ggplot(data = site.summary.PM2.5, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
+ggplot(data = AQI.ACS.geom, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
     geom_point() + 
     borders("state") + 
     scale_color_gradient(low = "#ffff00", high = "#0000ff") +
@@ -611,6 +680,214 @@ ggplot(data = site.summary.PM2.5, aes(x = longitude, y = latitude, color = pm2.5
     theme_bw() 
 
 ```
+
+
+```{r crossvalidation, eval=TRUE}
+
+dim(AQI.ACS)
+set.seed(1504492)
+kgroup <- data.frame(kgroup = sample(1:5, size = dim(AQI.ACS)[1], replace = T))
+AQI.ACS.onlynec <- bind_cols(AQI.ACS,data.frame(kgroup = sample(1:5, size = dim(AQI.ACS)[1], replace = T))) %>% 
+                    select(-pm2.5_p50, -pm2.5_pct_ungreen, -pm2.5_flag20_ungreen, -denominator) %>%
+                    group_by()
+
+for (i in 1:5) {
+
+	train <- filter(AQI.ACS.onlynec, kgroup != i)
+	test  <- filter(AQI.ACS.onlynec, kgroup == i)
+    
+  # GLM: All variables
+	glm <- train %>% glm(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             , data = .
+             , family = binomial())
+	
+	glm.predict <- bind_cols(test[,"GEOID"], data.frame(glmpred = predict(glm, test, type = "response")))
+	
+  # GLM: Selected variables
+	select.glm <- train %>% glm(pm2.5_flag10_ungreen ~ 
+               age.median + race.black.any + ethn.nhisp.white.alone + veteran 
+               + manufacturing + farm.fish.mining + worked.12mo + commutes.car.alone
+             , data = .
+             , family = binomial())
+	
+	select.predict <- bind_cols(test[,"GEOID"], data.frame(selectpred = predict(select.glm, test, type = "response")))
+	
+	# Random forest
+	rf <- train %>% randomForest(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             , data = .
+             , ntree = 2000)
+	
+	rf.predict <- bind_cols(test[,"GEOID"], data.frame(rfpred = predict(rf, test, type = "prob")[,2]))
+	
+	# Support vector machines with radial kernel
+	svm <- train %>% svm(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             , data = .
+             , scale = TRUE
+             , kernel = "radial"
+             , probability = TRUE)
+	
+	svm.step1 <- predict(svm, test, probability = TRUE)
+
+	svm.predict <- bind_cols(test[,"GEOID"], data.frame(svmpred = attr(svm.step1, "probabilities")[,2]))
+
+	# Join the predictions together by GEOID
+	two.predict   <- inner_join(glm.predict, rf.predict, by="GEOID")
+	three.predict <- inner_join(two.predict, select.predict, by="GEOID")
+	four.predict  <- inner_join(three.predict, svm.predict, by="GEOID")
+		
+	if (i==1){
+	  collect.predict <- four.predict
+	} else {
+	  collect.predict <- bind_rows(collect.predict, four.predict)
+	}
+}
+
+AQI.ACS.preds <- inner_join(AQI.ACS.onlynec, collect.predict, by = "GEOID")
+
+library(pROC)
+AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, rfpred, ci=TRUE)
+AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, glmpred, ci=TRUE)
+AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, selectpred, ci=TRUE)
+AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, svmpred, ci=TRUE)
+
+plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$svmpred, col="yellow")
+plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$rfpred, col="darkgreen", add=TRUE)
+plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$glmpred, col="blue", add=TRUE)
+plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$selectpred, col="orange", add=TRUE)
+legend("bottomright"
+       ,legend = c("SVM (Radial)","Random Forest", "Logistic: All Vars", "Logistic: Select Vars")
+       ,col = c("yellow","darkgreen", "blue", "orange")
+       ,lwd = 1)
+
+```
+
+```{r adfkgjnadfg, eval=TRUE}
+head(AQI.ACS.preds)
+
+
+#SVM
+roc(obs.outputs, pred.outputs.svm, ci = TRUE)
+plot.roc(titanic$survived, svm.pred.lived)
+plot.roc(obs.outputs, pred.outputs.svm, ci = TRUE, col = "blue", add = TRUE)
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "blue"), lwd = 1)
+
+#Random Forest
+roc(obs.outputs, pred.outputs.rf, ci = TRUE)
+plot.roc(titanic$survived, rf.pred.lived)
+plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE)
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "darkgreen"), lwd = 1)
+
+#Lasso
+roc(obs.outputs, pred.outputs.lasso, ci = TRUE)
+plot.roc(titanic$survived, titanic.lasso.pred[ ,1])
+plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE)
+legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "red"), lwd = 1)
+
+#Plot both cross-validation ROCs
+plot.roc(obs.outputs, pred.outputs.svm, ci = TRUE, col = "blue") #CV of svm
+plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE) #CV of rf
+plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE) #CV of lasso
+legend("bottomright", legend = c("SVM Cross-Validation", "RF Cross-Validation", "Lasso Cross-Validation"), col = c("blue", "darkgreen", "red"), lwd = 2)
+
+
+
+table(AQI.ACS.preds$glmpred,AQI.ACS.preds$pm2.5_flag10_ungreen)
+
+
+  pred.status.glm[1:length(s[s == i]) + offset] <- glm.pred.test
+  
+  # Random forest
+	rf <- train %>% select(-status) %>% randomForest(statusfactor ~ ., data = ., ntree = 100)
+	rf.pred.test <- predict(rf, newdata = test, type = "prob") 
+	pred.status.rf[1:length(s[s == i]) + offset] <- rf.pred.test[ , 2]
+  
+	offset <- offset + length(s[s == i])
+}
+
+
+
+rf.flag10.ungreen <- randomForest(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom
+             ,ntree = 2000
+             ,importance = TRUE)
+
+rf.flag10.ungreen
+rf.flag10.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
+
+
+rf.flag20.ungreen <- randomForest(pm2.5_flag20_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             ,data = AQI.ACS.geom
+             ,ntree = 2000
+             ,importance = TRUE)
+
+rf.flag20.ungreen
+rf.flag20.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
+
+library(e1071)
+AQI.ACS.svm <- svm(pm2.5_flag10_ungreen ~ 
+               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
+             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
+             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
+             , data = AQI.ACS.geom
+             , scale = TRUE
+             # , kernel = "linear"
+             , kernel = "radial")
+
+# Linear kernel:
+#         0-10% >10%
+#   0-10%   192  180
+#   >10%    111  426
+
+# Radial kernel: Better! 
+#         0-10% >10%
+#   0-10%   193  179
+#   >10%     46  491
+
+plot(worked.12mo ~ ethn.nhisp.white.alone, data=AQI.ACS.svm, col = pm2.5_flag10_ungreen)
+
+summary(AQI.ACS.svm)
+svm.flag10pred <- fitted(AQI.ACS.svm)
+table(AQI.ACS.geom$pm2.5_flag10_ungreen, svm.flag10pred)
+
+?plot.svm
+length(svm.flag10pred)
+length(AQI.ACS.geom$pm2.5_flag10_ungreen)
+
+?e1071::plot
+plot(svm.flag10pred, AQI.ACS.geom[,c("pm2.5_flag10_ungreen","worked.12mo","ethn.nhisp.white.alone")], worked.12mo ~ ethn.nhisp.white.alone) 
+
+
+
+
+?svm
+
+
+```
+
+
+
+
 
 
 
