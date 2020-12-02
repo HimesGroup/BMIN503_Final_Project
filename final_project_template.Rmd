@@ -16,17 +16,25 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ### Overview
 Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
-
+```{r}
+#I want to look at if/how marital status impacts survival across different genders and cancer  sites. I know in general epi literature, there is a tendency to see that marriage typically  is a stronger predictor of survival in men than in women depending on the disease.I plan to further stratify by race.
+```
 
 ### Introduction 
 Describe the problem addressed, its significance, and some background to motivate the problem.
 
 Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+```{r}
+#It has been found across social epidemiological studies that marital status can be a predictor of survival outcomes for various diseases. Sometimes it is found that there is a  stronger association between being married and longer survival for men than for women. I  intend to investigate whether or not this pattern holds true for those diagnosed with various forms of cancer in the US and Puerto Rico, utilizing the SEER dataset. I would also like to further explore the effects of race on these potential associations. Epidemiology itself is an interdisciplinary field, and this project will also utilize the fields of social epidemiology, oncology, and biostatistics.
 
+#I am using the SEER database below (over 8 million observations so far, so I can't upload it):
+
+#Surveillance, Epidemiology, and End Results (SEER) Program (www.seer.cancer.gov) SEER*Stat Database: Incidence - SEER 18 Regs Research Data + Hurricane Katrina Impacted Louisiana Cases, Nov 2018 Sub (1975-2016 varying) - Linked To County Attributes - Total U.S., 1969-2017 Counties,National Cancer Institute, DCCPS, Surveillance Research Program, released April 2019, based on the November 2018 submission.
+```
 
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
-```{r}
+```{r, warning=FALSE}
 library(tidyverse)
 #load raw dataset
 seer <- read.csv("C:/Users/kmroh/Desktop/BMIN503/dataset1.csv", header = T)
@@ -70,16 +78,65 @@ seer <- seer %>%
 #remove those whose cause of death is unknown, or whose tumor is not the first
 table(seer$cod)
 seer <- seer %>%
-  filter(cod == "Alive or dead of other cause" |
+  filter(cod == "Alive or dead of other cause Dead" |
          cod == "Dead (attributable to this cancer dx)")
-#remove observations with unknown primary site
+#remove observations with unknown primary site and those that were alive at the study close
 seer <- seer %>%
-  filter(prim.site != "C80.9-Unknown primary site")
+  filter(prim.site != "C80.9-Unknown primary site" |
+           cod != "Alive")
 
 #create group average of survival month by mar variable
 seer <- seer %>%
   group_by(part) %>%
   mutate(avg.pstatus = mean(surv.months, na.rm = T))
+
+#create group average of survival month by sex
+seer <- seer %>%
+  ungroup() %>%
+  group_by(sex) %>%
+  mutate(avg.sex = mean(surv.months, na.rm = T))
+
+#create group average of survival month by mar and sex variables
+seer <- seer %>%
+  ungroup %>%
+  group_by(part,sex) %>%
+  mutate(avg.part.sex = mean(surv.months, na.rm = T))
+
+#recode primary site variable to body category
+seer$c.code <- str_extract(seer$prim.site, "C[0-9][0-9]")
+seer$c.code <- as.numeric(str_extract(seer$c.code, "[0-9][0-9]"))
+seer$group <- ifelse(seer$c.code <= 14, "Lip, Oral Cavity and Pharynx",
+ ifelse(seer$c.code <= 26,  "Digestive Organs",
+ ifelse(seer$c.code <= 30,  NA,
+ ifelse(seer$c.code <= 39,  "Respiratory and Intrathoracic Organs",
+ ifelse(seer$c.code <= 41,  "Bone and Articular Cartilage",
+ ifelse(seer$c.code == 42,  NA,
+ ifelse(seer$c.code <= 44,  "Skin",
+ ifelse(seer$c.code <= 49,  "Mesothelial and Soft Tissue",
+ ifelse(seer$c.code == 50,  "Breast",
+ ifelse(seer$c.code <= 58,  "Female Genital Organs",
+ ifelse(seer$c.code == 59,  NA,
+ ifelse(seer$c.code <= 63,  "Male Genital Organs",
+ ifelse(seer$c.code <= 68,  "Urinary Tract",
+ ifelse(seer$c.code <= 72,  "Eye, Brain or Central Nervous System",
+ ifelse(seer$c.code <= 75,  "Thyroid & Endocrine Glands",
+ ifelse(seer$c.code <= 80,  "Ill-Defined Sites",
+ ifelse(seer$c.code <= 96,  "Lymphoid, Hematopoietic and Related Tissue", NA)))))))))))))))))
+seer <- seer %>%
+  ungroup %>%
+  group_by(part,sex,race) %>%
+  mutate(avg.race = mean(surv.months, na.rm = T)) %>%
+  ungroup %>%
+  group_by(part,sex,race,group) %>%
+  mutate(avg.grp = mean(surv.months, na.rm = T)) %>%
+  na.omit()
+
+
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r, warning=FALSE}
 #plot survival months by recoded marital status
 ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
   geom_boxplot() +
@@ -90,12 +147,10 @@ ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
         axis.line = element_line(colour = "black")) +
   labs(title = "Survival Months by Marital Status at Diagnosis \nAll Sexes", 
        x = "Relationship status", 
-       y = "Survival Months")
+       y = "Survival Months") +
+  geom_text(aes(label = round(avg.pstatus,2), y = avg.pstatus))
 
-seer <- seer %>%
-  group_by(sex) %>%
-  mutate(avg.part.sex = mean(surv.months, na.rm = T))
-
+#plot survival months by sex
 ggplot(seer, aes(x=as.factor(sex), y=surv.months)) +
   geom_boxplot() +
   theme(plot.title = element_text(hjust = 0.5),
@@ -105,8 +160,10 @@ ggplot(seer, aes(x=as.factor(sex), y=surv.months)) +
         axis.line = element_line(colour = "black")) +
   labs(title = "Survival Months by Sex", 
        x = "Sex", 
-       y = "Survival Months")
+       y = "Survival Months") +
+  geom_text(aes(label = round(avg.sex,2), y = avg.sex))
 
+#plot survival months by part and sex
 ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
   geom_boxplot(aes(color = sex)) +
   theme(plot.title = element_text(hjust = 0.5),
@@ -116,9 +173,164 @@ ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
         axis.line = element_line(colour = "black")) +
   labs(title = "Survival Months by Marital Status at Diagnosis \nand Sex", 
        x = "Relationship status", 
+       y = "Survival Months") 
+
+#plot survival months by part, sex, and race
+ggplot(seer, aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex and Race", 
+       x = "Relationship status", 
+       y = "Survival Months") +
+  facet_wrap(~ race) 
+
+#plot survival months by part, sex and group
+ggplot(subset(seer, group %in% c("Lip, Oral Cavity and Pharynx")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Lip, Oral Cavity and Pharynx", 
+       x = "Relationship status", 
+       y = "Survival Months") 
+
+ggplot(subset(seer, group %in% c("Digestive Organs")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Digestive Organs", 
+       x = "Relationship status", 
+       y = "Survival Months") 
+
+ggplot(subset(seer, group %in% c("Respiratory and Intrathoracic Organs")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Respiratory and Intrathoracic Organs", 
+       x = "Relationship status", 
        y = "Survival Months")
-#
+
+ggplot(subset(seer, group %in% c("Bone and Articular Cartilage")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Bone and Articular Cartilage", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Skin")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Skin", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Mesothelial and Soft Tissue")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Mesothelial and Soft Tissue", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Breast")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Breast", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Female Genital Organs")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Female Genital Organs", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Male Genital Organs")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Male Genital Organs", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Urinary Tract")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Urinary Tract", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Eye, Brain or Central Nervous System")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Eye, Brain or Central Nervous System", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Thyroid & Endocrine Glands")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Thyroid & Endocrine Glands", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
+ggplot(subset(seer, group %in% c("Ill-Defined Sites")), aes(x=as.factor(part), y=surv.months)) +
+  geom_boxplot(aes(color = sex)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black")) +
+  labs(title = "Survival Months by Marital Status at Diagnosis, \nSex \nGroup: Ill-Defined Sites", 
+       x = "Relationship status", 
+       y = "Survival Months")
+
 ```
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
