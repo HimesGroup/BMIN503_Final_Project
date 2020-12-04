@@ -8,7 +8,8 @@ All necessary files to replicate this project are included in this repository.
 
 Important definitions
 
-Urban/Rural classifications are defined by the 2013 NCHS Urban-Rural Classification Scheme for Counties
+Urban/Rural classifications are defined by the 2013 NCHS Urban-Rural Classification Scheme for Counties.
+
 
 For regional residence (variable 'resregion'), states fall into the following categories:
 
