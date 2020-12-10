@@ -1,0 +1,533 @@
+---
+title: "When are we going home? An examination of provider discharge predictions in the NICU"
+author: "Leah Carr"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    code_folding: show
+    df_print: kable
+    #depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```  
+***
+
+### Overview
+Predicting time to discharge in neonatal patient care is complex, but essential as neonatal intensive care units (NICUs) need to anticipate unit census for patient admission and staffing purposes and to ensure safe and effective patient transitions to home. As a component of a patient safety and quality improvement (QI) initiative in the CHOP NICU, a checklist was implemented that uses provider-endorsed time windows to aid in discharge predictions. This project explores provider predictive accuracy and factors that might contribute to individuals who discharge at times outside their predicted window. 
+
+My final Github repository can be accessed here: https://github.com/carrlh/BMIN-503-final-project
+
+
+### Introduction 
+In the NICU, the youngest hospital patients receive complex care. With nearly 10% of infants in the United States being born premature and a subset of term infants requiring assistance, NICUs provide essential care to a vulnerable patient population. Thankfully, since the first NICU in the United States opened, infant mortality has drastically decreased and many more patients admitted to the NICU are able to be discharged. Anticipation of discharge is key to patient-specific and unit-wide planning. As NICU patients prepare to leave the unit, plans are set in place for medical and supportive care. An anticipated discharge timeframe allows for medications to be prepped, homecare supplies to be delivered, and for families to mentally prepare to take their infants home. Incorrect predictions can lead to delays in discharge, which are not only disappointing, but can have significant implications beyond individual patients. For referral centers, units often admit patients needing coordinated, high-level care or those coming in post-operatively from elective procedures. For these units, discharge timeframes inform whether or not they will have bed space available for admissions. In addition, discharge anticipation is also needed for staff scheduling. While there is a body of literature examining NICU provider predictions of patient mortality, there is limited information regarding provider's perceptions of time to discharge.
+
+The importance of anticipating discharge timing is not unique to the field of neonatology. Principles and findings from this exploratory analysis can be applied across hospital units that seek to better understand their discharge practices. All hospitals are interested in better understanding what contributes to their ability to admit and discharge patients, whether for patient care and safety purposes or as a component of their business models. Through discussions with Dr. Nicolas Bamat, a neonatal clinical researcher, I was able to better define my demographic characteristics and potential factors influencing discharge. I then connected with two CHOP data analysts, Matt Devine and Jake Riley, who aided in data extraction and analytic planning. 
+
+Using data collected from a CHOP NICU QI and safety rounding tool as well as electronic health record (EHR) data taken from EPIC, I aim to evaluate the quality of NICU providers' abilities to predict discharge and to further assess what factors contribute to incorrect assessments. The discharge-specific component of the tool is currently used as a trigger for multiple aspects of discharge planning, but data regarding its accuracy have yet to be analyzed.
+
+
+### Methods
+Data was obtained through a SQL query of the CHOP Clinical Data Warehouse. The specific data pulled included responses to a weekly question to NICU providers asking them when they anticipate that a patient will discharge. Data was taken from October, 2019 through the end of October, 2020. Providers respond to this question by clicking a button in the EHR with "today," "<3 days," "3-7 days," "7-14 days," or "no date identified" as potential answer choices. In addition to the actual discharge prediction, the timing of the discharge prediction, and when a patient actually discharged, the query included  identifiers (pat_key, visit_key), demographics (gestational age, corrected gestational age, sex, race, ethnicity), patient characteristics (insurance carrier, government vs. commercial insurance categorization, primary and secondary hospital diagnoses and associated ICD-10 codes, presence of a central line [0 - no central line, 1 - central line placed after the question was asked, 2 - central line present at the time the question was asked], presence of an endotracheal tube [numerical coding is the same as with central lines], and whether or not the patient was on IV medications or fluids [again, coding was the same]). In addition, information regarding the accuracy of discharge prediction (0 - inaccurate, 1 - accurate) was pulled. 
+
+The data was then opened in R Studio where it was deidentified, cleaned, and then analyzed. The deidentification process involved removal of the pat_key, substitution of values for the visit_key, and removal of all dates instead favoring use of relative values (e.g. time off from anticipated discharge window). 
+
+Next, the data was manipulated to examine rates of accuracy across all entries, then accuracy across first prediction vs. last prediction (prediction closest to the time of discharge). Then, bivariate analysis was completed to examine what factors contributed to prediction accuracy. The most significant mediators were then used in logistic regression to further characterize relationships between accuracy and our predictors. Linear regression was then used to further examine factors contributing to the degree of provider inaccuracy. Specifics regarding the code are shown below in the chunks below.
+
+The initial data analysis involved deidentifying the information from a "base" dataset with some cleaning to add columns based off of the timing of discharge using the code featured below.
+
+<br>
+<br>
+
+#### Initial data cleaning
+```{r}
+#pull in necessary packages
+library(tidyverse)
+library(lubridate)
+library(RColorBrewer)
+library(broom)
+library(knitr)
+
+#make bar graphs have a grey outline
+update_geom_defaults(geom = "bar", list(color = "grey70"))
+
+#pull in data
+base_data <- read.csv("ccq_discharge_predictions.csv") %>% #pull in file, rename dataframe as "base_data"
+  rename_all(tolower) %>% #format all variables to lowercase
+  mutate(
+    prediction_entry_date = mdy(prediction_entry_date), #modify date formatting
+    discharge_calendar_date = as.Date(mdy_hm(discharge_calendar_date)),
+    discharge_prediction_lower_bound = as.Date(mdy(discharge_prediction_lower_bound)),
+    discharge_prediction_upper_bound = as.Date(mdy(discharge_prediction_upper_bound))
+  )
+
+#determine what is the appropriate key column to include and filter on
+pat_key_count <- count(base_data, pat_key) #note there are 854 pat keys (representing each patient)
+visit_key_count <- count(base_data, visit_key) #note there are 875 visit keys representing visits (important for determining if patients were readmitted, this is the more important factor to include as there is evidence of patients moving in and out of the unit)
+
+#deidentify and further clean data for csv file that can be shared
+anon_data <- base_data %>% 
+   mutate(
+     diff = case_when(
+    discharge_calendar_date < discharge_prediction_lower_bound ~ discharge_calendar_date - discharge_prediction_lower_bound,
+    discharge_calendar_date <= discharge_prediction_upper_bound ~ 0, 
+    TRUE ~ discharge_calendar_date - discharge_prediction_upper_bound)
+    ) %>% #make a new column looking at how off we are from the predicted time window to be used in later analysis
+    mutate(visit_key = dense_rank(visit_key)) %>%  #for deidentification, modification of the visit keys to random numbers
+  group_by(visit_key) %>% 
+  mutate(est_number = rank(prediction_entry_date)) %>% #make a new column that ranks the number of estimates by prediction entry date for later use
+  ungroup() %>% 
+  dplyr::select(-c(pat_key, prediction_entry_date, prediction_recorded_timestamp, discharge_calendar_date, discharge_prediction_lower_bound, discharge_prediction_upper_bound, payor_name, corrected_age_in_wks_at_prediction, ethnicity)) #remove unnecessary columns for future analysis and to maintain anonymity 
+
+write_csv(anon_data, 'carr_anon_data.csv')
+
+#pull in deidentified data for further cleaning
+clean_data <- read.csv("carr_anon_data.csv") %>% 
+  mutate(discharge_prediction = str_replace_all(discharge_prediction, "no date identied", "no date identified")) %>% #typo noted in some of the data, corrected using stringr 
+  rename(dx1_name = primary_hsp_account_dx_name) %>% #rename columns to make it easier for data manipulation later on
+  rename(dx1_icd10 = primary_hsp_account_dx_icd10) %>% 
+  rename(dx2_name = secondary_dx) %>% 
+  rename(dx2_icd10 = secondary_dx_icd10) %>% 
+  filter(deceased_ind == 0) %>% #remove individuals who did not survive
+  mutate(gest_age_groups = cut(gestational_age_complete_weeks, breaks=c(-Inf, 25, 30, 35, Inf), labels=c("<25 weeks","25-30 weeks","30-35 weeks", ">35 weeks"))) %>% #categorize gestational age for further analysis
+  filter(gest_age_groups != "NA") %>% #remove NA gest age values
+  filter(sex != "U") #remove unidentifed sex values
+
+```
+<br>
+<br>
+
+#### Visualizing prediction response frequency
+```{r}
+#visualization of prediction responses
+clean_data %>% 
+  count(discharge_prediction) %>% 
+  ggplot(aes(x = reorder(discharge_prediction, n), y = n, fill = reorder(discharge_prediction, n))) +
+  geom_bar(stat = 'identity') +
+  labs(title = "Frequency of Responses by Discharge Prediction Category", x = "Discharge Prediction", y = "Count") +
+  scale_fill_brewer(palette = "Blues", name = "Discharge Prediction") 
+
+#visualization of prediction responses with only "identified" responses
+clean_data %>% 
+  count(discharge_prediction) %>%
+  filter(discharge_prediction != "no date identified") %>% 
+  ggplot(aes(x = reorder(discharge_prediction, n), y = n, fill = reorder(discharge_prediction, n))) +
+  geom_bar(stat = 'identity') +
+  labs(title = "Frequency of Responses by Discharge Prediction Category", x = "Discharge Prediction", y = "Count") + 
+  scale_fill_brewer(palette = "Blues", name = "Discharge Prediction") 
+
+#Examine patients who have no date identified and how far away they actually are from discharge
+no_date_identified <- clean_data %>%
+  filter(discharge_prediction == "no date identified")
+
+mean(no_date_identified$days_until_discharge) #examine mean "days until discharge" of patients with no date identified 
+
+```
+<br>
+We see a large number of "no date identified" responses. When these are removed, we see progression from predictions of "today" to "7-14 days" in terms of increasing response frequency. Among those patients who have no identified discharge date, they are discharged an average of 74 days from the time the estimation is made. 
+<br>
+<br>
+
+### Results
+
+<br>
+<br>
+
+#### Overall accuracy of predictions
+```{r}
+
+#make a dataframe looking at how providers anticipated discharge
+pred_descrip <- clean_data %>% 
+  dplyr::select(visit_key, discharge_prediction, days_until_discharge, accurate_prediction_ind) 
+
+#look at total number of prediction types
+discharge_pred_count <- pred_descrip %>% #make a new dataframe 
+  count(discharge_prediction) %>%  #count the number of predictions in each prediction group
+  rename("total_predictions" = "n") %>% #rename prediction column
+  filter(discharge_prediction != "no date identified") #look at all patients who had a prediction time window (remove those without an identified date) 
+
+#look at accuracy counts by discharge prediction timeline
+accurate_pred_count <- pred_descrip %>% 
+  group_by(discharge_prediction) %>% 
+  filter(accurate_prediction_ind == 1) %>% 
+  count(accurate_prediction_ind) %>%
+  rename("total_accurate_predictions" = "n")
+
+#look at accuracy rates
+pred_accuracy_rates <- inner_join(accurate_pred_count, discharge_pred_count, by = "discharge_prediction") %>% #make a new dataframe that looks at accuracy rates
+  dplyr::select(-c(accurate_prediction_ind)) %>% #remove the accuracy indicator
+  mutate(accuracy = round(total_accurate_predictions/total_predictions, 3) * 100) %>% #calculate accuracy rate
+  arrange(accuracy) %>% #reorder
+  mutate(time = "overall") 
+
+pred_accuracy_rates
+
+#visualization of the accuracy of all predictions
+pred_accuracy_rates$discharge_prediction <-
+  factor(pred_accuracy_rates$discharge_prediction,
+         levels = pred_accuracy_rates$discharge_prediction[order(pred_accuracy_rates$accuracy)]) #reorder for graphing purposes
+
+ggplot(data = pred_accuracy_rates, aes(x = discharge_prediction, y = accuracy, group = 1)) + #graph our predictions
+  geom_line(color = "dodgerblue2", size = 1) + #customize line color and size
+  geom_point(color = "dodgerblue2", size = 2) + #customize point color and size
+  labs(title = "Accuracy of All Predictions by Discharge Prediction Type", x = "Discharge Prediction", y = "Accuracy (%)") + #add in titles
+  ylim(0, NA) #make the y-axis start at 0
+
+
+```
+<br>
+We get more accurate in predicting time of discharge as a patient gets closer to discharge
+<br>
+<br>
+
+
+#### Dataframe creation of first and last predictions
+```{r}
+
+first_est <- clean_data %>% 
+  group_by(visit_key) %>% #group by the patient IDs
+  filter(est_number == 1) %>% #look only at the first estimates
+  ungroup()
+
+last_est <- clean_data %>% 
+  group_by(visit_key) %>% #group by the patient IDs
+  filter(est_number == max(est_number)) %>% #look only at the last estimates
+  ungroup()
+
+```
+
+<br>
+<br>
+
+#### Accuracy of initial predictions
+```{r}
+
+#look at total number of prediction types
+first_est_discharge_pred_count <- first_est %>% #make a new dataframe
+  dplyr::select(visit_key, discharge_prediction, days_until_discharge, accurate_prediction_ind) %>% 
+  group_by(discharge_prediction) %>% 
+  count(discharge_prediction) %>%  #count the number of predictions in each prediction group
+  rename("total_predictions" = "n") %>% #rename prediction column
+  filter(discharge_prediction != "no date identified") #look at all patients who had a prediction time window (remove those without an identified date) 
+
+#look at accuracy counts by discharge prediction timeline
+first_est_accurate_pred_count <- first_est %>% 
+  dplyr::select(visit_key, discharge_prediction, days_until_discharge, accurate_prediction_ind) %>%
+  group_by(discharge_prediction) %>% 
+  filter(accurate_prediction_ind == 1) %>% 
+  count(accurate_prediction_ind) %>%
+  rename("total_accurate_predictions" = "n")
+
+#look at accuracy rates
+first_est_pred_accuracy_rates <- inner_join(first_est_accurate_pred_count, first_est_discharge_pred_count, by = "discharge_prediction") %>% #make a new dataframe that looks at accuracy rates
+  dplyr::select(-c(accurate_prediction_ind)) %>% #remove the accuracy indicator
+  mutate(accuracy = round(total_accurate_predictions/total_predictions, 3) * 100) %>% #calculate accuracy rate
+  arrange(accuracy) %>% #reorder
+  mutate(time = "first") 
+
+first_est_pred_accuracy_rates
+
+#visualization of the accuracy for first predictions
+first_est_pred_accuracy_rates$discharge_prediction <- factor(first_est_pred_accuracy_rates$discharge_prediction, levels = first_est_pred_accuracy_rates$discharge_prediction[order(first_est_pred_accuracy_rates$accuracy)]) #reorder for graphing purposes
+
+ggplot(data = first_est_pred_accuracy_rates, aes(x = discharge_prediction, y = accuracy, group = 1)) + #graphing accuracy
+  geom_line(color = "red", size = 1) + #customize line color, size
+  geom_point(color = "red", shape = 4, size = 3) + #customize point color, shape, and size
+  labs(title = "Accuracy of First Predictions by Discharge Prediction Type", x = "Discharge Prediction", y = "Accuracy (%)") + #add titles
+  ylim(0, NA) #make y-axis start at 0
+
+
+
+```
+<br>Using just first estimates, we remain most accurate at the timepoints closest to discharge (<3 days and today).
+<br>
+<br>
+
+#### Accuracy of final predictions
+```{r}
+
+#look at total number of prediction types
+last_est_discharge_pred_count <- last_est %>% #make a new dataframe
+  dplyr::select(visit_key, discharge_prediction, days_until_discharge, accurate_prediction_ind) %>% 
+  group_by(discharge_prediction) %>% 
+  count(discharge_prediction) %>%  #count the number of predictions in each prediction group
+  rename("total_predictions" = "n") %>% #rename prediction column
+  filter(discharge_prediction != "no date identified") #look at all patients who had a prediction time window (remove those without an identified date) 
+
+#look at accuracy counts by discharge prediction timeline
+last_est_accurate_pred_count <- last_est %>% 
+  dplyr::select(visit_key, discharge_prediction, days_until_discharge, accurate_prediction_ind) %>%
+  group_by(discharge_prediction) %>% 
+  filter(accurate_prediction_ind == 1) %>% 
+  count(accurate_prediction_ind) %>%
+  rename("total_accurate_predictions" = "n")
+
+#look at accuracy rates
+last_est_pred_accuracy_rates <- inner_join(last_est_accurate_pred_count, last_est_discharge_pred_count, by = "discharge_prediction") %>% #make a new dataframe that looks at accuracy rates
+  dplyr::select(-c(accurate_prediction_ind)) %>% #remove the accuracy indicator
+  mutate(accuracy = round(total_accurate_predictions/total_predictions, 3) * 100) %>% #calculate accuracy rate
+  arrange(accuracy) %>% #reorder
+  mutate(time = "last") 
+
+last_est_pred_accuracy_rates
+
+#visualization of the accuracy for final predictions
+last_est_pred_accuracy_rates$discharge_prediction <- factor(last_est_pred_accuracy_rates$discharge_prediction, levels = last_est_pred_accuracy_rates$discharge_prediction[order(last_est_pred_accuracy_rates$accuracy)]) #reorder for graphing purposes
+
+ggplot(data = last_est_pred_accuracy_rates, aes(x = discharge_prediction, y = accuracy, group = 1)) + #graph accurary rates
+  geom_line(color = "purple", size = 1) + #customize line color and size
+  geom_point(color = "purple", shape = 2, size = 2) + #customize point color, shape, and size
+  labs(title = "Accuracy of Final Predictions by Discharge Prediction Type", x = "Discharge Prediction", y = "Accuracy (%)") + #add titles
+  ylim(0, NA) #make y-axis start at 0
+
+```
+<br>Using just the estimate closest to the date of discharge, we see the same trend, we are more accurate at predicting discharge at timepoints closest to going home.
+<br>
+<br>
+
+#### Accuracy across groups
+```{r}
+
+accuracy_by_type <- bind_rows( #make a dataframe that looks at all groups
+  pred_accuracy_rates,
+  first_est_pred_accuracy_rates,
+  last_est_pred_accuracy_rates
+) %>% 
+  mutate(shape = recode(time, overall = "1", first = "4", last = "2") %>% #make it so that our custom shapes will pull in
+           as.integer())
+
+ggplot(accuracy_by_type, aes(x = discharge_prediction, y = accuracy, group = time, color = time, shape = shape)) + #graph accuracy in all three groups
+  geom_line() + 
+  geom_point(size = 2) +
+  labs(title = "Accuracy Across Predictions by Time of Prediction", x = "Discharge Prediction", y = "Accuracy (%)", color = "Prediction Timeframe") + #add columns
+  ylim(0, NA) +
+  scale_color_manual(values = c("dodgerblue2", "red", "purple")) + #make the legend colors appropriate
+  scale_shape_identity()
+              
+```
+<br>We see that across the groups, our similar trend is again seen; however, at the time of final prediction (i.e. the one closest to the time of discharge), we become more accurate than in our overall or first prediction group as we near discharge.
+<br>
+<br>
+
+#### Between-groups analysis
+```{r}
+#make a new dataframe for analyzing statistical diff between groups with predicted discharge "today"
+accuracy_by_type_chi_today <- accuracy_by_type %>% 
+  filter(discharge_prediction == "today") %>% 
+  dplyr::select(accuracy, discharge_prediction, time) %>% 
+  { 
+  chisq.test(xtabs(accuracy ~ time, data = .))
+    } %>% 
+  print()
+
+#make a new dataframe for analyzing statistical diff between groups with predicted discharge at "<3 days"
+accuracy_by_type_chi_less3 <- accuracy_by_type %>% 
+  filter(discharge_prediction == "<3 days") %>% 
+  dplyr::select(accuracy, discharge_prediction, time) %>% 
+  { 
+  chisq.test(xtabs(accuracy ~ time, data = .))
+    } %>% 
+  print()
+
+#make a new dataframe for analyzing statistical diff between groups with predicted discharge at "3-7 days"
+accuracy_by_type_chi_37 <- accuracy_by_type %>% 
+  filter(discharge_prediction == "3-7 days") %>% 
+  dplyr::select(accuracy, discharge_prediction, time) %>% 
+  { 
+  chisq.test(xtabs(accuracy ~ time, data = .))
+    } %>% 
+  print()
+
+#make a new dataframe for analyzing statistical diff between groups with predicted discharge at "7-14 days"
+accuracy_by_type_chi_714 <- accuracy_by_type %>% 
+  filter(discharge_prediction == "7-14 days") %>% 
+  dplyr::select(accuracy, discharge_prediction, time) %>% 
+  { 
+  chisq.test(xtabs(accuracy ~ time, data = .))
+    } %>% 
+  print()
+
+```
+<br>Despite the differences seen between the groups on the graph, these differences are not statistically significant based on the chi-squared testing.
+<br>
+<br>
+
+#### Diagnosis information cleaning
+```{r}
+dx_total <- clean_data %>% 
+  group_by(visit_key) %>% #group by the patient IDs
+  filter(est_number == 1) %>% #filter based off of first prediction
+  ungroup() %>% 
+  dplyr::select(dx1_icd10, dx2_icd10) %>% 
+  gather(key = "source", value = "dx") %>% #place diagnoses in one column
+  add_count(short_dx = substr(dx, 1, 5)) %>%  #look only at first 4 characters in the ICD codes
+  mutate(n = ifelse(short_dx == "Z38.0", 0, n)) %>% #Z38.0 is a diagnosis I'm uninterested in (it describes birth status), so I want this removed
+  distinct(dx, n) %>% #maintaining granularity, but eliminating our short column
+  print()
+
+dx_1 <- dx_total %>% #new dataframe for primary diagnoses
+  rename(dx1_icd10 = dx,
+         dx1_n = n) #renaming the dx column for the primary diagnosis group to prepare to join it with the secondary diagnoses
+
+dx_2 <- dx_total %>% #new dataframe for secondary diagnoses
+  rename(dx2_icd10 = dx,
+         dx2_n = n) #renaming the dx column for the secondary diagnosis group to prepare to join it with the primary diagnoses
+
+clean_data <- clean_data %>% 
+  left_join(dx_1) %>% #join in dx_1 and dx_2 to clean data
+  left_join(dx_2) %>% 
+  mutate(top_dx =
+    case_when(dx1_n >= dx2_n ~ dx1_icd10, 
+              TRUE ~ dx2_icd10) #bring back the more common diagnosis to then be used in logistic regression
+  ) %>% 
+  mutate(top_dx = substr(top_dx, 1, 5)) #limit the length of the diagnosis string
+
+
+```
+<br>
+Based on this investigation, I will use a select grouping of the most common diagnoses in my dataset for use in later statistical testing (P28.5 - respiratory failure of the newborn, p29.3 - pulmonary hypertension, Q79.0 - congenital diaphragmatic hernia, J21.0 - bronchiolitis due to respiratory syncitial virus, P91.6 - hypoxic ischemic encephalopathy)
+<br>
+<br>
+
+#### Bivariate analysis 
+```{r}
+#Bivariate analysis was completed to look at potential factors contributing to accuracy. First data was cleaned further and an additional dataframe examining the order of predictions was created.
+
+#new dataframe created for further analysis
+rank_data <- clean_data %>% 
+  group_by(visit_key) %>% #group by the surrogate for patient IDs
+  filter(discharge_prediction != "no date identified") %>%  #look at all patients who had a prediction time window (remove those without an identified date)
+  mutate( #create a column that looks at when a prediction estimate was made and groups by first, last, other
+    pred_order = 
+      case_when(est_number == max(est_number) ~ "last", 
+                est_number == 1 ~ "first", 
+                TRUE ~ "other"), 
+    total_est = max(est_number)
+    ) %>%
+  ungroup() %>% 
+  mutate(pred_order = as.factor(pred_order) %>% 
+           fct_relevel("last", "other", "first")) %>% #make into a factor and reorder them
+  mutate(ett_status = as.factor(ett_status)) %>% #make ETT status into a factor for further analysis (it was recognized this was a significant variable in analysis and for visualization, I needed to ensure this was a factor)
+  mutate(top_dx_P28 = top_dx == "P28.5") %>% 
+  mutate(top_dx_P293 = top_dx == "P29.3") %>% 
+  mutate(top_dx_79 = top_dx == "Q79.0") %>% 
+  mutate(top_dx_21 = top_dx == "J21.0") %>% 
+  mutate(top_dx_916 = top_dx == "P91.6") %>% 
+  dplyr::select(visit_key, accurate_prediction_ind, discharge_prediction, days_until_discharge, diff, gest_age_groups, sex, race, payor_group, pred_order, central_line_status, ett_status, iv_fluid_or_med_start_post_prediction, top_dx, top_dx_P28, top_dx_P293, top_dx_79, top_dx_21, top_dx_916) #select variables
+
+#use a function and for loop to run the analysis
+calc_p <- function(x) { #make a function to put into the for loop
+   rslt <- summary(glm(accurate_prediction_ind ~ rank_data[[x]], data = rank_data, family = binomial())) #bivariate testing of each column against prediction accuracy
+   data.frame( #make a dataframe that has the column name and p-values 
+     var = x, 
+     p_val = rslt$coefficients[2,4] #brings back p-value from the glm chart
+   )
+}
+
+all_variables <- calc_p("discharge_prediction") #run the function looking at "discharge prediction" and assign to all_variables 
+
+for (i in names(rank_data %>% dplyr::select(-c(visit_key, accurate_prediction_ind, discharge_prediction, diff)))){ #put function into the for loop, ensure that first column, diff, and days until discharge columns are removed
+  all_variables <- bind_rows(all_variables, calc_p(i)) #bind the result from the above function
+}
+
+all_variables %>% 
+  filter(p_val <= .05) %>% #filter for significant variables with p<0.05
+  arrange(p_val) #order values
+
+```
+<br>
+Discharge prediction choice, days until discharge, and prediction order appear to be the only significant contributors to accuracy.
+<br>
+<br>
+
+#### Logistic regression 
+```{r}
+#Using the significant variables from the bivariate analysis, we can then do logistic regression
+summary(glm(accurate_prediction_ind ~ days_until_discharge + pred_order + discharge_prediction, data = rank_data, family = binomial))
+#In the logistic regression, discharge prediction, days until discharge, and prediction order appears to be significantly associated with accuracy
+
+#let's look at first vs. last prediction accuracy by discharge prediction category
+rank_data_first <- rank_data %>% 
+  filter(pred_order == "first") 
+
+summary(glm(accurate_prediction_ind ~ discharge_prediction + gest_age_groups + sex + race + payor_group + days_until_discharge + central_line_status + ett_status + iv_fluid_or_med_start_post_prediction + top_dx_P28 + top_dx_P293 + top_dx_79 + top_dx_21 + top_dx_916, data = rank_data_first, family = binomial))
+#no significant mediators of accuracy on first estimates
+
+rank_data_last <- rank_data %>%
+  filter(pred_order == "last")
+
+summary(glm(accurate_prediction_ind ~ discharge_prediction + gest_age_groups + sex + race + payor_group + days_until_discharge + central_line_status + ett_status + iv_fluid_or_med_start_post_prediction + top_dx_P28 + top_dx_P293 + top_dx_79 + top_dx_21 + top_dx_916, data = rank_data_last, family = binomial))
+
+
+```
+<br>
+At the timing of last prediction, the discharge prediction grouping and the days until discharge were significantly associated with accuracy.
+<br>
+<br>
+
+#### Linear regression 
+```{r}
+
+rank_data_correct <- rank_data %>% 
+  filter(accurate_prediction_ind == 0) %>%  #only look at estimates that were incorrect
+  mutate(
+    diff = (as.numeric(diff))
+    ) 
+
+#linear regression examining factors contributing to the degree of inaccuracy. First data was cleaned again.
+summary(lm(diff ~ discharge_prediction + gest_age_groups + sex + race + payor_group + pred_order + central_line_status + ett_status + iv_fluid_or_med_start_post_prediction + top_dx_P28 + top_dx_P293 + top_dx_79 + top_dx_21 + top_dx_916, data = rank_data_correct)) 
+#gestational age >35 weeks, prediction order, ETT status, and a diagnosis of stage 2 NEC  are associated with how off we are in our estimations
+
+ggplot(rank_data_correct, aes(x = diff, y = gest_age_groups)) + 
+  geom_boxplot() +
+  labs(title = "Relationship between Inaccuracy and Gestational Age",
+       y = "Gestational Age (weeks)", 
+       x = "Days off of Estimated Time Window") +
+  coord_cartesian(xlim = c(0,50)) #zoom in on the box plot to make it readable, recognizing that some of the outliers are lost
+#kids born closer to term had fewer days off from prediction
+
+ggplot(rank_data_correct, aes(y = pred_order, x = diff)) + 
+  geom_boxplot() +
+  labs(title = "Relationship between Inaccuracy and Estimate Order",
+       y = "Estimate Order", 
+       x = "Days off of Estimated Time Window") +
+  coord_cartesian(xlim = c(0,50))
+#last estimates were closer to the estimated time window
+
+rank_data_correct %>% 
+  filter(ett_status != 1) %>% 
+  mutate(ett_status = recode(ett_status, "0" = "no ETT", "2" = "yes ETT")) %>% 
+ggplot(aes(y = ett_status, x = diff)) + 
+  geom_boxplot() +
+  labs(title = "Relationship between Inaccuracy and ETT Status",
+       y = "ETT status", 
+       x = "Days off of Estimated Time Window") +
+  coord_cartesian(xlim = c(0,200))
+#If you have an ETT or have one placed after the question is asked, you are more likely to stay in the hospital for longer
+
+rank_data_correct <- rank_data_correct %>% 
+  mutate(top_dx_79 = as.character(top_dx_79)) %>% 
+  mutate(top_dx_79 = recode(top_dx_79, "TRUE" = "yes CDH", "FALSE" = "no CDH"))
+ggplot(rank_data_correct, aes(y = top_dx_79, x = diff)) +
+  geom_boxplot() +
+  labs(title = "Relationship between Inaccuracy and CDH Diagnosis",
+       y = "CDH",
+       x = "Days off of Estimated Time Window") +
+  coord_cartesian(xlim = c(0, 100))
+```
+<br>
+Gestational age window (being closer to term), prediction order (last prediction), lack of an ETT, and having a diagnoses of CDH all led to predictions that were closer to the accurate time window.
+<br>
+<br>
+
+
+### Conclusions
+Through this exploratory analysis, I found that the majority of patients receive discharge predictions that are outside of any anticipated time window and that, on average, these patients discharge over 2 months after the time of that prediction. In addition, accuracy of predictions improves as a patient nears discharge and many estimates are incorrect unless they are made on the day of discharge. Providers are more accurate on the last prediction, for patients born closer to term, for those without endotracheal tubes, and for patients born with congenital diaphragmatic hernias.
+
+### Acknowledgements 
+Thank you to Nic Bamat, Matt Devine, and Jake Riley for their assistance with this project and to Alexa Woodward for all of her help with troubleshooting.
