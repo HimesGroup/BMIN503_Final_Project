@@ -1,5 +1,5 @@
 ---
-title: "BMIN503 Final Project"
+title: "BMIN503 Final Project - Medicaid Expansion and Crime Rates"
 author: "Taylor Hertzler"
 output: 
   html_document:
