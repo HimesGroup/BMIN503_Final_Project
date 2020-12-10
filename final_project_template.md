@@ -2199,6 +2199,505 @@ confusion_to_gt(confusionMatrix_simple, "Simplified Model") # Turn into gt table
 The ensemble model performs poorly with a sensitivity and specificity of 50% and 50%. As a result of the poorly performing ensemble model, the simplified model shows even worse performance with a sensitivity of 0% and specificity of 100%. Loss of accuracy is to be expected when flattening an ensemble model, which benefits from general consensus, to a single decision tree. Given the performance of the ensemble model, this loss of nuance leaves the model unable to identify cases in which there is a serious finding.
 
 
+
+```r
+# Consensus from feedback is that people wanted to see how the model would perform with cases of non-urgent findings
+# Cutoffs were given with some trial-and-error
+# Table at the end describes sensitivity and specificity for each class
+
+# Remove kids not imaged
+# Transform outcome variable into a factor (makes predictions cleaner)
+dt_findings_all <- dt %>% 
+  filter(imaging == 1) %>%
+  mutate(finding = factor(case_when(
+    finding == 1 ~ "Urgent",
+    is.na(finding) ~ "Non-Urgent",
+    finding == 0 ~ "Unremarkable"),
+    levels = c("Unremarkable", "Non-Urgent", "Urgent"))) %>% # Include NA findings but marked as 'non-urgent'
+  select(-all_of(trim_vars))
+
+# Impute  missing data
+# Remember variables with > 5% missingness were already removed
+dt_findings_impute_all <- rfImpute(finding ~ ., data = dt_findings_all)
+
+# Create random assignments for test and training datasets
+# Make sure both classes are evenly distributed
+dt_assignments_all <- caret::createDataPartition(
+  dt_findings_impute_all$finding, p = test_to_train[[1]], 
+  list = FALSE, times = 1)
+
+# Training data
+dt_train_all <- dt_findings_impute_all[dt_assignments_all,]
+
+# Testing data
+dt_test_all <- dt_findings_impute_all[-dt_assignments_all,]
+
+
+#Select predictor variables 
+dt_predictors_all <- dt_train_all %>% select(-finding)
+
+dt_randomForest_all <- randomForest( # run RandomForst with specified cutoff
+      x = dt_predictors_all, y = dt_train_all$finding, ntree = num_randomforest_trees,
+      importance = TRUE, cutoff = c(0.7, 0.29, .01), nodesize = 3
+    )
+
+# Finally take the chosen RF model and predict using test data
+dt_randomForest_pred_all <- dt_test_all %>%
+  predict(dt_randomForest_all, ., type = "response")
+
+# Confusion matrix for ensemble model
+confusionMatrix_ensemble_all <- caret::confusionMatrix( 
+    data = factor(dt_randomForest_pred_all, 
+                  levels = rev(c("Unremarkable", "Non-Urgent", "Urgent")), 
+                  labels = rev(c("Unremarkable", "Non-Urgent", "Urgent"))),
+    reference = factor(dt_test_all$finding, 
+                       levels = rev(c("Unremarkable", "Non-Urgent", "Urgent")), 
+                       labels = rev(c("Unremarkable", "Non-Urgent", "Urgent"))), 
+    positive = "Finding", dnn = c("Prediction", "True Outcome"))
+
+measure_byClass <- as_tibble( # Grab sensitivity + specificity measures for each class
+  confusionMatrix_ensemble_all$byClass, rownames = "class") %>%
+  mutate(class = str_remove(class, "Class: ")) %>%
+  select(class, Sensitivity, Specificity) %>% 
+  pivot_longer(cols = -class) %>% # Shift table to match count table below for binding
+  pivot_wider(id_cols = name, names_from = class, values_from = value) %>%
+  rename(Prediction = name) %>% # Rename solely for binding
+  mutate(across(where(is.numeric), ~scales::percent(.x, accuracy = 1))) #Display as whole percentage points
+
+as_tibble(confusionMatrix_ensemble_all$table) %>% # Get 3x3 confusion matrix
+  pivot_wider(names_from = `True Outcome`, values_from = n) %>%
+  mutate(across(everything(), as.character)) %>%
+  bind_rows(measure_byClass) %>% # Shape it so predicted classes as rows and true classes as columns
+  gt(rowname_col = "Prediction") %>% # Transform into gt table
+  tab_spanner(
+    label = "True Outcome", # Spans column labels for true classes
+    columns = vars(`Urgent`, `Non-Urgent`, Unremarkable)) %>%
+  tab_stubhead(label = "Prediction") %>% # spans row names for predicted classes
+  tab_style( # Two rows at end mark sens + spec for each class. marked w/ gray to be distinct
+    style = cell_fill(color = "gray90"),
+    locations = cells_body(
+      rows = Prediction %in% c("Sensitivity", "Specificity"))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "gray90"),
+    locations = cells_stub(
+      rows = c("Sensitivity", "Specificity"))
+  ) %>%
+  tab_header(title = "Ensemble Model (All Cases)") 
+```
+
+```
+## ntree      OOB      1      2      3
+##   300:  20.48%  0.00%100.00%100.00%
+## ntree      OOB      1      2      3
+##   300:  20.48%  0.00%100.00%100.00%
+## ntree      OOB      1      2      3
+##   300:  20.48%  0.00%100.00%100.00%
+## ntree      OOB      1      2      3
+##   300:  20.48%  0.00%100.00%100.00%
+## ntree      OOB      1      2      3
+##   300:  20.48%  0.00%100.00%100.00%
+```
+
+<!--html_preserve--><style>html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
+}
+
+#dregtxgkrz .gt_table {
+  display: table;
+  border-collapse: collapse;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#dregtxgkrz .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 0;
+  padding-bottom: 4px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#dregtxgkrz .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#dregtxgkrz .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#dregtxgkrz .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#dregtxgkrz .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#dregtxgkrz .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#dregtxgkrz .gt_group_heading {
+  padding: 8px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#dregtxgkrz .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#dregtxgkrz .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#dregtxgkrz .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#dregtxgkrz .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#dregtxgkrz .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 12px;
+}
+
+#dregtxgkrz .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#dregtxgkrz .gt_first_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#dregtxgkrz .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#dregtxgkrz .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding: 4px;
+}
+
+#dregtxgkrz .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#dregtxgkrz .gt_sourcenote {
+  font-size: 90%;
+  padding: 4px;
+}
+
+#dregtxgkrz .gt_left {
+  text-align: left;
+}
+
+#dregtxgkrz .gt_center {
+  text-align: center;
+}
+
+#dregtxgkrz .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#dregtxgkrz .gt_font_normal {
+  font-weight: normal;
+}
+
+#dregtxgkrz .gt_font_bold {
+  font-weight: bold;
+}
+
+#dregtxgkrz .gt_font_italic {
+  font-style: italic;
+}
+
+#dregtxgkrz .gt_super {
+  font-size: 65%;
+}
+
+#dregtxgkrz .gt_footnote_marks {
+  font-style: italic;
+  font-size: 65%;
+}
+</style>
+<div id="dregtxgkrz" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
+  <thead class="gt_header">
+    <tr>
+      <th colspan="4" class="gt_heading gt_title gt_font_normal" style>Ensemble Model (All Cases)</th>
+    </tr>
+    <tr>
+      <th colspan="4" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border" style></th>
+    </tr>
+  </thead>
+  <thead class="gt_col_headings">
+    <tr>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="2" colspan="1">Prediction</th>
+      <th class="gt_center gt_columns_top_border gt_column_spanner_outer" rowspan="1" colspan="3">
+        <span class="gt_column_spanner">True Outcome</span>
+      </th>
+    </tr>
+    <tr>
+      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1">Urgent</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1">Non-Urgent</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1">Unremarkable</th>
+    </tr>
+  </thead>
+  <tbody class="gt_table_body">
+    <tr>
+      <td class="gt_row gt_left gt_stub">Urgent</td>
+      <td class="gt_row gt_left">1</td>
+      <td class="gt_row gt_left">18</td>
+      <td class="gt_row gt_left">66</td>
+    </tr>
+    <tr>
+      <td class="gt_row gt_left gt_stub">Non-Urgent</td>
+      <td class="gt_row gt_left">0</td>
+      <td class="gt_row gt_left">0</td>
+      <td class="gt_row gt_left">4</td>
+    </tr>
+    <tr>
+      <td class="gt_row gt_left gt_stub">Unremarkable</td>
+      <td class="gt_row gt_left">1</td>
+      <td class="gt_row gt_left">16</td>
+      <td class="gt_row gt_left">75</td>
+    </tr>
+    <tr>
+      <td class="gt_row gt_left gt_stub" style="background-color: #E5E5E5;">Sensitivity</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">50%</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">0%</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">52%</td>
+    </tr>
+    <tr>
+      <td class="gt_row gt_left gt_stub" style="background-color: #E5E5E5;">Specificity</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">53%</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">97%</td>
+      <td class="gt_row gt_left" style="background-color: #E5E5E5;">53%</td>
+    </tr>
+  </tbody>
+  
+  
+</table></div><!--/html_preserve-->
+
+
+Peer feedback specified curiosity as to how the randomForest model would perform with additional cases of non-urgent findings (previously excluded). Overall, the model is still quite poor at differentiation, and fails to correctly label the cases of interest, those with serious findings. However, if we compare overall performance, both the original and the 3-class model are close with accuracy of 50% vs. 42% and Cohen's Kappa of 1.86e-04 vs. 5.75e-03. Overall, the model performance does not improve in a meaningful manner.
+
+
+
 ```r
 prettyLearner_randomForest <- presentRules(learner_randomForest, colnames(dt_predictors)) %>% # Takes simplified model and substitutes into actual variable names (example, "variable_1" becomes "age")
   as_tibble() %>% # Into tidyr table
@@ -2253,7 +2752,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
 }
 
-#tujfmfzeki .gt_table {
+#jrozkkdxmo .gt_table {
   display: table;
   border-collapse: collapse;
   margin-left: auto;
@@ -2278,7 +2777,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-left-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_heading {
+#jrozkkdxmo .gt_heading {
   background-color: #FFFFFF;
   text-align: center;
   border-bottom-color: #FFFFFF;
@@ -2290,7 +2789,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-right-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_title {
+#jrozkkdxmo .gt_title {
   color: #333333;
   font-size: 125%;
   font-weight: initial;
@@ -2300,7 +2799,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-bottom-width: 0;
 }
 
-#tujfmfzeki .gt_subtitle {
+#jrozkkdxmo .gt_subtitle {
   color: #333333;
   font-size: 85%;
   font-weight: initial;
@@ -2310,13 +2809,13 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-top-width: 0;
 }
 
-#tujfmfzeki .gt_bottom_border {
+#jrozkkdxmo .gt_bottom_border {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_col_headings {
+#jrozkkdxmo .gt_col_headings {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -2331,7 +2830,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-right-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_col_heading {
+#jrozkkdxmo .gt_col_heading {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -2351,7 +2850,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   overflow-x: hidden;
 }
 
-#tujfmfzeki .gt_column_spanner_outer {
+#jrozkkdxmo .gt_column_spanner_outer {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -2363,15 +2862,15 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   padding-right: 4px;
 }
 
-#tujfmfzeki .gt_column_spanner_outer:first-child {
+#jrozkkdxmo .gt_column_spanner_outer:first-child {
   padding-left: 0;
 }
 
-#tujfmfzeki .gt_column_spanner_outer:last-child {
+#jrozkkdxmo .gt_column_spanner_outer:last-child {
   padding-right: 0;
 }
 
-#tujfmfzeki .gt_column_spanner {
+#jrozkkdxmo .gt_column_spanner {
   border-bottom-style: solid;
   border-bottom-width: 2px;
   border-bottom-color: #D3D3D3;
@@ -2383,7 +2882,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   width: 100%;
 }
 
-#tujfmfzeki .gt_group_heading {
+#jrozkkdxmo .gt_group_heading {
   padding: 8px;
   color: #333333;
   background-color: #FFFFFF;
@@ -2405,7 +2904,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   vertical-align: middle;
 }
 
-#tujfmfzeki .gt_empty_group_heading {
+#jrozkkdxmo .gt_empty_group_heading {
   padding: 0.5px;
   color: #333333;
   background-color: #FFFFFF;
@@ -2420,15 +2919,15 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   vertical-align: middle;
 }
 
-#tujfmfzeki .gt_from_md > :first-child {
+#jrozkkdxmo .gt_from_md > :first-child {
   margin-top: 0;
 }
 
-#tujfmfzeki .gt_from_md > :last-child {
+#jrozkkdxmo .gt_from_md > :last-child {
   margin-bottom: 0;
 }
 
-#tujfmfzeki .gt_row {
+#jrozkkdxmo .gt_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -2447,7 +2946,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   overflow-x: hidden;
 }
 
-#tujfmfzeki .gt_stub {
+#jrozkkdxmo .gt_stub {
   color: #333333;
   background-color: #FFFFFF;
   font-size: 100%;
@@ -2459,7 +2958,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   padding-left: 12px;
 }
 
-#tujfmfzeki .gt_summary_row {
+#jrozkkdxmo .gt_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -2469,7 +2968,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   padding-right: 5px;
 }
 
-#tujfmfzeki .gt_first_summary_row {
+#jrozkkdxmo .gt_first_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -2479,7 +2978,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-top-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_grand_summary_row {
+#jrozkkdxmo .gt_grand_summary_row {
   color: #333333;
   background-color: #FFFFFF;
   text-transform: inherit;
@@ -2489,7 +2988,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   padding-right: 5px;
 }
 
-#tujfmfzeki .gt_first_grand_summary_row {
+#jrozkkdxmo .gt_first_grand_summary_row {
   padding-top: 8px;
   padding-bottom: 8px;
   padding-left: 5px;
@@ -2499,11 +2998,11 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-top-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_striped {
+#jrozkkdxmo .gt_striped {
   background-color: rgba(128, 128, 128, 0.05);
 }
 
-#tujfmfzeki .gt_table_body {
+#jrozkkdxmo .gt_table_body {
   border-top-style: solid;
   border-top-width: 2px;
   border-top-color: #D3D3D3;
@@ -2512,7 +3011,7 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-bottom-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_footnotes {
+#jrozkkdxmo .gt_footnotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -2526,13 +3025,13 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-right-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_footnote {
+#jrozkkdxmo .gt_footnote {
   margin: 0px;
   font-size: 90%;
   padding: 4px;
 }
 
-#tujfmfzeki .gt_sourcenotes {
+#jrozkkdxmo .gt_sourcenotes {
   color: #333333;
   background-color: #FFFFFF;
   border-bottom-style: none;
@@ -2546,46 +3045,46 @@ prettyLearner_randomForest %>% # Present table of rules for single tree
   border-right-color: #D3D3D3;
 }
 
-#tujfmfzeki .gt_sourcenote {
+#jrozkkdxmo .gt_sourcenote {
   font-size: 90%;
   padding: 4px;
 }
 
-#tujfmfzeki .gt_left {
+#jrozkkdxmo .gt_left {
   text-align: left;
 }
 
-#tujfmfzeki .gt_center {
+#jrozkkdxmo .gt_center {
   text-align: center;
 }
 
-#tujfmfzeki .gt_right {
+#jrozkkdxmo .gt_right {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-#tujfmfzeki .gt_font_normal {
+#jrozkkdxmo .gt_font_normal {
   font-weight: normal;
 }
 
-#tujfmfzeki .gt_font_bold {
+#jrozkkdxmo .gt_font_bold {
   font-weight: bold;
 }
 
-#tujfmfzeki .gt_font_italic {
+#jrozkkdxmo .gt_font_italic {
   font-style: italic;
 }
 
-#tujfmfzeki .gt_super {
+#jrozkkdxmo .gt_super {
   font-size: 65%;
 }
 
-#tujfmfzeki .gt_footnote_marks {
+#jrozkkdxmo .gt_footnote_marks {
   font-style: italic;
   font-size: 65%;
 }
 </style>
-<div id="tujfmfzeki" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
+<div id="jrozkkdxmo" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;"><table class="gt_table">
   
   <thead class="gt_col_headings">
     <tr>
@@ -2666,7 +3165,7 @@ Even though the simplified model has poor performance, it is to be expected when
 
 # Discussion
 
-In this report, we created two predictive models to assess the risk of a serious finding on head imaging based on patient demographics and self-reported symptoms and history. The models failed to reach both a high sensitivity and specificity, with the ensemble randomForests model reaching a sensitivity of 50% and specificity of 50% and the simplified decision tree only 0% and 100%. To mimic its clinical context, we chose a suspicion threshold of 99% for the randomForests model best performed at a suspicion threshold of 99% which was the minimum consensus among trees needed to label a case as 'unremarkable'. However, the model performed poorly at any specified threshold between its default 50% and 99%, with sensitivity positively and specificity negatively associated with the cutoff value.
+In this report, we created two predictive models to assess the risk of a serious finding on head imaging based on patient demographics and self-reported symptoms and history. The models failed to reach both a high sensitivity and specificity, with the ensemble randomForests model reaching a sensitivity of 50% and specificity of 50% and the simplified decision tree only 0% and 100%. To mimic its clinical context, we chose a suspicion threshold of 99% for the randomForests model best performed at a suspicion threshold of 99% which was the minimum consensus among trees needed to label a case as 'unremarkable'. However, the model performed poorly at any specified threshold between its default 50% and 99%, with sensitivity positively and specificity negatively associated with the cutoff value. Adding cases of non-urgent findings to the model did not improve its ability to select cases of serious findings.
 
 Although the models failed to reach the high standards needed for adoption into clinical use, there are several limitations that make future directions more promising. Ultimately, the models and associated analysis plan were designed for a dataset of emergency room encounters. Due to time constraints, we were forced to substitute in an already-available dataset of outpatient neurology visits but there were several key differences that likely contributed to the models' performance. For one, children with headache seen in the outpatient context are less likely to have a serious cause of headache due to the fast-progressing nature and severity of associated symptoms for some serious etiologies (i.e., intracranial hemorrhage due to trauma, bacterial meningitis). In addition, outpatient cases only have diagnostic codes given before or during a visit. As the vast majority of imaging was done weeks after a visit, we were unable to select a serious case based on an associated ICD code. As a result, we could only rely on documentation of the radiologist contacting the ordering physician as recorded within the radiology note. These limitations led to the selection of too few cases of serious findings on imaging (only 13). As a serious finding on imaging encompasses a varied range of etiologies and their associated symptom profiles, this small but heterogenous group of serious cases was likely too small for the models to identify distinguishing traits.  In addition, predictors for the models included a health questionnaire characterizing headache type and severity. Although rich, this set of predictors lacked information on physical exam findings noted by the physician which can be very informative. For instance, papilledema, or swelling of the optic disc, is often a sign of high intracranial pressure and can warrant more urgent investigation and intervention. However, it is only visible via an ophthalmoscope used by an experienced clinician. A patient and their family would be unable to note this finding without such a tool. A limitation outside of dataset choice is the possibility of selection bias. In order for a child to be labeled as a serious case, the physician must first choose to image them, which means that possibly there are some children who are undiscovered serious cases which could bias the predictions made.
 

@@ -556,6 +556,100 @@ confusion_to_gt(confusionMatrix_simple, "Simplified Model") # Turn into gt table
 
 The ensemble model performs poorly with a sensitivity and specificity of `r scales::percent(confusionMatrix_ensemble$byClass['Sensitivity'])` and `r scales::percent(confusionMatrix_ensemble$byClass['Specificity'])`. As a result of the poorly performing ensemble model, the simplified model shows even worse performance with a sensitivity of `r scales::percent(confusionMatrix_simple$byClass['Sensitivity'])` and specificity of `r scales::percent(confusionMatrix_simple$byClass['Specificity'])`. Loss of accuracy is to be expected when flattening an ensemble model, which benefits from general consensus, to a single decision tree. Given the performance of the ensemble model, this loss of nuance leaves the model unable to identify cases in which there is a serious finding.
 
+
+```{r repeat-randomForest-all, results = 'hold'}
+
+# Consensus from feedback is that people wanted to see how the model would perform with cases of non-urgent findings
+# Cutoffs were given with some trial-and-error
+# Table at the end describes sensitivity and specificity for each class
+
+# Remove kids not imaged
+# Transform outcome variable into a factor (makes predictions cleaner)
+dt_findings_all <- dt %>% 
+  filter(imaging == 1) %>%
+  mutate(finding = factor(case_when(
+    finding == 1 ~ "Urgent",
+    is.na(finding) ~ "Non-Urgent",
+    finding == 0 ~ "Unremarkable"),
+    levels = c("Unremarkable", "Non-Urgent", "Urgent"))) %>% # Include NA findings but marked as 'non-urgent'
+  select(-all_of(trim_vars))
+
+# Impute  missing data
+# Remember variables with > 5% missingness were already removed
+dt_findings_impute_all <- rfImpute(finding ~ ., data = dt_findings_all)
+
+# Create random assignments for test and training datasets
+# Make sure both classes are evenly distributed
+dt_assignments_all <- caret::createDataPartition(
+  dt_findings_impute_all$finding, p = test_to_train[[1]], 
+  list = FALSE, times = 1)
+
+# Training data
+dt_train_all <- dt_findings_impute_all[dt_assignments_all,]
+
+# Testing data
+dt_test_all <- dt_findings_impute_all[-dt_assignments_all,]
+
+
+#Select predictor variables 
+dt_predictors_all <- dt_train_all %>% select(-finding)
+
+dt_randomForest_all <- randomForest( # run RandomForst with specified cutoff
+      x = dt_predictors_all, y = dt_train_all$finding, ntree = num_randomforest_trees,
+      importance = TRUE, cutoff = c(0.7, 0.29, .01), nodesize = 3
+    )
+
+# Finally take the chosen RF model and predict using test data
+dt_randomForest_pred_all <- dt_test_all %>%
+  predict(dt_randomForest_all, ., type = "response")
+
+# Confusion matrix for ensemble model
+confusionMatrix_ensemble_all <- caret::confusionMatrix( 
+    data = factor(dt_randomForest_pred_all, 
+                  levels = rev(c("Unremarkable", "Non-Urgent", "Urgent")), 
+                  labels = rev(c("Unremarkable", "Non-Urgent", "Urgent"))),
+    reference = factor(dt_test_all$finding, 
+                       levels = rev(c("Unremarkable", "Non-Urgent", "Urgent")), 
+                       labels = rev(c("Unremarkable", "Non-Urgent", "Urgent"))), 
+    positive = "Finding", dnn = c("Prediction", "True Outcome"))
+
+measure_byClass <- as_tibble( # Grab sensitivity + specificity measures for each class
+  confusionMatrix_ensemble_all$byClass, rownames = "class") %>%
+  mutate(class = str_remove(class, "Class: ")) %>%
+  select(class, Sensitivity, Specificity) %>% 
+  pivot_longer(cols = -class) %>% # Shift table to match count table below for binding
+  pivot_wider(id_cols = name, names_from = class, values_from = value) %>%
+  rename(Prediction = name) %>% # Rename solely for binding
+  mutate(across(where(is.numeric), ~scales::percent(.x, accuracy = 1))) #Display as whole percentage points
+
+as_tibble(confusionMatrix_ensemble_all$table) %>% # Get 3x3 confusion matrix
+  pivot_wider(names_from = `True Outcome`, values_from = n) %>%
+  mutate(across(everything(), as.character)) %>%
+  bind_rows(measure_byClass) %>% # Shape it so predicted classes as rows and true classes as columns
+  gt(rowname_col = "Prediction") %>% # Transform into gt table
+  tab_spanner(
+    label = "True Outcome", # Spans column labels for true classes
+    columns = vars(`Urgent`, `Non-Urgent`, Unremarkable)) %>%
+  tab_stubhead(label = "Prediction") %>% # spans row names for predicted classes
+  tab_style( # Two rows at end mark sens + spec for each class. marked w/ gray to be distinct
+    style = cell_fill(color = "gray90"),
+    locations = cells_body(
+      rows = Prediction %in% c("Sensitivity", "Specificity"))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "gray90"),
+    locations = cells_stub(
+      rows = c("Sensitivity", "Specificity"))
+  ) %>%
+  tab_header(title = "Ensemble Model (All Cases)") 
+
+
+```
+
+
+Peer feedback specified curiosity as to how the randomForest model would perform with additional cases of non-urgent findings (previously excluded). Overall, the model is still quite poor at differentiation, and fails to correctly label the cases of interest, those with serious findings. However, if we compare overall performance, both the original and the 3-class model are close with accuracy of `r scales::percent(confusionMatrix_ensemble$overall["Accuracy"])` vs. `r scales::percent(confusionMatrix_ensemble_all$overall["Accuracy"])` and Cohen's Kappa of `r scales::scientific(confusionMatrix_ensemble$overall["Kappa"])` vs. `r scales::scientific(confusionMatrix_ensemble_all$overall["Kappa"])`. Overall, the model performance does not improve in a meaningful manner.
+
+
 ```{r pretty-learner}
 
 prettyLearner_randomForest <- presentRules(learner_randomForest, colnames(dt_predictors)) %>% # Takes simplified model and substitutes into actual variable names (example, "variable_1" becomes "age")
@@ -615,7 +709,7 @@ Even though the simplified model has poor performance, it is to be expected when
 
 # Discussion
 
-In this report, we created two predictive models to assess the risk of a serious finding on head imaging based on patient demographics and self-reported symptoms and history. The models failed to reach both a high sensitivity and specificity, with the ensemble randomForests model reaching a sensitivity of `r scales::percent(confusionMatrix_ensemble$byClass['Sensitivity'])` and specificity of `r scales::percent(confusionMatrix_ensemble$byClass['Specificity'])` and the simplified decision tree only `r scales::percent(confusionMatrix_simple$byClass['Sensitivity'])` and `r scales::percent(confusionMatrix_simple$byClass['Specificity'])`. To mimic its clinical context, we chose a suspicion threshold of `r scales::percent(rf_normal_cutoff)` for the randomForests model best performed at a suspicion threshold of `r scales::percent(rf_normal_cutoff)` which was the minimum consensus among trees needed to label a case as 'unremarkable'. However, the model performed poorly at any specified threshold between its default 50% and 99%, with sensitivity positively and specificity negatively associated with the cutoff value.
+In this report, we created two predictive models to assess the risk of a serious finding on head imaging based on patient demographics and self-reported symptoms and history. The models failed to reach both a high sensitivity and specificity, with the ensemble randomForests model reaching a sensitivity of `r scales::percent(confusionMatrix_ensemble$byClass['Sensitivity'])` and specificity of `r scales::percent(confusionMatrix_ensemble$byClass['Specificity'])` and the simplified decision tree only `r scales::percent(confusionMatrix_simple$byClass['Sensitivity'])` and `r scales::percent(confusionMatrix_simple$byClass['Specificity'])`. To mimic its clinical context, we chose a suspicion threshold of `r scales::percent(rf_normal_cutoff)` for the randomForests model best performed at a suspicion threshold of `r scales::percent(rf_normal_cutoff)` which was the minimum consensus among trees needed to label a case as 'unremarkable'. However, the model performed poorly at any specified threshold between its default 50% and 99%, with sensitivity positively and specificity negatively associated with the cutoff value. Adding cases of non-urgent findings to the model did not improve its ability to select cases of serious findings.
 
 Although the models failed to reach the high standards needed for adoption into clinical use, there are several limitations that make future directions more promising. Ultimately, the models and associated analysis plan were designed for a dataset of emergency room encounters. Due to time constraints, we were forced to substitute in an already-available dataset of outpatient neurology visits but there were several key differences that likely contributed to the models' performance. For one, children with headache seen in the outpatient context are less likely to have a serious cause of headache due to the fast-progressing nature and severity of associated symptoms for some serious etiologies (i.e., intracranial hemorrhage due to trauma, bacterial meningitis). In addition, outpatient cases only have diagnostic codes given before or during a visit. As the vast majority of imaging was done weeks after a visit, we were unable to select a serious case based on an associated ICD code. As a result, we could only rely on documentation of the radiologist contacting the ordering physician as recorded within the radiology note. These limitations led to the selection of too few cases of serious findings on imaging (only `r dt %>% filter(finding == 1) %>% nrow(.)`). As a serious finding on imaging encompasses a varied range of etiologies and their associated symptom profiles, this small but heterogenous group of serious cases was likely too small for the models to identify distinguishing traits.  In addition, predictors for the models included a health questionnaire characterizing headache type and severity. Although rich, this set of predictors lacked information on physical exam findings noted by the physician which can be very informative. For instance, papilledema, or swelling of the optic disc, is often a sign of high intracranial pressure and can warrant more urgent investigation and intervention. However, it is only visible via an ophthalmoscope used by an experienced clinician. A patient and their family would be unable to note this finding without such a tool. A limitation outside of dataset choice is the possibility of selection bias. In order for a child to be labeled as a serious case, the physician must first choose to image them, which means that possibly there are some children who are undiscovered serious cases which could bias the predictions made.
 
