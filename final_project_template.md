@@ -883,10 +883,10 @@ cutoff_plot <- cutoff_plot_df %>%
 cutoff_plot
 ```
 
-![](final_project_kellier_files/figure-html/randomForest-cutoffs-1.png)<!-- -->
+![](final_project_template_files/figure-html/randomForest-cutoffs-1.png)<!-- -->
 
 
-After imputation, we chose a cutoff of at least 99% agreement between decision trees needed for the predictive model could label a case as 'unremarkable'. However this chosen cutoff had high sensitivity with poor specificity. In clinical practice, emergency room physicians often operate at a low threshold of suspicion for possible grave etiologies. Conversely, that means a physician must be very confident before they exclude a possible serious condition. At default, cutoffs are set at the inverse of the number of possible labels, in this case, a cutoff of 50% between the two labels of 'unremarkable' and 'serious'. Increasing the cutoff to higher levels would more closely mimic the high suspicion seen in clinical practice, however, the model appears to perform poorly with no apparent threshold that carries both high sensitivity and specificity.
+After imputation, we chose a cutoff of at least 99% agreement between decision trees needed for the predictive model could label a case as 'unremarkable'. However this chosen cutoff had moderate sensitivity with poor specificity. In clinical practice, emergency room physicians often operate at a low threshold of suspicion for possible grave etiologies. Conversely, that means a physician must be very confident before they exclude a possible serious condition. At default, cutoffs are set at the inverse of the number of possible labels, in this case, a cutoff of 50% between the two labels of 'unremarkable' and 'serious'. Increasing the cutoff to higher levels would more closely mimic the high suspicion seen in clinical practice, however, the model appears to perform poorly with no apparent threshold that carries both high sensitivity and specificity.
 
 
 
