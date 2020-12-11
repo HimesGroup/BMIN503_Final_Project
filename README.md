@@ -26,8 +26,7 @@ In order to run the code, please download five files from the submodule at
 Set the variable `home` to your local directory where those data files are saved.
 
 Additional Notes for Running `final_project_mamourian.Rmd`:
-- the variable `fromBeginning` is set to FALSE.         
-This will skip the data preparation, and run the code to visualize results, 
+- the variable `fromBeginning` is set to FALSE. This will skip the data preparation, and run the code to visualize results, 
 using the provided de-identified data files.
 
 
