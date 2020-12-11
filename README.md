@@ -14,7 +14,8 @@ and the volume normalized by intracranial volume. Z-scores for each ROI are calc
 and age and sex matched normal control group, and applied to the case subjects, to see how
 the disease affects cases in comparison to normal controls. 
     
-In order to run the code, please download five files from the `https://github.com/mamourie/BMIN503_Final_Project/Data/`submodule 
+In order to run the code, please download five files from the submodule at
+`https://github.com/mamourie/BMIN503_Final_Project/Data/`
    
 1 "df_z_503.csv"      
 2 "df_z_icv_503.csv"      
@@ -24,21 +25,10 @@ In order to run the code, please download five files from the `https://github.co
 
 Set the variable `home` to your local directory where those data files are saved.
 
-At the beginning of the Rmd chunk in `final_project_template.Rmd` called `data_prep`, the variable called `fromBeginning` is set to FALSE.       
-This allows you to view the code for data preparation, and also to run the code to visualize results, using the provided data files.
+Additional Notes for Running `final_project_mamourian.Rmd`:
+- the variable `fromBeginning` is set to FALSE.         
+This will skip the data preparation, and run the code to visualize results, 
+using the provided de-identified data files.
 
 
-
-
-___________________________________________________________________________________________________________
-
-> Modify the files provided, add your own, and **commit** changes to complete your final project.
-> **Push**/sync the changes up to your GitHub account.
-> Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-DUE DATE FOR FINAL VERSION: 12/11/20 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
 
