@@ -8,7 +8,7 @@ All necessary files to replicate this project are included in this repository.
 
 Important definitions
 
-Urban/Rural classifications are defined by the 2013 NCHS Urban-Rural Classification Scheme for Counties.
+Urban/Rural classifications are defined by the 2013 NCHS Urban-Rural Classification Scheme for Counties (https://www.cdc.gov/nchs/data_access/urban_rural.htm). In the NHIS survey, Medium Metro and Small Metro are combined into one level. Micropolitan and Non-core are also combined to create the Nonmetro category.
 
 
 For regional residence (variable 'resregion'), states fall into the following categories:
