@@ -1,0 +1,1817 @@
+---
+title: "BMIN503 Final Project"
+author: "Ceire Hay"
+date: "11 December 2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+``` 
+
+```{r global options, include = FALSE}
+knitr::opts_chunk$set(echo=TRUE, eval=TRUE, warning = FALSE, message = FALSE)
+library(knitr)
+library(DT)
+``` 
+
+# Serum Amyloid A promotes Th17 responses in naive CD4+ T cells
+
+# Overview
+Using the publicly available RNASeq dataset [GSE132761](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE132761) from the Gene Expression Omnibus (GEO) repository, my goal was to understand transcriptomic changes in naive CD4 T cells in response to the acute phase protein Serum Amyloid A (SAA). This is a protein with well characterized roles as a biomarker of systemic inflammation, but has an emerging role as a pro-inflammatory, cytokine-like protein in a number of chronic inflammatory conditions including multiple sclerosis, asthma, obesity and colitis
+
+**Faculty mentors**:
+
+1. **Sarah Henrickson, M.D.,Ph.D.:** Assistant Professor of Pediatrics in the Allergy and Immunology Division at CHOP. Sarah helped me to consider the broader impacts of this research, especially as it relates to T cell exhaustion and dysfunction.
+
+2. **Mengyuan Kan, Ph.D:** Postdoctoral Researcher in Blanca Himes' lab. Mengyuan was an enormously helpful resource throughout my project, particularly as it related to using the RNASeq Analysis pipeline.
+  
+3. **Chao Di, PhD:** Bioinformatician at CHOP. Chao furthered my understaning of the execution and interpretation of the numerous QC steps that occur in RNASeq analysis before functional enrichment analysis.
+
+**GitHub Repository:** https://github.com/ceirehay/BMIN503_Final_Project
+
+
+# Introduction
+
+The protein Serum Amyloid A (SAA) is a key component of the acute-phase response (APR). The APR is one of the earliest defense mechanisms launched by the innate immune system and it involves the rapid and robust secretion of acute phase proteins into the blood stream. Acute phase proteins include SAA, C-reactive protein, fibrinogen and complement. Both SAA and CRP are secreted by hepatocytes during the APR and go on to circulate throughout the body via blood serum. The expression level of SAA and CRP can be increased more than a 1000 fold over basal levels during an APR and for this reason these proteins have well-characterized roles as biomarkers of systemic inflammation. More recently, SAA has been shown to play a more direct role in pro-inflammatory responses by behaving as a cytokine-like protein. The emerging function of SAA as an immunomodulatory protein has been explored in mouse models of chronic inflammatory disease like asthma, multiple sclerosis and colitis. Thus, understanding the molecular underpinnings of SAA-mediated inflammation may serve as pathway to improve therapeutics for medically vulnerable patients.
+
+A key feature of a chronic inflammatory response is T cell dysregulation or exhaustion. In brief, T cells can become less effective in response to chronic exposure to antigen and the mechanisms regulating this process remain poorly understood. However, the role of T cell exhaustion in chronic diseease is central to my own research interest as a PhD student in the Henrickson Lab. This project aims to further explore the analysis published by [Lee JY, et al.](https://pubmed-ncbi-nlm-nih-gov.proxy.library.upenn.edu/31866067/) this year. In this paper, the authors find a previously unrecognized role for SAA1 in driving a pathogenic TH17 response in naive CD4+ T cells isolated from healthy mice. T cells were treated _in vitro_ with IL-6 alone (negative control, non-Th17 polarizing condition), IL-6 + TGFb (positive control, non-pathogenic condition) and IL-6 + SAA1 (experimental condition) for 3, 12 and 48hrs. At the end of each time point, RNA was isolated for sequencing using next generation sequencing techniques and computational analysis demonstrated an upregulation in genes associated with a pathogenic signature in the SAA1 treated cells. The authors did not explore the role of exhausted or dysregulated T cells in their analysis. As such, in addition to the traditional method of preforming GSEA against a series of gene collections from the [Molecular Signature Database (MSigDB)](https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp),I will preform a similar analysis using a dataset curated by my lab containing genes known to be upregulated and downregulated in exhausted T cells. I hypothesize that genes CD4+ T cells treated with SAA1 and IL-6 will show increased expression of genes known to be upregulated in exhausted T cells and that the expression signature will increase in a dose-dependent manner. 
+
+# Methods
+Methodology described by the Himes Lab in the [RAVED](https://github.com/HimesGroup/raved) and [taffeta](https://github.com/HimesGroup/taffeta) pipelines. Because most of my analysis was preformed using these pipelines, retrieving and cleaning my data was not preformed in my local R environment but on the Himes Lab server. Additionally, using this pipeline allowed me to generate multiple Rmd files that cover in great detail the steps taken to retrieve and preform extensive QC on this dataset before continuing on the functional enrichment methods described in this report. The general steps I followed are described below and I included links the relevant Rmd files on my GitHub repository.
+
+## I. Obtain Raw Data
+*The following steps were completed in a lab server that behaves similarly to a HPC*
+
+**Protocol**
+
+1. Download raw data files using the `SRA Toolkit`
+2. Merge fastq files
+3. Preform preliminary quality control of raw fastq files with `FastQC`
+
+**GitHub**
+
+1. [GPL24247.soft:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/GPL24247.soft) Contains the metadata and normalized abundance data about the experiment 
+
+2. [GSE132761_series_matrix.txt.gz:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/GSE132761_series_matrix.txt.gz) Pre-processed experimental data
+
+3. [SRP201470.metadata.csv:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470.metadata.csv) Contains the metadata about the experiment
+
+4. [GSE132761_withoutQC.txt:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/GSE132761_withoutQC.txt) Contains the phenotype data about the experiment
+
+5. [SRP201470_sraFile.info:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_sraFile.info) A datafile in a format specific to the Sequencing Read Archive (SRA) that is ultimately used to extract raw read in the ".fastq" format with `sra-toolkit`
+
+6. [SRP201470_SRAdownload_RnaSeqReport.html](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_SRAdownload_RnaSeqReport.html):html file describing steps taken to retrieve and tidy raw data
+
+7. [SRP201470_SRAdownload_RnaSeqReport.Rmd](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_SRAdownload_RnaSeqReport.Rmd):as above, but in Rmd format
+
+8. [fastqfile_merge.txt:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/fastqfile_merge.txt) Some of the samples were run more than once so duplicate reads were merged
+
+9. [SRP201470_Phenotype_withoutQC.txt:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_Phenotype_withoutQC.txt): Tidied phenotypic data related to the dataset. This df does not include a parameter specifying whether a samples has passed or failed quality control
+
+## II. Align Reads to Reference Genome
+*The following steps were completed in a lab server that behaves similarly to a HPC*
+
+**Protocol**
+
+1. Create a data-set specific phenotype file
+2. Align raw reads to reference genome using the `STAR` aligner and the `mm10` mouse reference genome
+3. Quantification and statistics from  aligned reads using `HTSeq`
+4. Preform QC on aligned reads using `samtools`, `bamtools` and `picardtools`
+
+**GitHub**
+
+1. [SRP201470_QC_RnaSeqReport.Rmd:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_QC_RnaSeqReport.Rmd) Describes the QC of aligned reads
+2. [SRP201470_QC_RnaSeqReport.html:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_QC_RnaSeqReport.html) Describes the QC of aligned reads
+
+
+## III. Determine Differentially Expressed Genes (DEGs)
+*The following steps were completed in a lab server that behaves similarly to a HPC*
+
+1. Create a [dataframe](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_comp_file.txt) that lists the pairwise comparisons of interest 
+2. Use [DESeq2](https://bioc.ism.ac.jp/packages/2.14/bioc/vignettes/DESeq2/inst/doc/beginner.pdf)to determine the differentially expressed genes between each pairwise condition specified in the above file
+3. QC and normalization of DEGs
+
+**GitHub**
+
+1. [SRP201470_comp_file.txt:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_comp_file.txt)
+2. Normalized Counts:
+  - (2.1) [SRP201470_IL6_rmSAA1_3_vs_IL6_3_counts_normalized_by_DESeq2.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_3_vs_IL6_3_counts_normalized_by_DESeq2.txt)
+  - (2.2) [SRP201470_IL6_rmSAA1_3_vs_IL6_TGFb_3_counts_normalized_by_DESeq2.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_3_vs_IL6_TGFb_3_counts_normalized_by_DESeq2.txt)
+  - (2.3) [SRP201470_IL6_rmSAA1_12_vs_IL6_12_counts_normalized_by_DESeq2.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_12_vs_IL6_12_counts_normalized_by_DESeq2.txt)
+  - (2.4) [SRP201470_IL6_rmSAA1_12_vs_IL6_TGFb_12_counts_normalized_by_DESeq2](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_12_vs_IL6_TGFb_12_counts_normalized_by_DESeq2)
+  - (2.5) [SRP201470_IL6_rmSAA1_48_vs_IL6_48_counts_normalized_by_DESeq2.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_48_vs_IL6_48_counts_normalized_by_DESeq2.txt)
+  - (2.6) [SRP201470_IL6_rmSAA1_48_vs_IL6_TGFb_48_counts_normalized_by_DESeq2.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_48_vs_IL6_TGFb_48_counts_normalized_by_DESeq2.txt)
+  - (2.7) [SRP201470_IL6_TGFb_3_vs_IL6_3_counts_normalized_by_DESeq2](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_TGFb_3_vs_IL6_3_counts_normalized_by_DESeq2)
+  - (2.8) [SRP201470_IL6_TGFb_12_vs_IL6_12_counts_normalized_by_DESeq2](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_TGFb_12_vs_IL6_12_counts_normalized_by_DESeq2)
+  - (2.9) [SRP201470_IL6_TGFb_48_vs_IL6_48_counts_normalized_by_DESeq2](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/[SRP201470_IL6_TGFb_48_vs_IL6_48_counts_normalized_by_DESeq2)
+  
+3. Log fold change:
+  - (3.1) [SRP201470_IL6_rmSAA1_3_vs_IL6_3_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_3_vs_IL6_3_full_DESeq2_results.txt)
+  - (3.2) [SRP201470_IL6_rmSAA1_3_vs_IL6_TGFb_3_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_3_vs_IL6_TGFb_3_full_DESeq2_results.txt)
+  - (3.3) [SRP201470_IL6_rmSAA1_12_vs_IL6_12_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_12_vs_IL6_12_full_DESeq2_results.txt)
+  - (3.4) [SRP201470_IL6_rmSAA1_12_vs_IL6_TGFb_12_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_12_vs_IL6_TGFb_12_full_DESeq2_results.txt)
+  - (3.5) [SRP201470_IL6_rmSAA1_48_vs_IL6_48_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_48_vs_IL6_48_full_DESeq2_results.txt)
+  - (3.6) [SRP201470_IL6_rmSAA1_48_vs_IL6_TGFb_48_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_rmSAA1_48_vs_IL6_TGFb_48_full_DESeq2_results.txt)
+  - (3.7) [SRP201470_IL6_TGFb_3_vs_IL6_3_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_TGFb_3_vs_IL6_3_full_DESeq2_results.txt)
+  - (3.8) [SRP201470_IL6_TGFb_12_vs_IL6_12_full_DESeq2_results.txt](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_TGFb_12_vs_IL6_12_full_DESeq2_results.txt)
+  - (3.9) [SRP201470_IL6_TGFb_48_vs_IL6_48_full_DESeq2_results](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_IL6_TGFb_48_vs_IL6_48_full_DESeq2_results.txt)
+4. [SRP201470_DESeq2_Report.Rmd:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_DESeq2_Report.Rmd)
+5. [SRP201470_DESeq2_Report.html:](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_DESeq2_Report.html)
+
+## IV. Functional Enrichment Analysis Using DEG Results
+*This is the subject of this Rmd file*
+
+# Results
+
+## 1. Analysis Setup
+
+
+### 1.1. Set working directory and define relevant variables
+Set working directory where all my relevant data files, including this Rmd file, are stored in my local environment. Also define and out going directory for any results I choose to save as excel file.
+
+```{r, setup, echo=T}
+#set working directory, tell R where to find downloaded files
+setwd("/Users/hayc/Box/Coursework/Fall 2020/BMIN503/BMIN503_Final_Project")
+out_dir = '/Users/hayc/Box/Coursework/Fall 2020/BMIN503/BMIN503_Final_Project'
+```
+
+### 1.2. Install and load required packages
+
+_Note: This code block will only install packages that have not been previously installed. Packages only need to be installed once but need to be loaded again for each new session_
+```{r "library", eval=T, echo=T, message=F, warning=F, results=F}
+# Create a character vector that specifies the list of required packages to be installed.
+P=c("BiocManager", "clusterProfiler", "data.table", "dplyr", "DT", "DOSE", "enrichplot", "fgsea", "ggplot2", "ggpubr", "knitr", "msigdbr", "pander", "stringr", "fgsea", "tibble", "tidyverse", "cowplot", "datapasta", "biomaRt", "rappdirs")
+#Check the list of required packages against what is currently installed in R. Only packages that have not been previously installed will be installed.
+installed_packages <- P %in% rownames(installed.packages()) 
+#install BiocManager
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+    install.packages("BiocManager")
+BiocManager::install(version = "3.12")
+}
+#install packages from CRAN
+if (any(installed_packages == FALSE)) {
+  install.packages(P[!installed_packages], repos = "https://cloud.r-project.org") #need to specify 'repos' for loop to work when knitting
+}
+#install packages from Bioconductor
+if (any(installed_packages == FALSE)) {
+  BiocManager::install(c(P[!installed_packages]))
+}
+
+#Create a character vector that specifies the list of required packages to be loaded at startup. Because some packages can mask specific functions of other packages, it is not always ideal to load all packages at the start. Those not included in this vector will be loaded and detached as needed.
+L= P
+#load the packages in QClib
+lapply(L, require, character.only=TRUE)
+```
+
+### 1.3 Read in DESeq2 Results
+The DESeq2 analysis is fully described [here](https://github.com/ceirehay/BMIN503_Final_Project/blob/master/SRP201470_QC_RnaSeqReport.Rmd). 
+
+**Description of DESeq2 Results Variables**
+
+- **Gene**: Official Gene Symbol or Ensembl Gene ID, depending on reference files used for alignment
+- **gene_symbol**:	Official Gene Symbol, obtained using biomaRt if first column has Ensembl Gene IDs - else same as first column
+- **baseMean**:	mean of normalized counts for all samples, computed by DESeq2
+- **log2FoldChange**: log2 fold change (MLE): Status acase vs control, computed by DESeq2
+- **lfcSE**:	standard error: Status case vs control, computed by DESeq2
+- **stat**:	Wald statistic: Statuscase vs control, computed by DESeq2
+- **pvalue**:	Wald test p-value: Status acase vs control, computed by DESeq2
+- **padj**:	Benjamini-Hochberg (BH) adjusted p-values, computed by DESeq2
+
+There are 9 pairwise comparisons made in this analysis. The SAA1 treated group was compared to the IL-6 only condition (non-Th17 polarizing) and the IL-6+TGFb condition (non-pathogenic Th17) across the 3 time points. Additionally, the IL-6+TGFb and IL-6 only conditions were compared across time points. At this point in the analysis, the list of DEGs generated by DESeq2 are read in to my local R environment.
+```{r, genesymbol, eval=T, echo=T, results=F, message=F}
+
+#create a character vector that lists the full path of all the txt files containing DEG results for each pairwise comparison
+DEG.res.path= list.files(path=out_dir,
+                     recursive = TRUE,
+                     pattern="_full_DESeq2_results.txt",
+                     full.names = TRUE)
+
+#create a character vector with the beginning of the character string (the path directory) removed from each file name
+file.names <- gsub(paste0(out_dir,"/"),"", DEG.res.path)
+
+#read in the results from each pairwise comparisons. Store the results from each comparsion as a df and store each df in a single list "DEGres.list"
+DEGres.list <- lapply(file.names, read.delim)
+
+#check the classes of the newly created data objects
+class(DEGres.list)
+class(DEGres.list[1])
+class(DEGres.list[[1]])
+
+#remove the beginning and the end of the file names to make the dataframes easier to recognize
+for (i in file.names){
+  end.remove <- gsub("_full_DESeq2_results.txt", "", file.names)
+  short.names <- gsub("SRP201470_", "", end.remove)
+}
+
+#name each dataframe in the list with the shortened names
+names(DEGres.list) <- short.names
+names(DEGres.list)
+
+#simplify names
+#create a character vector of "cleaner" names for each pairwise comparison, in the order that they are listed in the DEGres.list
+simple.names <- as.vector(c("SAA1 vs IL-6 (12hrs)", "SAA1 vs TGFb (12hrs)", "SAA1 vs IL-6 (3hrs)", "SAA1 vs TGFb (3hrs)", "SAA1 vs IL-6 (48hrs)", "SAA1 vs TGFb (48hrs)", "TGFb vs IL-6 (12hrs)","TGFb vs IL-6 (3hrs)", "TGFb vs IL-6 (48hrs)"))
+
+#create a character vector representing the number of indexes in the list (the number of pairwise comparisons used in DESeq2)
+index <- seq(1:9)
+
+#create a datat frame combining index, short names and simple names. 
+comp.names <- as.data.frame(cbind(index, short.names, simple.names))
+comp.names #print table
+```
+
+## 2. Gene Set Enrichment Analysis (GSEA)
+Now the DEG lists are read-in and labeled with user-friendly names, we can move on the functional enrichment analysis using GSEA. For this section I am using the "fast gene set enrichment analysis" package `fgsea`
+
+### 2.1 Obtain a ranked-list of genes from the DESeq2 results
+
+Now the DEG list must be made tidy and then ranked in order of the t statistic (stat)
+```{r, sortDEG}
+#Use a for loop to tidy and sort DESeq results
+library(dplyr)
+gene.list <- list() #empty list to store output from loop
+for (i in 1:length(DEGres.list)) {
+  gene.list[[i]] <- DEGres.list[[i]] %>% #tidy DEG results
+    dplyr::filter(!is.na(gene_symbol)) %>% # remove probes with NA gene.symbol
+    dplyr::filter(!is.na(pvalue)) %>% # remove probes with NA p.value
+    dplyr::rename(logFC=log2FoldChange) %>% # change the name of column 'log2FoldChange' to 'logFC'
+    dplyr::mutate(SD=logFC/stat) %>% # compute standard deviation
+    dplyr::rename(symbol=gene_symbol) %>% # rename gene_symbol to symbol
+    dplyr::arrange(symbol, padj,-abs(logFC)) %>% # order by gene name, p value and descending absolute logFC values
+    dplyr::group_by(symbol) %>% # group by gene name
+    dplyr::filter(row_number()==1) %>% # select first row in each gene, so there are no duplicate genes in list
+    dplyr::ungroup() %>%
+    dplyr::select(symbol, stat, logFC, padj) %>% # select column names
+    dplyr::arrange(desc(stat)) %>% 
+    as_tibble()
+}
+
+#add names to each dataframe in the list
+names(gene.list) <- comp.names$simple.names
+comp.names
+
+#double check the NAs are removed
+sum(is.na(gene.list)) 
+```
+
+```{r include = FALSE}
+# this needs to be here for multiple tables to print, not sure why 
+DT::datatable(gene.list[[1]])
+```
+
+### 2.1.2 Create interactive tables of the ranked results for each pairwise comparison
+Show the DEG results for each comparison in a nice, searchable table
+
+```{r results = 'asis'}
+#Use a for loop to print multiple interactive tables of the DESeq2 results
+gene.list.tables <- list() #empty list to store output from loop
+for (i in 1:length(gene.list)) {
+  gene.list.tables[[i]] <- gene.list[[i]] %>% 
+    dplyr::mutate(across(2:3, round, 3)) %>%  #round the 2nd (stat) and 3rd (logFC) columns to 3 decimal places
+    dplyr::mutate(padj=formatC(padj,format = "e", digits = 3)) #round padjusted to 3rd decimal in scientific notation
+  cat(paste(names(gene.list[[i]]))) #name the dataframe in each list
+  print(htmltools::tagList(DT::datatable(gene.list.tables[[i]], #use the DT package to generate tables
+                                         caption=htmltools::tags$caption(style= 'caption-side: top;
+                                                                         text-align: center;
+                                                                         color: black;
+                                                                         font-size:150%;',
+                                                                         names(gene.list[i])))))
+}
+```
+
+### 2.1.3 Obtain the ensembl ids for each gene symbol
+
+Next, a vector of ranked genes must be prepared for each pairwise comparison.
+
+```{r, entrezID, eval=T,cache=TRUE}
+#Load mouse annotation library
+library(org.Mm.eg.db)
+organism ="org.Mm.eg.db"
+
+#See list of all available keytypes
+#keytypes(org.Mm.eg.db)
+
+gene.list.sym.stat <- list()
+for (i in 1:length(DEGres.list)) {
+  gene.list[[i]]$entrez <- AnnotationDbi::mapIds(x = org.Mm.eg.db, #Select the column of entrezIDs to the ranked gene list
+                                                 column = c("ENTREZID"), #the column to search the annotation library for- used by "keys" and is for when the thing you want to pattern match is different from the keytype. In other words, retrieve the EntrezIDs that correspond to the gene symbols.
+                                                 keys = gene.list[[i]][["symbol"]], #the keys to select records for from the database. The column in my dataframe that specifies what gene annotation I am using to match EntrezIDs to
+                                                 keytype = "SYMBOL") #The type of gene annotation of the keys
+  
+  gene.list.sym.stat[[i]] <- gene.list[[i]] %>% #create a new list of entrez id genes ranked by stat
+    dplyr::filter(!is.na(symbol)) %>%  #remove any "NA" entries (entrezids that could not be mapped to gene symbols)
+    dplyr::select(symbol, stat) %>% 
+    dplyr::arrange(stat) %>% #rank from lowest to highest
+    tibble::deframe() #create a list of numerical vectors containing the ranked stat value for each comparison
+}
+
+names(gene.list.sym.stat) <- names(gene.list)
+```
+
+### 2.2 Load the desired gene sets for functional enrichment analysis 
+
+#### 2.2.1 Obtain Gene Sets from Molecular Signatures Database (MSigDb)
+
+[Molecular Signatures Database (MSigDb)]("https://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp?collection)
+
+I am interested in the following gene collections:
+
+1. **Hallmark:** (category=H): Hallmark gene sets summarize and represent specific well-defined biological states or processes and display coherent expression. These gene sets were generated by a computational methodology based on identifying overlaps between gene sets in other MSigDB collections and retaining genes that display coordinate expression
+  - Category H= Hallmark Gene Sets
+2. **Kyoto Encyclopedia of Genes and Genomes (KEGG):** a collection of manually drawn pathway maps representing molecular interaction and reaction networks. These pathways cover a wide range of biochemical processes that can be divided in 7 broad categories: metabolism, genetic and environmental information processing, cellular processes, organismal systems, human diseases, and drug development
+  - Category C2= Curated Gene Sets
+  - Subcategory KEGG= Canonical Pathways gene sets derived from the KEGG pathway database.
+3. **Reactome:**  Canonical Pathways gene sets derived from the Reactome pathway database.
+  - Category C2= Curated Gene Sets
+  - Subcategory Reactome= Canonical Pathways gene sets derived from the Reactome pathway database.
+4. **Gene Ontology (GO):** defines concepts/classes used to describe gene function, and relationships between these concepts
+  - Category C5= GO Gene sets
+  - by not specifying a subcategory I am obtaining all three (3):
+    - BP= Gene sets derived from the GO Biological Process Ontology
+    - CC= Gene sets derived from the GO Cellular Component Ontology
+    - MF= Gene sets derived from the GO Molecular Function Ontology
+5. **WikiPathways:** Canonical Pathways gene sets derived from the WikiPathways pathway database.
+
+
+Read in each gene collection using the `msigdbr` package and tidying the resulting data object using `dplyr`
+```{r, MGSigDB, echo=TRUE, eval=TRUE}
+library(msigdbr)
+# 1. Retrieve the mouse gene sets from the HALLMARK collection (stored as a data frame)
+hallmark = msigdbr(species = "Mus musculus", category = "H") %>% 
+  dplyr::select(gs_name, entrez_gene, gene_symbol) %>% #only save the gene set names and entrez id from this collection
+  dplyr::mutate(gs_name=gsub("HALLMARK_","",gs_name)) %>% #remove the "HALLMARK_" prefix from each gene set name entry
+  dplyr::rename(term = gs_name) %>% #rename gs_name (gene set name) to term
+  dplyr::rename(symbol = gene_symbol) %>% #rename gene_symbol to symbol
+  dplyr::rename(entrez = entrez_gene) %>% #rename entrez_gene to entrez
+  dplyr::mutate(term = as.character(term)) 
+
+# 2. Retrieve the mouse gene sets from the KEGG collection
+kegg = msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")%>% 
+  dplyr::select(gs_name, entrez_gene, gene_symbol) %>% 
+  dplyr::mutate(gs_name=gsub("KEGG_","",gs_name)) %>% #remove the "KEGG_" prefix from each gene set name entry
+  dplyr::rename(term = gs_name) %>% #rename gs_name (gene set name) to term
+  dplyr::rename(symbol = gene_symbol) %>% #rename gene_symbol to symbol
+  dplyr::rename(entrez = entrez_gene) %>% #rename entrez_gene to entrez
+  dplyr::mutate(term = as.character(term)) 
+
+# 3. Retrieve the mouse gene sets from the REACTOME collection
+reactome = msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:REACTOME")%>% 
+  dplyr::select(gs_name, entrez_gene, gene_symbol) %>% 
+  dplyr::mutate(gs_name=gsub("REACTOME_","",gs_name)) %>% #remove the "REACTOME_" prefix from each gene set name entry
+  dplyr::rename(term = gs_name) %>% #rename gs_name (gene set name) to term
+  dplyr::rename(symbol = gene_symbol) %>% #rename gene_symbol to symbol
+  dplyr::rename(entrez = entrez_gene) %>% #rename entrez_gene to entrez
+  dplyr::mutate(term = as.character(term)) 
+
+# 4. Retrieve the mouse gene sets from the GO collection
+go = msigdbr(species = "Mus musculus", category = "C5")%>% 
+  dplyr::select(gs_name, entrez_gene, gene_symbol) %>% 
+  dplyr::mutate(gs_name=gsub("GO_","",gs_name)) %>% #remove the "GO_" prefix from each gene set name entry
+  dplyr::rename(term = gs_name) %>% #rename gs_name (gene set name) to term
+  dplyr::rename(symbol = gene_symbol) %>% #rename gene_symbol to symbol
+  dplyr::rename(entrez = entrez_gene) %>% #rename entrez_gene to entrez
+  dplyr::mutate(term = as.character(term)) 
+
+# 5. Retrieve the mouse gene sets from the GO collection
+wp = msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:WIKIPATHWAYS")%>% 
+  dplyr::select(gs_name, entrez_gene, gene_symbol) %>% 
+  dplyr::mutate(gs_name=gsub("WP_","",gs_name)) %>% #remove the "WP_" prefix from each gene set name entry
+  dplyr::rename(term = gs_name) %>% #rename gs_name (gene set name) to term
+  dplyr::rename(symbol = gene_symbol) %>% #rename gene_symbol to symbol
+  dplyr::rename(entrez = entrez_gene) %>% #rename entrez_gene to entrez
+  dplyr::mutate(term = as.character(term)) 
+
+```
+
+#### 2.2.2 Organize genes from MSigDb Genesets by Pathway
+
+Create a "term to gene" (t2g) list for each gene collection so that each individual gene pathway/set in the collection is saved as a list
+```{r}
+#Group gene sets by term
+#hallmark
+a <- hallmark %>% dplyr::group_by(term)
+a <- a %>%  
+  dplyr::group_split() %>% #split data frame according to terms
+  magrittr::set_names(unlist(dplyr::group_keys(a))) #each character vector in dataframe is named for the term
+
+m_t2g_H_list <- lapply(a, function(z){dplyr::pull(z, symbol)}) #extract the genes that belong to each term
+
+#KEGG
+b <- kegg %>% dplyr::group_by(term)
+b <- b %>%
+  dplyr::group_split() %>%
+  magrittr::set_names(unlist(dplyr::group_keys(b)))
+m_t2g_K_list <- lapply(b, function(z){dplyr::pull(z, symbol)})
+
+#Reactome
+c <- reactome %>% dplyr::group_by(term)
+c <- c %>%
+  dplyr::group_split() %>%
+  magrittr::set_names(unlist(dplyr::group_keys(c)))
+m_t2g_R_list <- lapply(c, function(z){dplyr::pull(z, symbol)})
+
+#GO
+d <- reactome %>% dplyr::group_by(term)
+d <- d %>%
+  dplyr::group_split() %>%
+  magrittr::set_names(unlist(dplyr::group_keys(d)))
+m_t2g_G_list <- lapply(d, function(z){dplyr::pull(z, symbol)})
+
+#wikipathways
+e <- wp %>% dplyr::group_by(term)
+e <- e %>%
+  dplyr::group_split() %>%
+  magrittr::set_names(unlist(dplyr::group_keys(e)))
+m_t2g_WP_list <- lapply(e, function(z){dplyr::pull(z, symbol)})
+```
+
+#### 2.2.3 Read in Custom Gene Set
+
+My lab has a list of *human* genes known to be upregulated in exhausted T cells (Texh) and a list of genes known to be downregulated in Texh. Given the clinical relvance of exhausted T cells in cancer and other chronic inflammatory states, I first convert these genes to mouse genes and then will apply these gene sets to my analysis here. 
+```{r Texh_readin}
+#define the path to the Texh gene sets
+TexhUP <- "/Users/hayc/Box/Henrickson/Experiments/DataScience/ESG_UP_ATAC.grp"
+TexhDN <- "/Users/hayc/Box/Henrickson/Experiments/DataScience/ESG_DN_ATAC.grp"
+
+#read in gene set
+Texh.up <- read.csv(TexhUP, header=FALSE)
+Texh.dn <- read.csv(TexhDN, header=FALSE)
+
+#get human ensembl gene ids using biomaRt
+human <- biomaRt::useMart('ensembl', dataset = 'hsapiens_gene_ensembl')
+#get mouse ensembl gene ids using biomaRt
+mouse <- biomaRt::useMart('ensembl', dataset = 'mmusculus_gene_ensembl')
+
+#convert the upregulated Texh genes
+Texh.up.mouse <- biomaRt::getLDS(attributes = c('hgnc_symbol'),
+                                 filters = 'hgnc_symbol',
+                                 values = Texh.up$V1 ,
+                                 mart = human,
+                                 attributesL = c('mgi_symbol'),
+                                 martL = mouse, uniqueRows=TRUE)
+#create a named list of converted genes for use in flea
+Texh.up.mouse.list <- list(Texh.up.mouse=Texh.up.mouse$MGI.symbol)
+
+#convert downregulated genes and save as named list
+Texh.down.mouse <- biomaRt::getLDS(attributes = c('hgnc_symbol'),
+                                 filters = 'hgnc_symbol',
+                                 values = Texh.dn$V1 ,
+                                 mart = human,
+                                 attributesL = c('mgi_symbol'),
+                                 martL = mouse, uniqueRows=TRUE)
+Texh.down.mouse.list <- list(Texh.up.mouse=Texh.down.mouse$MGI.symbol)
+
+```
+
+#### 2.2.4 Run GSEA for each pairwise comparison against the MSigDb and Texh gene sets
+
+Because I saved all of the ranked genes per n=9 pairwise comparison in a single list, I created a for loop so I can interate over this list to generate fgsea results for each of the 7 gene collections of interest.
+```{r fgsea_res}
+#hallmark
+H_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  H_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= m_t2g_H_list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  H_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_hallmark_results.csv", quote = FALSE)
+}
+names(H_fgsea.res) <- names(gene.list)
+
+#KEGG
+K_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  K_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= m_t2g_K_list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  K_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_KEGG_results.csv", quote = FALSE)
+}
+names(K_fgsea.res) <- names(gene.list)
+
+#Reactome
+R_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  R_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= m_t2g_R_list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  R_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_reactome_results.csv", quote = FALSE)
+}
+names(R_fgsea.res) <- names(gene.list)
+
+#GO
+G_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  G_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= m_t2g_G_list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  G_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_GO_results.csv", quote = FALSE)
+}
+names(G_fgsea.res) <- names(gene.list)
+
+#WikiPathways
+WP_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  WP_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= m_t2g_WP_list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  WP_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_WP_results.csv", quote = FALSE)
+}
+names(WP_fgsea.res) <- names(gene.list)
+
+#Upregulated in exhausted T cells
+TexhUP_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  TexhUP_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= Texh.up.mouse.list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    #dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  TexhUP_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_TexhUP_results.csv", quote = FALSE)
+}
+names(TexhUP_fgsea.res) <- names(gene.list)
+
+#Downregulated in exhausted T cells
+TexhDN_fgsea.res <- list()
+for (i in 1:length(gene.list.sym.stat)) {
+  set.seed(42)
+  TexhDN_fgsea.res[[i]] <- fgsea::fgseaMultilevel(pathways= Texh.down.mouse.list,
+                                             stats= gene.list.sym.stat[[i]],
+                                             minSize  = 15,
+                                             maxSize  = Inf) %>% 
+    dplyr::arrange(NES) %>%
+    dplyr::filter(padj <= 0.01) %>%
+    #dplyr::mutate(pathway = factor(pathway, levels = pathway)) %>% 
+    as_tibble()
+  TexhDN_fgsea.res[[i]] %>% 
+    mutate(leadingEdge = sapply(leadingEdge, toString)) %>%
+    write.csv(., file = "GSEA_TexhDN_results.csv", quote = FALSE)
+}
+names(TexhDN_fgsea.res) <- names(gene.list)
+
+```
+
+Before I continue on with analysis, here I take a back step to verify that I can recapitulate the results reported by [Lee JY, et al](https://pubmed-ncbi-nlm-nih-gov.proxy.library.upenn.edu/31866067/). My results match well with the previously published data in that at the 48hr timepoint, cells treated with SAA1 upregulate genes involved in pathogenic Th17 polarization whereas cells treated with TGFb and IL-6 have an expression signature that correlated well with non-pathogenic Th17 cell polarization
+
+#### 2.2.5 Can I recapitulate the published results?
+
+```{r recap}
+published.genes <- c("Gzmb", "Il22", "Tbx21", "Casp6", "S100a4","Ccr6", "Ilr1", "Il23r", "Gpr15", "Ahr")
+SAA1.TGFb.top10 <- ggpubr::ggmaplot(data=DEGres.list[[6]],
+                 FDR= 0.01,
+                 fc= 1.5,
+                 size= 0.4,
+                 #palette = c("#B31B21", "#1465AC", "darkgray"),
+                 genenames= as.vector(DEGres.list[[6]]$Gene),
+                 top = 10,
+                 label.select = published.genes,
+                 legend = "none",
+                 select.top.method = c("padj", "fc"),
+                 font.label = c("bold", 10),
+                 label.rectangle = TRUE,
+                 ylab = "Log2FoldChange",
+                 title= "Top 10 DEGs in SAA1 vs IL-6 (48hrs)",
+                 ggtheme = ggplot2::theme_minimal())
+
+SAA1.TGFb.pubgenes <- ggpubr::ggmaplot(data=DEGres.list[[6]],
+                                       FDR= 0.01,
+                                       fc= 1.5,
+                                       size= 0.4,
+                                       #palette = c("#B31B21", "#1465AC", "darkgray"),
+                                       genenames= as.vector(DEGres.list[[6]]$Gene),
+                                       top = 0,
+                                       label.select = published.genes,
+                                       legend = "none",
+                                       select.top.method = c("padj", "fc"),
+                                       font.label = c("bold", 10),
+                                       label.rectangle = TRUE,
+                                       ylab = "Log2FoldChange",
+                                       title= "Published DEGs in SAA1 vs IL-6 (48hrs)",
+                                       ggtheme = ggplot2::theme_minimal())
+
+cowplot::plot_grid(SAA1.TGFb.top10, SAA1.TGFb.pubgenes, ncol=1)
+```
+
+
+## 3. Visualization
+
+### 3.1 Generating Plots and Tables
+
+In this section, I write functions to generate the desired tables and figures and store the results of each visualization method as a named data object
+
+#### 3.1.1 Tabular Results
+
+Generate tables for all pairwise comparisons across all gene collections
+
+```{r tables}
+#Write function for generating interactive tables for hallmark pathways
+H_fgsea.table <- function(x){
+  H_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("Hallmark Results: ",comp.names[[3]][[x]]))))
+}
+                                                                        
+H_SAA1.IL6.3.table <- H_fgsea.table(x=3)
+H_SAA1.IL6.12.table <- H_fgsea.table(x=1)
+H_SAA1.IL6.48.table <- H_fgsea.table(x=5)
+
+H_SAA1.TGFb.3.table <- H_fgsea.table(x=4)
+H_SAA1.TGFb.12.table <- H_fgsea.table(x=2)
+H_SAA1.TGFb.48.table <- H_fgsea.table(x=6)
+
+H_TGFb.IL6.3.table <- H_fgsea.table(x=8)
+H_TGFb.IL6.12.table <- H_fgsea.table(x=7)
+H_TGFb.IL6.48.table <- H_fgsea.table(x=9)
+
+#----
+#KEGG Pathways
+K_fgsea.table <- function(x){
+  K_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("KEGG Results: ",comp.names[[3]][[x]]))))
+}
+K_SAA1.IL6.3.table <- K_fgsea.table(x=3)
+K_SAA1.IL6.12.table <- K_fgsea.table(x=1)
+K_SAA1.IL6.48.table <- K_fgsea.table(x=5)
+
+K_SAA1.TGFb.3.table <- K_fgsea.table(x=4)
+K_SAA1.TGFb.12.table <- K_fgsea.table(x=2)
+K_SAA1.TGFb.48.table <- K_fgsea.table(x=6)
+
+K_TGFb.IL6.3.table <- K_fgsea.table(x=8)
+K_TGFb.IL6.12.table <- K_fgsea.table(x=7)
+K_TGFb.IL6.48.table <- K_fgsea.table(x=9)
+
+#----
+#reactome
+R_fgsea.table <- function(x){
+  R_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("Reactome Results: ",comp.names[[3]][[x]]))))
+}
+
+R_SAA1.IL6.3.table <- R_fgsea.table(x=3)
+R_SAA1.IL6.12.table <- R_fgsea.table(x=1)
+R_SAA1.IL6.48.table <- R_fgsea.table(x=5)
+
+R_SAA1.TGFb.3.table <- R_fgsea.table(x=4)
+R_SAA1.TGFb.12.table <- R_fgsea.table(x=2)
+R_SAA1.TGFb.48.table <- R_fgsea.table(x=6)
+
+R_TGFb.IL6.3.table <- R_fgsea.table(x=8)
+R_TGFb.IL6.12.table <- R_fgsea.table(x=7)
+R_TGFb.IL6.48.table <- R_fgsea.table(x=9)
+
+#----
+#GO
+G_fgsea.table <- function(x){
+  G_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("GO Results: ",comp.names[[3]][[x]]))))
+}
+G_SAA1.IL6.3.table <- G_fgsea.table(x=3)
+G_SAA1.IL6.12.table <- G_fgsea.table(x=1)
+G_SAA1.IL6.48.table <- G_fgsea.table(x=5)
+
+G_SAA1.TGFb.3.table <- G_fgsea.table(x=4)
+G_SAA1.TGFb.12.table <- G_fgsea.table(x=2)
+G_SAA1.TGFb.48.table <- G_fgsea.table(x=6)
+
+G_TGFb.IL6.3.table <- G_fgsea.table(x=8)
+G_TGFb.IL6.12.table <- G_fgsea.table(x=7)
+G_TGFb.IL6.48.table <- G_fgsea.table(x=9)
+
+#----
+#WikiPathways
+WP_fgsea.table <- function(x){
+  WP_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("WikiPathways Results: ",comp.names[[3]][[x]]))))
+}
+
+WP_SAA1.IL6.3.table <- WP_fgsea.table(x=3)
+WP_SAA1.IL6.12.table <- WP_fgsea.table(x=1)
+WP_SAA1.IL6.48.table <- WP_fgsea.table(x=5)
+
+WP_SAA1.TGFb.3.table <- WP_fgsea.table(x=4)
+WP_SAA1.TGFb.12.table <- WP_fgsea.table(x=2)
+WP_SAA1.TGFb.48.table <- WP_fgsea.table(x=6)
+
+WP_TGFb.IL6.3.table <- WP_fgsea.table(x=8)
+WP_TGFb.IL6.12.table <- WP_fgsea.table(x=7)
+WP_TGFb.IL6.48.table <- WP_fgsea.table(x=9)
+
+#----
+#Upregulated Tcell Exhaustion Visualization
+TexhUP_fgsea.table <- function(x){
+  TexhUP_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("Upregulated in Tcell Exh:",comp.names[[3]][[x]]))))
+}
+UP_SAA1.IL6.3.table <- TexhUP_fgsea.table(x=3)
+UP_SAA1.IL6.12.table <- TexhUP_fgsea.table(x=1)
+UP_SAA1.IL6.48.table <- TexhUP_fgsea.table(x=5)
+
+UP_SAA1.TGFb.3.table <- TexhUP_fgsea.table(x=4)
+UP_SAA1.TGFb.12.table <- TexhUP_fgsea.table(x=2)
+UP_SAA1.TGFb.48.table <- TexhUP_fgsea.table(x=6)
+
+UP_TGFb.IL6.3.table <- TexhUP_fgsea.table(x=8)
+UP_TGFb.IL6.12.table <- TexhUP_fgsea.table(x=7)
+UP_TGFb.IL6.48.table <- TexhUP_fgsea.table(x=9)
+
+#----
+#Downregulated Tcell Exhaustion Visualization
+TexhDN_fgsea.table <- function(x){
+  TexhDN_fgsea.res[[x]] %>% 
+    dplyr::as_tibble() %>% 
+    dplyr::select(-leadingEdge) %>% 
+    dplyr::mutate_if(is.numeric, round, 3) %>% 
+    arrange(desc(NES)) %>%
+    DT::datatable(caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center;color: black;font-size:150%', htmltools::em(paste0("Downregulated in Tcell Exh: ",comp.names[[3]][[x]]))))
+}
+DN_SAA1.IL6.3.table <- TexhDN_fgsea.table(x=3)
+DN_SAA1.IL6.12.table <- TexhDN_fgsea.table(x=1)
+DN_SAA1.IL6.48.table <- TexhDN_fgsea.table(x=5)
+
+DN_SAA1.TGFb.3.table <- TexhDN_fgsea.table(x=4)
+DN_SAA1.TGFb.12.table <- TexhDN_fgsea.table(x=2)
+DN_SAA1.TGFb.48.table <- TexhDN_fgsea.table(x=6)
+
+DN_TGFb.IL6.3.table <- TexhDN_fgsea.table(x=8)
+DN_TGFb.IL6.12.table <- TexhDN_fgsea.table(x=7)
+DN_TGFb.IL6.48.table <- TexhDN_fgsea.table(x=9)
+
+```
+
+#### 3.1.2 NES Plot
+
+Generate Normalized Enrichment Score (NES) plots for all pairwise comparisons across all gene collections. Enrichment scores greater than 0 indicate upregulation whereas scores less than 0 signal downregulation. The color of the bar correlates to the adjusted p value. 
+```{r NESPlots}
+#Hallmark
+H_fgsea.NES.plot <- function(x){
+  H_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("Hallmark Results: ",comp.names[[3]][[x]]))+
+  theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+        axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+        legend.title = element_text(size=6), #change size of legend title
+        legend.text =element_text(size=6), #change size of legend test
+        legend.key.height= unit(0.3, 'cm'), #change height of legend
+        legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+  ylab(NULL) #remove y axis label
+}
+H_SAA1.IL6.3.NES <- H_fgsea.NES.plot(x=3)
+H_SAA1.IL6.12.NES <- H_fgsea.NES.plot(x=1)
+H_SAA1.IL6.48.NES <- H_fgsea.NES.plot(x=5)
+
+H_SAA1.TGFb.3.NES <- H_fgsea.NES.plot(x=4)
+H_SAA1.TGFb.12.NES <- H_fgsea.NES.plot(x=2)
+H_SAA1.TGFb.48.NES <- H_fgsea.NES.plot(x=6)
+
+H_TGFb.IL6.3.NES <- H_fgsea.NES.plot(x=8)
+H_TGFb.IL6.12.NES <- H_fgsea.NES.plot(x=7)
+H_TGFb.IL6.48.NES <- H_fgsea.NES.plot(x=9)
+
+#----
+#KEGG Pathways
+K_fgsea.NES.plot <- function(x){
+  K_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("KEGG Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+K_SAA1.IL6.3.NES <- K_fgsea.NES.plot(x=3)
+K_SAA1.IL6.12.NES <- K_fgsea.NES.plot(x=1)
+K_SAA1.IL6.48.NES <- K_fgsea.NES.plot(x=5)
+
+K_SAA1.TGFb.3.NES <- K_fgsea.NES.plot(x=4)
+K_SAA1.TGFb.12.NES <- K_fgsea.NES.plot(x=2)
+K_SAA1.TGFb.48.NES <- K_fgsea.NES.plot(x=6)
+
+K_TGFb.IL6.3.NES <- K_fgsea.NES.plot(x=8)
+K_TGFb.IL6.12.NES <- K_fgsea.NES.plot(x=7)
+K_TGFb.IL6.48.NES <- K_fgsea.NES.plot(x=9)
+
+#----
+#reactome
+R_fgsea.NES.plot <- function(x){
+  R_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("Reactome Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+R_SAA1.IL6.3.NES <- R_fgsea.NES.plot(x=3)
+R_SAA1.IL6.12.NES <- R_fgsea.NES.plot(x=1)
+R_SAA1.IL6.48.NES <- R_fgsea.NES.plot(x=5)
+
+R_SAA1.TGFb.3.NES <- R_fgsea.NES.plot(x=4)
+R_SAA1.TGFb.12.NES <- R_fgsea.NES.plot(x=2)
+R_SAA1.TGFb.48.NES <- R_fgsea.NES.plot(x=6)
+
+R_TGFb.IL6.3.NES <- R_fgsea.NES.plot(x=8)
+R_TGFb.IL6.12.NES <- R_fgsea.NES.plot(x=7)
+R_TGFb.IL6.48.NES <- R_fgsea.NES.plot(x=9)
+
+#----
+#GO
+G_fgsea.NES.plot <- function(x){
+  G_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("GO Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+G_SAA1.IL6.3.NES <- G_fgsea.NES.plot(x=3)
+G_SAA1.IL6.12.NES <- G_fgsea.NES.plot(x=1)
+G_SAA1.IL6.48.NES <- G_fgsea.NES.plot(x=5)
+
+G_SAA1.TGFb.3.NES <- G_fgsea.NES.plot(x=4)
+G_SAA1.TGFb.12.NES <- G_fgsea.NES.plot(x=2)
+G_SAA1.TGFb.48.NES <- G_fgsea.NES.plot(x=6)
+
+G_TGFb.IL6.3.NES <- G_fgsea.NES.plot(x=8)
+G_TGFb.IL6.12.NES <- G_fgsea.NES.plot(x=7)
+G_TGFb.IL6.48.NES <- G_fgsea.NES.plot(x=9)
+
+#----
+#WikiPathways
+WP_fgsea.NES.plot <- function(x){
+  WP_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("WikiPathways Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+WP_SAA1.IL6.3.NES <- WP_fgsea.NES.plot(x=3)
+WP_SAA1.IL6.12.NES <- WP_fgsea.NES.plot(x=1)
+WP_SAA1.IL6.48.NES <- WP_fgsea.NES.plot(x=5)
+
+WP_SAA1.TGFb.3.NES <- WP_fgsea.NES.plot(x=4)
+WP_SAA1.TGFb.12.NES <- WP_fgsea.NES.plot(x=2)
+WP_SAA1.TGFb.48.NES <- WP_fgsea.NES.plot(x=6)
+
+WP_TGFb.IL6.3.NES <- WP_fgsea.NES.plot(x=8)
+WP_TGFb.IL6.12.NES <- WP_fgsea.NES.plot(x=7)
+WP_TGFb.IL6.48.NES <- WP_fgsea.NES.plot(x=9)
+
+#----  
+#Upregulated Tcell Exhaustion Visualization
+TexhUP_fgsea.NES.plot <- function(x){
+  TexhUP_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("Upregulated in Exhausted T cells ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+UP_SAA1.IL6.3.NES <- TexhUP_fgsea.NES.plot(x=3)
+UP_SAA1.IL6.12.NES <- TexhUP_fgsea.NES.plot(x=1)
+UP_SAA1.IL6.48.NES <- TexhUP_fgsea.NES.plot(x=5)
+
+UP_SAA1.TGFb.3.NES <- TexhUP_fgsea.NES.plot(x=4)
+UP_SAA1.TGFb.12.NES <- TexhUP_fgsea.NES.plot(x=2)
+UP_SAA1.TGFb.48.NES <- TexhUP_fgsea.NES.plot(x=6)
+
+UP_TGFb.IL6.3.NES <- TexhUP_fgsea.NES.plot(x=8)
+UP_TGFb.IL6.12.NES <- TexhUP_fgsea.NES.plot(x=7)
+UP_TGFb.IL6.48.NES <- TexhUP_fgsea.NES.plot(x=9)
+
+#----
+#Downregulated Tcell Exhaustion Visualization
+TexhDN_fgsea.NES.plot <- function(x){
+  TexhDN_fgsea.res[[x]] %>%
+  dplyr::filter(padj <= 0.05) %>%
+  ggplot(aes(x = NES, y = pathway, fill = padj))+
+  geom_col()+
+  scale_fill_viridis_c()+
+  ggtitle(paste0("Downregulated in Exhausted T cells ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),#change size of plot title font
+          axis.text.y = element_text(size=5), #change size of y asix labels (pathway names)
+          legend.title = element_text(size=6), #change size of legend title
+          legend.text =element_text(size=6), #change size of legend test
+          legend.key.height= unit(0.3, 'cm'), #change height of legend
+          legend.key.width= unit(0.3, 'cm'))+ #change width of legend
+    ylab(NULL) #remove y axis label
+}
+DN_SAA1.IL6.3.NES <- TexhDN_fgsea.NES.plot(x=3)
+DN_SAA1.IL6.12.NES <- TexhDN_fgsea.NES.plot(x=1)
+DN_SAA1.IL6.48.NES <- TexhDN_fgsea.NES.plot(x=5)
+
+DN_SAA1.TGFb.3.NES <- TexhDN_fgsea.NES.plot(x=4)
+DN_SAA1.TGFb.12.NES <- TexhDN_fgsea.NES.plot(x=2)
+DN_SAA1.TGFb.48.NES <- TexhDN_fgsea.NES.plot(x=6)
+
+DN_TGFb.IL6.3.NES <- TexhDN_fgsea.NES.plot(x=8)
+DN_TGFb.IL6.12.NES <- TexhDN_fgsea.NES.plot(x=7)
+DN_TGFb.IL6.48.NES <- TexhDN_fgsea.NES.plot(x=9)
+
+```
+
+
+#### 3.1.3 Dotplots
+
+Generate dot plots for all pairwise comparisons across all gene collections. These plots are very similar to the NES plots with the addition of encoding the number of leading edge genes included in the enriched pathways. Here, the color coding also related to the p-value and the size of the dot is related to the number of genes/
+```{r dotplots}
+#Hallmark
+H_fgsea.dot.plot <- function(x){
+  H_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("Hallmark Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+H_SAA1.IL6.3.dot <- H_fgsea.dot.plot(x=3)
+H_SAA1.IL6.12.dot <- H_fgsea.dot.plot(x=1)
+H_SAA1.IL6.48.dot <- H_fgsea.dot.plot(x=5)
+
+H_SAA1.TGFb.3.dot <- H_fgsea.dot.plot(x=4)
+H_SAA1.TGFb.12.dot <- H_fgsea.dot.plot(x=2)
+H_SAA1.TGFb.48.dot <- H_fgsea.dot.plot(x=6)
+
+H_TGFb.IL6.3.dot <- H_fgsea.dot.plot(x=8)
+H_TGFb.IL6.12.dot <- H_fgsea.dot.plot(x=7)
+H_TGFb.IL6.48.dot <- H_fgsea.dot.plot(x=9)
+
+#----
+#KEGG
+K_fgsea.dot.plot <- function(x){
+  K_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("KEGG Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+K_SAA1.IL6.3.dot <- K_fgsea.dot.plot(x=3)
+K_SAA1.IL6.12.dot <- K_fgsea.dot.plot(x=1)
+K_SAA1.IL6.48.dot <- K_fgsea.dot.plot(x=5)
+
+K_SAA1.TGFb.3.dot <- K_fgsea.dot.plot(x=4)
+K_SAA1.TGFb.12.dot <- K_fgsea.dot.plot(x=2)
+K_SAA1.TGFb.48.dot <- K_fgsea.dot.plot(x=6)
+
+K_TGFb.IL6.3.dot <- K_fgsea.dot.plot(x=8)
+K_TGFb.IL6.12.dot <- K_fgsea.dot.plot(x=7)
+K_TGFb.IL6.48.dot <- K_fgsea.dot.plot(x=9)
+
+#----
+#Reactome
+R_fgsea.dot.plot <- function(x){
+  R_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("Reactome Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+R_SAA1.IL6.3.dot <- R_fgsea.dot.plot(x=3)
+R_SAA1.IL6.12.dot <- R_fgsea.dot.plot(x=1)
+R_SAA1.IL6.48.dot <- R_fgsea.dot.plot(x=5)
+
+R_SAA1.TGFb.3.dot <- R_fgsea.dot.plot(x=4)
+R_SAA1.TGFb.12.dot <- R_fgsea.dot.plot(x=2)
+R_SAA1.TGFb.48.dot <- R_fgsea.dot.plot(x=6)
+
+R_TGFb.IL6.3.dot <- R_fgsea.dot.plot(x=8)
+R_TGFb.IL6.12.dot <- R_fgsea.dot.plot(x=7)
+R_TGFb.IL6.48.dot <- R_fgsea.dot.plot(x=9)
+
+#----
+#GO
+G_fgsea.dot.plot <- function(x){
+  G_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("GO Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+G_SAA1.IL6.3.dot <- G_fgsea.dot.plot(x=3)
+G_SAA1.IL6.12.dot <- G_fgsea.dot.plot(x=1)
+G_SAA1.IL6.48.dot <- G_fgsea.dot.plot(x=5)
+
+G_SAA1.TGFb.3.dot <- G_fgsea.dot.plot(x=4)
+G_SAA1.TGFb.12.dot <- G_fgsea.dot.plot(x=2)
+G_SAA1.TGFb.48.dot <- G_fgsea.dot.plot(x=6)
+
+G_TGFb.IL6.3.dot <- G_fgsea.dot.plot(x=8)
+G_TGFb.IL6.12.dot <- G_fgsea.dot.plot(x=7)
+G_TGFb.IL6.48.dot <- G_fgsea.dot.plot(x=9)
+
+#----
+#WikiPathways
+WP_fgsea.dot.plot <- function(x){
+  WP_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("WikiPathways Results: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+WP_SAA1.IL6.3.dot <- WP_fgsea.dot.plot(x=3)
+WP_SAA1.IL6.12.dot <- WP_fgsea.dot.plot(x=1)
+WP_SAA1.IL6.48.dot <- WP_fgsea.dot.plot(x=5)
+
+WP_SAA1.TGFb.3.dot <- WP_fgsea.dot.plot(x=4)
+WP_SAA1.TGFb.12.dot <- WP_fgsea.dot.plot(x=2)
+WP_SAA1.TGFb.48.dot <- WP_fgsea.dot.plot(x=6)
+
+WP_TGFb.IL6.3.dot <- WP_fgsea.dot.plot(x=8)
+WP_TGFb.IL6.12.dot <- WP_fgsea.dot.plot(x=7)
+WP_TGFb.IL6.48.dot <- WP_fgsea.dot.plot(x=9)
+
+#----
+#Upregulated in Texh
+TexhUP_fgsea.dot.plot <- function(x){
+  TexhUP_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("Upregulated in Texh: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+UP_SAA1.IL6.3.dot <- TexhUP_fgsea.dot.plot(x=3)
+UP_SAA1.IL6.12.dot <- TexhUP_fgsea.dot.plot(x=1)
+UP_SAA1.IL6.48.dot <- TexhUP_fgsea.dot.plot(x=5)
+
+UP_SAA1.TGFb.3.dot <- TexhUP_fgsea.dot.plot(x=4)
+UP_SAA1.TGFb.12.dot <- TexhUP_fgsea.dot.plot(x=2)
+UP_SAA1.TGFb.48.dot <- TexhUP_fgsea.dot.plot(x=6)
+
+UP_TGFb.IL6.3.dot <- TexhUP_fgsea.dot.plot(x=8)
+UP_TGFb.IL6.12.dot <- TexhUP_fgsea.dot.plot(x=7)
+UP_TGFb.IL6.48.dot <- TexhUP_fgsea.dot.plot(x=9)
+
+#----
+#Downregulated in Texh
+TexhDN_fgsea.dot.plot <- function(x){
+  TexhDN_fgsea.res[[x]] %>%
+    filter(padj < 0.01) %>%
+    dplyr::slice_max(order_by = -padj, n = 10) %>%
+    mutate(num_leading_edge = lengths(leadingEdge)) %>%
+    mutate(gene_ratio = num_leading_edge/size) %>%
+    ggplot(aes(x = gene_ratio, y = pathway, colour=padj, size = num_leading_edge))+
+    geom_point()+
+    scale_fill_viridis_c()+
+    ggtitle(paste0("Downregulated in Texh: ",comp.names[[3]][[x]]))+
+    theme(plot.title=element_text(hjust=0.5, size=10),
+          axis.text.x = element_text(size=6),
+          axis.text.y = element_text(size=6),
+          axis.title = element_text(size=7),
+          legend.title = element_text(size=4),
+          legend.text = element_text(size=6),
+          legend.key.height= unit(0.3, 'cm'),
+          legend.key.width= unit(0.3, 'cm'))+
+  ylab(NULL)+
+  xlab("Gene Ratio")
+}
+
+DN_SAA1.IL6.3.dot <- TexhDN_fgsea.dot.plot(x=3)
+DN_SAA1.IL6.12.dot <- TexhDN_fgsea.dot.plot(x=1)
+DN_SAA1.IL6.48.dot <- TexhDN_fgsea.dot.plot(x=5)
+
+DN_SAA1.TGFb.3.dot <- TexhDN_fgsea.dot.plot(x=4)
+DN_SAA1.TGFb.12.dot <- TexhDN_fgsea.dot.plot(x=2)
+DN_SAA1.TGFb.48.dot <- TexhDN_fgsea.dot.plot(x=6)
+
+DN_TGFb.IL6.3.dot <- TexhDN_fgsea.dot.plot(x=8)
+DN_TGFb.IL6.12.dot <- TexhDN_fgsea.dot.plot(x=7)
+DN_TGFb.IL6.48.dot <- TexhDN_fgsea.dot.plot(x=9)
+```
+
+
+### 3.2 Functional Enrichment Visualization
+#### 3.2.1 Comparisons Within Cytokine Treatments
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when cytokine treatments is held constant
+
+##### 3.2.2 SAA1 vs IL-6
+In this comparison, cells treated with SAA1 are compared to culture conditions that do not favor Th17 polarization. In each of the subsequent sections I generate an interactive table, an NES plot and a dotplot for SAA1 vs IL-6 at 3, 12 and 48 hours per gene set collection.
+
+##### 3.2.1.1 Hallmark
+
+Tabular Results
+```{r 1H_table}
+H_SAA1.IL6.3.table
+H_SAA1.IL6.12.table
+H_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1H_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(H_SAA1.IL6.3.NES,H_SAA1.IL6.12.NES,H_SAA1.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dot pLots
+```{r 1H_dot, fig.width=20, fig.height=15, fig.align="center"}
+cowplot::plot_grid(H_SAA1.IL6.3.dot,H_SAA1.IL6.12.dot,H_SAA1.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.1.2 KEGG
+
+Tabular Results
+```{r 1K_table}
+K_SAA1.IL6.3.table
+K_SAA1.IL6.12.table
+K_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1K_NES, fig.width=10, fig.height=10, fig.align="center"}
+cowplot::plot_grid(K_SAA1.IL6.3.NES,K_SAA1.IL6.12.NES,K_SAA1.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 1K_dot, fig.width=10, fig.height=10, fig.align="center"}
+cowplot::plot_grid(K_SAA1.IL6.3.dot,K_SAA1.IL6.12.dot,K_SAA1.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+
+##### 3.2.1.3 Reactome
+
+Tabular Results
+```{r 1R_table}
+R_SAA1.IL6.3.table
+R_SAA1.IL6.12.table
+R_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1R_NES, fig.width=30, fig.height=20, fig.align="center"}
+cowplot::plot_grid(R_SAA1.IL6.3.NES, R_SAA1.IL6.12.NES, R_SAA1.IL6.48.NES, ncol=1, align = "v", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 1R_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(R_SAA1.IL6.3.dot,R_SAA1.IL6.12.dot,R_SAA1.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.1.4 GO
+
+Tabular Results
+```{r 1G_table}
+G_SAA1.IL6.3.table
+G_SAA1.IL6.12.table
+G_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1G_NES, fig.width=10, fig.height=20, fig.align="center"}
+cowplot::plot_grid(G_SAA1.IL6.3.NES, G_SAA1.IL6.12.NES, G_SAA1.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+Dotplot
+```{r 1G_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(G_SAA1.IL6.3.dot, G_SAA1.IL6.12.dot, G_SAA1.IL6.48.dot, ncol=1, align = "v", axis="bt")
+```
+
+##### 3.2.1.5 WikiPathways
+
+Tabular Results
+```{r 1WP_table}
+WP_SAA1.IL6.3.table
+WP_SAA1.IL6.12.table
+WP_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1WP_NES, fig.width=18, fig.height=18, fig.align="center"}
+bottom.row3 <- cowplot::plot_grid(WP_SAA1.IL6.12.NES, WP_SAA1.IL6.48.NES, ncol=2, align = "h", axis="bt")
+cowplot::plot_grid(WP_SAA1.IL6.3.NES, bottom.row3, nrow=2)
+```
+
+Dotplot
+```{r 1WP_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(WP_SAA1.IL6.3.dot,WP_SAA1.IL6.12.dot,WP_SAA1.IL6.48.dot, nrow=3, align = "h", axis="bt")
+```
+
+##### 3.2.1.6 Upregulated in Exhausted T cells
+
+Tabular Results
+```{r 1UP_table}
+UP_SAA1.IL6.3.table
+UP_SAA1.IL6.12.table
+UP_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1UP_NES, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_SAA1.IL6.3.NES, UP_SAA1.IL6.12.NES, UP_SAA1.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 1UP_dot, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_SAA1.IL6.3.dot, UP_SAA1.IL6.12.dot, UP_SAA1.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.1.7 Downregulated in Exhausted T cells
+
+Tabular Results
+```{r 1DN_table}
+DN_SAA1.IL6.3.table
+DN_SAA1.IL6.12.table
+DN_SAA1.IL6.48.table
+```
+
+NES Plots
+```{r 1DN_NES, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_SAA1.IL6.3.NES, DN_SAA1.IL6.12.NES, DN_SAA1.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 1DN_dot, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_SAA1.IL6.3.dot,DN_SAA1.IL6.12.dot,DN_SAA1.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+---
+
+##### 3.2.3 SAA1 vs TGFb
+In this comparison, cells treated with SAA1 are compared to culture conditions known to mediate pathogenic Th17 polarization. In each of the subsequent sections I generate an interactive table, an NES plot and a dotplot for SAA1 vs TGFb at 3, 12 and 48 hours per gene set collection.
+
+##### 3.2.2.1 Hallmark
+
+Tabular Results
+```{r 2H_table}
+H_SAA1.TGFb.3.table
+H_SAA1.TGFb.12.table
+H_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2H_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(H_SAA1.TGFb.3.NES, H_SAA1.TGFb.12.NES, H_SAA1.TGFb.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 2H_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(H_SAA1.TGFb.3.dot, H_SAA1.TGFb.12.dot, H_SAA1.TGFb.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.2.2 KEGG
+
+Tabular Results
+```{r 2K_table}
+K_SAA1.TGFb.3.table
+K_SAA1.TGFb.12.table
+K_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2K_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(K_SAA1.TGFb.3.NES, K_SAA1.TGFb.12.NES, K_SAA1.TGFb.48.NES, nrow=2, align = "h", axis="bt")
+```
+
+Dotplot
+```{r 2K_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(K_SAA1.TGFb.3.dot, K_SAA1.TGFb.12.dot, K_SAA1.TGFb.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.2.3 Reactome
+
+Tabular Results
+```{r 2R_table}
+R_SAA1.TGFb.3.table
+R_SAA1.TGFb.12.table
+R_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2R_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(R_SAA1.TGFb.3.NES, R_SAA1.TGFb.12.NES, R_SAA1.TGFb.48.NES, ncol=1, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 2R_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(R_SAA1.TGFb.3.dot, R_SAA1.TGFb.12.dot, R_SAA1.TGFb.48.dot, ncol=1, align = "h", axis="bt")
+```
+
+##### 3.2.2.4 GO
+
+Tabular Results
+```{r 2G_table}
+G_SAA1.TGFb.3.table
+G_SAA1.TGFb.12.table
+G_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2G_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(G_SAA1.TGFb.3.NES, G_SAA1.TGFb.12.NES, G_SAA1.TGFb.48.NES, ncol=1, align = "h", axis="bt")
+```
+
+Dotplot
+```{r 2G_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(G_SAA1.TGFb.3.dot,G_SAA1.TGFb.12.dot,G_SAA1.TGFb.48.dot, ncol=1, align = "h", axis="bt")
+```
+
+##### 3.2.2.5 WikiPathways
+
+Tabular Results
+```{r 2WP_table}
+WP_SAA1.TGFb.3.table
+WP_SAA1.TGFb.12.table
+WP_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2WP_NES, fig.width=15, fig.height=10, fig.align="center"}
+plot.top <- cowplot::plot_grid(WP_SAA1.TGFb.3.NES, WP_SAA1.TGFb.12.NES, nrow=1, align = "h", axis="bt") 
+cowplot::plot_grid(plot.top, WP_SAA1.TGFb.48.NES, nrow=2)
+```
+
+Dotplot
+```{r 2WP_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(WP_SAA1.TGFb.3.dot, WP_SAA1.TGFb.12.dot, WP_SAA1.TGFb.48.dot, ncol=1, align = "h", axis="bt")
+```
+
+##### 3.2.2.6 Upregulated in Exhausted T cells
+
+Tabular Results
+```{r 2TUP_table}
+UP_SAA1.TGFb.3.table
+UP_SAA1.TGFb.12.table
+UP_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2TUP_NES, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_SAA1.TGFb.3.NES, UP_SAA1.TGFb.12.NES, UP_SAA1.TGFb.48.NES, ncol=1, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 2TUP_dot, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_SAA1.TGFb.3.dot, UP_SAA1.TGFb.12.dot, UP_SAA1.TGFb.48.dot, ncol=1, align = "h", axis="bt")
+```
+
+##### 3.2.2.7 Downregulated in Exhausted T cells
+
+Tabular Results
+```{r 2TDN_table}
+DN_SAA1.TGFb.3.table
+DN_SAA1.TGFb.12.table
+DN_SAA1.TGFb.48.table
+```
+
+NES Plots
+```{r 2TDN_NES, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_SAA1.TGFb.3.NES, DN_SAA1.TGFb.12.NES, DN_SAA1.TGFb.48.NES, ncol=1, align = "h", axis="bt")
+```
+
+Dotplot
+```{r 2TDN_dot, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_SAA1.TGFb.3.dot, DN_SAA1.TGFb.12.dot, DN_SAA1.TGFb.48.dot, ncol=1, align = "h", axis="bt")
+```
+---
+
+##### 3.2.4 TGFb vs IL-6
+In this comparison, cells treated with TGFb and IL-6 (abbreviated TGFb) are compared to cells treated with IL-6 alone. These conditions are know to mediate pathogenic Th17 polarization and non-Th17 cell polarization, respectively.
+
+##### 3.2.3.1 Hallmark
+Tabular Results
+```{r 3hallmark}
+H_TGFb.IL6.3.table
+H_TGFb.IL6.12.table
+H_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3H_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(H_TGFb.IL6.3.NES, H_TGFb.IL6.12.NES, H_TGFb.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 3H_dot, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(H_TGFb.IL6.3.dot, H_TGFb.IL6.12.dot, H_TGFb.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.3.2 KEGG
+
+Tabular Results
+```{r 3K}
+K_TGFb.IL6.3.table
+K_TGFb.IL6.12.table
+K_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3K_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(K_TGFb.IL6.3.NES, K_TGFb.IL6.12.NES, K_TGFb.IL6.48.NES, nrow=2, align = "h", axis="bt")
+```
+
+Dotplot
+```{r 3K_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(K_TGFb.IL6.3.dot, K_TGFb.IL6.12.dot, K_TGFb.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.3.3 Reactome
+Tabular Results
+```{r 3R}
+R_TGFb.IL6.3.table
+R_TGFb.IL6.12.table
+R_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3R_NES, fig.width=15, fig.height=15, fig.align="center"}
+bot <- cowplot::plot_grid(R_TGFb.IL6.3.NES, R_TGFb.IL6.12.NES, ncol=2, align = "h", axis="bt")
+cowplot::plot_grid(R_TGFb.IL6.48.NES, bot, nrow=2)
+```
+
+Dotplot
+```{r 3R_dot, fig.width=15, fig.height=15, fig.align="center"}
+bott <- cowplot::plot_grid(R_TGFb.IL6.3.dot, R_TGFb.IL6.12.dot, ncol=2, align = "h", axis="bt")
+cowplot::plot_grid(R_TGFb.IL6.48.dot, bott, nrow=2)
+```
+
+##### 3.2.3.4 GO
+Tabular Results
+```{r 3G}
+G_TGFb.IL6.3.table
+G_TGFb.IL6.12.table
+G_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3G_NES, fig.width=15, fig.height=15, fig.align="center"}
+bot1 <- cowplot::plot_grid(G_TGFb.IL6.3.NES, G_TGFb.IL6.12.NES, ncol=2, align = "h", axis="bt")
+cowplot::plot_grid(G_TGFb.IL6.48.NES, bot1, nrow=2)
+```
+
+Dotplot
+```{r 3G_dot, fig.width=15, fig.height=15, fig.align="center"}
+bot2 <- cowplot::plot_grid(G_TGFb.IL6.3.dot, G_TGFb.IL6.12.dot, ncol=2, align = "h", axis="bt")
+cowplot::plot_grid(G_TGFb.IL6.48.dot, bot2, nrow=2)
+```
+
+##### 3.2.3.5 WikiPathways
+
+Tabular Results
+```{r 3WP}
+WP_TGFb.IL6.3.table
+WP_TGFb.IL6.12.table
+WP_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3WP_NES, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(WP_TGFb.IL6.3.NES, WP_TGFb.IL6.12.NES, WP_TGFb.IL6.48.NES, ncol=1, align = "h", axis="bt")
+```
+
+Dotplot
+```{r 3WP_dot, fig.width=15, fig.height=15, fig.align="center"}
+cowplot::plot_grid(WP_TGFb.IL6.3.dot, WP_TGFb.IL6.12.dot, WP_TGFb.IL6.48.dot, ncol=1, align = "h", axis="bt")
+```
+
+##### 3.2.3.6 Upregulated in Exhausted T cells
+Tabular Results
+```{r 3TUP}
+UP_TGFb.IL6.3.table
+UP_TGFb.IL6.12.table
+UP_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3UP_NES, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_TGFb.IL6.3.NES, UP_TGFb.IL6.12.NES, UP_TGFb.IL6.48.NES, ncol=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 3UP_dot, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(UP_TGFb.IL6.3.dot, UP_TGFb.IL6.12.dot, UP_TGFb.IL6.48.dot, nrow=2, align = "h", axis="bt")
+```
+
+##### 3.2.3.7 Downregulated in Exhausted T cells
+Tabular Results
+```{r 3TDN}
+DN_TGFb.IL6.3.table
+DN_TGFb.IL6.12.table
+DN_TGFb.IL6.48.table
+```
+
+NES Plots
+```{r 3DN_NES, fig.width=5, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_TGFb.IL6.3.NES, DN_TGFb.IL6.12.NES, DN_TGFb.IL6.48.NES, nrow=2, align = "h", axis="bt") #align plots horizontally by the bottom and  top axis
+```
+
+Dotplot
+```{r 3DN_dot, fig.width=7, fig.height=5, fig.align="center"}
+cowplot::plot_grid(DN_TGFb.IL6.3.dot, DN_TGFb.IL6.12.dot, DN_TGFb.IL6.48.dot, nrows=2, align = "h", axis="bt")
+```
+
+                  
+                  
+
+
+
+#### 3.2.2 Comparisons Within Culture Times
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+
+##### 3.2.1 Hallmark Enrichment
+```{H_time, fig.height=15, fig.width=15}
+#3 hours
+cowplot::plot_grid(H_SAA1.IL6.3.NES, H_SAA1.TGFb.3.NES, H_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt")
+
+#12 hours
+cowplot::plot_grid(H_SAA1.IL6.12.NES, H_SAA1.TGFb.12.NES, H_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(H_SAA1.IL6.48.NES, H_SAA1.TGFb.48.NES, H_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+ 
+##### 3.2.2 KEGG Enrichment
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+```{K_time, fig.height=15, fig.width=15}
+#3 hours
+cowplot::plot_grid(K_SAA1.IL6.3.NES, K_SAA1.TGFb.3.NES, K_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt")
+
+#12 hours
+cowplot::plot_grid(K_SAA1.IL6.12.NES, K_SAA1.TGFb.12.NES, K_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(K_SAA1.IL6.48.NES, K_SAA1.TGFb.48.NES, K_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+##### 3.2.3 GO Enrichment
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+```{G_time, fig.height=15, fig.width=15}
+#3 hours
+cowplot::plot_grid(G_SAA1.IL6.3.NES, G_SAA1.TGFb.3.NES, G_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt") 
+
+#12 hours
+cowplot::plot_grid(G_SAA1.IL6.12.NES, G_SAA1.TGFb.12.NES, G_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(G_SAA1.IL6.48.NES, G_SAA1.TGFb.48.NES, G_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+#combine
+#cowplot::plot_grid(G3H, G12H, G48H, ncol=3, align = "h", axis="bt")
+```
+
+##### 3.2.4 Reactome Enrichment
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+```{R_time, fig.height=30, fig.width=20}
+#3 hours
+cowplot::plot_grid(R_SAA1.IL6.3.NES, R_SAA1.TGFb.3.NES, R_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt") 
+
+#12 hours
+cowplot::plot_grid(R_SAA1.IL6.12.NES, R_SAA1.TGFb.12.NES, R_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(R_SAA1.IL6.48.NES, R_SAA1.TGFb.48.NES, R_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+##### 3.2.5 WikiPathways Enrichment
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+```{WP_time, fig.height=30, fig.width=15}
+#3 hours
+cowplot::plot_grid(WP_SAA1.IL6.3.NES, WP_SAA1.TGFb.3.NES, WP_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt")
+
+#12 hours
+cowplot::plot_grid(WP_SAA1.IL6.12.NES, WP_SAA1.TGFb.12.NES, WP_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(WP_SAA1.IL6.48.NES, WP_SAA1.TGFb.48.NES, WP_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+
+##### 3.2.6 Upregulated in Exhausted T cells
+
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+
+```{UP_time, fig.height=15, fig.width=15}
+#3 hours
+cowplot::plot_grid(UP_SAA1.IL6.3.NES, UP_SAA1.TGFb.3.NES, UP_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt")
+#12 hours
+cowplot::plot_grid(UP_SAA1.IL6.12.NES, UP_SAA1.TGFb.12.NES, UP_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+#48 hours
+cowplot::plot_grid(UP_SAA1.IL6.48.NES, UP_SAA1.TGFb.48.NES, UP_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+
+##### 3.2.7 Downregulated in Exhausted T cells
+
+In these plots, we can see how gene set enrichment changes between the 3 treatment conditions when time is held constant
+```{DN_time, fig.height=15, fig.width=10}
+#3 hours
+cowplot::plot_grid(DN_SAA1.IL6.3.NES, DN_SAA1.TGFb.3.NES, DN_TGFb.IL6.3.NES, ncol=1, align = "v", axis="bt")
+
+#12 hours
+cowplot::plot_grid(DN_SAA1.IL6.12.NES, DN_SAA1.TGFb.12.NES, DN_TGFb.IL6.12.NES, ncol=1, align = "v", axis="bt")
+
+#48 hours
+cowplot::plot_grid(DN_SAA1.IL6.48.NES, DN_SAA1.TGFb.48.NES, DN_TGFb.IL6.48.NES, ncol=1, align = "v", axis="bt")
+```
+
+# Conclusion
+Overall, the analysis provides some evidence to support the hypothesis that exposure to SAA1 will lead to T cell exhaustion (Texh), although the predicted dose-dependent response to SAA1 treatment was not observed. Naive CD4+ T cells treated with SAA1 and IL-6 showed significant increased in Texh-skewing genes when compared to both the TGFb and the IL-6 conditions. However, this was not consistent across incubation times. For example, in the comparison of SAA1 vs TGFb, there was a significant increase in the DEGs at 3 hours and 48 hours but not at 24 hours. Moreover, increased enrichment for Texh-skewing genes was only observed at the 12 hours time point for the SAA1 vs IL-6 comparison. On the other hand, no SAA1 conditions demonstrated enrichment for genes known to be downregulated in Texh. Taken together, the results are inconclusive and warranr further investigation. 
+
+Cells treated with SAA1 demonstrated enrichment for genes pathways important in T cell signaling or pro-inflammatory process. For examples, in the Hallmark collection, gsea analysis demonstrates significant enrichment for IL-2 STAT5 signaling (important to T regulatory cell development), TGF-Beta signaling, TNFa signaling across almost all time points in all conditions. As expected, cells treated with TGFb demonstrate enrichment for TGFb signaling pathways across all gene collections. In general, cells treated with SAA1 display an increased enrichment for immunologically relevant pathways (i.e. cytosine signaling pathways) compared to either IL-6 or TGFb conditions.
+
+In the future, I hope to interrogate the  properties of SAA1 on human naive CD4 T cells. In this experiment, I hypothesize SAA1 treatment will result in increased Th17 responses. 
+
+# Acknowledgements
+
+I would like to say a special thank you to Mengyuan Kan who was instrumental to my ability to analyze this dataset. 
+
+# References
+
+1. [GSE132761](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE132761)
+2. [Lee JY, Hall JA, Kroehling L, et al. Serum Amyloid A Proteins Induce Pathogenic Th17 Cells and Promote Inflammatory Disease. Cell. 2020;180(1):79-91.e16. doi:10.1016/j.cell.2019.11.026](https://pubmed-ncbi-nlm-nih-gov.proxy.library.upenn.edu/31866067/)
+3. [Fan Y, Vong CT, Ye RD. Serum Amyloid A and Immunomodulation. Amyloid Diseases. 2019 Jan 9](https://www.intechopen.com/books/amyloid-diseases/serum-amyloid-a-and-immunomodulation)
+
