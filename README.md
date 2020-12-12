@@ -10,6 +10,10 @@ Thyroid cancer is a relatively uncommon cancer, with an estimated incidence of 5
 
 While it is a relatively rare tumor, at Penn Medicine we have a large amount of experience and tumor registry data for patients with this disease. Given our local experience, this project seeks to examine our dataset to understand summary statistics for our local population and their tumors and identify characteristics associated with tumor upstaging, tumor recurrence, and death. 
 
+My repo contains two files of interes: 
+- BMIN503_FinalProject_JSoegaard.rmd - code
+- BMIN503_FinalProject_JSoegaard.rmd - HTML project report
+
 Any critiques or suggestions welcome! 
 
 (Modified 12/11/2020)
