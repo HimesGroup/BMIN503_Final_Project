@@ -1,6 +1,6 @@
 ---
 title: "BMIN503 Final Project: Air Quality in American Communities"
-author: "BayesB"
+author: "Brian Bayes"
 output: 
   html_document:
     toc: false 
@@ -24,6 +24,7 @@ library(tidycensus)
 library(leaflet)
 library(randomForest)
 library(e1071)
+library(pROC)
 ```
 
 ***
@@ -31,19 +32,45 @@ library(e1071)
 ### Overview
 *Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.*
 
-This project considers the burdens of poor air quality and its health consequences, and how they fall on different American communities. To explore and understand these relationships, I use daily site-level testing data from the EPA's Air Quality System for small particulate matter (PM2.5) from 2019, linked with census data for the tract surrounding each testing site. I am still determining how I can best incorporate data on the near-term health effects of poor air quality, although my main goal is not to use air quality to predict those health outcomes, but rather to determine whether there are differences (e.g. in extent/significance) between how community characteristics predict air quality and how those same characteristics predict the prevalence of events like emergency department presentations for asthma exacerbation. In developing a plan for this project I met with Drs. Anil Vachani, Gary Weissman, and John P. Reilly, who provided insights on the causal pathway from pollution sources to specific EPA-measured pollutants to short- and long-term health outcomes; potential data sources and analytic approaches; the ways in which "natural experiments" related to major changes in pollutant generation have been used to compare the effects of perturbation from a steady state; and more. Materials for this project can be found in [this GitHub repository](https://github.com/bayesb/BMIN503_Final_Project). 
+This project considers the burdens of poor air quality and its health consequences, and how they fall on different American communities. 
+
+
+
+To explore and understand these relationships, I use daily site-level testing data from the EPA's Air Quality System for fine particulate matter (PM2.5) from 2019, linked with 2018 data from the 5-year American Community Survey for the tract surrounding each testing site.
+
+
+In developing a plan for this project I met with Drs. Anil Vachani, Gary Weissman, and John P. Reilly, who provided insights on the causal pathway from pollution sources to specific EPA-measured pollutants to short- and long-term health outcomes; potential data sources and analytic approaches; the ways in which "natural experiments" related to major changes in pollutant generation have been used to compare the effects of perturbation from a steady state; and more. Materials for this project can be found in [this GitHub repository](https://github.com/bayesb/BMIN503_Final_Project). 
 
 ### Introduction 
 *Describe the problem addressed, its significance, and some background to motivate the problem. Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.*
 
 Poor air quality can have a substantial negative influence on health and quality of life, but different people will have different resources, incentives, and tradeoffs to consider in determining where to live, and we might expect that the relationship between who lives where and air quality is more complex than people with more wealth, income, and social power concentrating in places with better air quality. By considering many different community characteristics in building models to predict poor air quality, it is possible to learn which factors are most strongly associated with air quality and how successfully models trained on community characteristics can predict poor air quality and related health events.
 
-### Methods
-*Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.* 
+Very small particulate matter in the air can be inhaled deep into the lungs, causing respiratory and cardiovascular health problems such as asthma attacks, bronchitis, heart attacks, and more. Particulate matter as a pollutant is classified as either fine or coarse.
 
+Fine: Less than 2.5 microns in diameter. Referred to as PM 2.5.
+Coarse: Between 2.5 and 10 microns
+
+12 micrograms per cubic meter is considered the maximum acceptable concentration of PM 2.5 in ambient air. This corresponds to the boundary between the “Good” (green) and “Moderate” (yellow) zones for the Air Quality Index (AQI) as updated in 2012.
+
+
+How strong are the associations between household characteristics and PM 2.5 levels?
+Can household characteristics be used to confidently predict whether a community will experience worse air quality (in terms of PM 2.5)?
+
+
+Particulate matter as a pollutant is classified as either fine or coarse.
+Major source of PM 2.5: Combustion
+Car engines
+Coal- or gas-fired power plants
+Burning wood
+Localized sources like major highways and industrial plants may be undesirable neighbors, but air quality will rarely be the top consideration in where people live.
+The tradeoffs between living near sources of pollution and other factors such as job availability, housing affordability, proximity to family, friends, recreation, etc. may work out differently for different types of households.
+
+
+### Methods
 I begin by defining a function to create a data frame from the results of a GET call to the EPA's Air Quality System API. I create objects with relevant reference lists and define a vector for the "lower 48" U.S. states and Washington, D.C. for later use. 
 
-```{r get-AQS-setup, eval=TRUE}
+```{r get-AQS-setup, eval=TRUE, results='hide'}
 # Retrieve environment variables with EPA AQS API credentials
 api.email <- Sys.getenv("EPA_AQS_EMAIL")
 api.key   <- Sys.getenv("EPA_AQS_KEY")
@@ -115,7 +142,7 @@ saveRDS(all.2019.dailyPM2.5, file = "all2019dailyPM25.RDS")
 ```
 
 I test combinations of testing site location identifiers and add a single `site_id` variable to the 2019 PM2.5 data set by concatenating location identifiers. I also create a data frame with one observation per testing site.
-```{r unique-AQS-sites, eval=TRUE}
+```{r unique-AQS-sites, eval=TRUE, results='hide'}
 # Load the full 2019 raw file
 all.2019.dailyPM2.5 <- readRDS("all2019dailyPM25.RDS")
 str(all.2019.dailyPM2.5)
@@ -169,7 +196,7 @@ saveRDS(testing.sites.tracts, file = "testing_sites_tracts.RDS")
 
 From `tidycensus` I now retrieve the variable list for the 2018 5-year American Community Survey. After reviewing the concepts from those variables as well as the [questionnaire](http://www2.census.gov/programs-surveys/acs/methodology/questionnaires/2018/quest18.pdf), I create an object with a set of variables to test for associations with the AQS data.
 
-```{r set-ACS-var-list, eval=TRUE}
+```{r set-ACS-var-list, eval=TRUE, results='hide'}
 testing.sites.tracts <- readRDS("testing_sites_tracts.RDS")
 head(testing.sites.tracts)
 
@@ -275,7 +302,7 @@ saveRDS(testing.sites.acs, file = "testing_sites_acs.RDS")
 
 With all the ACS data I need, I can create clean versions of the variables to be included in the analysis. I exclude tracts that do not have complete data for all 19 ACS-based variables or with fewer than 500 respondents in the sample (using the denominator from the set of race variables).
 
-```{r ACS-data-cleaning, eval=TRUE}
+```{r ACS-data-cleaning, eval=TRUE, results='hide'}
 testing.sites.acs <- readRDS("testing_sites_acs.RDS")
 head(testing.sites.acs)
 
@@ -332,7 +359,7 @@ length(unique(testing.sites.acs.complete$GEOID))
 
 I join the census tract GEOIDs to the daily PM2.5 data, and clean and summarize the PM2.5 data by tract. Tracts with fewer than 50 days of valid data are excluded.
 
-```{r AQS-outcomes, eval=TRUE}
+```{r AQS-outcomes, eval=TRUE, results='hide'}
 summary(clean.2019.dailyPM2.5)
 
 # Create a file of site IDs with GEOIDs that have complete ACS data.
@@ -414,7 +441,7 @@ AQI.outcomes.final %>% dplyr::filter(pm2.5_flag20_ungreen==">20%") %>% summary()
 ```
 
 With both predictors and outcomes summarized by census tract, the ACS and AQS files can now be joined to create the final data set.
-```{r final-linkage-step, eval=TRUE}
+```{r final-linkage-step, eval=TRUE, results='hide'}
 
 str(AQI.outcomes.final)
 str(testing.sites.acs.complete)
@@ -441,7 +468,7 @@ geom.joinready <-
   unique()
 dim(geom.joinready)
 length(unique(geom.joinready$GEOID))
-geom.joinready %>% group_by(GEOID) %>% summarise(obs=n()) %>% arrange(-obs) %>% head()
+geom.joinready %>% group_by(GEOID) %>% summarise(obs=n(),.groups="keep") %>% arrange(-obs) %>% head()
 geom.joinready %>% dplyr::filter(GEOID=="06079012304")
 
 # Hard-code one value to be able to keep city attribute unique by GEOID
@@ -462,12 +489,7 @@ class(AQI.ACS.geom)
 
 
 ### Results
-*Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.*
-
-XXXXXXXXXXXXXXXXXPerform bivariate tests of community characteristics vs air quality (continous measures and 1/0 for poor air quality above threshold). Create multivariate models to predict air quality from community characteristics. Construct a classifier using community characteristics and evaluate its performance against the real data. XXXXXXXXXXXXXXXXX
-
-
-
+The continuous PM2.5 outcomes show geographic variability. Some patterns are evident; very rural tracts appear to have lower levels of PM2.5 compared to urban centers; the "Rust Belt" and southern California seem to have higher PM2.5 generally; but there do not appear to be large areas within which the analyzed tracts have very consistent values. 
 
 Continuous PM2.5 outcomes by tract, mapped: 
 ```{r leaflet, eval=TRUE}
@@ -515,9 +537,8 @@ leaflet(AQI.ACS.geom.WGS84) %>%
   addScaleBar()
 ```
 
-
-Regression results, using all 19 ACS-based predictor variables: 
-```{r regression, eval=TRUE}
+Regression results, using all 19 ACS-based predictor variables:
+```{r regression, eval=TRUE, results='hold'}
 # Run linear regression for continuous outcomes
 lm.p50 <- lm(pm2.5_p50 ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
@@ -570,15 +591,31 @@ pval2 <- inner_join(pval1,logit.flag10.ungreen.pval.df, by="acs.var")
 pval3 <- inner_join(pval2,logit.flag20.ungreen.pval.df, by="acs.var") %>% arrange(lm.p50.pval)
 
 # Return results
+
 summary.lm(lm.p50)
+# Adjusted R-squared:  0.2364 
 summary(lm.pct.ungreen)
+# Adjusted R-squared:  0.1353 
 summary(logit.flag10.ungreen)
+# AIC: 1118.6
 summary(logit.flag20.ungreen)
+# AIC: 842.87
+
 pval3
 ```
 
+Repeat linear regression for median PM2.5 using only the variables that were significant at p<.05 when all 19 were included:
+```{r reg-top8, eval=TRUE}
+# Repeat p50 regression with top 8. Do all remain significant? Does R-squared improve?
+lm.p50.top8 <- lm(pm2.5_p50 ~ 
+               age.median + race.black.any + ethn.nhisp.white.alone + worked.12mo + 
+               veteran + manufacturing + farm.fish.mining + commutes.car.alone 
+              ,data = AQI.ACS.geom)
+summary(lm.p50.top8)
+# Adjusted R-squared:  0.2378 
+```
 
-Bivariate plots for most strongly-associated predictor variables with median PM2.5 and 10%-of-days outcomes:
+Bivariate plots of median PM2.5 and 10%-of-days outcomes for the 8 predictor variables with a significant (p<.05) association in at least 1 regression model:
 ```{r assoc-plots, eval=TRUE}
 # worked.12mo
 ggplot(data = AQI.ACS.geom, aes(x = worked.12mo, y = pm2.5_p50)) + 
@@ -593,12 +630,12 @@ ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = worked.12mo)) +
 
 # manufacturing
 ggplot(data = AQI.ACS.geom, aes(x = manufacturing, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  geom_point() + geom_smooth(color = "blue", method = "lm") + 
   xlab("% of Workers in Manufacturing Industry") +
   ylab("Median Daily PM2.5 Concentration (mcg/m3)")
 
 ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = manufacturing)) +
-  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
   xlab("% of Days with PM2.5 >= 12mcg/m3") + 
   ylab("% of Workers in Manufacturing Industry") 
 
@@ -615,12 +652,12 @@ ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = farm.fish.mining))
 
 # ethn.nhisp.white.alone
 ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  geom_point() + geom_smooth(color = "blue", method = "lm") + 
   xlab("% of Respondents Reporting\nNon-Hispanic Ethnicity and White Race Only") +
   ylab("Median Daily PM2.5 Concentration (mcg/m3)")
 
 ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = ethn.nhisp.white.alone)) +
-  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
   xlab("% of Days with PM2.5 >= 12mcg/m3") + 
   ylab("% of Respondents Reporting\nNon-Hispanic Ethnicity and White Race Only")
 
@@ -635,19 +672,67 @@ ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = race.black.any)) +
   xlab("% of Days with PM2.5 >= 12mcg/m3") + 
   ylab("% of Respondents Reporting Black Race\n(with or without other categories)")
 
+# commutes.car.alone
+ggplot(data = AQI.ACS.geom, aes(x = commutes.car.alone, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm") + 
+  xlab("% of Workers Commuting by Car, Alone") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
+
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = commutes.car.alone)) +
+  geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% of Workers Commuting by Car, Alone") 
+
+# age.median
+ggplot(data = AQI.ACS.geom, aes(x = age.median, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("Median Age (Years)") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
+
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = age.median)) +
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("Median Age (Years)")
+
+# veteran
+ggplot(data = AQI.ACS.geom, aes(x = veteran, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "blue", method = "lm") + 
+  xlab("% Veterans") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
+
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = veteran)) +
+  geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% Veterans")
+
 ```
 
+In considering the bivariate plots, several of the associations we noted from the multivariate models are apparent. Better air quality (lower PM2.5) is associated with:
+* Higher rates of recent employment (worked in past 12 months)
+* Fewer workers in manufacturing
+* Higher % non-Hispanic white respondents
+* Lower % Black respondents
+* Older median age
 
+Other associations with better air quality for which the bivariate plots are less convincing: 
+* More workers in agriculture, forestry, fishing and hunting, and mining 
+* Fewer workers commuting by car, alone
+* Higher % veterans
 
-```{r crossvalidation, eval=TRUE}
-
-dim(AQI.ACS)
+To explore how well these factors perform at predicting tracts with higher PM2.5, I perform 5-fold cross-validation to generate and evaluate predictions for the binary outcome for whether a tract had >10% of days above 12 mcg/m3. Four (4) approaches were assessed: 
+* Logistic regression with all 19 ACS-based variables
+* Logistic regression with the top 8 variables from regression analysis above
+* Random forest
+* Support vector machines with radial kernel
+```{r cross-validation, eval=TRUE, results='hide', warning=FALSE, message=FALSE}
+# Generate a column containing the 5 groups for 5-fold cross-validation
 set.seed(1504492)
 kgroup <- data.frame(kgroup = sample(1:5, size = dim(AQI.ACS)[1], replace = T))
 AQI.ACS.onlynec <- bind_cols(AQI.ACS,data.frame(kgroup = sample(1:5, size = dim(AQI.ACS)[1], replace = T))) %>% 
                     select(-pm2.5_p50, -pm2.5_pct_ungreen, -pm2.5_flag20_ungreen, -denominator) %>%
                     group_by()
 
+# Loop through the 5 groups
 for (i in 1:5) {
 
 	train <- filter(AQI.ACS.onlynec, kgroup != i)
@@ -712,13 +797,16 @@ for (i in 1:5) {
 }
 
 AQI.ACS.preds <- inner_join(AQI.ACS.onlynec, collect.predict, by = "GEOID")
+```
 
-library(pROC)
+```{r crossval-output, eval=TRUE, results='hold', warning=FALSE, message=FALSE}
+# Calculate AUROC values for each method under 5-fold cross-validation
 AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, rfpred, ci=TRUE)
 AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, glmpred, ci=TRUE)
 AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, selectpred, ci=TRUE)
 AQI.ACS.preds %>% roc(pm2.5_flag10_ungreen, svmpred, ci=TRUE)
 
+# Plot ROC curves for each method
 plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$svmpred, col="yellow")
 plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$rfpred, col="darkgreen", add=TRUE)
 plot.roc(AQI.ACS.preds$pm2.5_flag10_ungreen, AQI.ACS.preds$glmpred, col="blue", add=TRUE)
@@ -727,349 +815,9 @@ legend("bottomright"
        ,legend = c("SVM (Radial)","Random Forest", "Logistic: All Vars", "Logistic: Select Vars")
        ,col = c("yellow","darkgreen", "blue", "orange")
        ,lwd = 1)
-
 ```
+These 4 approaches performed very similarly, achieving AUCs of 0.70-0.72, with linear regression (top 8) slightly outperforming the others. 
 
-```{r adfkgjnadfg, eval=FALSE}
-head(AQI.ACS.preds)
-
-
-#SVM
-roc(obs.outputs, pred.outputs.svm, ci = TRUE)
-plot.roc(titanic$survived, svm.pred.lived)
-plot.roc(obs.outputs, pred.outputs.svm, ci = TRUE, col = "blue", add = TRUE)
-legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "blue"), lwd = 1)
-
-#Random Forest
-roc(obs.outputs, pred.outputs.rf, ci = TRUE)
-plot.roc(titanic$survived, rf.pred.lived)
-plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE)
-legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "darkgreen"), lwd = 1)
-
-#Lasso
-roc(obs.outputs, pred.outputs.lasso, ci = TRUE)
-plot.roc(titanic$survived, titanic.lasso.pred[ ,1])
-plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE)
-legend("bottomright", legend = c("Training", "Cross-Validation"), col = c("black", "red"), lwd = 1)
-
-#Plot both cross-validation ROCs
-plot.roc(obs.outputs, pred.outputs.svm, ci = TRUE, col = "blue") #CV of svm
-plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "darkgreen", add = TRUE) #CV of rf
-plot.roc(obs.outputs, pred.outputs.lasso, ci = TRUE, col = "red", add = TRUE) #CV of lasso
-legend("bottomright", legend = c("SVM Cross-Validation", "RF Cross-Validation", "Lasso Cross-Validation"), col = c("blue", "darkgreen", "red"), lwd = 2)
-
-
-
-table(AQI.ACS.preds$glmpred,AQI.ACS.preds$pm2.5_flag10_ungreen)
-
-
-  pred.status.glm[1:length(s[s == i]) + offset] <- glm.pred.test
-  
-  # Random forest
-	rf <- train %>% select(-status) %>% randomForest(statusfactor ~ ., data = ., ntree = 100)
-	rf.pred.test <- predict(rf, newdata = test, type = "prob") 
-	pred.status.rf[1:length(s[s == i]) + offset] <- rf.pred.test[ , 2]
-  
-	offset <- offset + length(s[s == i])
-}
-
-
-
-rf.flag10.ungreen <- randomForest(pm2.5_flag10_ungreen ~ 
-               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
-             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
-             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
-             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
-             ,data = AQI.ACS.geom
-             ,ntree = 2000
-             ,importance = TRUE)
-
-rf.flag10.ungreen
-rf.flag10.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
-
-
-rf.flag20.ungreen <- randomForest(pm2.5_flag20_ungreen ~ 
-               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
-             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
-             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
-             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
-             ,data = AQI.ACS.geom
-             ,ntree = 2000
-             ,importance = TRUE)
-
-rf.flag20.ungreen
-rf.flag20.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
-
-
-AQI.ACS.svm <- svm(pm2.5_flag10_ungreen ~ 
-               age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
-             + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
-             + bachelor.plus + veteran + manufacturing + farm.fish.mining + commutes.car.alone 
-             + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
-             , data = AQI.ACS.geom
-             , scale = TRUE
-             # , kernel = "linear"
-             , kernel = "radial")
-
-# Linear kernel:
-#         0-10% >10%
-#   0-10%   192  180
-#   >10%    111  426
-
-# Radial kernel: Better! 
-#         0-10% >10%
-#   0-10%   193  179
-#   >10%     46  491
-
-plot(worked.12mo ~ ethn.nhisp.white.alone, data=AQI.ACS.svm, col = pm2.5_flag10_ungreen)
-
-summary(AQI.ACS.svm)
-svm.flag10pred <- fitted(AQI.ACS.svm)
-table(AQI.ACS.geom$pm2.5_flag10_ungreen, svm.flag10pred)
-
-?plot.svm
-length(svm.flag10pred)
-length(AQI.ACS.geom$pm2.5_flag10_ungreen)
-
-?e1071::plot
-plot(svm.flag10pred, AQI.ACS.geom[,c("pm2.5_flag10_ungreen","worked.12mo","ethn.nhisp.white.alone")], worked.12mo ~ ethn.nhisp.white.alone) 
-
-
-
-
-?svm
-
-
-```
-
-
-
-
-
-
-
-```{r junk-just-in-case, eval=FALSE, echo=FALSE}
-
-#################################################
-# Scraps from previous attempts I'm keeping in case I need them later...
-#################################################
-
-table(all.2019.dailyPM2.5$units_of_measure, useNA = TRUE)
-# All Micrograms/cubic meter (LC) 
-
-table(round(all.2019.dailyPM2.5$sample_measurement))
-
-# Plot distribution of time-of-day-of-measurement by testing site, 
-# to determine whether an overall plot of measurement x time of day will be representative
-
-
-
-# Try getting 1 month of state-level daily summary data - Jan 2017, Pennsylvania
-
-# 88101	: PM2.5 - Local Conditions
-
-dSum.PA201701.PM2.5Local <- get.AQS.data(
-    "/data/api/dailyData/byState?email=api.email&key=api.key&param=88101&bdate=20170101&edate=20170131&state=42"
-)
-
-head(dSum.PA201701.PM2.5Local)
-table(dSum.PA201701.PM2.5Local$county_code)
-summary(dSum.PA201701.PM2.5Local)
-View(dSum.PA201701.PM2.5Local)
-
-table(dSum.PA201701.PM2.5Local$local_site_name,useNA="ifany") 
-# 1,445 NA
-dSum.PA201701.PM2.5Local %>% filter(is.na(local_site_name)) %>% View()
-
-dSum.PA201701.PM2.5Local %>% 
-  group_by(county_code,site_number,cbsa_code,site_address,local_site_name) %>% 
-  summarise(count=n(), .groups="keep")
-
-length(unique(dSum.PA201701.PM2.5Local$local_site_name))
-# 38 unique sites
-
-table(dSum.PA201701.PM2.5Local$observation_count)
-# Ranges from 1 to 24
-table(dSum.PA201701.PM2.5Local$units_of_measure) 
-# Micrograms/cubic meter (LC) for all
-
-
-
-
-dSum.PA201701.PM2.5Local %>% filter(observation_count > 20) %>% View()
-
-
-# Site_number is not unique. Is county (or county_code) x site_number unique? 
-PA.testing.sites %>% 
-  select(county, site_number) %>%
-  unique() %>%
-  dim()
-
-# Yes. Create county (1st 4 letters) + site_number to have something unique and also sort of readable.
-
-PA.testing.sites <- PA.testing.sites %>%
-                      mutate(site_cty = paste0(substring(toupper(county),1,4),site_number))
-
-table(PA.testing.sites$site_cty)
-length(unique(PA.testing.sites$site_cty))
-
-# Apply to full data set
-
-all.2019.dailyPM2.5 <- all.2019.dailyPM2.5 %>%
-                  mutate(site_cty = paste0(substring(toupper(county),1,4),site_number))
-
-table(all.2019.dailyPM2.5$site_cty)
-
-# What do the counts look like by site?
-
-PA.site.counts <- all.2019.dailyPM2.5 %>%
-                    group_by(site_cty) %>%
-                    summarize(obs = n(), .groups = "keep") %>%
-                    arrange(-obs)
-
-head(PA.site.counts)
-
-PA.site.counts %>% filter(obs > 10000)
-# WASH0005	17885			
-# CAMB0011	17520	
-
-# Look more closely - should these actually be 2 sites (with the same long/lat?)?
-all.2019.dailyPM2.5 %>% filter(site_cty == "WASH0005") %>% View()
-
-table(all.2019.dailyPM2.5$method_code,all.2019.dailyPM2.5$site_cty)
-# Some sites use different methods at different points in the year
-# The 2 highest-count sites appear to use 2 methods simultaneously throughout the year
-# One method appears seems likely to be a daily measurement which should be ignored 
-# in considering trends by time of day
-
-ggplot(data = all.2019.dailyPM2.5, aes(x = factor(substring(time_local,1,2)), fill = factor(method_code))) + 
-    geom_bar(position = "stack")
-
-# Yes. Ignore method_code = "145" for considering time-of-day. Also ignore time_local = "00:14"
-
-all.2019.dailyPM2.5 %>%
-  filter(method_code != "145" & time_local != "00:14") %>%
-  ggplot(data = ., aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
-    geom_bar(position = "stack")
-
-# Also drop sites that have less than approx 1 measurement/hour for the year (365 x 24 = 8760)
-PA.site.counts %>% filter(obs < 8000)
-# LYCO0419	3840			
-# WYOM0010	672			
-# ALLE0067	121			
-# ALLE1008	121			
-# ALLE1301	121			
-# ALLE0093	61			
-# ALLE3007	61	
-
-all.2019.dailyPM2.5 %>%
-  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010"))) %>%
-  ggplot(data = ., aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
-    geom_bar(position = "stack")
-
-# Now, ready to make violin plots for sample_measurement by time_local
-
-# #########################################
-# NEED TO REMOVE NA MEASUREMENT VALUES!!!
-# #########################################
-
-all.2019.dailyPM2.5 %>% filter(is.na(sample_measurement) == TRUE) %>% View()
-# Consider the `qualifier` field - seems to explain why no measurement was collected 
-
-# table(all.2019.dailyPM2.5$qualifier,useNA = "always")
-# all.2019.dailyPM2.5 %>% select(qualifier) %>% unique() %>% arrange(qualifier)
-
-PA.qualifier.counts <- all.2019.dailyPM2.5 %>% 
-                        mutate(any_measure = !is.na(sample_measurement)) %>%
-                        group_by(any_measure,qualifier) %>% 
-                        summarize(obs = n(), .groups = "keep") %>% 
-                        arrange(-any_measure, -obs)
-
-PA.qualifier.counts
-
-all.2019.dailyPM2.5 %>% filter(!is.na(qualifier) & !is.na(sample_measurement)) %>% View()
-# Not many in total and most are type 145 anyway
-
-all.2019.dailyPM2.5 %>% filter(!is.na(qualifier) & !is.na(sample_measurement) & method_code != "145") %>% View()
-# 5 records, all flagged as "Outlier" - no need to exclude here
-
-all.2019.dailyPM2.5 %>%
-  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010"))) %>%
-  select(sample_measurement) %>%
-  summary()
-
-
-table(round(all.2019.dailyPM2.5$sample_measurement))
-
-# 75th pct 11.0 but max 217.9 !! 
-# And negative concentrations are impossible; code to 0
-
-all.2019.dailyPM2.5 %>%
-  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010")) & sample_measurement < 0) %>% 
-  View()
-
-all.2019.dailyPM2.5 %>%
-  filter(method_code != "145" & time_local != "00:14" & !(site_cty %in% c("LYCO0419","WYOM0010")) & sample_measurement >= 100) %>% 
-  View()
-
-clean.all.2019.dailyPM2.5 <- all.2019.dailyPM2.5 %>%
-                        filter(method_code != "145" 
-                               & time_local != "00:14" 
-                               & !(site_cty %in% c("LYCO0419","WYOM0010"))
-                               & !is.na(sample_measurement)) %>%
-                        mutate(sample_measurement = case_when(sample_measurement < 0 ~ 0, TRUE ~ sample_measurement))
-
-dim(clean.all.2019.dailyPM2.5)
-table(round(clean.all.2019.dailyPM2.5$sample_measurement),useNA = "always")
-
-ggplot(data = clean.all.2019.dailyPM2.5, aes(x = site_cty, fill = factor(substring(time_local,1,2)))) + 
-    geom_bar(position = "stack")
-
-ggplot(data = clean.all.2019.dailyPM2.5, aes(x = factor(substring(time_local,1,2)), y = sample_measurement)) + 
-    geom_violin(fill = "lightblue", draw_quantiles = c(0.10,0.30, 0.50, 0.70, 0.90)) +
-    ylim(c(0,25))
-
-# There is some fluctuation by time of day -- 
-# But, all of the site left in have ~hourly readings throughout the year. 
-# So it would still be reasonable to compute annual percentiles and means by site 
-# for an overall sense of typical particulate conditions by geography. 
-
-clean.PA.site.summary <- clean.all.2019.dailyPM2.5 %>%
-                          group_by(site_cty,county,county_code,site_number,latitude,longitude) %>%
-                          summarise(pm2.5_mean = mean(sample_measurement),
-                                    pm2.5_p10 = quantile(sample_measurement, 0.10), 
-                                    pm2.5_p25 = quantile(sample_measurement, 0.25), 
-                                    pm2.5_p50 = quantile(sample_measurement, 0.50), 
-                                    pm2.5_p75 = quantile(sample_measurement, 0.75), 
-                                    pm2.5_p90 = quantile(sample_measurement, 0.90), 
-                                    .groups = "keep") %>%
-                          arrange(-pm2.5_p50)
-
-View(clean.PA.site.summary)
-summary(clean.PA.site.summary$longitude)
-summary(clean.PA.site.summary$latitude)
-
-# more to come
-```
-
-Retrieve a range of census descriptive data by census tract. 
-Join with air quality summary data.
-
-```{r explore-linked-data, eval=FALSE}
-
-# still to come 
-
-```
-
-
-
-
-```{r actual-data-science, eval=FALSE}
-
-# still to come
-
-```
-
-
+The community characteristics identified from the American Community Survey did show some interesting relationships with PM2.5 levels, as listed above. Taken together, though, their performance at *predicting* whether a tract will have worse air quality is fair or poor. Interestingly, measures related to income, rent and mortgage amounts, and poverty turned out not to be important in the models. In future work, it would be interesting to consider population density explicitly, and possibly proximity to shipping routes, or to a known set of factory sites. 
 
 
