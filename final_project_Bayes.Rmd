@@ -21,7 +21,9 @@ library(ggplot2)
 library(tigris)
 library(sf)
 library(tidycensus)
+library(leaflet)
 library(randomForest)
+library(e1071)
 ```
 
 ***
@@ -39,9 +41,9 @@ Poor air quality can have a substantial negative influence on health and quality
 ### Methods
 *Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.* 
 
-Retrieve daily PM2.5 pollutant data for the lower 48 states for 2019 from the EPA's Air Quality System database via their API.
+I begin by defining a function to create a data frame from the results of a GET call to the EPA's Air Quality System API. I create objects with relevant reference lists and define a vector for the "lower 48" U.S. states and Washington, D.C. for later use. 
 
-```{r AQS-function, eval=TRUE}
+```{r get-AQS-setup, eval=TRUE}
 # Retrieve environment variables with EPA AQS API credentials
 api.email <- Sys.getenv("EPA_AQS_EMAIL")
 api.key   <- Sys.getenv("EPA_AQS_KEY")
@@ -67,7 +69,8 @@ list.states.lower48
 lower48.codes <- as.vector(as.matrix(list.states.lower48[,1]))
 ```
 
-```{r AQS-download-2019, eval=FALSE, echo=TRUE}
+To manage downloading daily PM2.5 data for each state for all of 2019, I define another function to loop through the state FIPS codes for given date parameters. Executing this step with 1 call per month of data takes roughly 90 minutes, so I save the resulting data frame and load it in the chunk below.
+```{r download-AQS-2019, eval=FALSE, echo=TRUE}
 # Pull daily PM2.5 (parameter 88101) data for these states, with arguments for date range
 get.daily.lower48 <- function(b,e){
 collector <- data.frame()
@@ -111,10 +114,8 @@ saveRDS(all.2019.dailyPM2.5, file = "all2019dailyPM25.RDS")
 
 ```
 
-
-Create a unique list of testing site locations and a corresponding `site_id`. 
-
-```{r AQS-site-id, eval=TRUE}
+I test combinations of testing site location identifiers and add a single `site_id` variable to the 2019 PM2.5 data set by concatenating location identifiers. I also create a data frame with one observation per testing site.
+```{r unique-AQS-sites, eval=TRUE}
 # Load the full 2019 raw file
 all.2019.dailyPM2.5 <- readRDS("all2019dailyPM25.RDS")
 str(all.2019.dailyPM2.5)
@@ -143,7 +144,7 @@ clean.2019.dailyPM2.5 <- all.2019.dailyPM2.5 %>%
 
 ```
 
-Get the geometries and tract GEOIDs for the testing sites. 
+Using the `tigris::tracts` function, I retrieve the geometries, GEOIDs, and other spatial information for census tracts and join each AQS testing site to the data for the tract within which it lies, based on the latitude and longitude from AQS. I looping through the state FIPS codes one at a time and stack the results into a single crosswalk file. This step is time-consuming so I save the resulting file and load it in the next step.  
 
 ```{r spatial-join, eval=FALSE, echo=TRUE}
 # Prepare for spatial merge. Create sf file from testing site coordinates
@@ -166,16 +167,17 @@ for (s in seq_along(lower48.codes)) {
 saveRDS(testing.sites.tracts, file = "testing_sites_tracts.RDS")
 ```
 
+From `tidycensus` I now retrieve the variable list for the 2018 5-year American Community Survey. After reviewing the concepts from those variables as well as the [questionnaire](http://www2.census.gov/programs-surveys/acs/methodology/questionnaires/2018/quest18.pdf), I create an object with a set of variables to test for associations with the AQS data.
 
-Get the census variable list and select a range of variables of interest.
-
-```{r census-var-list, eval=TRUE}
+```{r set-ACS-var-list, eval=TRUE}
 testing.sites.tracts <- readRDS("testing_sites_tracts.RDS")
 head(testing.sites.tracts)
 
+# Load a data frame with all 5-year ACS variables
 census.1yr.vars <- load_variables(dataset = "acs5",year = 2018)
 head(census.1yr.vars)
 
+# Simplify the variable list to make it easier to review the major concepts represented
 census.1yr.concept.counts <- 
   census.1yr.vars %>% 
   mutate(root.concept = str_split_fixed(concept," BY",2)[,1]) %>%
@@ -186,10 +188,9 @@ census.1yr.concept.counts <-
   summarise(obs=n(), .groups="keep") %>%
   arrange(root.name,-obs)
 
-# head(census.1yr.concept.counts)
 # View(sort(unique(census.1yr.concept.counts$root.concept)))
 
-# After reviewing variable list, grab a number of measures of interest
+# After reviewing the variable list, create an object with the ones of interest
 final.acs.var.list <- census.1yr.vars %>% filter(name %in% c(
      "B01002_001" # median age
     ,"B03002_003","B03002_001" # Hon-Hisp-White-alone // Denom
@@ -215,9 +216,9 @@ final.acs.var.list
 
 ```
 
-Retrieve and linking census variables of interest to the testing site file. 
+Once more I loop through the state FIPS codes, retrieving the ACS variables of interest by tract as a flat file using `tidycensus::get_acs` and preserving the data only for the census tracts that contain AQS testing sites. As this is another slow step, I save the resulting data frame. 
 
-```{r census-download, eval=FALSE, echo=TRUE}
+```{r download-ACS-for-tracts, eval=FALSE, echo=TRUE}
 head(testing.sites.tracts)
 
 # Keep only what is needed to make the ACS calls in a small data frame
@@ -272,12 +273,13 @@ testing.sites.acs
 saveRDS(testing.sites.acs, file = "testing_sites_acs.RDS")
 ```
 
-Compute versions of ACS variables to use in modeling. 
+With all the ACS data I need, I can create clean versions of the variables to be included in the analysis. I exclude tracts that do not have complete data for all 19 ACS-based variables or with fewer than 500 respondents in the sample (using the denominator from the set of race variables).
 
-```{r census-cleaning, eval=TRUE}
+```{r ACS-data-cleaning, eval=TRUE}
 testing.sites.acs <- readRDS("testing_sites_acs.RDS")
 head(testing.sites.acs)
 
+# Create percentage variables and scaled medians/totals to use in modeling
 testing.sites.acs.ready <- testing.sites.acs %>%
   dplyr::rename( age.median       = B01002_001E
                 ,income.hh.median = B22008_001E 
@@ -328,10 +330,7 @@ summary(testing.sites.acs.complete)
 length(unique(testing.sites.acs.complete$GEOID))
 ```
 
-
-Join testing site locations data with census tracts. (Still to come)
-Label the PM2.5 data with census tract. (Still to come)
-Create outcomes summarized by census tract based on PM2.5 readings for the year.
+I join the census tract GEOIDs to the daily PM2.5 data, and clean and summarize the PM2.5 data by tract. Tracts with fewer than 50 days of valid data are excluded.
 
 ```{r AQS-outcomes, eval=TRUE}
 summary(clean.2019.dailyPM2.5)
@@ -344,14 +343,6 @@ site_id.GEOID.xwalk <- testing.sites.acs.complete %>%
 GEOID.dailyPM2.5 <- inner_join( site_id.GEOID.xwalk
                                ,clean.2019.dailyPM2.5
                                ,by="site_id")
-
-# ggplot(data = AQI.ACS.geom, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
-#     geom_point() + 
-#     borders("state") + 
-#     scale_color_gradient(low = "#ffff00", high = "#0000ff") +
-#     labs(title = "Median daily PM2.5 reading for 2019 by testing site") +
-#     labs(x = "Longitude", y = "Latitude") + 
-#     theme_bw() 
 
 dim(GEOID.dailyPM2.5)
 # 1,396,734 rows
@@ -367,36 +358,17 @@ table(GEOID.dailyPM2.5$validity_indicator, GEOID.dailyPM2.5$event_type, useNA="a
 # Excluding validity_indicator == "N" does not get rid of a meaningful % of events
 # GEOID.dailyPM2.5 %>% dplyr::filter(validity_indicator == "N") %>% View()
 
-GEOID.dailyPM2.5 %>% 
-  group_by(method_code, method) %>%
-  summarise(obs = n(), .groups = "keep")
-  
-GEOID.dailyPM2.5 %>% 
-  group_by(aqi, arithmetic_mean) %>%
-  summarise(obs = n(), .groups = "keep")
-  
-# 0 to 50	Good	Green
-# 51 to 100	Moderate	Yellow 
-# >>>>>>>>>>> YELLOW CORRESPONDS TO MEAN > 12 -- https://aqicn.org/faq/2013-09-09/revised-pm25-aqi-breakpoints/
-# 101 to 150	Unhealthy for Sensitive Groups	Orange
-# 151 to 200	Unhealthy	Red
-# 201 to 300	Very Unhealthy	Purple
-# 301 to 500	Hazardous	Maroon
-
 summary(GEOID.dailyPM2.5$arithmetic_mean)
 
+# Create preliminary outcome variables
 GEOID.daily.summary <-
   GEOID.dailyPM2.5 %>%
   dplyr::filter(validity_indicator=="Y") %>%
-  mutate(arithmetic_mean = case_when(arithmetic_mean < 0 ~ 0, TRUE ~ arithmetic_mean)
-        ,event           = case_when(event_type %in% c("Included","Excluded") ~ 1L, TRUE ~ 0L)
-        ) %>%
+  mutate(arithmetic_mean = case_when(arithmetic_mean < 0 ~ 0, TRUE ~ arithmetic_mean)) %>%
   group_by(GEOID,date_local) %>%
-  summarise( mean      = mean(arithmetic_mean)
-            ,any_event = max(event)
-            ,.groups = "keep")
+  summarise(mean = mean(arithmetic_mean),.groups = "keep")
 
-table(GEOID.daily.summary$any_event)
+# table(GEOID.daily.summary$any_event)
 summary(GEOID.daily.summary$mean)
 
 GEOID.AQI.outcomes <-
@@ -405,18 +377,16 @@ GEOID.AQI.outcomes <-
   group_by(GEOID) %>%
   summarise( pm2.5_days         = n()
             ,pm2.5_p50          = quantile(mean, 0.50)
-            ,pm2.5_p90          = quantile(mean, 0.90)
             ,pm2.5_ungreen_days = sum(ungreen)
-            ,pm2.5_event_days   = sum(any_event)
             ,.groups="keep")
 
 head(GEOID.AQI.outcomes)
 summary(GEOID.AQI.outcomes)
 
+# How many days of valid data do we have per tract?
 table(GEOID.AQI.outcomes$pm2.5_days)
-table(GEOID.AQI.outcomes$pm2.5_ungreen_days)
-table(GEOID.AQI.outcomes$pm2.5_event_days)
 
+# Create final PM2.5 outcome variables
 AQI.outcomes.final <-
   GEOID.AQI.outcomes %>%
   dplyr::filter(pm2.5_days >= 50) %>%
@@ -432,24 +402,24 @@ AQI.outcomes.final <-
                                         ,labels = c("0-20%",">20%"))) %>%
   dplyr::select(GEOID, pm2.5_p50, pm2.5_pct_ungreen, pm2.5_flag10_ungreen, pm2.5_flag20_ungreen)
 
+# Review created outcome variables
 head(AQI.outcomes.final)
 summary(AQI.outcomes.final$pm2.5_p50)
 summary(AQI.outcomes.final$pm2.5_pct_ungreen)
 table(AQI.outcomes.final$pm2.5_flag10_ungreen)
 table(AQI.outcomes.final$pm2.5_flag20_ungreen)
-
 AQI.outcomes.final %>% dplyr::filter(pm2.5_flag10_ungreen==">10%") %>% summary()
 AQI.outcomes.final %>% dplyr::filter(pm2.5_flag20_ungreen==">20%") %>% summary()
 
-
-
 ```
 
+With both predictors and outcomes summarized by census tract, the ACS and AQS files can now be joined to create the final data set.
 ```{r final-linkage-step, eval=TRUE}
 
 str(AQI.outcomes.final)
 str(testing.sites.acs.complete)
 
+# Drop unnecessary geographic variables from the ACS file
 acs.joinready <- 
   testing.sites.acs.complete %>%
   dplyr::select(-site_id, -STATEFP, -COUNTYFP) %>%
@@ -457,23 +427,24 @@ acs.joinready <-
 
 dim(acs.joinready)
 length(unique(acs.joinready$GEOID))
+# 920 rows, unique on GEOID
 
+# Join PM2.5 and ACS data by tract on GEOID
 AQI.ACS <- inner_join(AQI.outcomes.final,acs.joinready,by="GEOID")
 head(AQI.ACS)
 
+# Prepare the geography/geometry file for linkage
 str(testing.sites.tracts)
-
 geom.joinready <-
   testing.sites.tracts %>%
   dplyr::select(GEOID,NAMELSAD,STATEFP,state,COUNTYFP,county,city,cbsa,cbsa_code,geometry) %>%
   unique()
-
 dim(geom.joinready)
 length(unique(geom.joinready$GEOID))
-
 geom.joinready %>% group_by(GEOID) %>% summarise(obs=n()) %>% arrange(-obs) %>% head()
 geom.joinready %>% dplyr::filter(GEOID=="06079012304")
 
+# Hard-code one value to be able to keep city attribute unique by GEOID
 geom.joinready2 <- 
   geom.joinready %>%
   mutate(city = case_when(GEOID=="06079012304" ~ "Arroyo Grande", TRUE ~ city)) %>%
@@ -483,81 +454,71 @@ dim(geom.joinready2)
 length(unique(geom.joinready2$GEOID))
 head(geom.joinready2)
 
+# Join geography/geometry file with AQS outcomes and ACS variables
 AQI.ACS.geom <- inner_join(geom.joinready2,AQI.ACS,by="GEOID") %>% group_by()
 head(AQI.ACS.geom)
 class(AQI.ACS.geom)
 ```
 
+
+### Results
+*Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.*
+
+XXXXXXXXXXXXXXXXXPerform bivariate tests of community characteristics vs air quality (continous measures and 1/0 for poor air quality above threshold). Create multivariate models to predict air quality from community characteristics. Construct a classifier using community characteristics and evaluate its performance against the real data. XXXXXXXXXXXXXXXXX
+
+
+
+
+Continuous PM2.5 outcomes by tract, mapped: 
 ```{r leaflet, eval=TRUE}
-# FROM 4269
-# TO 4326
 
-library(leaflet)
-AQI.ACS.geom.WGS84 <- st_transform(AQI.ACS.geom, 4326)
+AQI.ACS.geom.WGS84 <- st_transform(AQI.ACS.geom, 4326) # FROM 4269 TO 4326 to cooperate with leaflet
 
-# Select a color palette with which to run the palette function
-pal_fun <- colorNumeric("BuPu", NULL)       # Blue-Purple from RColorBrewer
-pal_fun2 <- colorNumeric("YlOrRd", NULL)    # Yellow-Orange-Red from RColorBrewer
-pal_fun3 <- colorNumeric("viridis", NULL, reverse=TRUE)   # viridis from viridis
-pal_fun4 <- colorNumeric("inferno", NULL)   # inferno from viridis
-pal_fun5 <- colorNumeric("inferno", NULL, reverse=TRUE)  # reverses the color ramp
+palette <- colorNumeric("viridis", NULL, reverse=TRUE)
 
-# Median PM2.5
-popup_msg <- paste0(AQI.ACS.geom.WGS84$county
-                    ," County, "
-                   ,AQI.ACS.geom.WGS84$state
-                   ,", "
-                   ,AQI.ACS.geom.WGS84$NAMELSAD
-                   ,"<br>Metro Area: "
-                   ,AQI.ACS.geom.WGS84$cbsa
-                   ,"<br>Median PM2.5: "
-                   ,round(AQI.ACS.geom.WGS84$pm2.5_p50,digits=2))
+# Median PM2.5 by tract - interactive
+popup_msg <- paste0(AQI.ACS.geom.WGS84$county," County, ",AQI.ACS.geom.WGS84$state,", ",AQI.ACS.geom.WGS84$NAMELSAD
+                   ,"<br>Metro Area: ",AQI.ACS.geom.WGS84$cbsa
+                   ,"<br>Median PM2.5: ",round(AQI.ACS.geom.WGS84$pm2.5_p50,digits=2))
 
 leaflet(AQI.ACS.geom.WGS84) %>%
-  addPolygons(fillColor = ~pal_fun3(pm2.5_p50)
+  addPolygons(fillColor = ~palette(pm2.5_p50)
               ,fillOpacity = 0.9
               ,weight = 1.5
               ,color = "black"
               ,popup = popup_msg) %>%      
   addTiles() %>%
   addLegend("bottomright",         
-            pal=pal_fun3,      
+            pal=palette,      
             values=~pm2.5_p50,   
             title = 'PM2.5',  
             opacity = 1) %>%    
   addScaleBar()
 
-# % of days above 12 mcg/m3
-popup_msg2 <- paste0(AQI.ACS.geom.WGS84$county
-                    ," County, "
-                   ,AQI.ACS.geom.WGS84$state
-                   ,", "
-                   ,AQI.ACS.geom.WGS84$NAMELSAD
-                   ,"<br>Metro Area: "
-                   ,AQI.ACS.geom.WGS84$cbsa
-                   ,"<br>Reached 12mcg/m3 on "
-                   ,round(AQI.ACS.geom.WGS84$pm2.5_pct_ungreen,digits=1)
-                   ,"% of days")
+# % of days above 12 mcg/m3 by tract - interactive
+popup_msg2 <- paste0(AQI.ACS.geom.WGS84$county," County, ",AQI.ACS.geom.WGS84$state,", ",AQI.ACS.geom.WGS84$NAMELSAD
+                   ,"<br>Metro Area: ",AQI.ACS.geom.WGS84$cbsa
+                   ,"<br>Reached 12mcg/m3 on ",round(AQI.ACS.geom.WGS84$pm2.5_pct_ungreen,digits=1),"% of days")
 
 leaflet(AQI.ACS.geom.WGS84) %>%
-  addPolygons(fillColor = ~pal_fun3(pm2.5_pct_ungreen)
+  addPolygons(fillColor = ~palette(pm2.5_pct_ungreen)
               ,fillOpacity = 0.9
               ,weight = 1.5
               ,color = "black"
               ,popup = popup_msg2) %>%      
   addTiles() %>%
   addLegend("bottomright",         
-            pal=pal_fun3,      
+            pal=palette,      
             values=~pm2.5_pct_ungreen,   
-            title = '% days reaching 12mcg/m3',  
+            title = '% days of 12+ mcg/m3 PM2.5',  
             opacity = 1) %>%    
   addScaleBar()
 ```
 
 
-Multivariate linear models and logistic regressions for binary outcomes
-
-```{r modeling-1, eval=TRUE}
+Regression results, using all 19 ACS-based predictor variables: 
+```{r regression, eval=TRUE}
+# Run linear regression for continuous outcomes
 lm.p50 <- lm(pm2.5_p50 ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
              + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
@@ -572,6 +533,7 @@ lm.pct.ungreen <- lm(pm2.5_pct_ungreen ~
              + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
              ,data = AQI.ACS.geom)
 
+# Run logistic regression for binary outcomes
 logit.flag10.ungreen <- glm(pm2.5_flag10_ungreen ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
              + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
@@ -579,8 +541,6 @@ logit.flag10.ungreen <- glm(pm2.5_flag10_ungreen ~
              + renter + single.fam.home + worked.12mo + poverty.12mo + snap.12mo
              ,data = AQI.ACS.geom
              ,family = binomial())
-
-
 
 logit.flag20.ungreen <- glm(pm2.5_flag20_ungreen ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
@@ -590,163 +550,93 @@ logit.flag20.ungreen <- glm(pm2.5_flag20_ungreen ~
              ,data = AQI.ACS.geom
              ,family = binomial())
 
-
-
-summary(lm.p50)$coefficients
-summary(lm.p50)$coefficients[-1,4]
-
+# Extract p-values by predictor variable from regression results into a summary data frame.
 lm.p50.pval.df <- data.frame(acs.var = names(summary(lm.p50)$coefficients[-1,4])
                              ,lm.p50.pval  = summary(lm.p50)$coefficients[-1,4])
-lm.p50.pval.df
-
-summary(lm.pct.ungreen)$coefficients
-summary(lm.pct.ungreen)$coefficients[-1,4]
 
 lm.pct.ungreen.pval.df <- data.frame(acs.var = names(summary(lm.pct.ungreen)$coefficients[-1,4])
                                     ,lm.pct.ungreen.pval   = summary(lm.pct.ungreen)$coefficients[-1,4])
-lm.pct.ungreen.pval.df
-
-
-summary(logit.flag10.ungreen)
-summary(logit.flag10.ungreen)$coefficients
-
 
 logit.flag10.ungreen.pval.df <- data.frame(acs.var = names(summary(logit.flag10.ungreen)$coefficients[-1,4])
                                     ,logit.flag10.ungreen.pval = summary(logit.flag10.ungreen)$coefficients[-1,4])
-logit.flag10.ungreen.pval.df
-
-summary(logit.flag20.ungreen)
-summary(logit.flag20.ungreen)$coefficients
-
 
 logit.flag20.ungreen.pval.df <- data.frame(acs.var = names(summary(logit.flag20.ungreen)$coefficients[-1,4])
                                     ,logit.flag20.ungreen.pval = summary(logit.flag20.ungreen)$coefficients[-1,4])
-logit.flag20.ungreen.pval.df
 
+# Join p-value data frames together by ACS-based variable name. 
+# Sort ascending by p-value for median PM2.5 regression
 pval1 <- inner_join(lm.p50.pval.df,lm.pct.ungreen.pval.df, by="acs.var")
 pval2 <- inner_join(pval1,logit.flag10.ungreen.pval.df, by="acs.var")
 pval3 <- inner_join(pval2,logit.flag20.ungreen.pval.df, by="acs.var") %>% arrange(lm.p50.pval)
 
-pval3
-
-
-coef(lm.p50)
+# Return results
 summary.lm(lm.p50)
-
-
-
 summary(lm.pct.ungreen)
-
 summary(logit.flag10.ungreen)
 summary(logit.flag20.ungreen)
-
-
-
+pval3
 ```
 
-```{r assoc-plots, eval=TRUE}
-ggplot(data = AQI.ACS.geom, aes(x = worked.12mo       , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining  , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = race.black.any    , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = manufacturing     , y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = commutes.car.alone, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = age.median,         y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = veteran,            y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
-ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_p50)) + 
-  geom_point() + geom_smooth(color = "red", method = "lm") + labs(y="Median daily PM 2.5 concentration (mcg/cubic meter)")
 
-ggplot(data = AQI.ACS.geom, aes(x = worked.12mo           , y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = manufacturing         , y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining,       y = pm2.5_pct_ungreen)) + 
-  geom_point() + geom_smooth(color = "blue", method = "lm") + labs(y="Percent of days above 12mcg/cubic meter of PM 2.5")
+Bivariate plots for most strongly-associated predictor variables with median PM2.5 and 10%-of-days outcomes:
+```{r assoc-plots, eval=TRUE}
+# worked.12mo
+ggplot(data = AQI.ACS.geom, aes(x = worked.12mo, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("% Worked in Past 12 Months") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
+
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = worked.12mo)) +
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% Worked in Past 12 Months") 
+
+# manufacturing
+ggplot(data = AQI.ACS.geom, aes(x = manufacturing, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("% of Workers in Manufacturing Industry") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
 
 ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = manufacturing)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = worked.12mo)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = race.black.any)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = ethn.nhisp.white.alone)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% of Workers in Manufacturing Industry") 
+
+# farm.fish.mining
+ggplot(data = AQI.ACS.geom, aes(x = farm.fish.mining, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("% of Workers in Agriculture, Forestry,\nFishing & Hunting, and Mining Industry Category") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
+
 ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = farm.fish.mining)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = snap.12mo)) +
-    geom_violin(fill = "springgreen1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% of Workers in Agriculture, Forestry,\nFishing & Hunting, and Mining Industry Category")
 
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = worked.12mo)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = ethn.nhisp.white.alone)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = income.hh.median.10k)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
-ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag20_ungreen, y = bachelor.plus)) +
-    geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + labs(x="Percent of days above 12mcg/cubic meter of PM 2.5")
+# ethn.nhisp.white.alone
+ggplot(data = AQI.ACS.geom, aes(x = ethn.nhisp.white.alone, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("% of Respondents Reporting\nNon-Hispanic Ethnicity and White Race Only") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
 
-library(ggsn)
-library(maps)
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = ethn.nhisp.white.alone)) +
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% of Respondents Reporting\nNon-Hispanic Ethnicity and White Race Only")
 
-ggplot() +
-  geom_sf(data = AQI.ACS.geom, aes(fill=pm2.5_p50)) +
-  borders("state")
-  
-ggplot() +
-  geom_sf(data = AQI.ACS.geom, aes(fill=pm2.5_p50)) +
-  ggtitle("Median daily PM2.5 reading for 2019 by census tract") + 
-  scale_color_gradient(low = "#ffff00", high = "#0000ff") +
-  borders("state")
+# race.black.any
+ggplot(data = AQI.ACS.geom, aes(x = race.black.any, y = pm2.5_p50)) + 
+  geom_point() + geom_smooth(color = "red", method = "lm") + 
+  xlab("% of Respondents Reporting Black Race\n(with or without other categories)") +
+  ylab("Median Daily PM2.5 Concentration (mcg/m3)")
 
-class(AQI.ACS.geom)
-+
-  my_theme() +    
-  ggtitle("Tract-level poverty rates in Philadelphia") + 
-  scale_fill_gradientn(name = "Poverty \nrate (%)",  
-                    colours = myPalette(100)) +
-  north(x.min = -75.28031, y.min = 39.86747,    # add north bar with north()
-        x.max = -74.95575, y.max = 40.13793,    # set map boundaries with x.min, y.min, etc..      
-        symbol=12,                              # select north arrow symbol
-        anchor = c(x = -75, y = 39.93)) +       # set north bar location
-  scalebar(x.min = -75.28031, y.min = 39.86747, # add scalebar with scalebar()
-           x.max = -74.95575, y.max = 40.13793, # set map boundaries
-           dist = 5, dist_unit = 'km',          # set scalebar segment length = 5km
-           transform = TRUE,                    # TRUE for decimal degree coordinates
-           model = "WGS84")                     # specify CRS
-```
-
-
-Visualizations of 2019 air quality summaries across the U.S.
-
-```{r simple-outcome-maps, eval=TRUE}
-
-library(maps)
-
-ggplot(data = AQI.ACS.geom, aes(x = longitude, y = latitude, color = pm2.5_p50)) + 
-    geom_point() + 
-    borders("state") + 
-    scale_color_gradient(low = "#ffff00", high = "#0000ff") +
-    labs(title = "Median daily PM2.5 reading for 2019 by testing site") +
-    labs(x = "Longitude", y = "Latitude") + 
-    theme_bw() 
-
-ggplot(data = site.summary.PM2.5, aes(x = longitude, y = latitude, color = pm2.5_p90)) + 
-    geom_point() + 
-    borders("state") + 
-    scale_color_gradient(low = "#ffff00", high = "#ff0000") +
-    labs(title = "90th percentile daily PM2.5 reading for 2019 by testing site") +
-    labs(x = "Longitude", y = "Latitude") + 
-    theme_bw() 
+ggplot(data = AQI.ACS.geom, aes(x = pm2.5_flag10_ungreen, y = race.black.any)) +
+  geom_violin(fill = "steelblue1", draw_quantiles = c(0.25, 0.5, 0.75)) + 
+  xlab("% of Days with PM2.5 >= 12mcg/m3") + 
+  ylab("% of Respondents Reporting Black Race\n(with or without other categories)")
 
 ```
+
 
 
 ```{r crossvalidation, eval=TRUE}
@@ -840,7 +730,7 @@ legend("bottomright"
 
 ```
 
-```{r adfkgjnadfg, eval=TRUE}
+```{r adfkgjnadfg, eval=FALSE}
 head(AQI.ACS.preds)
 
 
@@ -910,7 +800,7 @@ rf.flag20.ungreen <- randomForest(pm2.5_flag20_ungreen ~
 rf.flag20.ungreen
 rf.flag20.ungreen$importance[,c("MeanDecreaseGini")] %>% sort(decreasing = TRUE)
 
-library(e1071)
+
 AQI.ACS.svm <- svm(pm2.5_flag10_ungreen ~ 
                age.median + commute.time.agg.10k + income.hh.median.10k + rent.median.100 
              + home.pmt.median.100 + race.black.any + ethn.nhisp.white.alone + married + kids 
@@ -1172,10 +1062,7 @@ Join with air quality summary data.
 ```
 
 
-### Results
-*Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.*
 
-Perform bivariate tests of community characteristics vs air quality (continous measures and 1/0 for poor air quality above threshold). Create multivariate models to predict air quality from community characteristics. Construct a classifier using community characteristics and evaluate its performance against the real data. 
 
 ```{r actual-data-science, eval=FALSE}
 
