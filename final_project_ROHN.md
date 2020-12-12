@@ -14,31 +14,23 @@ output:
 ## [1] 56000
 ```
 ***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
-
 ### Overview
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
 
 I want to look at if/how marital status impacts survival across different genders and cancer  sites. I know in general epi literature, there is a tendency to see that marriage typically is a stronger predictor of survival in men than in women depending on the disease.I plan to further stratify by race.
 
 
 ### Introduction 
-Describe the problem addressed, its significance, and some background to motivate the problem.
-
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
 
 It has been found across social epidemiological studies that marital status can be a predictor of survival outcomes for various diseases. Sometimes it is found that there is a  stronger association between being married and longer survival for men than for women. I  intend to investigate whether or not this pattern holds true for those diagnosed with various forms of cancer in the US and Puerto Rico, utilizing the SEER dataset. I would also like to further explore the effects of race on these potential associations. Epidemiology itself is an interdisciplinary field, and this project will also utilize the fields of social epidemiology, oncology, and biostatistics.
-I am using the SEER database below (over 8 million observations so far, so I can't upload it):
-Surveillance, Epidemiology, and End Results (SEER) Program (www.seer.cancer.gov) SEER*Stat Database: Incidence - SEER 18 Regs Research Data + Hurricane Katrina Impacted Louisiana Cases, Nov 2018 Sub (1975-2016 varying) - Linked To County Attributes - Total U.S., 1969-2017 Counties,National Cancer Institute, DCCPS, Surveillance Research Program, released April 2019, based on the November 2018 submission.
-
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+I am using the SEER database below (over 8 million observations so far, so I can't upload it):
+Surveillance, Epidemiology, and End Results (SEER) Program (www.seer.cancer.gov) SEER*Stat Database: Incidence - SEER 18 Regs Research Data + Hurricane Katrina Impacted Louisiana Cases, Nov 2018 Sub (1975-2016 varying) - Linked To County Attributes - Total U.S., 1969-2017 Counties,National Cancer Institute, DCCPS, Surveillance Research Program, released April 2019, based on the November 2018 submission. 
 
 ```r
 library(tidyverse)
 #load raw dataset
-seer <- read.csv("C:/Users/kmroh/Desktop/BMIN503/dataset1.csv", header = T)
+seer <- read.csv("C:/Users/kmroh/Documents/BMI Cert/BMIN503/dataset1.csv", header = T)
 #view column names and rename variables of interest
 colnames(seer)
 ```
