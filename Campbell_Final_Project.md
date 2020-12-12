@@ -17,20 +17,31 @@ library(tidyverse)
 library(magrittr)
 library(lubridate)
 library(texreg)
+library(cowplot)
+library(sjPlot)
 ```
 ***
 
 ### Overview
-Clinical Genetics consultation during hospitalization attempts to identify an underlying cause of a patient’s multiple medical problems and may include genetic testing which takes many weeks or months to complete. Because the patient may be discharged from the hospital before the testing results become available, ensuring that the results are effectively communicated to the patient or family and their healthcare team is challenging. I used data extracted from the Children’s Hospital of Philadelphia electronic health record to identify factors which increase the risk of failed follow up. I used this information to inform implementation of a system including clinical decision support in an attempt to improve timely delivery of care.
+Clinical Genetics consultation during hospitalization attempts to identify an underlying cause of a patient’s multiple medical problems and may include genetic testing which takes many weeks or months to complete. Because the patient may be discharged from the hospital before the testing results become available, ensuring that the results are effectively communicated to the patient or family and their healthcare team is challenging. I used data extracted from the Children’s Hospital of Philadelphia (CHOP) electronic health record (EHR) to identify factors which increase the risk of failed follow up. I used this information to inform implementation of a system including clinical decision support in an attempt to improve timely delivery of care.
 
 ### Introduction 
-Genetic testing has the ability to provide an overarching reason for a patient’s medical problems. Likewise, it can inform prognosis, management, surveillance and recurrence risk. However, to be useful, the testing must be reviewed and interpreted by professionals that can implement care based on the knowledge gained and inform the patient or their family members of its meaning. Too frequently, genetic testing is sent and never followed up on by a provider. When sent as an inpatient, this testing is often performed at the expense of the hospital. If the patient or family member never realizes the benefit of the testing, there is the potential that this hospital resource could be wasted. 
+Genetic testing has the ability to provide an overarching reason for a patient’s medical problems. Likewise, it can inform prognosis, management, surveillance and recurrence risk. However, to be useful, the testing must be reviewed and interpreted by professionals that can implement care based on the knowledge gained and inform the patient or their family members of its meaning. 
 
-To reduce the rate of testing that is never followed up on, we will implement a comprehensive tracking system that takes the place of disparate systems used by individual providers. To facilitate the implementation, we will model the characteristics of patients that appear to be at increased risk of never having documented follow up. Information gained through this analysis will be used to design the tracking system; it will aim to decrease the time and effort needed for providers to access needed data and perform follow-up tasks. We will also aim to measure follow up before and after the intervention. 
+In a typical workflow, a patient is admitted to the hospital. Their primary care team suspects there may be an underlying genetic etiology of the patient's medical problems and requests consulation of a geneticist. The geneticist evaluates the patient and leaves documentation and may recommend genetic testing. The primary team then implements these recommendations, and a DNA or other sample is sent to a reference laboratory for processing. Weeks or months later, the test results are completed and conveyed as a test report. This report is entered into the patient's EHR. Because significant time has passed, the patient has frequently been discharged from the hospital.
 
+![](images/GeneticsWorkflow.png)
+
+In an ideal situation, the consulting geneticist becomes aware of the results, interprets them in the context of the patient's medical problems and returns the results to the family. However, too frequently, genetic testing is sent and never followed up on by a provider. When sent as an inpatient, this testing is often performed at the expense of the hospital. If the patient or family member never realizes the benefit of the testing, there is the potential that this hospital resource could be wasted. 
+
+To reduce the rate of testing that is never followed up on, we implemented a comprehensive tracking system that takes the place of disparate systems used by individual providers. To facilitate the implementation, we modeled the characteristics of patients that appear to be at increased risk of never having documented follow up. Information gained through this analysis was used to design the tracking system; in addition to improving follow up documentation, it will hopefully decrease the time and effort needed for providers to access needed data and perform follow-up tasks. We will also aim to measure follow up before and after the intervention. 
 
 ### Methods
-As part of a quality improvement project, I extracted from the CHOP Data Warehouse. This Netezza SQL database houses data that is loaded via Extract Transform Load processes from the Clarity database of the CHOP Epic electronic health record implementation. Due to institutional restrictions, I extracted the data using a separate IDE.
+At CHOP, health information is collected through a commercial EHR, Epic. This data is operationally held in an InterSystems Caché database called Chronicles. The EHR vendor provides extract transform load (ETL) processes that convert this data into a relational database named Clarity. At CHOP, this is an Oracle SQL database. To minimize impacts to the EHR relational database, CHOP uses custom ETL processes to copy the data from Clarity into a Netezza SQL database called the CHOP Data Warehouse (CDW). 
+
+![](images/CDW.png)
+
+As part of a quality improvement project, I extracted the required EHR data from the CDW. Due to institutional restrictions, I extracted the data using a separate IDE.
 
 I obtained a list of patients who had an evaluation by the consulting service of Clinical Genetics while hospitalized between the dates of `2019-08-01` and `2020-08-01`. I identified these patients by searching for clinical notes of type `CONSULT NOTE`. I also extracted other information about their hospitalization, insurance coverage and demographic information. 
 
@@ -181,7 +192,7 @@ ggplot(aes(x = ConsultMonth, fill = Service)) +
 
 ![](Campbell_Final_Project_files/figure-html/unnamed-chunk-5-1.png)<!-- -->
 
-The distribution of the consulting hospital service remained stable during the study period. There is a notable decrease in consults in December with a subsequent rise in Janurary, likely due to the effects of winter holidays.
+The distribution of the consulting hospital services remained stable during the study period. There is a notable decrease in consults in December with a subsequent rise in Janurary, likely due to the effects of winter holidays.
 
 #### Documentation of Follow Up Care Following Initial Consultation
 
@@ -219,15 +230,15 @@ ggplot(SummarizedSubsequentNotes, aes(x = ConsultMonth, fill = FollowUpType)) +
 
 ![](Campbell_Final_Project_files/figure-html/unnamed-chunk-6-1.png)<!-- -->
 
-Notably, **58%** of patients with completed consults during the study period had no subsequent clinical note documented by any member of the Genetics healthcare team. The rate appeared to remain relatively stable over time.
+Notably, **58%** of patients with completed consults during the study period had no subsequent clinical note documented by any member of the Genetics healthcare team. The rate appeared to remain relatively stable over time, although there may have been a drop in patients without documented follow up starting in March 2020.
 
-I hypothesized that a number of consultations actually require no further follow up:
+I hypothesized that some consultations actually require no further follow up:
 
-* The patient was evaluated but the clinician felt that no genetic testing nor further follow up was warranted
-* The patient previously underwent genetic testing and the Genetics team is being consulted for management during hospitalization
-* The patient previously underwent genetic testing and was diagnosed with a specific condition, the family desires further counseling from the CHOP Genetics team, but no long-term follow up is required
+* The patient was evaluated but the Geneticist felt that no genetic testing nor further follow up was warranted
+* The patient previously underwent genetic testing and the Genetics team was consulted for management during hospitalization
+* The patient previously underwent genetic testing and was diagnosed with a specific condition, the family desires further counseling from the CHOP Genetics team, but long-term follow up is not required
 
-In other cases, I hypothesized that genetic testing was recommended, but the results of that testing was either never reviewed or the interpretation and follow up plan was not documented in the patient's chart.
+In other cases, I hypothesized that genetic testing was recommended, but the results of that testing were either never reviewed or the interpretation and follow up plan was not documented in the patient's chart.
 
 
 ```r
@@ -248,6 +259,7 @@ ggplot(aes(x = ConsultMonth, fill = GeneticResults)) +
 ```
 
 ![](Campbell_Final_Project_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+
 Interestingly, **78%** of patients with no documented follow up had genetic testing performed.  
 
 
@@ -315,173 +327,334 @@ AggregateADI <- ADI[,.(MedianStateADI = median(as.numeric(ADI_STATERNK),na.rm = 
 
 To assess how socioeconomic factors may influence follow up, I relied on a previously developed metric called the Area Deprivation Index. This index attempts to include information about income, education, employment, and housing quality. I downloaded census tract level data for Pennsylvania and surrounding states from the [University of Wisconsin website](https://www.neighborhoodatlas.medicine.wisc.edu/). I aggregated the data to zip code level using the median index for that zip code.   
 
+I then developed a multivariate generalized linear model for documented follow up based on a number patient demographics.
+
 
 ```r
 FilteredConsult %>% 
     left_join(SummarizedSubsequentNotes) %>%
     left_join(GeneticResultsSummary) %>%
     mutate(across(Array:MLPA22q,replace_na,0),
-           FollowUp = recode(FollowUpType, None = 0, .default = 1),
-           AnyTesting = as.integer(Patient %in% GeneticResults$Patient),
-           ArrayOnly = as.logical(Array) & !rowSums(cbind(Exome,Miscellaneous,Karyotype,MLPA22q)),
-           Service = recode(AdmissionService,
+           FollowUp = factor(recode(FollowUpType, None = 0, .default = 1),
+                             labels = c("No","Yes")),
+           Exome = factor(Exome,
+                          labels = c("No","Yes")),
+           AnyTesting = factor(as.integer(Patient %in% GeneticResults$Patient),
+                               labels = c("No","Yes")),
+           Service = recode(AdmissionService, #Combine to Cardiology, Crtical Care, Neonatology, Other
                             "Cardiovascular Surgery" = "Cardiology",
                             "Cardiac Critical Care" = "Cardiology",
-                            "Cardiology" = "Cardiology",
                             "Critical Care" = "Critical Care",
                             "Neonatology" = "Neonatology",
                             .default = "Other"),
-           ServiceType = recode(Service,
+           `Service Type` = recode_factor(Service, #Combine all critical care services
                                 "Other" = "Non-Critical Care",
                                 .default = "Crtical Care"),
-           SDU = fct_other(AdmissionSource, keep = "SDU Neonate",
-                           other_level = "Other"),
-           PayorGroup = fct_other(PayorGroup, keep = "COMMERCIAL",
-                                  other_level = "Other"),
-           PreferredLanguage = fct_other(PreferredLanguage, keep = "ENGLISH",
-                                  other_level = "Other"),
+           `Admission Type` = recode_factor(AdmissionSource, #Combine to SDU, Transfer, Other
+                            "SDU Neonate" = "SDU",
+                            "SDU Birth Parent" = "SDU",
+                            "Transfer" = "Transfer",
+                            .default = "Other"),
+           `Payor Type` = recode_factor(PayorGroup, # Dicotomize
+                                 "COMMERCIAL" = "Commercial",
+                                 .default = "Government"),
+           `Preferred Language` = recode_factor(PreferredLanguage, "ENGLISH" = "English",
+                                  .default = "Other"),
            Race = fct_other(RaceEthnicity,
-                             keep = c("Non-Hispanic Black","Hispanic or Latino","Non-Hispanic White"),
+                             keep = c("Non-Hispanic Black", "Hispanic or Latino", "Non-Hispanic White"),
                              other_level = "Other"),
-           Zip = str_pad(str_extract(Zip,"^[0-9]{4,5}"), 5,"left","0")) %>%
+           Zip = str_pad(str_extract(Zip,"^[0-9]{4,5}"), 5,"left","0"), #Pad to join to ADI
+           `Consult Month` = as.integer(as.factor(ConsultMonth)),
+           `Hospital Length of Stay (Weeks)` = HospitalLOS / 7, #Change from days to weeks for OR
+           `Gestational Age (Weeks)` = GestationalAge,
+           `Age (Months)` = AgeDays / 30 ) %>%
     left_join(AggregateADI) %>%
+    mutate(`Home Zip Area Deprivation Index` = MedianStateADI) %>%
     assign("ModelData",. ,envir = .GlobalEnv)
 
-NoFollowUpModel <- glm(FollowUp ~ ConsultMonth + AnyTesting + ServiceType + HospitalLOS + GestationalAge + Exome + PayorGroup * MedianStateADI,data = ModelData, family = "binomial")
-summary(NoFollowUpModel)
+NoFollowUpModel <- glm(FollowUp ~ `Consult Month` + AnyTesting + Exome + `Service Type` + `Admission Type` +
+                         `Hospital Length of Stay (Weeks)` + `Gestational Age (Weeks)` + Race +
+                         `Preferred Language` + `Age (Months)` + `Payor Type` * `Home Zip Area Deprivation Index`,
+                       data = ModelData, binomial(link = "logit"))
+
+tab_model(NoFollowUpModel, show.reflvl = TRUE,  prefix.labels = "varname",
+          rm.terms="Payor TypeGovernment:Home Zip Area Deprivation Index", wrap.labels = 50,
+          order.terms = c(1:4,6,8,13,11,7,9,10,14,15,22,23,16:21,5,12))
 ```
 
-```
-## 
-## Call:
-## glm(formula = FollowUp ~ ConsultMonth + AnyTesting + ServiceType + 
-##     HospitalLOS + GestationalAge + Exome + PayorGroup * MedianStateADI, 
-##     family = "binomial", data = ModelData)
-## 
-## Deviance Residuals: 
-##     Min       1Q   Median       3Q      Max  
-## -1.9823  -0.9073  -0.6732   1.1000   2.2183  
-## 
-## Coefficients:
-##                                  Estimate Std. Error z value Pr(>|z|)    
-## (Intercept)                    -4.971e+01  1.558e+01  -3.191  0.00142 ** 
-## ConsultMonth                    2.534e-03  8.487e-04   2.986  0.00283 ** 
-## AnyTesting                      8.237e-01  2.883e-01   2.857  0.00428 ** 
-## ServiceTypeNon-Critical Care    4.873e-01  2.362e-01   2.064  0.03906 *  
-## HospitalLOS                     4.220e-03  1.573e-03   2.683  0.00729 ** 
-## GestationalAge                  6.071e-02  3.084e-02   1.969  0.04899 *  
-## Exome                           1.370e+00  2.324e-01   5.896 3.73e-09 ***
-## PayorGroupOther                -9.183e-01  4.326e-01  -2.123  0.03379 *  
-## MedianStateADI                 -7.809e-02  4.833e-02  -1.616  0.10616    
-## PayorGroupOther:MedianStateADI  1.051e-01  6.978e-02   1.507  0.13186    
-## ---
-## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-## 
-## (Dispersion parameter for binomial family taken to be 1)
-## 
-##     Null deviance: 816.43  on 603  degrees of freedom
-## Residual deviance: 725.21  on 594  degrees of freedom
-##   (168 observations deleted due to missingness)
-## AIC: 745.21
-## 
-## Number of Fisher Scoring iterations: 4
-```
+<table style="border-collapse:collapse; border:none;">
+<tr>
+<th style="border-top: double; text-align:center; font-style:normal; font-weight:bold; padding:0.2cm;  text-align:left; ">&nbsp;</th>
+<th colspan="3" style="border-top: double; text-align:center; font-style:normal; font-weight:bold; padding:0.2cm; ">FollowUp</th>
+</tr>
+<tr>
+<td style=" text-align:center; border-bottom:1px solid; font-style:italic; font-weight:normal;  text-align:left; ">Predictors</td>
+<td style=" text-align:center; border-bottom:1px solid; font-style:italic; font-weight:normal;  ">Odds Ratios</td>
+<td style=" text-align:center; border-bottom:1px solid; font-style:italic; font-weight:normal;  ">CI</td>
+<td style=" text-align:center; border-bottom:1px solid; font-style:italic; font-weight:normal;  ">p</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">(Intercept)</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.02</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.00&nbsp;&ndash;&nbsp;0.25</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.003</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">AnyTesting: No</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">AnyTesting: Yes</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">2.21</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.27&nbsp;&ndash;&nbsp;4.02</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.006</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Exome: No</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Exome: Yes</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">3.96</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">2.48&nbsp;&ndash;&nbsp;6.46</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>&lt;0.001</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Consult Month</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.07</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.02&nbsp;&ndash;&nbsp;1.13</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.006</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Hospital Length of Stay (Weeks)</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.03</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.01&nbsp;&ndash;&nbsp;1.05</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.007</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Gestational Age (Weeks)</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.07</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.01&nbsp;&ndash;&nbsp;1.14</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.036</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Service Type: Non-Critical Care</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Service Type: Crtical Care</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.76</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.45&nbsp;&ndash;&nbsp;1.28</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.296</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Admission Type: SDU</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Admission Type: Transfer</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.58</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.02&nbsp;&ndash;&nbsp;2.46</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.041</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Admission Type: Other</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.14</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.69&nbsp;&ndash;&nbsp;1.90</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.602</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Payor Type: Commercial</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Payor Type: Government</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.40</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.17&nbsp;&ndash;&nbsp;0.94</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><strong>0.037</strong></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Race: Hispanic or Latino</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Race: Non-Hispanic Black</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.95</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.49&nbsp;&ndash;&nbsp;1.84</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.889</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Race: Non-Hispanic White</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.98</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.55&nbsp;&ndash;&nbsp;1.78</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.955</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Race: Other</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.17</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.60&nbsp;&ndash;&nbsp;2.28</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.638</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Preferred Language: English</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "><em>Reference</em></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  "></td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Preferred Language: Other</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.77</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.38&nbsp;&ndash;&nbsp;1.52</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.462</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Age (Months)</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.00</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">1.00&nbsp;&ndash;&nbsp;1.01</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.834</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; ">Home Zip Area Deprivation Index</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.93</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.84&nbsp;&ndash;&nbsp;1.02</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:center;  ">0.145</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; padding-top:0.1cm; padding-bottom:0.1cm; border-top:1px solid;">Observations</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; padding-top:0.1cm; padding-bottom:0.1cm; text-align:left; border-top:1px solid;" colspan="3">604</td>
+</tr>
+<tr>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; text-align:left; padding-top:0.1cm; padding-bottom:0.1cm;">R<sup>2</sup> Tjur</td>
+<td style=" padding:0.2cm; text-align:left; vertical-align:top; padding-top:0.1cm; padding-bottom:0.1cm; text-align:left;" colspan="3">0.151</td>
+</tr>
+
+</table>
 
 
-I then developed a generalized linear model for documented follow up based on a number patient demographics.
+The model identifies the strongest predictor of documented follow-up as having exome sequencing performed. This is to be expected, as patients and their families undergo an extensive consent process prior to ordering the test. Thus they are expecting the results. Having any genetic testing performed was also associated with increased likelihood of follow up, as expected. 
 
-The model identifies the strongest predictor of documented follow-up as having exome sequencing performed. This is to be expected, as patients and their families undergo an extensive consent process prior to ordering the test. Thus they are expecting the results. Having any genetic testing performed was also associated with increased likelihood of follow up, as expected. Another perhaps unsurprising result was that patients were more likely to have documented follow up if they were hospitalized for longer. Additional research will be required to assess if this is a proxy for medical complexity or if the association is with the state of being admitted when results return. 
-
-More interestingly, there was a significant positive correlation with gestational age at birth and documented follow-up, indicated that premature infants were less likely to have documented follow-up. Patients admitted to a non-critical care service were also more likely to have documented follow up. It may be that healthcare providers in a critical care setting have a lower threshold to consult Genetics, while providers caring for patients admitted to lower levels of care only request evaluation in the cases most likely to have genetic disease. Additionally, the month the initial consult was completed was positively correlated with documented follow-up, potentially indicating a shift following the onset of the SARS-COV-2 pandemic. Additional research will be required to address if this is due to staff changes or differences from off-site work. 
-
-Finally, the model identified having non-commercial insurance as being negatively correlated with documented follow up. It is unclear what this association may be a proxy for. The Area Deprivation Index of the patient's home zip code was not correlated with follow-up.  
-
-Analysis revealed no significant association among sex assigned at birth, age at consult, race, ethnicity, or preferred language (data not shown). Likewise, there was no clear association with delivery in the "Special Delivery Unit" Obstetric floor at CHOP.
 
 
 ```r
-names(NoFollowUpModel$coefficients) <- c("(Intercept)","Consult Month","Any Genetic Testing", "Non-Critical Care Service",
-                                 "Hospital Length of Stay","Gestational Age at Birth","Exome Performed",
-                                 "Non-commertial Insurance", "Home Zip Code Median ADI","Insurance : ADI Interaction")
-htmlreg(NoFollowUpModel, single.row = TRUE, digits = 4, type = "html", doctype = FALSE,
-        center = FALSE, html.tag = FALSE, inline.css = TRUE) %>%
-  htmltools::HTML()
+SummarizedSubsequentNotes %>%
+  left_join(FilteredConsult) %>%
+  mutate(LOSCat = factor(cut(HospitalLOS,20))) %>%
+  mutate(LOSCat = factor(LOSCat,levels = levels(LOSCat),
+                         labels = str_replace_all(str_replace_all(levels(LOSCat),"[\\(\\]]",""),",","-"))) %>%
+  mutate(FollowUp = !FollowUpType=="None") %T>%
+{ggplot(.,aes(x = LOSCat, fill = as.factor(FollowUp))) + 
+  geom_bar(position = "fill",
+           show.legend = FALSE) +
+  labs(y = "Percentage of Patients",
+       fill = "Follow Up Documented?") + 
+  ggtitle("Was Hospital Length of Stay Associated with Follow Up?") +
+  scale_fill_manual(values = c("TRUE" = "cornflowerblue", 
+                               "FALSE" = "firebrick3"),
+                    labels = c("FALSE" = "No",
+                               "TRUE" = "Yes")) +
+  scale_y_continuous(labels = scales::percent) +
+  guides(x = guide_axis(angle = 45)) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x =element_blank(),
+        axis.title.x = element_blank()) ->> plot3} %>%
+{ggplot(.,aes(x = LOSCat, fill = as.factor(FollowUp))) + 
+  geom_bar(position = "stack") +
+  labs(y = "Number of Patients",
+       x = "Hospital Length of Stay (Days)",
+       fill = "Follow Up Documented?") +
+  scale_fill_manual(values = c("TRUE" = "cornflowerblue", 
+                               "FALSE" = "firebrick3"),
+                    labels = c("FALSE" = "No",
+                               "TRUE" = "Yes")) +
+  guides(x = guide_axis(angle = 45)) +
+  theme_minimal() +
+  theme(legend.position = "bottom") ->> plot4}
+cowplot::plot_grid(plot3, plot4, ncol =1, rel_heights = c(0.4,0.6))
 ```
 
-<!--html_preserve--><table class="texreg" style="margin: 10px;border-collapse: collapse;border-spacing: 0px;caption-side: bottom;color: #000000;border-top: 2px solid #000000;">
-<caption>Statistical models</caption>
-<thead>
-<tr>
-<th style="padding-left: 5px;padding-right: 5px;">&nbsp;</th>
-<th style="padding-left: 5px;padding-right: 5px;">Model 1</th>
-</tr>
-</thead>
-<tbody>
-<tr style="border-top: 1px solid #000000;">
-<td style="padding-left: 5px;padding-right: 5px;">(Intercept)</td>
-<td style="padding-left: 5px;padding-right: 5px;">-49.7083 (15.5782)<sup>**</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Consult Month</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.0025  (0.0008)<sup>**</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Any Genetic Testing</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.8237  (0.2883)<sup>**</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Non-Critical Care Service</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.4873  (0.2362)<sup>*</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Hospital Length of Stay</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.0042  (0.0016)<sup>**</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Gestational Age at Birth</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.0607  (0.0308)<sup>*</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Exome Performed</td>
-<td style="padding-left: 5px;padding-right: 5px;">1.3704  (0.2324)<sup>***</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Non-commertial Insurance</td>
-<td style="padding-left: 5px;padding-right: 5px;">-0.9183  (0.4326)<sup>*</sup></td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Home Zip Code Median ADI</td>
-<td style="padding-left: 5px;padding-right: 5px;">-0.0781  (0.0483)</td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Insurance : ADI Interaction</td>
-<td style="padding-left: 5px;padding-right: 5px;">0.1051  (0.0698)</td>
-</tr>
-<tr style="border-top: 1px solid #000000;">
-<td style="padding-left: 5px;padding-right: 5px;">AIC</td>
-<td style="padding-left: 5px;padding-right: 5px;">745.2090</td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">BIC</td>
-<td style="padding-left: 5px;padding-right: 5px;">789.2448</td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Log Likelihood</td>
-<td style="padding-left: 5px;padding-right: 5px;">-362.6045</td>
-</tr>
-<tr>
-<td style="padding-left: 5px;padding-right: 5px;">Deviance</td>
-<td style="padding-left: 5px;padding-right: 5px;">725.2090</td>
-</tr>
-<tr style="border-bottom: 2px solid #000000;">
-<td style="padding-left: 5px;padding-right: 5px;">Num. obs.</td>
-<td style="padding-left: 5px;padding-right: 5px;">604</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="font-size: 0.8em;" colspan="2"><sup>***</sup>p &lt; 0.001; <sup>**</sup>p &lt; 0.01; <sup>*</sup>p &lt; 0.05</td>
-</tr>
-</tfoot>
-</table>
-<!--/html_preserve-->
+![](Campbell_Final_Project_files/figure-html/unnamed-chunk-11-1.png)<!-- -->
+
+Another perhaps unsurprising result was that patients were more likely to have documented follow up if they were hospitalized for longer. Additional research will be required to assess if this is a proxy for medical complexity or if the association is with the state of being admitted when results return. 
+
+
+```r
+SummarizedSubsequentNotes %>%
+  left_join(FilteredConsult) %>%
+  mutate(GestationalAge = floor(GestationalAge),
+         FollowUp = !FollowUpType=="None") %T>%
+{ggplot(., aes(x = as.factor(GestationalAge), fill = as.factor(FollowUp))) + 
+  geom_bar(position = "fill",
+           show.legend = FALSE) +
+  labs(y = "Percentage of Patients",
+       x = "Gestational Age",
+       fill = "Follow Up Documented?") + 
+  ggtitle("Was Gestational Age Associated with Follow Up?") +
+  scale_fill_manual(values = c("TRUE" = "cornflowerblue", 
+                               "FALSE" = "firebrick3"),
+                    labels = c("FALSE" = "No",
+                               "TRUE" = "Yes")) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x =element_blank(),
+        axis.title.x = element_blank()) ->> plot1} %>%
+{ggplot(., aes(x = as.factor(GestationalAge), fill = as.factor(FollowUp))) + 
+  geom_bar(position = "stack") +
+  labs(y = "Number of Patients",
+       x = "Gestational Age (Completed Weeks)",
+       fill = "Follow Up Documented?") + 
+  scale_fill_manual(values = c("TRUE" = "cornflowerblue", 
+                               "FALSE" = "firebrick3"),
+                    labels = c("FALSE" = "No",
+                               "TRUE" = "Yes")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")->> plot2}
+cowplot::plot_grid(plot1, plot2, ncol =1, rel_heights = c(0.4,0.6))
+```
+
+![](Campbell_Final_Project_files/figure-html/unnamed-chunk-12-1.png)<!-- -->
+
+More interestingly, there was a significant positive correlation with gestational age at birth and documented follow-up, indicating that premature infants were less likely to have documented follow-up. Patients transferred from another hospital were more likely to have documented follow up in comparison to patients born at our hospital's Special Delivery Unit (SDU) or admitted from the ambulatory setting.
+
+Additionally, the month the initial consult was completed was positively correlated with documented follow-up, potentially indicating a shift following the onset of the SARS-COV-2 pandemic. Additional research will be required to address if this is due to staff changes or differences from off-site work. 
+
+Finally, the model identified having non-commercial insurance as being negatively correlated with documented follow up. Patients with complex medical issues often qualify for government insurance, and thus, this may be another proxy for medical complexity. However, newborn infants should still be on their parents' insurance and there are other explanatory variables controlling for admission type and age at consultation. Interestingly, the Area Deprivation Index of the patient's home zip code was not correlated with follow-up. More accurate indicators of socioeconomic status such as self reported income would be preferable, but were unavailable.  
+
+Analysis revealed no significant association with age at consult, admission service, race, ethnicity, or preferred language. 
+
+### Conclusion
+
+Overall, I found that a majority (58%) of individuals who undergo evaluation by Clinical Genetics at Children’s Hospital of Philadelphia have no other clinical documentation placed in their EHR by a member of the Genetics team. Although the reason why this occurs is not clear, 78% percent of such patients have had genetic testing at a date subsequent to their consultation. 
+
+A logistic regression model investigating what factors may be associated with having no documented follow up identified a number of interesting associations. Unsurprisingly, having genetic testing, and particularly the most expensive and complex test (exome sequencing), performed increased the likelihood of follow up. Interestingly, having government issued health insurance was associated with decreased likelihood of follow up. While the underpinnings of this possible association remain unclear, one must consider if there social determinants of health that are playing an important role. 
+
+### Future Directions 
+
+Building on the insight gained during this project, I have conceived of, developed, implemented, and administered provider training regarding a comprehensive genetic testing follow up system in the CHOP EHR. After any necessary improvements are made, I will measure the same metrics to assess the effectiveness of my intervention. 
+
+### Acknowledgements
+
+I would like to express my thanks the input and encouragement of my Clinical Informatics colleagues at CHOP:
+
+* Leah Carr, MD
+* Eli Lourie, MD
+* Tony Luberti, MD
+* Eric Shelov, MD
+* Joseph Zorc, MD
+
+I also would like to thank my clinical mentor in Genetics:
+
+* Elaine Zackai, MD
