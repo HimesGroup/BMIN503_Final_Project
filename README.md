@@ -10,9 +10,15 @@ Please see [this markdown document](https://github.com/ianmcampbell/BMIN503_Fina
 
 ## Files Present:
 `README.md` - This Read Me
+
 `Campbell_Final_Project.Rmd` - Final project RMD file
+
 `Campbell_Final_Project.md` - Knit Markdown document for consumption on GitHub
+
 `Campbell_Final_Project.html` - Knit HTML file for submission to class
+
 `BMIN503_Final_Project.Rproj` - R project file
+
 `/images/` - Images embedded in `.md` version.
+
 `/Campbell_Final_Project_files/figure-html/` - Knit graph images for `.md` version.
