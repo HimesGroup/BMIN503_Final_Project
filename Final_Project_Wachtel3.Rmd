@@ -1,0 +1,485 @@
+---
+title: "BMIN503/EPID600 Final Project"
+author: "Heather Wachtel"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+### Overview
+
+Succinate dehydrogenase (SDH) germline pathogenic variants have been implicated in several human cancers.  The goal of this study is to characterize SDHx mutations in a large cohort of subjects undergoing multigene panel testing of cancer predisposition genes, and to determine the risks of specific cancer types associated with SDHx germline pathogenic variants.
+
+Faculty:  
+
+1. Katherine Nathanson, Basser Professor, Div. of Genetics and Translational Medicine, PSOM: Suggestions were to characterize SDHx coding variants as these have not been well characterized. 
+
+2. Ben Voight, Assoc. Professor, Genetics/Systems Pharmacology and Translational Therapeutics, PSOM: Suggestions were to use ggplot for visualization and to discuss with Ambry Genetics to see if we can get original bam files from sequencing.  
+
+3. Eric Polley, Asst. Professor, Biostatistics, Mayo Clinic: Suggestions were to utilize R for data analysis, and to consider dual categorization of gnomAD dataset prior to performing analysis. 
+
+
+### Introduction 
+
+Succinate dehydrogenase (SDH) is a mitochondrial enzyme which plays an essential role in energy production in oxygenated cells.[1, 2] SDHA, SDHB, SDHC, SDHD, SDHAF1, and SDHAF2 are the genes encoding the four subunits of SDH.[1, 3] Germline SDHx pathogenic variants (PVs) have been best characterized in pheochromocytoma/paraganglioma (PCC/PGL), neuroendocrine tumors in which pseudohypoxia appears to drive tumorigenesis.[2, 4, 5] SDHx mutations have also been identified in gastrointestinal stromal tumors (GIST), renal cell carcinomas, thyroid cancers, and sarcomas.[1, 2]  
+
+SDH functions as a tumor suppressor and succinate, its substrate, functions as an oncometabolite at high levels.[6, 7] The latter may play a role in metabolic alteration, epithelial-to-mesenchymal transition, and angiogenesis.[7, 8]  Given the fundamental impact of these pathways on differentiation and development, SDHx mutations have broad implications for human disease.  To date, no comprehensive analysis has been performed to assess for SDHx pathogenic variants in common cancers, and SDHx penetrance is incompletely understood. It has been posited that there is a link between SDHB and breast cancer, however there is no empiric evidence to support this hypothesis. 
+
+The goals of this study are therefore twofold: firstly, to determine the prevalence of SDHx germline PVs in a large cohort of patients undergoing multigene panel testing of cancer predisposition genes, and secondly to estimate risks of breast cancer and other common cancer types associated with germline SDHx.
+
+### Methods
+
+#### Study cohort
+The study cohort consists of subjects undergoing multigene panel testing of cancer predisposition genes between March 2012 and 6/30/2019, at a single diagnostic laboratory (Ambry Genetics). Clinical histories were obtained from clinician-completed test requisition forms (TRFs) and included clinical documentation.  Gene-specific PVs and variants likely pathogenic (VLPs) of SDHx subunits (SDHA, SDHAF2, SDHB, SDHC, and SDHD) were assessed.  
+
+#### Definitions
+A masked ‘positive’ was defined as an individual with a null allele (frameshift, nonsense, canonical splice and other alterations such as missense that have been previously classified as PV/VLP) at a heterozygote ratio of 30% or greater, reflecting that >99% of calls with heterozygote ratios over 30% confirmed on Sanger sequencing.  Gross deletions were excluded.
+
+#### Statistical analysis
+Descriptive statistics were performed.  Continuous variables were presented as mean with standard deviation (SD) for normally distributed variables, and median with interquartile range (IQR) for non-normally distributed variables.  Logistic regression was performed to evaluate the association between SDHx PVs and common human cancers.  A p-value of 0.05 was considered statistically significant. 
+
+#### Case-control analysis
+Case-control analysis was performed to estimate gene-specific risks of cancer. Case-control analysis was performed by pooling PVs at the gene level. Subjects with concomitant PV/VLP in SDHx and other hereditary cancer predisposition genes were excluded from analysis (n=74). Odds ratios and 95% confidence intervals were estimated for subjects with a personal cancer history. 
+
+#### Data cleaning and analysis
+```{r, eval = TRUE}
+#First, I imported the packages.
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(gt)
+library(gtsummary)
+library(RColorBrewer)
+library(sjPlot)
+library(table1)
+library(tidyr)
+```
+```{r, eval = TRUE}
+#Read in masked data files
+masked_demographic <- read.csv("Data/SDHx_Masked&ReportedDeID_052820_Proband_Demographic.csv", header = TRUE)
+masked_clinical <- read.csv("Data/SDHx_Masked&ReportedDeID_051420_Proband_Clinical.csv", header = TRUE)
+masked_family <- read.csv("Data/SDHx_Masked&ReportedDeID_051420_Family_Clinical.csv", header = TRUE)
+masked_mult_mut <- read.csv("Data/SDHx_Masked&ReportedDeID_052820_Mult_Mut.csv", header = TRUE)
+
+#Merge masked files for demographic and clinical data
+masked <- left_join(masked_demographic, masked_clinical, by = "Project.ID")
+
+#Read in reported data files
+reported_demographic <- read.csv("Data/SDHx_Negative CasesDeID_051420_Proband_Demographic.csv", header = TRUE)
+reported_clinical <- read.csv("Data/SDHx_Negative CasesDeID_051420_Proband_Clinical.csv", header = TRUE)
+reported_family <- read.csv("Data/SDHx_Negative CasesDeID_051420_Family_Clinical.csv", header = TRUE)
+
+#Merge reported files for demographic and clinical data
+reported <- left_join(reported_demographic, reported_clinical, by = "Project.ID")
+
+#Merge masked and reported datasets
+c <- full_join(masked, reported, all=TRUE)
+head(c)
+
+#Variable selection, recoding and cleaning, including making new variables for each cancer type
+c2 <- c %>%
+  select(X1st.degree.FHx.with.PGL.and.or.PCC, Test.Name.Condensed, Panel.Version, Genes.Tested, Ethnicity.Condensed,  Gender, Overall.Classification, Age...Year.Only, SDHA, SDHB, SDHC, SDHD, SDHAF2, SDHx.Zygosity, SDHx.Classification, SDHx.Gene, SDHx.C_variant.1, SDHx.P_variant.1, Zygosity, Classification, Gene, C_variant.1, P_variant.1, Classification.2, Gene.2, Classification.3, Gene.3, Classification.4, Gene.4, Classification.5, Gene.5, Cohort.x, Cohort.y, Cancer.Category1, Cancer.Site1, Cancer.Category2, Cancer.Site2, Cancer.Category3, Cancer.Site3, Cancer.Category4, Cancer.Site4, Cancer.Category5, Cancer.Site5, Cancer.Category6, Cancer.Site6, More_than_1_result, Details_more_than_1_result, Multiple.mutations.same.gene., Multiple_VUS_same_gene, Mult_Mut_Conf) %>%
+  mutate(Gender= as.factor(Gender)) %>%
+  mutate(Age = as.factor(Age...Year.Only)) %>%
+  mutate(SDHx.Gene = as.factor(SDHx.Gene)) %>%
+  mutate(SDHx.Gene.Recode = factor (SDHx.Gene, levels = c("None", "SDHA", "SDHAF2", "SDHB", "SDHC", "SDHD"))) %>%
+  mutate(Gene_1 = as.factor(Gene)) %>%
+  mutate(SDH.Mut = ifelse(SDHx.Classification=="Mutation"|SDHx.Classification=="VLP" |SDHx.Classification =="Unclassified", 1, 0)) %>%
+  mutate(Breast_Cancer = ifelse(Cancer.Category1=="Breast"|Cancer.Category2=="Breast" |Cancer.Category3=="Breast" |Cancer.Category4=="Breast"| Cancer.Category5=="Breast" |Cancer.Category6=="Breast", 1, 0)) %>%
+  mutate(Colorectal_Cancer = ifelse(Cancer.Category1=="Colorectal"|Cancer.Category2=="Colorectal" |Cancer.Category3=="Colorectal" |Cancer.Category4=="Colorectal"| Cancer.Category5=="Colorectal" |Cancer.Category6=="Colorectal", 1, 0)) %>%
+  mutate(Kidney_Cancer = ifelse(Cancer.Category1=="Kidney"|Cancer.Category2=="Kidney" |Cancer.Category3=="Kidney" |Cancer.Category4=="Kidney"| Cancer.Category5=="Kidney" |Cancer.Category6=="Kidney", 1, 0)) %>%
+  mutate(Melanoma = ifelse(Cancer.Category1=="Melanoma"|Cancer.Category2=="Melanoma" |Cancer.Category3=="Melanoma" |Cancer.Category4=="Melanoma"| Cancer.Category5=="Melanoma" |Cancer.Category6=="Melanoma", 1, 0)) %>%
+  mutate(Ovarian_Cancer = ifelse(Cancer.Category1=="Ovarian"|Cancer.Category2=="Ovarian" |Cancer.Category3=="Ovarian" |Cancer.Category4=="Ovarian"| Cancer.Category5=="Ovarian" |Cancer.Category6=="Ovarian", 1, 0)) %>%
+  mutate(Pancreatic_Cancer = ifelse(Cancer.Category1=="Pancreatic"|Cancer.Category2=="Pancreatic" |Cancer.Category3=="Pancreatic" |Cancer.Category4=="Pancreatic"| Cancer.Category5=="Pancreatic" |Cancer.Category6=="Pancreatic", 1, 0)) %>%
+  mutate(Prostate_Cancer = ifelse(Cancer.Category1=="Prostate"|Cancer.Category2=="Prostate" |Cancer.Category3=="Prostate" |Cancer.Category4=="Prostate"| Cancer.Category5=="Prostate" |Cancer.Category6=="Prostate", 1, 0)) %>%
+  mutate(Thyroid_Cancer = ifelse(Cancer.Category1=="Thyroid"|Cancer.Category2=="Thyroid" |Cancer.Category3=="Thyroid" |Cancer.Category4=="Thyroid"| Cancer.Category5=="Thyroid" |Cancer.Category6=="Thyroid", 1, 0)) %>%
+mutate(Uterine_Endometrial_Cancer = ifelse(Cancer.Category1=="Uterine/Endometrial"|Cancer.Category2=="Uterine/Endometrial" |Cancer.Category3=="Uterine/Endometrial" |Cancer.Category4=="Uterine/Endometrial"| Cancer.Category5=="Uterine/Endometrial" |Cancer.Category6=="Uterine/Endometrial", 1, 0)) %>%
+mutate(Pheo = ifelse(Cancer.Site1=="Pheochromocytoma"|Cancer.Site1=="pheochromocytoma"| Cancer.Site2=="Pheochromocytoma"|Cancer.Site2=="pheochromocytoma"| Cancer.Site3=="Pheochromocytoma"|Cancer.Site3=="pheochromocytoma"| Cancer.Site4=="Pheochromocytoma"|Cancer.Site4=="pheochromocytoma"| Cancer.Site5=="Pheochromocytoma"|Cancer.Site5=="pheochromocytoma"|Cancer.Site6=="Pheochromocytoma"|Cancer.Site6=="pheochromocytoma", 1, 0)) %>%
+  mutate(Para = ifelse(Cancer.Site1=="Paraganglioma"|Cancer.Site1=="paraganglioma"|Cancer.Site1=="carotid"| Cancer.Site2=="Paraganglioma"|Cancer.Site2=="paraganglioma"| Cancer.Site3=="Paraganglioma"|Cancer.Site3=="paraganglioma"| Cancer.Site4=="Paraganglioma"|Cancer.Site4=="paraganglioma"| Cancer.Site5=="Paraganglioma"|Cancer.Site5=="paraganglioma"|Cancer.Site6=="Paraganglioma"|Cancer.Site6=="paraganglioma", 1, 0)) %>%
+  mutate(Pheo_or_Para = ifelse(Cancer.Site1=="Pheochromocytoma"|Cancer.Site1=="pheochromocytoma"| Cancer.Site2=="Pheochromocytoma"|Cancer.Site2=="pheochromocytoma"| Cancer.Site3=="Pheochromocytoma"|Cancer.Site3=="pheochromocytoma"| Cancer.Site4=="Pheochromocytoma"|Cancer.Site4=="pheochromocytoma"| Cancer.Site5=="Pheochromocytoma"|Cancer.Site5=="pheochromocytoma"|Cancer.Site6=="Pheochromocytoma"|Cancer.Site6=="pheochromocytoma"|Cancer.Site1=="Paraganglioma"|Cancer.Site1=="paraganglioma"|Cancer.Site1=="carotid"| Cancer.Site2=="Paraganglioma"|Cancer.Site2=="paraganglioma"| Cancer.Site3=="Paraganglioma"|Cancer.Site3=="paraganglioma"| Cancer.Site4=="Paraganglioma"|Cancer.Site4=="paraganglioma"| Cancer.Site5=="Paraganglioma"|Cancer.Site5=="paraganglioma"|Cancer.Site6=="Paraganglioma"|Cancer.Site6=="paraganglioma", 1, 0))
+
+#consolidate levels for key variables
+c2$Gender_Binary= fct_collapse(c2$Gender, 
+    Female = c("F", "Female", "F/M"), 
+    Male = c("M", "M/F"))
+c2$Ethnicity_Race = fct_collapse(c2$Ethnicity.Condensed, 
+    Ashkenazi = c("ashkenazi jewish", "Ashkenazi Jewish"),
+    Asian = c("asian", "Asian", "middle eastern", "Middle Eastern"),
+    Black = c("african american/black", "African American/Black"),
+    Caucasian = c("caucasian", "Caucasian"),
+    Hispanic = c("hispanic", "Hispanic"),
+    Other = c("mixed ethnicity", "mixed Ethnicity", "Mixed Ethnicity", "other", "Other", "Unknown", "unknown", "native american", "Native American"))
+c2$SDHx.P_variant.1=fct_collapse(c2$SDHx.P_variant.1, 
+    " "  = c("NULL", "Null", ""))
+c2$Age=fct_collapse(c2$Age, 
+    "90"  = c("90+"))
+#replacing NAs to generate binary outcome variables for logistic regressions
+c2 <- c2 %>%
+  mutate(SDHx.Gene.Recode = replace_na(SDHx.Gene.Recode, "None")) %>%
+  mutate(SDH.Mut = replace_na(SDH.Mut, 0)) %>%
+  mutate(Mult_Mut_Conf = replace_na(Mult_Mut_Conf, 0)) %>%
+  mutate(Breast_Cancer = replace_na(Breast_Cancer, 0)) %>%
+  mutate(Colorectal_Cancer = replace_na(Colorectal_Cancer, 0)) %>%
+  mutate(Kidney_Cancer = replace_na(Kidney_Cancer, 0)) %>%
+  mutate(Melanoma = replace_na(Melanoma, 0)) %>%
+  mutate(Ovarian_Cancer = replace_na(Ovarian_Cancer, 0)) %>%
+  mutate(Pancreatic_Cancer = replace_na(Pancreatic_Cancer, 0)) %>%
+  mutate(Pheo = replace_na(Pheo, 0)) %>%
+  mutate(Para = replace_na(Para, 0)) %>%
+  mutate(Pheo_or_Para = replace_na(Pheo_or_Para, 0)) %>%
+  mutate(Prostate_Cancer = replace_na(Prostate_Cancer, 0)) %>%
+  mutate(Thyroid_Cancer = replace_na(Thyroid_Cancer, 0)) %>%
+  mutate(Uterine_Endometrial_Cancer = replace_na(Uterine_Endometrial_Cancer, 0)) 
+
+#Assign data labels
+label(c2$Age) <- "Age, years"
+label(c2$Ethnicity_Race)<- "Ethnicity/Race"
+label(c2$Gender_Binary) <- "Gender"
+label(c2$SDHx.Gene) <- "Succinate Dehydrogenase Subunit"
+label(c2$SDHx.Gene.Recode) <- "Succinate Dehydrogenase Subunit Germline Mutation"
+```
+
+
+```{r}
+#Check variables
+table(c2$Test.Name.Condensed)
+table(c2$Genes.Tested)
+table(c2$Age)
+table(c2$Gender)
+table(c2$Ethnicity.Condensed)
+table(c2$Ethnicity_Race)
+table(c2$Gene)
+table(c2$Gene.2)
+table(c2$Gene.3)
+table(c2$Gene.4)
+table(c2$Gene.5)
+table(c2$SDHx.Classification)
+table(c2$SDH.Mut)
+table(c2$SDHx.Gene)
+table(c2$SDHx.Gene.Recode)
+table(c2$SDHx.P_variant.1)
+table(c2$Mult_Mut_Conf)
+
+table(c2$Cancer.Category1)
+table(c2$Cancer.Category2)
+table(c2$Cancer.Category3)
+table(c2$Cancer.Category4)
+table(c2$Cancer.Category5)
+table(c2$Cancer.Category6)
+
+table(c2$Cancer.Site1)
+table(c2$Cancer.Site2)
+table(c2$Cancer.Site3)
+table(c2$Cancer.Site4)
+table(c2$Cancer.Site5)
+table(c2$Cancer.Site6)
+
+table(c2$Breast_Cancer)
+table(c2$Colorectal_Cancer)
+table(c2$Kidney_Cancer)
+table(c2$Melanoma)
+table(c2$Ovarian_Cancer)
+table(c2$Pancreatic_Cancer)
+table(c2$Pheo)
+table(c2$Para)
+table(c2$Pheo_or_Para)
+table(c2$Prostate_Cancer)
+table(c2$Thyroid_Cancer)
+table(c2$Uterine_Endometrial_Cancer)
+```
+
+### Results
+Descriptive cohort statistics were performed.  Table 1 shows the demographic characteristics of the cohort. The distribution of SDHx pathogenic variants is shown in the bar plot.
+
+```{r, eval = TRUE}
+#Describe the demographics of the study cohort
+
+Table_1 <- c2 %>%
+  select(Age, Ethnicity_Race, Gender_Binary, SDHx.Gene.Recode) %>%
+  mutate(Age= as.integer(Age)) %>%
+  tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})", all_categorical() ~ "{n} / {N} ({p}%)"), digits = all_continuous() ~ 1, missing="ifany") %>%
+  as_gt() %>% 
+  gt::tab_header("Table 1. Demographic Characteristics of Study Cohort")
+knit_print(Table_1)
+
+#bar plot demonstrating the distribution of SDHx mutations
+SDH_bar <- ggplot(c2, aes(SDHx.Gene.Recode)) +
+    geom_bar(color = "black", fill = "navyblue")
+print(SDH_bar)
+```
+
+
+Coding and corresponding protein variants of SDHx were described, along with their frequencies, as shown in Table 2.
+```{r, eval = TRUE}
+#characterize unique SDHx mutations and their frequencies
+Supp_Table_1 <- c2 %>%
+  filter(!is.na(SDHx.Gene))%>%
+  count(SDHx.Gene, SDHx.C_variant.1, SDHx.P_variant.1) %>%
+  group_by(SDHx.Gene) %>%
+  arrange(desc(n), .by_group=TRUE) %>%
+  mutate (percent = round(n/8827*100, digits = 2)) %>%
+  gt() %>%
+  tab_header(title = "Table 2. Succinate Dehydrogenase Pathogenic Variants and Variants Likely Pathogenic") %>%
+  tab_stubhead(label = "Subunit") %>%
+  cols_label(
+    SDHx.Gene = "Subunit",
+    SDHx.C_variant.1 = "Coding Variant",
+    SDHx.P_variant.1 = "Protein Variant",
+    n = "Frequency",
+    percent = "% Prevalence"
+  )
+
+knit_print(Supp_Table_1)
+```
+To determine the association between common human cancers and SDHx subunit pathogenic variants, I generated logistic regression models for each cancer type.  Subjects with pathogenic variants in other hereditary cancer genes (n=74) were excluded from this analysis, to avoid confounding.
+```{r, eval = TRUE}
+#filter out subjects with pathogenic variants in other hereditary cancer genes
+c3 <- c2 %>%
+  filter(Mult_Mut_Conf!=1)
+
+#Logistic regression for cancers with individual SDHx subunits
+
+#Breast Cancer
+Breast_Cancer_lr <- (glm(Breast_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Breast_Cancer_lr)
+summary(Breast_Cancer_lr)$coefficients[,4]
+exp(coef(Breast_Cancer_lr))
+confint(Breast_Cancer_lr) 
+exp(cbind(OR = coef(Breast_Cancer_lr), CI = confint(Breast_Cancer_lr))) 
+
+#Colorectal Cancer
+Colorectal_Cancer_lr <- (glm(Colorectal_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Colorectal_Cancer_lr)
+summary(Colorectal_Cancer_lr)$coefficients[,4]
+exp(coef(Colorectal_Cancer_lr))
+confint(Colorectal_Cancer_lr) 
+exp(cbind(OR = coef(Colorectal_Cancer_lr), CI = confint(Colorectal_Cancer_lr))) 
+
+#Kidney Cancer
+Kidney_Cancer_lr <- (glm(Kidney_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Kidney_Cancer_lr)
+summary(Kidney_Cancer_lr)$coefficients[,4]
+exp(coef(Kidney_Cancer_lr))
+confint(Kidney_Cancer_lr) 
+exp(cbind(OR = coef(Kidney_Cancer_lr), CI = confint(Kidney_Cancer_lr))) 
+
+#Melanoma
+Melanoma_lr <- (glm(Melanoma ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Melanoma_lr)
+summary(Melanoma_lr)$coefficients[,4]
+exp(coef(Melanoma_lr))
+confint(Melanoma_lr) 
+exp(cbind(OR = coef(Melanoma_lr), CI = confint(Melanoma_lr))) 
+
+#Ovarian Cancer
+Ovarian_Cancer_lr <- (glm(Ovarian_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Ovarian_Cancer_lr)
+summary(Ovarian_Cancer_lr)$coefficients[,4]
+exp(coef(Ovarian_Cancer_lr))
+confint(Ovarian_Cancer_lr) 
+exp(cbind(OR = coef(Ovarian_Cancer_lr), CI = confint(Ovarian_Cancer_lr))) 
+
+#Pancreatic Cancer
+Pancreatic_Cancer_lr <- (glm(Pancreatic_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Pancreatic_Cancer_lr)
+summary(Pancreatic_Cancer_lr)$coefficients[,4]
+exp(coef(Pancreatic_Cancer_lr))
+confint(Pancreatic_Cancer_lr) 
+exp(cbind(OR = coef(Pancreatic_Cancer_lr), CI = confint(Pancreatic_Cancer_lr))) 
+
+#Pheochromocytoma
+Pheo_lr <- (glm(Pheo ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Pheo_lr)
+summary(Pheo_lr)$coefficients[,4]
+exp(coef(Pheo_lr))
+confint(Pheo_lr) 
+exp(cbind(OR = coef(Pheo_lr), CI = confint(Pheo_lr))) 
+
+#Paraganglioma
+Para_lr <- (glm(Para ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Para_lr)
+summary(Para_lr)$coefficients[,4]
+exp(coef(Para_lr))
+confint(Para_lr) 
+exp(cbind(OR = coef(Para_lr), CI = confint(Para_lr))) 
+
+#Pheochromocytoma or paraganglioma
+Pheo_or_Para_lr <- (glm(Pheo_or_Para ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Pheo_or_Para_lr)
+summary(Pheo_or_Para_lr)$coefficients[,4]
+exp(coef(Pheo_or_Para_lr))
+confint(Pheo_or_Para_lr) 
+exp(cbind(OR = coef(Pheo_or_Para_lr), CI = confint(Pheo_or_Para_lr))) 
+
+#Prostate Cancer
+Prostate_Cancer_lr <- (glm(Prostate_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Prostate_Cancer_lr)
+summary(Prostate_Cancer_lr)$coefficients[,4]
+exp(coef(Prostate_Cancer_lr))
+confint(Prostate_Cancer_lr) 
+exp(cbind(OR = coef(Prostate_Cancer_lr), CI = confint(Prostate_Cancer_lr))) 
+
+#Thyroid_Cancer
+Thyroid_Cancer_lr <- (glm(Thyroid_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Thyroid_Cancer_lr)
+summary(Thyroid_Cancer_lr)$coefficients[,4]
+exp(coef(Thyroid_Cancer_lr))
+confint(Thyroid_Cancer_lr) 
+exp(cbind(OR = coef(Thyroid_Cancer_lr), CI = confint(Thyroid_Cancer_lr))) 
+
+#Uterine or Endometrial Cancer
+Uterine_Endometrial_Cancer_lr <- (glm(Uterine_Endometrial_Cancer ~ SDHx.Gene.Recode, data = c3, family = binomial()))
+summary(Uterine_Endometrial_Cancer_lr)
+summary(Uterine_Endometrial_Cancer_lr)$coefficients[,4]
+exp(coef(Uterine_Endometrial_Cancer_lr))
+confint(Uterine_Endometrial_Cancer_lr) 
+exp(cbind(OR = coef(Uterine_Endometrial_Cancer_lr), CI = confint(Uterine_Endometrial_Cancer_lr))) 
+
+```
+To determine the association between common human cancers and the binary outcome of a SDHx pathogenic variant (of any subunit), I generated logistic regression models for each cancer type.  Subjects with pathogenic variants in other hereditary cancer genes (n=74) were excluded from this analysis, to avoid confounding.
+```{r,  eval = TRUE}
+#Logistic regression for cancers with any SDHx PV or vLP
+
+#Breast Cancer
+Breast_Cancer_lr2 <- (glm(Breast_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Breast_Cancer_lr2)
+summary(Breast_Cancer_lr2)$coefficients[,4]
+exp(coef(Breast_Cancer_lr2))
+confint(Breast_Cancer_lr2) 
+exp(cbind(OR = coef(Breast_Cancer_lr2), CI = confint(Breast_Cancer_lr2))) 
+
+#Colorectal Cancer
+Colorectal_Cancer_lr2 <- (glm(Colorectal_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Colorectal_Cancer_lr2)
+summary(Colorectal_Cancer_lr2)$coefficients[,4]
+exp(coef(Colorectal_Cancer_lr2))
+confint(Colorectal_Cancer_lr2) 
+exp(cbind(OR = coef(Colorectal_Cancer_lr2), CI = confint(Colorectal_Cancer_lr2))) 
+
+#Kidney Cancer
+Kidney_Cancer_lr2 <- (glm(Kidney_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Kidney_Cancer_lr2)
+summary(Kidney_Cancer_lr2)$coefficients[,4]
+exp(coef(Kidney_Cancer_lr2))
+confint(Kidney_Cancer_lr2) 
+exp(cbind(OR = coef(Kidney_Cancer_lr2), CI = confint(Kidney_Cancer_lr2))) 
+
+#Melanoma
+Melanoma_lr2 <- (glm(Melanoma ~ SDH.Mut, data = c3, family = binomial()))
+summary(Melanoma_lr2)
+summary(Melanoma_lr2)$coefficients[,4]
+exp(coef(Melanoma_lr2))
+confint(Melanoma_lr2) 
+exp(cbind(OR = coef(Melanoma_lr2), CI = confint(Melanoma_lr2))) 
+
+#Ovarian Cancer
+Ovarian_Cancer_lr2 <- (glm(Ovarian_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Ovarian_Cancer_lr2)
+summary(Ovarian_Cancer_lr2)$coefficients[,4]
+exp(coef(Ovarian_Cancer_lr2))
+confint(Ovarian_Cancer_lr2) 
+exp(cbind(OR = coef(Ovarian_Cancer_lr2), CI = confint(Ovarian_Cancer_lr2))) 
+
+#Pancreatic Cancer
+Pancreatic_Cancer_lr2 <- (glm(Pancreatic_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Pancreatic_Cancer_lr2)
+summary(Pancreatic_Cancer_lr2)$coefficients[,4]
+exp(coef(Pancreatic_Cancer_lr2))
+confint(Pancreatic_Cancer_lr2) 
+exp(cbind(OR = coef(Pancreatic_Cancer_lr2), CI = confint(Pancreatic_Cancer_lr2))) 
+
+#Pheochromocytoma
+Pheo_lr2 <- (glm(Pheo ~ SDH.Mut, data = c3, family = binomial()))
+summary(Pheo_lr2)
+summary(Pheo_lr2)$coefficients[,4]
+exp(coef(Pheo_lr2))
+confint(Pheo_lr2) 
+exp(cbind(OR = coef(Pheo_lr2), CI = confint(Pheo_lr2))) 
+
+#Paraganglioma
+Para_lr2 <- (glm(Para ~ SDH.Mut, data = c3, family = binomial()))
+summary(Para_lr2)
+summary(Para_lr2)$coefficients[,4]
+exp(coef(Para_lr2))
+confint(Para_lr2) 
+exp(cbind(OR = coef(Para_lr2), CI = confint(Para_lr2))) 
+
+#Pheochromocytoma or paraganglioma
+Pheo_or_Para_lr2 <- (glm(Pheo_or_Para ~ SDH.Mut, data = c3, family = binomial()))
+summary(Pheo_or_Para_lr2)
+summary(Pheo_or_Para_lr2)$coefficients[,4]
+exp(coef(Pheo_or_Para_lr2))
+confint(Pheo_or_Para_lr2) 
+exp(cbind(OR = coef(Pheo_or_Para_lr2), CI = confint(Pheo_or_Para_lr2))) 
+
+#Prostate Cancer
+Prostate_Cancer_lr2 <- (glm(Prostate_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Prostate_Cancer_lr2)
+summary(Prostate_Cancer_lr2)$coefficients[,4]
+exp(coef(Prostate_Cancer_lr2))
+confint(Prostate_Cancer_lr2) 
+exp(cbind(OR = coef(Prostate_Cancer_lr2), CI = confint(Prostate_Cancer_lr2))) 
+
+#Thyroid_Cancer
+Thyroid_Cancer_lr2 <- (glm(Thyroid_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Thyroid_Cancer_lr2)
+summary(Thyroid_Cancer_lr2)$coefficients[,4]
+exp(coef(Thyroid_Cancer_lr2))
+confint(Thyroid_Cancer_lr2) 
+exp(cbind(OR = coef(Thyroid_Cancer_lr2), CI = confint(Thyroid_Cancer_lr2))) 
+
+#Uterine or Endometrial Cancer
+Uterine_Endometrial_Cancer_lr2 <- (glm(Uterine_Endometrial_Cancer ~ SDH.Mut, data = c3, family = binomial()))
+summary(Uterine_Endometrial_Cancer_lr2)
+summary(Uterine_Endometrial_Cancer_lr2)$coefficients[,4]
+exp(coef(Uterine_Endometrial_Cancer_lr2))
+confint(Uterine_Endometrial_Cancer_lr2) 
+exp(cbind(OR = coef(Uterine_Endometrial_Cancer_lr2), CI = confint(Uterine_Endometrial_Cancer_lr2))) 
+```
+To visualize the association between pheochromocytoma and individual SDHx subunit pathogenic variants, I plotted the pheochromocytoma logistic regression model on a forest plot.  This showed that only SDHB was significantly associated with pheochromocytoma.
+
+
+```{r, eval = TRUE}
+#Forest plot of odds of pheochromocytoma associated with individual SDHx subunit pathogenic variants
+plot_model(Pheo_lr, title = "Association between Pheochromocytoma and SDHx", axis.lim = c(0.5, 10), ci.lvl=0.95, vline.color = "blue",show.values = TRUE, value.offset = 0.2)
+```
+
+
+To visualize the association between paraganglioma and individual SDHx subunit pathogenic variants, I plotted the paraganglioma logistic regression model on a forest plot.  This showed that pathogenic variants in all SDHx subunits were significantly associated with paraganglioma.
+
+```{r, eval = TRUE}
+#Forest plot of odds of paraganglioma associated with individual SDHx subunit pathogenic variants
+plot_model(Para_lr, title = "Association between Paraganglioma and SDHx", axis.lim = c(0.5, 100), ci.lvl=0.95, vline.color = "blue", show.values = TRUE, value.offset = 0.2)
+
+```
+
+
+In order to visualize the relationship between SDHx mutation and human cancers, I used plot_models to plot each individual logistic regression model onto the same forest plot.  Only pheochromocytoma (OR 2.25) and paraganglioma (OR 27.33) were significantly associated with SDH mutation.
+
+```{r, eval = TRUE}
+y = plot_models(Breast_Cancer_lr2, Colorectal_Cancer_lr2, Kidney_Cancer_lr2, Melanoma_lr2,  Para_lr2, Pheo_lr2, Prostate_Cancer_lr2, Ovarian_Cancer_lr2, Thyroid_Cancer_lr2, Uterine_Endometrial_Cancer_lr2, m.labels = c("Breast Cancer", "Colorectal Cancer", "Kidney Cancer", "Melanoma", "Prostate Cancer", "Paraganglioma", "Pheochromocytoma",  "Ovarian Cancer", "Thyroid Cancer", "Uterine or Endometrial Cancer"), ci.lvl=0.95, vline.color = "blue", show.values = TRUE, spacing = 1, value.size = 3, title = "SDHx pathogenic variants and human cancers", legend.title = "Cancer Type", auto.label=FALSE, colors="Paired")
+plot(y)
+```
+
+
+### Conclusions
+In this project, I characterized SDHx pathogenic variants in a large cohort of subjects undergoing multigene panel testing for hereditary cancers.  In this cohort, SDHA had the highest prevalence of pathogenic variants, similar to population prevalence.  The most common SDHA variant was p.R31*, which was present in ~1% of subjects.  SDHB demonstrated a large range of pathogenic variant, with two potential hotspots comprising the three most frequent variants.  SDHD, which is paternally inherited, had a single mutation (p.P81L) comprising the majority of variants.  On logistic regression modeling, all SDHx subunits were significantly associated with paraganglioma, while only SDHB was significantly associated with pheochromocytoma.  After controlling for concomitant germline mutations in other cancer predisposition genes, SDHx was not associated with significantly increased risk of other human cancers.  The
+ significantly lower risk of other cancers seen in association with SDHx in this cohort likely represents ascertainment bias reflecting undiagnosed hereditary cancer syndromes associated with other cancer predisposition genes.
+
+
+### References
+
+1.	Dalla Pozza E, Dando I, Pacchiana R, et al (2020) Regulation of succinate dehydrogenase and role of succinate in cancer. Semin Cell Dev Biol 98:4-14.:10.1016/j.semcdb.2019.1004.1013. Epub 2019 May 1011.
+2.	Gill AJ (2018) Succinate dehydrogenase (SDH)-deficient neoplasia. Histopathology 72:106-116. doi: 110.1111/his.13277.
+3.	Amorim-Pires D, Peixoto J, Lima J (2016) Hypoxia Pathway Mutations in Pheochromocytomas and Paragangliomas. Cytogenet Genome Res 150:227-241. doi: 210.1159/000457479. Epub 000452017 Feb 000457424.
+4.	Kluckova K, Tennant DA (2018) Metabolic implications of hypoxia and pseudohypoxia in pheochromocytoma and paraganglioma. Cell Tissue Res 372:367-378. doi: 310.1007/s00441-00018-02801-00446. Epub 02018 Feb 00415.
+5.	Dahia PL, Ross KN, Wright ME, et al (2005) A HIF1alpha regulatory loop links hypoxia and mitochondrial signals in pheochromocytomas. PLoS genetics 1:72-80
+6.	Dando I, Pozza ED, Ambrosini G, et al (2019) Oncometabolites in cancer aggressiveness and tumour repopulation. Biol Rev Camb Philos Soc 94:1530-1546. doi: 1510.1111/brv.12513. Epub 12019 Apr 12510.
+7.	Chen L, Liu T, Zhang S, et al (2014) Succinate dehydrogenase subunit B inhibits the AMPK-HIF-1alpha pathway in human ovarian cancer in vitro. J Ovarian Res 7:115.:10.1186/s13048-13014-10115-13041.
+8.	Aspuria PP, Lunt SY, Varemo L, et al (2014) Succinate dehydrogenase inhibition leads to epithelial-mesenchymal transition and reprogrammed carbon metabolism. Cancer Metab 2:21.:10.1186/2049-3002-1182-1121. eCollection 2014.
