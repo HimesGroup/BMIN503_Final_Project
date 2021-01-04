@@ -1,0 +1,1579 @@
+---
+title: "Mask Mandates & COVID-19"
+subtitle: 
+- BMIN503/EPID600 Project
+author: 
+- Kuldeep N Yadav
+date: December 2020
+# "`r format(Sys.time(), '%B %Y')`" 
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: true
+        smooth_scroll: true
+    depth: 3 
+    theme: cerulean
+    highlight: pygments
+---
+*** 
+
+```{r setup-options-packages, echo=FALSE, cache=FALSE, message=FALSE, results='hide'}
+# Knitr information # http://kbroman.org/knitr_knutshell/pages/Rmarkdown.html
+knitr::opts_chunk$set(echo = TRUE)
+
+# -----------------------------------------------------------------------------#
+# ### Options ###
+# -----------------------------------------------------------------------------#
+{
+# options(width = 400)
+# options(scipen = 999) # Scientific notation
+options(scipen=0) # No scientific notation
+}
+
+# -----------------------------------------------------------------------------#
+# ### Packages ###
+# -----------------------------------------------------------------------------#
+{
+# install.packages('Rcpp',dependencies = TRUE)
+# install.packages("pacman")
+# Ensure packages are updated
+# update.packages(repos='http://cran.rstudio.com/', ask=FALSE, checkBuilt=TRUE)
+# Load and Install Packages
+require(Rcpp)
+require(pacman)
+pacman::p_load(tidyverse, magrittr, data.table,knitr)
+}
+
+# -----------------------------------------------------------------------------#
+# ### KNY Functions ###
+# -----------------------------------------------------------------------------#
+{
+# Automatically round all numeric columns to user defined digits 
+round_df <- function(x, digits) {
+    # round all numeric variables
+    # x: data frame 
+    # digits: number of digits to round
+    numeric_columns <- sapply(x, class) == 'numeric'
+    x[numeric_columns] <-  round(x[numeric_columns], digits)
+    x
+}
+
+# Function to generate ggplot default palette 
+get_ggcolors <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+# Function to back calculate counts from growth rates
+recursive_calc <- function(count, growth, residual) 
+{
+   x=data.frame(count=count, growth=growth, residual=residual)
+   for(i in 1:nrow(x)) {
+   x$count[i] <- ifelse(is.na(x$count[i]),
+              round(exp(x$growth[i])*x$count[i-1]*residual,0),
+              x$count[i])
+   }
+   return(x$count)
+}
+
+}
+
+# -----------------------------------------------------------------------------#
+# ### Color R code output for strings ###
+# -----------------------------------------------------------------------------#
+{
+# crayon package: https://github.com/r-lib/crayon
+# crayon in R Markdown / knitr reports: https://stackoverflow.com/questions/47392839/crayon-in-r-markdown-knitr-reports
+
+options(crayon.enabled = TRUE)
+knitr::knit_hooks$set(message = function(x, options){
+  paste0(
+    "<pre class=\"r-output\"><code>",
+    fansi::sgr_to_html(x = x, warn = FALSE),
+    "</code></pre>"
+  )
+})
+
+# color html
+colorize <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{%s}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'>%s</span>", color, 
+      x)
+  } else x
+}
+}
+
+# -----------------------------------------------------------------------------#
+# ### Snowflake references#
+# -----------------------------------------------------------------------------#
+{
+# https://github.com/emilyriederer/demo-rmd-snow
+# https://twitter.com/EmilyRiederer/status/1337178684868980738
+}
+```  
+
+<!-- Call snow.Rmd to drop snowflakes along the left margin or the html file -->
+```{r child = "snow.Rmd"}
+```
+
+```{r, echo=FALSE}
+# Insert bitmoji to the top right corner of the html file
+htmltools::img(src = knitr::image_uri("~/Google Drive/BMIN503_Final_Project/Data/KNY_HeHimBitmoji.png"),
+               alt = 'logo', 
+               style = 'position:absolute; top:0; right:0; padding:10px; width: 200px; height: 200px')
+```
+
+### **`r colorize("Overview", "#008080")`**
+*`r colorize("Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.", "#6699cc")`*
+
++ This project aims to provide further support for a nationwide masking mandate for public face coverings in the upcoming months during COVID-19 vaccine nationwide rollout. 
++ The objective of this project is to explore whether statewide mandates played a role in curtailing the COVID-19 pandemic across the United States of America, as examined by a decrease in the exponential growth rate in COVID-19 incidence and mortality. 
++ This project will utilize publicly available data for **COVID-19 cases** and **COVID-19 deaths** from the *NY Times* as well as data for **statewide masking mandates** and other **COVID-19 mitigation policies** from *Boston University School of Public Health*. All of these datasets are publicly available via GitHub or other online repositories. 
++ This project is interdisciplinary because it require methodology and expertise from the fields of medicine, epidemiology, and health policy. As a result, I have sought out assistance from the following faculty from those fields: 
+
+</ul>
+<ul style="list-style-type:disc">
+<li> **M. Kit Delgado, MD MS** (Assistant Professor of Emergency Medicine and Epidemiology), who helped me identify relevant datasets from NY Times and Boston Univeristy and set the study objectives. </li> 
+<li> **Douglas J. Wiebe, PhD** (Professor of Epidemiology and Biostatistics), who advised me on exploring associations between state mask mandates and COVID-19 incidence and mortality at the county-level. </li>
+<li> **Michael O. Harhay, PhD MPH** (Assistant Professor of Epidemiology, Biostatistics, and Critical Care Medicine), who offered assistance in pre-post study designs, methodology regarding difference-in-differences, as well as subgroup analyses
+<li> **Harsha Thirumurthy, PhD** (Associate Professor of Medical Ethics and Health Policy), who provided guidance in finalizing the specifications of the event study model used by  health economists in flexibly evaluating the impact of health policies for which implementation may vary over time. </li> 
+</ul>
+
++ Link to my final project repository: 
+[Kuldeep N Yadav's Project Repo](https://github.com/kuldeepnyadav/BMIN503_Final_Project)
+
+***
+
+### **`r colorize("Introduction", "#008080")`**
+*`r colorize("Describe the problem addressed, its significance, and some background to motivate the problem.", "#6699cc")`*
+
++ COVID-19 pandemic caused by the SARS-CoV-2 coronavirus continues to surge while we enter 2021. As we now know, coronavirus can spread not only via person to person contact but also via air droplets and aerosols. Emerging research from numerous fields has revealed the effectiveness of face covering in public settings in order to slow the transmission of coronavirus. Even with such overwhelming evidence, numerous people across the United States have continued to NOT wear face coverings in public. As a result, more and more state governments have implemented mask mandates for their constituents throughout this year. Our objective to examine the effectiveness of these statewide mandates on curtailing the COVID-19 pandemic, specifically by examining their impact on COVID-19 incidence and mortality in the US. In so doing, we hope to provide additional support for the nationwide masking mandate for public face coverings proposed by the newly elected Biden-Harris administration. 
+
+*`r colorize("Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.", "#6699cc")`*
+
++ This project is interdisciplinary because it requires expertise and methodology from the fields of medicine, epidemiology, economics, and health policy.
++ Based on the feedback from faculty  (i.e., M. Kit Delgado, Michael O. Harhay, Douglas J. Wiebe, Harsha Thirumurthy), we have decided to implement an event study model, which employs a modified difference-in-differences analysis to examine the associations between exposure and outcome varying over time. 
+
+***
+
+### **`r colorize("Methods", "#008080")`**
+
+*`r colorize("Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.", "#6699cc")`*
+
++ The study period started on April 1st, 2020 and ended on July 19th, 2020. This start date was chosen in order to ensure that all states had data for at least 7 days prior to their mask mandate. Specifically, it was 7 days before the first state mask mandate issue by New Jersey (April 8th, 2020) and 2 days before CDC began recommending public face coverings (April 3rd, 2020). The end date corresponded to the day before former President Donald Trump officially supported public face coverings via twitter (July 20th, 2020). 
+
++ As shown in the figure below, 27 states plus Washington DC had implemented mask mandates as of July 19th, 2020.
+
+```{r, echo=FALSE}
+# Insert bitmoji to the top right corner of the html file
+htmltools::img(src = knitr::image_uri("~/Google Drive/BMIN503_Final_Project/Data/USMap_MaskMandates.png"),
+               alt = 'logo', 
+               style = 'padding:10px; width: 1000px; height: 400px')
+```
+
+### Methods: Import & Clean 
+
++ This project utilizes publicly available data for the daily cumulative counts of **COVID-19 cases** and **COVID-19 deaths** at the county level from the *NY Times*, statewide **mask mandates** and other **COVID-19 mitigation policies** from *Boston University School of Public Health*, state-level testing from the *COVID-19 Tracking Project*. All of these datasets are publicly available for download via GitHub or online repositories. Since these datasets have previously undergone data format change, we chose to download static versions containing the data relevant to this project.
+
++ Additionally, county-level **population**, **land area**, and **poverty rates** were sourced from the *US Census Bureau.* County-level **urban and rural designations** were identified from the *Econonmic Research Service* provided by the *U.S. Department OF Agriculture*. Lastly, county-level **political partisanship** was determined using 2016 county-level presidential election results published by the *MIT Election Data and Science Lab*.
+
++ We excluded counties that were not within the 50 states and District of Columbia and counties without any COVID-19 cases during our study period. We imputed a NYC specific value for covariates (i.e., population) that included data from all five NYC counties (NYC, Kings, Queens, Bronx, Richmond) because COVID-19 cases and deaths were reported in aggregate for NYC. 
+
+```{r import & clean exposure-outcome-covariates, message=FALSE, warning=FALSE}
+# -----------------------------------------------------------------------------#
+# ### SET study dates 
+# -----------------------------------------------------------------------------#
+{
+StudyStart = "2020-04-01" 
+StudyEnd = "2020-07-19"
+
+# turn dates into  format for merger late and create study range (i.e., study period) 
+require(lubridate)
+StudyRange = seq(as.Date(StudyStart),as.Date(StudyEnd),by="day") ##### CHANGE End Date #####
+dStudyRange = data.frame(month=lubridate::month(StudyRange),
+                         day=lubridate::day(StudyRange),
+                         year=format(StudyRange,"%y"))
+dStudyRange$date = paste(dStudyRange$month,dStudyRange$day,dStudyRange$year,sep="/")
+dStudyRange$date_mdy = as.character(mdy(dStudyRange$date))
+dStudyRange$date_index = c(1:nrow(dStudyRange))
+}
+
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+# ### [I] state mask mandate (exposure), state COVID-19 mitigation policies (covariates), 
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+{
+# -----------------------------------------------------------------------------#
+### IMPORT state mask mandate (exposure) and other COVID-19 mitigation policies (covariates)
+# -----------------------------------------------------------------------------#
+setwd("~/Google Drive/BMIN503_Final_Project/Data/1_StateMandates") # set working directory
+require(openxlsx) # openxlsx package for reading excel files
+StateMandates = read.xlsx("COVID-19 US state policy database 7_17_2020.xlsx",sheet="State policy changes ",detectDates=T,na.strings=c("NA")) # import data using openxlsx::read.xlsx()
+StateMandates = StateMandates[5:nrow(StateMandates),]
+StateMandates = StateMandates %>% dplyr::select("STATE", "POSTCODE", "STEMERG", "CLSCHOOL", "STAYHOME", "END_STHM", "CLBSNS", "END_BSNS", "FM_ALL", "FM_EMP", "CLREST", "ENDREST", "CLGYM", "ENDGYM", "CLMOVIE", "END_MOV", "CLOSEBAR", "END_BRS", "CLBAR2", "CLMV2", "CLGYM2", "CLRST2","FM_SIGN","FM_EFFECT") 
+
+# -----------------------------------------------------------------------------#
+### IMPORT & MERGE in state regions and divisions according US census designations
+# -----------------------------------------------------------------------------#
+setwd("~/Google Drive/2020_Masks_EpiQualExam/Analysis_MaskMandate/0_Information/State_Division")
+State_Divisons = data.table::fread("State_Division.csv",na.strings=c("","NA"))
+StateMandates = left_join(StateMandates,State_Divisons %>% dplyr::select(STATE,REGION,DIVISION),by.=c("STATE"))
+StateMandates$REGION <- factor(StateMandates$REGION, levels = c("South","Northeast","Midwest","West"))
+
+# write.csv(StateMandates, "~/Google Drive/2020_Masks_EpiQualExam/Analysis_MaskMandate/1_StateMandates/Mandate_BostonU_State/StateMandates.csv")
+}
+
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+# ### [II] COVID-19 cases and deaths (outcomes)
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+{
+# -----------------------------------------------------------------------------#
+# ### IMPORT County FIPS = 3141 Counties + District of Columbia 
+# -----------------------------------------------------------------------------#
+{
+setwd("~/Google Drive/BMIN503_Final_Project/Data/0_Information") # set working directory
+County_FIPS = data.table::fread("County_FIPS.csv") # import data using data.table::fread()
+}
+  
+# -----------------------------------------------------------------------------#
+# ### IMPORT COVID-19 cases and deaths (outcome) 
+# -----------------------------------------------------------------------------#
+{
+setwd("~/Google Drive/BMIN503_Final_Project/Data/2_CountyCasesDeaths") # set working directory
+NYTimes_County = data.table::fread("us-counties.csv") # import data using data.table::fread()
+data.table::setnames(NYTimes_County, old = c("county", "state", "fips"), new = c("COUNTY", "STATE", "FIPS"))
+### Impute New York County FIPS (36061) to New York City (which has all 5 NYC county cases and deaths)
+# NYC will remain, while Kings, Queens, Bronx, and Richmond will be removed when filtering out counties with 0 cases
+NYTimes_County$FIPS[NYTimes_County$COUNTY == "New York City"] = 36061
+
+NYTimes_County = NYTimes_County %>% filter(!(FIPS <= 1000 | FIPS >= 60000 | is.na(FIPS))) 
+# length(unique(NYTimes_County$FIPS)) # 3112 counties with at least 1 case
+# NYTimes_County = NYTimes_County %>% filter(FIPS %in% County_FIPS$FIPS)
+# length(unique(NYTimes_County$FIPS)) # 3112 counties with at least 1 case
+
+NYTimes_County_Omited = County_FIPS %>% filter(!(FIPS %in% NYTimes_County$FIPS))
+# length(unique(NYTimes_County_Omited$FIPS)) # 30 counties that do not have at least 1 case 
+
+NYTimes_County = merge(NYTimes_County,County_FIPS %>% dplyr::select(FIPS), by=c("FIPS"), all=T)
+# NYTimes_County = NYTimes_County %>% filter(!(is.na(date))) # Remove 30 FIPS
+# length(unique(NYTimes_County$FIPS)) # 3142
+# length(unique(NYTimes_County$FIPS)) # 3112 with at least 1 case
+
+### IMPUTE STATE COUNTY date cases deaths 
+# table(is.na(NYTimes_County$STATE))
+# table(is.na(NYTimes_County$COUNTY))
+# table(is.na(NYTimes_County$date))
+# table(is.na(NYTimes_County$deaths))
+# table(is.na(NYTimes_County$deaths))
+NYTimes_County$STATE = ifelse(is.na(NYTimes_County$STATE),
+                              plyr::mapvalues(NYTimes_County$FIPS,from=County_FIPS$FIPS,to=County_FIPS$STATE,warn_missing=F),
+                              NYTimes_County$STATE)
+NYTimes_County$COUNTY = ifelse(is.na(NYTimes_County$COUNTY),
+                              plyr::mapvalues(NYTimes_County$FIPS,from=County_FIPS$FIPS,to=County_FIPS$COUNTY,warn_missing=F),
+                              NYTimes_County$COUNTY)
+NYTimes_County$date = ifelse(is.na(NYTimes_County$date),0,NYTimes_County$date)
+NYTimes_County$date = lubridate::as_date(NYTimes_County$date)
+NYTimes_County$cases = ifelse(is.na(NYTimes_County$cases),0,NYTimes_County$cases)
+NYTimes_County$deaths = ifelse(is.na(NYTimes_County$deaths),0,NYTimes_County$deaths)
+
+# length(unique(NYTimes_County$FIPS)) # 3142
+}
+
+# -----------------------------------------------------------------------------#
+# ### Reformat COVID-19 cases (LONG to WIDE to LONG)
+# -----------------------------------------------------------------------------#
+{
+### Separate cases and change from long to wide format 
+CasesNYTimes_County = NYTimes_County %>% dplyr::select(FIPS,STATE,COUNTY,date,cases)
+CasesNYTimes_County = CasesNYTimes_County %>% tidyr::spread(key=date,value=cases,fill=0) # Fill in 0 for dates on which counties had 0 cases
+
+### Total counties in US
+CasesNYTimes_County_USA = CasesNYTimes_County # 3142 counties
+# length(unique(CasesNYTimes_County$FIPS)) # 3142
+
+### Remove US counties with 0 cases
+cat(paste("US counties with 0 COVID-19 cases during study period",
+      sprintf("%.2f %%",nrow(CasesNYTimes_County %>% filter(CasesNYTimes_County[[c(paste(StudyEnd))]]==0))/nrow(CasesNYTimes_County)*100),
+      nrow(CasesNYTimes_County %>% filter(CasesNYTimes_County[[c(paste(StudyEnd))]]==0)),nrow(CasesNYTimes_County),"\n",
+      sep=" | "))
+CasesNYTimes_County = CasesNYTimes_County %>% filter(!(CasesNYTimes_County[[c(paste(StudyEnd))]]==0))
+
+### Unique US counties included the study 
+# US has 3142 counties
+cat(paste("US counties with COVID-19 cases during study period",
+      sprintf("%.2f %%",nrow(CasesNYTimes_County)/nrow(CasesNYTimes_County_USA)*100),
+      nrow(CasesNYTimes_County),nrow(CasesNYTimes_County_USA),"\n",
+      sep=" | "))
+# write.csv(CasesNYTimes_County, "CasesNYTimes_County.csv")
+
+### LONG FORMAT OF CasesNYTimes_County
+CasesNYTimes_County_LongForm = CasesNYTimes_County %>% tidyr::gather(-FIPS,-STATE,-COUNTY,key=date,value=cases)
+
+### Select dates in study range
+CasesNYTimes_County_LongForm = CasesNYTimes_County_LongForm %>% filter(as.Date(date) %in% StudyRange)
+                                              
+### Number of instances with 0 cases 
+# cat(paste("Number of instances with 0 cases",
+#    sprintf("%.2f %%",nrow(CasesNYTimes_County_LongForm %>% filter(CasesNYTimes_County_LongForm$cases==0))/nrow(CasesNYTimes_County_LongForm)*100),
+#    nrow(CasesNYTimes_County_LongForm %>% filter(CasesNYTimes_County_LongForm$cases==0)),nrow(CasesNYTimes_County_LongForm),
+#    sep=" | "))
+
+### Map date_index
+CasesNYTimes_County_LongForm$date_index = as.numeric(plyr::mapvalues(CasesNYTimes_County_LongForm$date,from=dStudyRange$date_mdy,to=dStudyRange$date_index))
+# write.csv(CasesNYTimes_County_LongForm, "CasesNYTimes_County_LongForm.csv")
+}
+
+# -----------------------------------------------------------------------------#
+# ### Reformat COVID-19 deaths (LONG to WIDE to LONG)
+# -----------------------------------------------------------------------------#
+{
+### Separate deaths and change from long to wide format 
+DeathsNYTimes_County = NYTimes_County %>% dplyr::select(FIPS,STATE,COUNTY,date,deaths)
+DeathsNYTimes_County = DeathsNYTimes_County %>% tidyr::spread(key=date,value=deaths,fill=0)
+
+### Total counties in US
+DeathsNYTimes_County_USA = DeathsNYTimes_County # 3142 counties
+
+### Remove US counties with 0 deaths 
+cat(paste("US counties with 0 COVID-19 deaths during study period",
+      sprintf("%.2f %%",nrow(DeathsNYTimes_County %>% filter(DeathsNYTimes_County[[c(paste(StudyEnd))]]==0))/nrow(DeathsNYTimes_County)*100),
+      nrow(DeathsNYTimes_County %>% filter(DeathsNYTimes_County[[c(paste(StudyEnd))]]==0)),nrow(DeathsNYTimes_County),"\n",
+      sep=" | "))
+DeathsNYTimes_County = DeathsNYTimes_County %>% filter(!(DeathsNYTimes_County[[c(paste(StudyEnd))]]==0))
+
+### Unique US counties included the study 
+# US has 3142 counties
+cat(paste("US counties with COVID-19 deaths during study period",
+      sprintf("%.2f %%",nrow(DeathsNYTimes_County)/nrow(DeathsNYTimes_County_USA)*100),
+      nrow(DeathsNYTimes_County),nrow(DeathsNYTimes_County_USA),"\n",
+      sep=" | "))
+
+# write.csv(DeathsNYTimes_County, "DeathsNYTimes_County.csv")
+
+#LONG FORMAT OF DeathsNYTimes_County
+DeathsNYTimes_County_LongForm = DeathsNYTimes_County %>% tidyr::gather(-FIPS,-STATE,-COUNTY,key=date,value=deaths)
+
+### Select dates in study range
+DeathsNYTimes_County_LongForm = DeathsNYTimes_County_LongForm %>% filter(as.Date(date) %in% StudyRange)
+                                              
+### Number of instances with 0 deaths 
+# cat(paste("Number of instances with 0 deaths",
+#    sprintf("%.2f %%",nrow(DeathsNYTimes_County_LongForm %>% filter(DeathsNYTimes_County_LongForm$deaths==0))/nrow(DeathsNYTimes_County_LongForm)*100),
+#    nrow(DeathsNYTimes_County_LongForm %>% filter(DeathsNYTimes_County_LongForm$deaths==0)),nrow(DeathsNYTimes_County_LongForm),
+#    sep=" | "))
+
+### Map date_index
+DeathsNYTimes_County_LongForm$date_index = as.numeric(plyr::mapvalues(DeathsNYTimes_County_LongForm$date,from=dStudyRange$date_mdy,to=dStudyRange$date_index))
+# write.csv(DeathsNYTimes_County_LongForm, "DeathsNYTimes_County_LongForm.csv")
+}  
+}
+
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+# ### [III] Co-variates
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+{
+# -----------------------------------------------------------------------------#
+# ### NYC_5County for the five NYC counties
+# -----------------------------------------------------------------------------#
+{
+NYC_5County = c(36061, 36047, 36005, 36085,36081)
+# 36061 = New York County
+# 36047 = Kings County
+# 36005 = Bronx County
+# 36085 = Richmond County
+# 36081 = Queens County
+}
+  
+# -----------------------------------------------------------------------------#
+# ### Land Area # 3146 counties
+# -----------------------------------------------------------------------------#
+{
+setwd("~/Google Drive/BMIN503_Final_Project/Data/3_Covariates") # set working directory
+require(readxl) # readxl package for reading excel files
+LandArea2010_County = readxl::read_xls("LND01.xls") # import data using readxl::read_xls()
+LandArea2010_County = LandArea2010_County %>% dplyr::select("Areaname", "STCOU", "LND110210D")
+LandArea2010_County$STCOU=as.numeric(LandArea2010_County$STCOU) 
+setnames(LandArea2010_County, old = names(LandArea2010_County), new = c("COUNTY", "FIPS", "AREA_SQ_MILES_2010"))
+FullText_state = c("UNITED STATES", "ALABAMA", "ALASKA", "ARIZONA", "ARKANSAS", "CALIFORNIA", "COLORADO", "CONNECTICUT", "DELAWARE", "DISTRICT OF COLUMBIA", "FLORIDA", "GEORGIA", "HAWAII", "IDAHO", "ILLINOIS", "INDIANA", "IOWA", "KANSAS", "KENTUCKY", "LOUISIANA", "MAINE", "MARYLAND", "MASSACHUSETTS", "MICHIGAN", "MINNESOTA", "MISSISSIPPI", "MISSOURI", "MONTANA", "NEBRASKA", "NEVADA", "NEW HAMPSHIRE", "NEW JERSEY", "NEW MEXICO", "NEW YORK", "NORTH CAROLINA", "NORTH DAKOTA", "OHIO", "OKLAHOMA", "OREGON", "PENNSYLVANIA", "RHODE ISLAND", "SOUTH CAROLINA", "SOUTH DAKOTA", "TENNESSEE", "TEXAS", "UTAH", "VERMONT", "VIRGINIA", "WASHINGTON", "WEST VIRGINIA", "WISCONSIN", "WYOMING")
+LandArea2010_County = LandArea2010_County %>% filter(!(COUNTY %in% FullText_state))
+
+# Total land NYC by summing land 5 NYC counties 
+LandArea2010_County$AREA_SQ_MILES_2010[LandArea2010_County$FIPS==36061] = as.numeric(paste0(LandArea2010_County %>% filter(FIPS %in% NYC_5County) %>% summarise(sum(AREA_SQ_MILES_2010))))
+
+# length(unique(LandArea2010_County$FIPS)) # 3146 counties
+}
+
+# -----------------------------------------------------------------------------#
+# ### Population # 3142 counties
+# -----------------------------------------------------------------------------#
+{
+setwd("~/Google Drive/BMIN503_Final_Project/Data/3_Covariates") # set working directory
+mydir = "PopAndPop65Age2019_UScensus_County" # set my directory
+myfiles = list.files(path=mydir, pattern="*.csv", full.names=TRUE) # read my directory
+PopAndPop65Age2019_County = plyr::ldply(myfiles, read_csv)
+PopAndPop65Age2019_County = PopAndPop65Age2019_County %>% dplyr::select(c("STATE", "COUNTY", "STNAME", "CTYNAME", "YEAR", "POPESTIMATE", "AGE65PLUS_TOT")) %>% filter(YEAR == 12)
+PopAndPop65Age2019_County$FIPS = as.numeric(PopAndPop65Age2019_County$STATE) * 1000 + as.numeric(PopAndPop65Age2019_County$COUNTY)
+PopAndPop65Age2019_County = PopAndPop65Age2019_County %>% dplyr::select(!(c("STATE", "COUNTY", "YEAR")))
+PopAndPop65Age2019_County = PopAndPop65Age2019_County %>% dplyr::select(c("FIPS","STNAME","CTYNAME","POPESTIMATE","AGE65PLUS_TOT"))
+setnames(PopAndPop65Age2019_County, old = c("FIPS","STNAME","CTYNAME","POPESTIMATE","AGE65PLUS_TOT"), new = c("FIPS","STATE","COUNTY","TOTALPOP_2019","TOTALPOP_AGE65PLUS_2019"))
+PopAndPop65Age2019_County %>% filter(FIPS %in% NYC_5County)
+
+# Create total population by state
+PopAndPop65Age2019_County <- PopAndPop65Age2019_County %>% group_by(STATE) %>% dplyr::mutate(TOTALPOP_STATE_2019 = sum(TOTALPOP_2019))
+STATE_POPULATION = data.frame(unique(PopAndPop65Age2019_County[c("STATE","TOTALPOP_STATE_2019")]))
+# write_csv(STATE_POPULATION, "~/Box Sync/UPennPhD/2_Coursework/2020-09_Fall/EPID_623_SurvivalAnalysis/SurvivalAnalysisProject/Analysis/Data/STATE_POPULATION.csv")
+
+# Remove state population
+PopAndPop65Age2019_County <- PopAndPop65Age2019_County %>% dplyr::select(!(TOTALPOP_STATE_2019))
+
+# Replace NYC with NYC 5 Counties 
+TOTALPOP_2019.NYC_5County <- PopAndPop65Age2019_County %>% filter(FIPS %in% NYC_5County) %>% summarise(sum(TOTALPOP_2019))
+TOTALPOP_2019.NYC_5County <- as.numeric(TOTALPOP_2019.NYC_5County[,2])
+PopAndPop65Age2019_County$TOTALPOP_2019[PopAndPop65Age2019_County$FIPS==36061] <- TOTALPOP_2019.NYC_5County
+
+TOTALPOP_AGE65PLUS_2019.NYC_5County <- PopAndPop65Age2019_County %>% filter(FIPS %in% NYC_5County) %>% summarise(sum(TOTALPOP_AGE65PLUS_2019))
+TOTALPOP_AGE65PLUS_2019.NYC_5County <- as.numeric(TOTALPOP_AGE65PLUS_2019.NYC_5County[,2])
+PopAndPop65Age2019_County$TOTALPOP_AGE65PLUS_2019[PopAndPop65Age2019_County$FIPS==36061] <- TOTALPOP_AGE65PLUS_2019.NYC_5County
+
+# Create percentage of population age 65 or greater 
+PopAndPop65Age2019_County$TOTALPOP_AGE65PLUS_2019_Percent = round(PopAndPop65Age2019_County$TOTALPOP_AGE65PLUS_2019/PopAndPop65Age2019_County$TOTALPOP_2019*100,2)
+
+# length(unique(PopAndPop65Age2019_County$FIPS)) # 3142 counties
+}
+
+# -----------------------------------------------------------------------------#
+# ### Urban Rural Classification # 3221 counties
+# -----------------------------------------------------------------------------#
+{
+setwd("~/Google Drive/BMIN503_Final_Project/Data/3_Covariates") # set working directory
+UrbanRural2013_County = read_xls("2013_urban_rural_county.xls")
+UrbanRural2013_County = separate(data = UrbanRural2013_County, col = Description, into = c("UrbanRural2013_County"), sep = " - ")
+setnames(UrbanRural2013_County, old = colnames(UrbanRural2013_County), new = c("FIPS", "STATE", "COUNTY", "Population_2010", "RUCC_2013", "UrbanRural2013_County"))
+UrbanRural2013_County$FIPS <- as.numeric(UrbanRural2013_County$FIPS)
+UrbanRural2013_County$MetroNonMetro <- factor(UrbanRural2013_County$UrbanRural2013_County, levels = c("Nonmetro","Metro"))
+UrbanRural2013_County$UrbanRural <- plyr::mapvalues(UrbanRural2013_County$UrbanRural2013_County, from = c("Nonmetro","Metro"), to = c("Rural","Urban"))
+UrbanRural2013_County = UrbanRural2013_County %>% dplyr::select(!c(Population_2010,UrbanRural2013_County))
+
+# length(unique(UrbanRural2013_County$FIPS)) # 3221 counties with at least 1 case
+}
+
+# -----------------------------------------------------------------------------#
+# ### Poverty Rate # 3142 counties
+# -----------------------------------------------------------------------------#
+{
+# Remember to change columns "All.Ages.SAIPE.Poverty.Universe" and "All.Ages.in.Poverty.Count" to numeric in excel
+setwd("~/Google Drive/BMIN503_Final_Project/Data/3_Covariates") # set working directory
+PovertyRate2018_County = read.csv("SAIPESNC_05JUL20_18_12_06_52.csv")
+PovertyRate2018_County = PovertyRate2018_County %>% dplyr::select(c("County.ID","State...County.Name","All.Ages.SAIPE.Poverty.Universe","All.Ages.in.Poverty.Count","All.Ages.in.Poverty.Count.LB.90.","All.Ages.in.Poverty.Count.UB.90.","X90..Confidence.Interval..All.Ages.in.Poverty.Count.","All.Ages.in.Poverty.Percent","All.Ages.in.Poverty.Percent.LB.90.","All.Ages.in.Poverty.Percent.UB.90.","X90..Confidence.Interval..All.Ages.in.Poverty.Percent.")) 
+setnames(PovertyRate2018_County, old = colnames(PovertyRate2018_County), new = c("FIPS", "COUNTY","PovertyUniverse","PovertyCount","PovertyCountLB_90","PovertyCountUB_90","ConfidenceIntervalPovertyCount","PovertyPercent","PovertyPercentLB_90","PovertyPercentUB_90", "ConfidenceIntervalPovertyPercent"))
+FullText_state = c("United States", "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming")
+PovertyRate2018_County = PovertyRate2018_County %>% filter(!(COUNTY %in% FullText_state))
+
+# Replace NYC with NYC 5 Counties 
+PovertyRate2018_County$PovertyCount[PovertyRate2018_County$FIPS==36061] = as.numeric(paste0(PovertyRate2018_County %>% filter(FIPS %in% NYC_5County) %>% summarise(sum(PovertyCount))))
+PovertyRate2018_County$PovertyUniverse[PovertyRate2018_County$FIPS==36061] = as.numeric(paste0(PovertyRate2018_County %>% filter(FIPS %in% NYC_5County) %>% summarise(sum(PovertyUniverse))))
+PovertyRate2018_County$PovertyPercent = round(PovertyRate2018_County$PovertyCount/PovertyRate2018_County$PovertyUniverse*100,2)
+
+# length(unique(PovertyRate2018_County$FIPS)) # 3142 counties with at least 1 case
+}
+
+# -----------------------------------------------------------------------------#
+# ###  Political Partisanship # 3156 counties (includes counties outside of the 50 states)
+# -----------------------------------------------------------------------------#
+{
+### 2016 presidential election county level results 
+setwd("~/Google Drive/BMIN503_Final_Project/Data/3_Covariates") # set working directory
+Politics_County = read.csv("countypres_2000-2016.csv")
+Politics_County %<>% filter(year == 2016) # filter by 2016
+Politics_County %<>% filter(candidate %in% c("Donald Trump","Hillary Clinton")) # filter by trump or clinton
+Politics_County$percentvotes = Politics_County$candidatevotes/Politics_County$totalvotes 
+Politics_County %<>% arrange(FIPS,-percentvotes) # arrange by ascending FIPS and descending percentvotes
+Politics_County <- Politics_County[!duplicated(Politics_County$FIPS),] # Remove duplicates based on FIPS
+data.table::setnames(Politics_County, old = c("county", "state"), new = c("COUNTY", "STATE"))
+# length(Politics_County$FIPS) # 3156
+
+# Politics_County = Politics_County %>% filter(FIPS %in% NYTimes_County$FIPS)
+# length(Politics_County$FIPS) # 3114 of 3142 # discrepancy is because some counties are not reported in election results
+}
+}
+
+# -----------------------------------------------------------------------------#
+# ### [IV] COVID-19 Tracking Project: Cases, Deaths, Hospitalization, Testing (State level)
+# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+{
+# StateDataCDT = StateData Cases Deaths Testing 
+setwd("~/Google Drive/BMIN503_Final_Project/Data/4_StateCasesDeathsTests") # set working directory
+StateDataCDT = fread("daily.csv")
+StateDataCDT = StateDataCDT %>% dplyr::select(date, state, positive, death, deathConfirmed, deathProbable, totalTestResults, hospitalizedCurrently, hospitalizedCumulative, inIcuCurrently, inIcuCumulative)
+Abbreviated_state = c("AL","AK", "AZ","AR", "CA", "CO", "CT","DE","DC", "FL", "GA","HI","ID", "IL", "IN","IA","KS","KY", "LA","ME", "MD", "MA", "MI","MN", "MS", "MO","MT","NE","NV","NH", "NJ","NM", "NY", "NC","ND", "OH","OK","OR", "PA", "RI", "SC","SD", "TN", "TX","UT","VT", "VA", "WA","WV", "WI","WY")
+FullText_state = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming")
+StateDataCDT = StateDataCDT %>% filter(state %in% State_Divisons$'State Code') 
+StateDataCDT$STATE = plyr::mapvalues(StateDataCDT$state,from=State_Divisons$'State Code',to=State_Divisons$STATE) # mapping using the State_Divisons datafrome 
+StateDataCDT$date = lubridate::ymd(StateDataCDT$date)
+
+# Merge in population by state 
+StateDataCDT = left_join(StateDataCDT,STATE_POPULATION,by="STATE") # merge in state population
+
+# Testing State-level
+# Create tests per 100K population and new tests per 1K population
+StateDataCDT$tests_per100K = round(StateDataCDT$totalTestResults/StateDataCDT$TOTALPOP_STATE_2019*100000,2)
+StateDataCDT = StateDataCDT %>% relocate(c(totalTestResults), .after = last_col())
+StateDataCDT = StateDataCDT %>% 
+     dplyr::group_by(STATE) %>% 
+     dplyr::arrange(STATE,date) %>% 
+     dplyr::mutate(prior_day_totalTestResults=dplyr::lag(totalTestResults,default=first(totalTestResults)),
+                   new_totalTestResults=totalTestResults-prior_day_totalTestResults,
+                   new_tests_per100K=round(new_totalTestResults/TOTALPOP_STATE_2019*100000,2))
+
+# Hospitalization State-level
+StateDataCDT$inHospitalState = StateDataCDT$hospitalizedCurrently + StateDataCDT$hospitalizedCumulative
+StateDataCDT$inIcu = StateDataCDT$inIcuCurrently + StateDataCDT$inIcuCumulative
+
+# Cases and deaths State-level
+setnames(StateDataCDT, old = c("positive", "death"), new = c("cases_State", "deaths_State"))
+}
+```
+
+### Methods: Merge
+
++ We merged all of the various datasets into the dataframe *DATA*.
+
+```{r merge exposure-outcome-covariates, message=FALSE, warning=FALSE}
+### combine county-level cases and deaths  
+CasesDeathsNYTimes_County = left_join(CasesNYTimes_County_LongForm, DeathsNYTimes_County_LongForm %>% dplyr::select(FIPS, date, deaths), by = c("FIPS", "date")) 
+
+### merge in state mandates  
+DATA = data.frame(left_join(x= CasesDeathsNYTimes_County, y= StateMandates, by="STATE"))
+DATA$deaths = ifelse(is.na(DATA$deaths),0,DATA$deaths) # Replace NAs with 0 for counties where there were cases but no recorded deaths
+# length(unique(DATA$FIPS)) # 3091 counties
+
+### merge in land area
+DATA = left_join(DATA, LandArea2010_County %>% dplyr::select(FIPS, AREA_SQ_MILES_2010) , by = "FIPS") 
+# check = DATA %>% filter(is.na(DATA$AREA_SQ_MILES_2010)) 
+# length(unique(check$FIPS)) # 2 counties missing
+
+### merge in Metro-NonMetro and Urban-Rural
+DATA = left_join(DATA, UrbanRural2013_County %>% dplyr::select(FIPS, MetroNonMetro, UrbanRural), by = "FIPS")
+# check = DATA %>% filter(is.na(DATA$MetroNonMetro)) 
+# length(unique(check$FIPS)) # 2 counties missing
+
+### merge in county-level population from 2019
+DATA = left_join(DATA, PopAndPop65Age2019_County %>% dplyr::select(FIPS, STATE, TOTALPOP_2019, TOTALPOP_AGE65PLUS_2019, TOTALPOP_AGE65PLUS_2019_Percent), by = c("FIPS","STATE"))
+# check = DATA %>% filter(is.na(DATA$TOTALPOP_2019)) 
+# length(unique(check$FIPS)) # 2 counties missing
+
+### merge in county-level poverty percentage
+DATA = left_join(DATA, PovertyRate2018_County %>% dplyr::select(FIPS, PovertyCount, PovertyUniverse, PovertyPercent), by = "FIPS")
+# check = DATA %>% filter(is.na(DATA$PovertyPercent)) 
+# length(unique(check$FIPS)) # 2 counties missing
+
+### merge in county-level political partisanship
+DATA = left_join(DATA, Politics_County %>% dplyr::select(FIPS, party), by = "FIPS") # ONLY 3048 / 3071 counties
+# check = DATA %>% filter(is.na(DATA$party)) 
+# length(unique(check$FIPS)) # 24 counties missing
+
+### merge in state-level data from the COVID-19 tracking project
+DATA$date = lubridate::ymd(DATA$date) # change character to data format
+StateDataCDT$date = lubridate::ymd(StateDataCDT$date) # change character to data format
+DATA = left_join(DATA, StateDataCDT, by = c("STATE","date"))
+```
+
+### Methods: Label & Create
+
++ We created before and after mask mandate periods relative to a reference point. For states with a mask mandate, the reference point was the mask mandate date. For states without a mask mandate, the reference point was the median mandate date of all states within same US Census division that had mask mandates. 
+
++ We created 7-day bins before and after the mask mandate to account for the daily fluctuations in COVID-19 cases and deaths. 
+
+```{r lable & impute exposure-outcome-covariates, message=FALSE, warning=FALSE}
+# -----------------------------------------------------------------------------#
+# ### Calculate population density
+# -----------------------------------------------------------------------------#
+DATA$PopDensity = round(DATA$TOTALPOP_2019/DATA$AREA_SQ_MILES_2010,2)
+
+# -----------------------------------------------------------------------------#
+# ### LABEL date, date integer, and CREATE 1|0 & Y|N indicators for state mandates
+# -----------------------------------------------------------------------------#
+{
+DATA$date = lubridate::ymd(DATA$date) # change character to data format
+DATA$date_int = as.integer(DATA$date) # change date to integer format
+
+###  Public Face Mask Mandate (Boston U Database)
+DATA$fm_all = as.Date(DATA$FM_ALL)
+DATA$fm_all_int = as.integer(DATA$fm_all)
+DATA$fm_all_10 = ifelse(is.na(DATA$fm_all),0,1)
+DATA$fm_all_yn = factor(DATA$fm_all_10,levels=c(0:1),labels=c("No","Yes"))
+
+###  Public Face Mask Mandate (EFFECTIVE DATE)
+DATA$fm_effect = as.Date(DATA$FM_EFFECT)
+DATA$fm_effect_int = as.integer(DATA$fm_effect)
+DATA$fm_effect_10 = ifelse(is.na(DATA$fm_effect),0,1)
+DATA$fm_effect_00 = 0
+DATA$fm_effect_yn = factor(DATA$fm_effect_10,levels=c(0:1),labels=c("No","Yes"))
+
+###  Public Face Mask Mandate (SIGNING DATE)
+DATA$fm_sign = as.Date(DATA$FM_SIGN)
+DATA$fm_sign_int = as.integer(DATA$fm_sign)
+DATA$fm_sign_10 = ifelse(is.na(DATA$fm_sign),0,1)
+DATA$fm_sign_yn = factor(DATA$fm_sign_10,levels=c(0:1),labels=c("No","Yes"))
+
+###  Employee Face Mask Mandate
+DATA$fm_emp = as.Date(DATA$FM_EMP)
+DATA$fm_emp_int = as.integer(DATA$fm_emp)
+DATA$fm_emp_10 = ifelse(is.na(DATA$fm_emp),0,1)
+DATA$fm_emp_yn = factor(DATA$fm_emp_10,levels=c(0:1),labels=c("No","Yes"))
+
+###  State of emergency
+DATA$stemerg = as.Date(DATA$STEMERG)
+DATA$stemerg_int = as.integer(DATA$stemerg)
+DATA$stemerg_10 = ifelse(((DATA$date_int >= DATA$stemerg_int) & (!is.na(DATA$stemerg_int))),1,0) 
+DATA$stemerg_yn = factor(DATA$stemerg_10,levels=c(0:1),labels=c("No","Yes"))
+
+###  K-12 School closure
+DATA$clschool = as.Date(DATA$CLSCHOOL)
+DATA$clschool_int = as.integer(DATA$clschool)
+DATA$clschool_10 = ifelse(((DATA$date_int >= DATA$clschool_int) & (!is.na(DATA$clschool_int))),1,0) 
+DATA$clschool_yn = factor(DATA$clschool_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Stay at home order
+DATA$stayhome = as.Date(DATA$STAYHOME)
+DATA$stayhome_int = as.integer(DATA$stayhome)
+DATA$end_sthm = as.Date(DATA$END_STHM)
+DATA$end_sthm_int = as.integer(DATA$end_sthm)
+# static
+DATA$stayhomeON_10 = ifelse(((DATA$date_int >= DATA$stayhome_int) & (!is.na(DATA$stayhome_int))),1,0) # Close 
+DATA$stayhomeOFF_10 = ifelse(((DATA$date_int >= DATA$end_sthm_int) & (!is.na(DATA$end_sthm_int))),1,0) # Reopen
+# dynamic
+DATA$stayhome_10 = ifelse(((DATA$date_int >= DATA$stayhome_int) & (!is.na(DATA$stayhome_int))),1,0) # Close 
+DATA$stayhome_10 = ifelse(((DATA$date_int >= DATA$end_sthm_int) & (!is.na(DATA$end_sthm_int))),0,DATA$stayhome_10) # Reopen
+DATA$stayhome_yn = factor(DATA$stayhome_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Close Business
+DATA$clbsns = as.Date(DATA$CLBSNS)
+DATA$clbsns_int = as.integer(DATA$clbsns)
+
+DATA$endbsns = as.Date(DATA$END_BSNS)
+DATA$endbsns_int = as.integer(DATA$endbsns)
+# static
+DATA$clbsnsON_10 = ifelse(((DATA$date_int >= DATA$clbsns_int) & (!is.na(DATA$clbsns_int))),1,0) # Close 
+DATA$clbsnsOFF_10 = ifelse(((DATA$date_int >= DATA$endbsns_int) & (!is.na(DATA$endbsns_int))),1,0) # Reopen
+# dynamic
+DATA$clbsns_10 = ifelse(((DATA$date_int >= DATA$clbsns_int) & (!is.na(DATA$clbsns_int))),1,0) # Close 
+DATA$clbsns_10 = ifelse(((DATA$date_int >= DATA$endbsns_int) & (!is.na(DATA$endbsns_int))),0,DATA$clbsns_10) # Reopen
+DATA$clbsns_yn = factor(DATA$clbsns_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Close Restaurant
+DATA$clrest = as.Date(DATA$CLREST)
+DATA$clrest_int = as.integer(DATA$clrest)
+DATA$endrest = as.Date(DATA$ENDREST)
+DATA$endrest_int = as.integer(DATA$endrest)
+DATA$clrst2 = as.Date(lubridate::ymd(DATA$CLRST2))
+DATA$clrst2_int = as.integer(DATA$clrst2)
+# static
+DATA$clrestON_10 = ifelse(((DATA$date_int >= DATA$clrest_int) & (!is.na(DATA$clrest_int))),1,0) # Close 
+DATA$clrestOFF_10 = ifelse(((DATA$date_int >= DATA$endrest_int) & (!is.na(DATA$endrest_int))),1,0) # Reopen
+# dynamic
+DATA$clrest_10 = ifelse(((DATA$date_int >= DATA$clrest_int) & (!is.na(DATA$clrest_int))),1,0) # Close 
+DATA$clrest_10 = ifelse(((DATA$date_int >= DATA$endrest_int) & (!is.na(DATA$endrest_int))),0,DATA$clrest_10) # Reopen
+DATA$clrest_10 = ifelse(((DATA$date_int >= DATA$clrst2_int) & (!is.na(DATA$clrst2_int))),1,DATA$clrest_10) # Re-Close
+DATA$clrest_yn = factor(DATA$clrest_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Close Gym
+DATA$clgym = as.Date(DATA$CLGYM)
+DATA$clgym_int = as.integer(DATA$clgym)
+DATA$endgym = as.Date(DATA$ENDGYM)
+DATA$endgym_int = as.integer(DATA$endgym)
+DATA$clgym2 = as.Date(lubridate::ymd(DATA$CLGYM2))
+DATA$clgym2_int = as.integer(DATA$clgym2)
+# static
+DATA$clgymON_10 = ifelse(((DATA$date_int >= DATA$clgym_int) & (!is.na(DATA$clgym_int))),1,0) # Close 
+DATA$clgymOFF_10 = ifelse(((DATA$date_int >= DATA$endgym_int) & (!is.na(DATA$endgym_int))),1,0) # Reopen
+# dynamic
+DATA$clgym_10 = ifelse(((DATA$date_int >= DATA$clgym_int) & (!is.na(DATA$clgym_int))),1,0) # Close 
+DATA$clgym_10 = ifelse(((DATA$date_int >= DATA$endgym_int) & (!is.na(DATA$endgym_int))),0,DATA$clgym_10) # Reopen
+DATA$clgym_10 = ifelse(((DATA$date_int >= DATA$clgym2_int) & (!is.na(DATA$clgym2_int))),1,DATA$clgym_10) # Re-Close
+DATA$clgym_yn = factor(DATA$clgym_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Close movie
+DATA$clmov = as.Date(DATA$CLMOVIE)
+DATA$clmov_int = as.integer(DATA$clmov)
+DATA$end_mov = as.Date(DATA$END_MOV)
+DATA$end_mov_int = as.integer(DATA$end_mov)
+DATA$clmv2 = as.Date(lubridate::ymd(DATA$CLMV2))
+DATA$clmv2_int = as.integer(DATA$clmv2)
+# static
+DATA$clmovON_10 = ifelse(((DATA$date_int >= DATA$clmov_int) & (!is.na(DATA$clmov_int))),1,0) # Close 
+DATA$clmovOFF_10 = ifelse(((DATA$date_int >= DATA$end_mov_int) & (!is.na(DATA$end_mov_int))),1,0) # Reopen
+# dynamic
+DATA$clmov_10 = ifelse(((DATA$date_int >= DATA$clmov_int) & (!is.na(DATA$clmov_int))),1,0) # Close 
+DATA$clmov_10 = ifelse(((DATA$date_int >= DATA$end_mov_int) & (!is.na(DATA$end_mov_int))),0,DATA$clmov_10) # Reopen
+DATA$clmov_10 = ifelse(((DATA$date_int >= DATA$clmv2_int) & (!is.na(DATA$clmv2_int))),1,DATA$clmov_10) # Re-Close
+DATA$clmov_yn = factor(DATA$clmov_10,levels=c(0:1),labels=c("No","Yes"))
+
+### Close bar
+DATA$closebar = as.Date(DATA$CLOSEBAR)
+DATA$closebar_int = as.integer(DATA$closebar)
+DATA$end_brs = as.Date(DATA$END_BRS)
+DATA$end_brs_int = as.integer(DATA$end_brs)
+DATA$clbar2 = as.Date(lubridate::ymd(DATA$CLBAR2))
+DATA$clbar2_int = as.integer(DATA$clbar2)
+# static
+DATA$clbarON_10 = ifelse(((DATA$date_int >= DATA$closebar_int) & (!is.na(DATA$closebar_int))),1,0) # Close 
+DATA$clbarOFF_10 = ifelse(((DATA$date_int >= DATA$end_brs_int) & (!is.na(DATA$end_brs_int))),1,0) # Reopen
+# dynamic
+DATA$clbar_10 = ifelse(((DATA$date_int >= DATA$closebar_int) & (!is.na(DATA$closebar_int))),1,0) # Close 
+DATA$clbar_10 = ifelse(((DATA$date_int >= DATA$end_brs_int) & (!is.na(DATA$end_brs_int))),0,DATA$clbar_10) # Reopen
+DATA$clbar_10 = ifelse(((DATA$date_int >= DATA$clbar2_int) & (!is.na(DATA$clbar2_int))),1,DATA$clbar_10) # Re-Close
+DATA$clbar_yn = factor(DATA$clbar_10,levels=c(0:1),labels=c("No","Yes"))
+}
+
+# -----------------------------------------------------------------------------#
+# ### CREATE cases per 100K on April 1 2020 - Not used for current project, but will use later
+# -----------------------------------------------------------------------------#
+# {
+# DATA_Apr1 = DATA %>% dplyr::select(FIPS, date, cases, TOTALPOP_2019) %>% filter(date == "2020-04-01")
+# DATA_Apr1$POP_Per100K_Apr1 = round((DATA_Apr1$cases/DATA_Apr1$TOTALPOP_2019)*100000,2)
+# DATA_Apr1 = DATA_Apr1 %>% dplyr::select(FIPS, POP_Per100K_Apr1)
+# DATA = left_join(DATA, DATA_Apr1, by = "FIPS")
+# }
+
+# -----------------------------------------------------------------------------#
+# ### CREATE median date for states without public masks mandates (from all states with public mask mandates by division)
+# -----------------------------------------------------------------------------#
+{
+DATA$fm_effect[DATA$fm_effect == 0] <- NA
+
+MaskMandate_Impute = unique(DATA[c("STATE","DIVISION","fm_effect")])
+MaskMandate_Impute = MaskMandate_Impute %>% 
+                         dplyr::group_by(DIVISION) %>% 
+                         dplyr::mutate(fm_div_min = replace_na(fm_effect, min(fm_effect, na.rm = T)),
+                                       fm_div_med = replace_na(fm_effect, median(fm_effect, na.rm = T)),
+                                       fm_div_max = replace_na(fm_effect, max(fm_effect, na.rm = T))) # By 9 Divisions
+
+DATA = left_join(DATA,MaskMandate_Impute,by = c("STATE","DIVISION","fm_effect"))
+
+MaskMandate_Impute = unique(DATA[c("STATE","DIVISION","fm_effect","fm_div_min","fm_div_med","fm_div_max")])
+}
+
+# -----------------------------------------------------------------------------#
+# ### CREATE days since mask mandate and pre & post mask mandate periods
+# -----------------------------------------------------------------------------#
+{
+# Create days since mask mandate  
+# DATA$daysSince_fm_div_min = DATA$date_int - as.integer(as.Date(DATA$fm_div_min))
+DATA$daysSince_fm_div_med = DATA$date_int - as.integer(as.Date(DATA$fm_div_med))
+# DATA$daysSince_fm_div_max = DATA$date_int - as.integer(as.Date(DATA$fm_div_max))
+
+# Create pre & post mask mandate periods
+# DATA$period_fm_div_min = ifelse(DATA$daysSince_fm_div_min<=0,"Pre","Post")
+DATA$period_fm_div_med = ifelse(DATA$daysSince_fm_div_med<=0,"Pre","Post")
+# DATA$period_fm_div_max = ifelse(DATA$daysSince_fm_div_max<=0,"Pre","Post")
+}
+
+# -----------------------------------------------------------------------------#
+# ### CREATE 7-day bins pre & post mask mandate
+# -----------------------------------------------------------------------------#
+{
+### Create 7-day bins relative to min
+# {
+# DATA$period_bin7_min = NA
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min <= -15,1,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= -14 & DATA$daysSince_fm_div_min <= -8,2,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= -7 & DATA$daysSince_fm_div_min < 0,3,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 0 & DATA$daysSince_fm_div_min <= 7,4,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 8 & DATA$daysSince_fm_div_min <= 14,5,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 15 & DATA$daysSince_fm_div_min <= 21,6,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 22 & DATA$daysSince_fm_div_min <= 28,7,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 29 & DATA$daysSince_fm_div_min <= 35,8,DATA$period_bin7_min)
+# DATA$period_bin7_min = ifelse(DATA$daysSince_fm_div_min >= 36,9,DATA$period_bin7_min)   
+# table(DATA$period_bin7_min,exclude=T)
+# DATA$period_bin7_min = factor(DATA$period_bin7_min)
+# 
+# DATA$period_bin7_min_lbl = factor(DATA$period_bin7_min,levels=c(1:9),
+#                             labels=c("FM_B15plus","FM_B8to14","FM_B1to7",
+#                                      "FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+# table(DATA$period_bin7_min_lbl,DATA$period_bin7_min,exclude=T)
+# }
+
+### Create 7-day bins relative to median
+{
+DATA$period_bin7_med = NA
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med <= -15,1,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= -14 & DATA$daysSince_fm_div_med <= -8,2,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= -7 & DATA$daysSince_fm_div_med < 0,3,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 0 & DATA$daysSince_fm_div_med <= 7,4,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 8 & DATA$daysSince_fm_div_med <= 14,5,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 15 & DATA$daysSince_fm_div_med <= 21,6,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 22 & DATA$daysSince_fm_div_med <= 28,7,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 29 & DATA$daysSince_fm_div_med <= 35,8,DATA$period_bin7_med)
+DATA$period_bin7_med = ifelse(DATA$daysSince_fm_div_med >= 36,9,DATA$period_bin7_med)   
+table(DATA$period_bin7_med,exclude=T)
+DATA$period_bin7_med = factor(DATA$period_bin7_med)
+
+DATA$period_bin7_med_lbl = factor(DATA$period_bin7_med,levels=c(1:9),
+                            labels=c("FM_B15plus","FM_B8to14","FM_B1to7",
+                                     "FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+# table(DATA$period_bin7_med_lbl,DATA$period_bin7_med,exclude=T)
+}
+
+### Create 7-day bins relative to max
+# {
+# DATA$period_bin7_max = NA
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max <= -15,1,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= -14 & DATA$daysSince_fm_div_max <= -8,2,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= -7 & DATA$daysSince_fm_div_max < 0,3,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 0 & DATA$daysSince_fm_div_max <= 7,4,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 8 & DATA$daysSince_fm_div_max <= 14,5,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 15 & DATA$daysSince_fm_div_max <= 21,6,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 22 & DATA$daysSince_fm_div_max <= 28,7,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 29 & DATA$daysSince_fm_div_max <= 35,8,DATA$period_bin7_max)
+# DATA$period_bin7_max = ifelse(DATA$daysSince_fm_div_max >= 36,9,DATA$period_bin7_max)   
+# table(DATA$period_bin7_max,exclude=T)
+# DATA$period_bin7_max = factor(DATA$period_bin7_max)
+# 
+# DATA$period_bin7_max_lbl = factor(DATA$period_bin7_max,levels=c(1:9),
+#                             labels=c("FM_B15plus","FM_B8to14","FM_B1to7",
+#                                      "FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+# table(DATA$period_bin7_max_lbl,DATA$period_bin7_max,exclude=T)
+# }
+}
+
+# -----------------------------------------------------------------------------#
+# ### CREATE STATE ID
+# -----------------------------------------------------------------------------#
+UNIQUE_STATE <- unique(DATA$STATE)
+UNIQUE_STATE <- sort(UNIQUE_STATE)
+DATA$STATE_ID = plyr::mapvalues(DATA$STATE,from=UNIQUE_STATE,to=c(1:length(UNIQUE_STATE)))
+```
+
+### Methods: Growth Rate
+
++ Our analysis is at U.S. county level, and our binary exposure is the presence or absence of a state mask mandate. 
+
++ Our continuous outcome is daily exponential growth rate of COVID-19 cases and deaths derived from their daily cumulative counts, since the rate of COVID-19 case incidence and mortality follows an exponential growth curve. Thus, the daily exponential growth rate of COVID-19 cases and deaths can be mathematically represented as: 
+
++ **Case Growth Rate** = ln(Cases_day) - ln(Cases_day-1) * 100
+
++ **Death Growth Rate** = ln(Death_day) - ln(Death_day-1) * 100
+
+```{r compute growth rates for cases and deaths, message=FALSE, warning=FALSE}
+
+# -----------------------------------------------------------------------------#
+# ### CREATE Growth Rate for Cases + Deaths 
+# -----------------------------------------------------------------------------#
+{
+  
+### Impute where values are 0
+{
+# Impute 1 where cases are 0 or NA
+DATA$cases = ifelse(DATA$cases == 0 | is.na(DATA$cases),1,DATA$cases)
+table(DATA$cases<=0)
+
+# Impute 1 where deaths are 0 or NA
+DATA$deaths = ifelse(DATA$deaths == 0 | is.na(DATA$deaths),1,DATA$deaths)
+table(DATA$deaths<=0)
+
+# Impute 1 where tests are 0 or NA
+DATA$totalTestResults = ifelse(DATA$totalTestResults == 0 | is.na(DATA$totalTestResults),1,DATA$totalTestResults)
+table(DATA$totalTestResults<=0)
+}
+
+### Create prior_day_cases, cases_growth_rate, cases_growth_rate_per (county-level)
+{
+# https://stackoverflow.com/questions/30606360/subtract-value-from-previous-row-by-group
+DATA = DATA %>% relocate(c(STATE,COUNTY,FIPS,date,cases), .after = last_col())
+DATA = DATA %>% 
+     dplyr::group_by(FIPS) %>% 
+     dplyr::arrange(FIPS,date_int) %>% 
+     dplyr::mutate(prior_day_cases=dplyr::lag(cases,default=first(cases)),
+                   new_cases=cases-prior_day_cases,
+                   cases_growth_rate=log(cases)-log(prior_day_cases),
+                   cases_growth_rate_per=cases_growth_rate*100)
+
+###### Impute 0 where cases_growth_rate_per are 0 or NA because growth rate cannot be negative
+# Impute 0 into for NA or <0 for cases_growth_rate and cases_growth_rate_per
+DATA$cases_growth_rate = ifelse(is.na(DATA$cases_growth_rate) | DATA$cases_growth_rate<=0,0,DATA$cases_growth_rate)
+table(DATA$cases_growth_rate<0)
+DATA$cases_growth_rate_per = ifelse(is.na(DATA$cases_growth_rate_per) | DATA$cases_growth_rate_per<=0,0,DATA$cases_growth_rate_per)
+table(DATA$cases_growth_rate_per<0)
+DATA$cases_growth_rate_per = round(DATA$cases_growth_rate_per,2)
+}
+
+### Create prior_day_deaths, deaths_growth_rate, deaths_growth_rate_per (county-level)
+{
+# https://stackoverflow.com/questions/30606360/subtract-value-from-previous-row-by-group
+DATA = DATA %>% 
+     dplyr::group_by(FIPS) %>% 
+     dplyr::arrange(FIPS,date_int) %>% 
+     dplyr::mutate(prior_day_deaths=dplyr::lag(deaths,default=first(deaths)),
+                   new_deaths=deaths-prior_day_deaths,
+                   deaths_growth_rate=log(deaths)-log(prior_day_deaths),
+                   deaths_growth_rate_per=deaths_growth_rate*100)
+   
+###### Impute 0 where deaths_growth_rate_per are 0 or NA because growth rate cannot be negative
+# Impute 0 into for NA or <0 for deaths_growth_rate and deaths_growth_rate_per
+DATA$deaths_growth_rate = ifelse(is.na(DATA$deaths_growth_rate) | DATA$deaths_growth_rate<=0,0,DATA$deaths_growth_rate)
+table(DATA$deaths_growth_rate<0)
+DATA$deaths_growth_rate_per = ifelse(is.na(DATA$deaths_growth_rate_per) | DATA$deaths_growth_rate_per<=0,0,DATA$deaths_growth_rate_per)
+table(DATA$deaths_growth_rate_per<0)
+DATA$deaths_growth_rate_per = round(DATA$deaths_growth_rate_per,2)
+}
+
+### Create prior_day_tests, tests_growth_rate, tests_growth_rate_per (state-level)
+{
+# https://stackoverflow.com/questions/30606360/subtract-value-from-previous-row-by-group
+DATA = DATA %>% relocate(c(STATE,COUNTY,FIPS,date,totalTestResults), .after = last_col())
+DATA = DATA %>% 
+     dplyr::group_by(FIPS) %>% 
+     dplyr::arrange(FIPS,date_int) %>% 
+     dplyr::mutate(tests=totalTestResults,
+                   prior_day_tests=dplyr::lag(tests,default=first(tests)),
+                   new_tests=tests-prior_day_tests,
+                   tests_growth_rate=log(tests/prior_day_tests),
+                   tests_growth_rate_per=tests_growth_rate*100)
+
+###### Impute 0 where tests_growth_rate_per are 0 or NA because growth rate cannot be negative
+# Impute 0 into for NA or <0 for tests_growth_rate and tests_growth_rate_per
+DATA$tests_growth_rate = ifelse(is.na(DATA$tests_growth_rate) | DATA$tests_growth_rate<=0,0,DATA$tests_growth_rate)
+table(DATA$tests_growth_rate<0)
+DATA$tests_growth_rate_per = ifelse(is.na(DATA$tests_growth_rate_per) | DATA$tests_growth_rate_per<=0,0,DATA$tests_growth_rate_per)
+table(DATA$tests_growth_rate_per<0)
+DATA$tests_growth_rate_per = round(DATA$tests_growth_rate_per,2)
+
+###### Impute where new_tests are 0 
+DATA$new_tests=ifelse(DATA$new_tests<=0,1,DATA$new_tests)
+table(DATA$new_tests<=0)
+# Impute ln new cases
+DATA$log_new_tests = log(DATA$new_tests)
+}
+  
+}
+```
+
+### Methods: Model Specifics
+
++  We utilized an event study design, or a modified difference-in-differences analysis, to examine the effect of statewide mask mandates on mitigating the transmission of and death caused by the COVID-19 disease at the county level. 
+
++ Our null hypothesis (H0) is that there is no difference in differences in the exponential growth of COVID-19 cases and death before and after mandate between states with and without mandates, whereas our alternative hypothesis (Ha) is that there is a difference in differences in the exponential growth of COVID-19 cases and deaths before and after implementation of the mask mandate between states with and without mandates. 
+
+```{r, echo=FALSE}
+# Insert bitmoji to the top right corner of the html file
+htmltools::img(src = knitr::image_uri("~/Google Drive/BMIN503_Final_Project/Data/FixedEffectsModel.png"),
+               alt = 'logo', 
+               style = 'padding:10px; width:800px; height:100px')
+```
+
++ The event study design was modeled using fixed effects linear regression. To conduct this analysis, we employed the ***fixest*** package and ***feols*** command in R. As a reminder, growth rate was the outcome, while the presence or absence of a mask mandate was the exposure. Time represented by 7-day bins as well as an interaction term between the exposure and time were included in the model. The interaction term represents the difference-in-differences estimate and is indicative of the pre-post mask mandate change in growth rates for counties with a mask mandate relative to those for counties without a mask mandates.
+
++ This event study design allowed us to dynamically control for other statewide COVID-19 mitigation policies such as State of Emergency Declarations, K-12 School Closures, Business Closures, Restaurant Closures, Gym Closures, Movie Theater Closures, and Bar Closures. We also controlled for the growth rate in state-level COVID-19 testing. Additionally, county FIPS and days in study period were included as fixed effects, and we weighted the model by 2019 county population. Lastly, our results illustrated robust and state-clustered standard errors and confidence intervals. 
+
++ Using the significant difference-in-differences estimates from the model, we predicted growth rates for COVID-19 cases and deaths as if there were no state mask mandates. In other words, we subtracted out the difference-in-differences estimates from the actual growth rate to obtain the predicted growth rates in the absence of mask mandates. Note that these predicted growth rates should be greater than the observed growth rates in the presence of mask mandates. 
+
++ **Predicted growth rate** = actual growth rates – significant difference-in-differences estimates
+
++ Next, using the predicted growth rates as well as predicted counts and actual counts, we back calculated the daily cumulative counts of cases and deaths as if there were no mask mandates.
+
++ **predicted upper count_day** = predicted count_day-1 * e^(predicted growth rate*1)
+
++ **predicted lower count_day** = actual count_day-1 * e^(predicted growth rate*1)
+
++ Lastly, we calculated counts of cases and deaths that were averted by subtracting the actual count from the predicted count 
+
++ **upper counts averted** = predicted upper count - actual count
+
++ **lower counts averted** = predicted lower count - actual count 
+
+***
+
+### **`r colorize("Results", "#008080")`**
+
+*`r colorize("Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.", "#6699cc")`*
+
+```{r descriptives, message=FALSE, warning=FALSE}
+# length(unique(DATA$FIPS)) 
+# 3091 / 3142 Unique Counties in the Study as of 7/19/2020
+cat(paste("US counties with at least 1 COVID-19 case as of 7/19/2020",
+      sprintf("%.2f %%",length(unique(DATA$FIPS))/3142*100),
+      length(unique(DATA$FIPS)),3142,"\n",
+      sep=" | "))
+
+# length(unique(DATA$date_index)) 
+cat(paste("Duration of study period",
+      length(unique(DATA$date_index)),"days","\n",
+      sep=" | "))
+# 110 Days in the study period: 2020-04-01 to 2020-07-19
+# any(table(DATA$FIPS,DATA$date_index)!=1) # quality check 
+
+# DATA_No0 <- DATA %>% filter(!(is.na(DATA$period_bin7_med_lbl))) # omit data of mandate day
+```
+
+### Results: Model Code
+
+```{r fixed effect model, message=FALSE, warning=FALSE, fig.show='hide'}
+# -----------------------------------------------------------------------------#
+# ### feols - fixed Effects OLS - Differences-in-differences 
+# -----------------------------------------------------------------------------#
+require(fixest)
+### feols references
+# https://lost-stats.github.io/Model_Estimation/fixed_effects_in_linear_regression.html
+# https://cran.r-project.org/web/packages/fixest/vignettes/fixest_walkthrough.html
+# https://rdrr.io/cran/fixest/man/feols.html  OR   
+# https://www.rdocumentation.org/packages/fixest/versions/0.6.0/topics/feols
+# https://www.rdocumentation.org/packages/fixest/versions/0.6.0/topics/predict.fixest
+# install.packages('fixest')
+
+### feols notes
+# summary(MODEL) Standard errors are automatically clustered at the individual level
+# summary(MODEL,se="twoway") # clustered at the FIPS and date_index
+# summary(MODEL,only.inter = T, cluster=~STATE) # clustered by State
+# coefplot(MODEL, only.inter = T, cluster = ~STATE) # only clustered by State
+
+# -----------------------------------------------------------------------------#
+# ### cases
+# -----------------------------------------------------------------------------#
+{
+  
+###cases - growth rate feols 
+{   
+feols7_cases_med = feols(cases_growth_rate ~ fm_effect_10::period_bin7_med_lbl(ref="FM_B1to7") + 
+                         clschool_10 + stayhome_10 + clbsns_10 + clrest_10 + clgym_10 + clmov_10 + clbar_10 + tests_growth_rate_per | 
+                         FIPS + date_index, data=DATA, weights= ~TOTALPOP_2019, panel.id=c('FIPS', 'date_index'))
+
+DATA$cases_growth_rate_residuals = feols7_cases_med$residuals
+DATA$cases_growth_rate_wmean_residual = weighted.mean(exp(DATA$cases_growth_rate_residuals),DATA$TOTALPOP_2019)
+DATA$cases_growth_rate_fitted = feols7_cases_med$fitted.values
+
+summary_feols7_cases_med = summary(feols7_cases_med, cluster = ~STATE)
+table_feols7_cases_med = etable("Main Model" = summary_feols7_cases_med, 
+                                drop=c("stemerg_10","clschool_10","stayhome_10","clbsns_10",
+                                       "clrest_10","clgym_10","clmov_10","clbar_10","tests_growth_rate_per")) 
+
+coefplot_feols7_cases_med = coefplot(feols7_cases_med, only.inter = T, cluster = ~STATE)
+d_coefplot_feols7_cases_med = coefplot_feols7_cases_med$prms
+}
+
+# cases - table output
+{
+xlabels=c("\u2264 -15","-14 to -8","-7 to -1",
+          "1 to 7","8 to 14","15 to 21","22 to 28","29 to 35","\u2265 36")
+summary_feols7_cases_med = summary(feols7_cases_med, cluster = ~STATE)
+      coeftable_feols7_cases_med = summary_feols7_cases_med$coeftable
+      coeftable_feols7_cases_med = coeftable_feols7_cases_med[1:8,] 
+      data.table::setDT(coeftable_feols7_cases_med, keep.rownames = TRUE)[]
+      
+coefplot_feols7_cases_med = coefplot(feols7_cases_med, only.inter = T, cluster = ~STATE)
+      prms_coefplot_feols7_deaths_med = coefplot_feols7_cases_med$prms
+      
+coef_feols7_cases_med = left_join(prms_coefplot_feols7_deaths_med,coeftable_feols7_cases_med,by=c("estimate_names_raw"="rn")) 
+      coef_feols7_cases_med = round_df(coef_feols7_cases_med,3)
+            coef_feols7_cases_med$pvalue = ifelse(!(is.na(coef_feols7_cases_med$'Pr(>|t|)'))&coef_feols7_cases_med$'Pr(>|t|)'<0.05,
+                                                             "*","")
+            coef_feols7_cases_med$pvalue = ifelse(!(is.na(coef_feols7_cases_med$'Pr(>|t|)'))&coef_feols7_cases_med$'Pr(>|t|)'<0.01,
+                                                             "**",coef_feols7_cases_med$pvalue)
+            coef_feols7_cases_med$pvalue = ifelse(!(is.na(coef_feols7_cases_med$'Pr(>|t|)'))&coef_feols7_cases_med$'Pr(>|t|)'<0.001,
+                                                             "***",coef_feols7_cases_med$pvalue)
+      finalcoef_feols7_cases_med = cbind(xlabels,coef_feols7_cases_med[c("estimate_names","Estimate","Std. Error",
+                                                                                               "ci_low","ci_high","pvalue","Pr(>|t|)")]) 
+      finalcoef_feols7_cases_med$'feols7_cases_med' = paste0(finalcoef_feols7_cases_med$Estimate,"",
+                                                                             finalcoef_feols7_cases_med$pvalue,"\n(",
+                                                                             finalcoef_feols7_cases_med$'Std. Error',")\n",
+                                                                             "[",finalcoef_feols7_cases_med$ci_low,", ",
+                                                                             finalcoef_feols7_cases_med$ci_high,"]")
+      finalcoef_feols7_cases_med = finalcoef_feols7_cases_med[c("xlabels","estimate_names","feols7_cases_med","pvalue")]
+      finalcoef_feols7_cases_med = rbind(finalcoef_feols7_cases_med,c("N","N",summary_feols7_cases_med$nobs,""))
+      finalcoef_feols7_cases_med = DataCombine::InsertRow(finalcoef_feols7_cases_med, NewRow = rep(NA, 4), RowNum = 10)
+} 
+  
+# cases - add DID estimates to DATA
+{
+cases_did = d_coefplot_feols7_cases_med[c("estimate_names","estimate")]
+cases_did = cases_did %>% filter(estimate_names %in% c("FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+data.table::setnames(cases_did, old = c("estimate"), new = c("cases_growth_rate_did"))
+DATA = left_join(DATA,cases_did,by=c("period_bin7_med_lbl"="estimate_names")) 
+DATA$period_bin7_med_lbl = factor(DATA$period_bin7_med,levels=c(1:9),
+                            labels=c("FM_B15plus","FM_B8to14","FM_B1to7",
+                                     "FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+
+DATA$cases_growth_rate_did = ifelse(DATA$fm_effect_10==0,0,DATA$cases_growth_rate_did)
+DATA$cases_growth_rate_did = ifelse(DATA$fm_effect_10==1 & is.na(DATA$cases_growth_rate_did),0,DATA$cases_growth_rate_did)
+DATA$cases_growth_rate_predict = DATA$cases_growth_rate - DATA$cases_growth_rate_did
+DATA$cases_growth_rate_did
+
+# RELOCATE
+DATA = DATA %>% relocate(c(POSTCODE,FIPS,date_index,fm_effect,fm_effect_10,period_bin7_med_lbl), .after = last_col())
+DATA = DATA %>% relocate(c(cases_growth_rate_did,cases_growth_rate_predict,cases_growth_rate_residuals,cases_growth_rate_wmean_residual), .after = last_col())
+DATA = DATA %>% relocate(c(cases_growth_rate,cases_growth_rate_fitted), .after = last_col())
+}
+  
+# cases - instantiate cases_predict, cases_discount1, cases_discount2, cases_discount1_factor, cases_discount2_factor
+{
+DATA = DATA %>%
+       dplyr::group_by(FIPS) %>%
+       dplyr::arrange(FIPS,date_index) %>%
+       dplyr::mutate(cases_predict=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,cases,NA),
+                     cases_discount1=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,cases,NA),
+                     cases_discount2=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,cases,NA))
+
+DATA = DATA %>% relocate(c(prior_day_cases,cases,cases_predict), .after = last_col())
+DATA = DATA %>% relocate(c(cases_discount1,cases_discount2), .after = last_col())
+DATA = DATA %>% arrange(FIPS,date_index)
+
+DATA = DATA %>%
+       dplyr::group_by(FIPS) %>%
+       dplyr::arrange(FIPS,date_index) %>%
+       dplyr::mutate(cases_predict=ifelse(daysSince_fm_div_med>0,recursive_calc(cases_predict,cases_growth_rate_predict,cases_growth_rate_wmean_residual),cases_predict),
+                     cases_discount1=ifelse(daysSince_fm_div_med>0 & is.na(cases_discount1),
+                                            round(prior_day_cases*exp(cases_growth_rate_fitted)*cases_growth_rate_wmean_residual,0),cases_discount1),
+                     cases_discount1_factor=ifelse(cases_discount1>cases,cases/cases_discount1,1),
+                     cases_discount2=ifelse(daysSince_fm_div_med>0,recursive_calc(cases_discount2,cases_growth_rate_fitted,cases_growth_rate_wmean_residual),cases_discount2),
+                     cases_discount2_factor=ifelse(cases_discount2>cases,cases/cases_discount2,1))
+
+DATA = DATA %>% relocate(c(POSTCODE,FIPS,date_index,fm_effect,fm_effect_10,daysSince_fm_div_med,period_bin7_med_lbl), .after = last_col())
+DATA = DATA %>% relocate(c(prior_day_cases,cases,cases_predict), .after = last_col())
+DATA = DATA %>% relocate(c(cases_discount1_factor), .after = last_col())
+DATA = DATA %>% relocate(c(cases_discount2_factor), .after = last_col())
+DATA = DATA %>% arrange(FIPS,date_index)
+}    
+  
+# cases - predictions for day 52 & day 110
+{   
+DATA_cases_Prediction_Day_52 = DATA %>%
+       dplyr::filter(date_index==52) %>%
+       dplyr::group_by(date_index==52) %>%
+       dplyr::summarize(total_cases = sum(cases),
+                        total_cases_predict = sum(cases_predict),
+                        wmean_cases_discount1_factor = weighted.mean(cases_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_cases_discount2_factor = weighted.mean(cases_discount2_factor,TOTALPOP_2019,na.rm=T))
+cases_predict_day52_lower = (DATA_cases_Prediction_Day_52$wmean_cases_discount2_factor*DATA_cases_Prediction_Day_52$total_cases_predict) - DATA_cases_Prediction_Day_52$total_cases
+cases_predict_day52_upper = (DATA_cases_Prediction_Day_52$wmean_cases_discount1_factor*DATA_cases_Prediction_Day_52$total_cases_predict) - DATA_cases_Prediction_Day_52$total_cases
+# 326,221.9 - 370,388 cases averted as of May 22, 2020...Interval spans 44,166 cases
+# May 22, 2020 | 1,597,220 actual cases | 326,221.9 - 370,388 cases averted (Interval is 44,166.1 cases)
+
+cat(paste0("On 05/22/2020, there were 1,597,220 actual cases and ", round(cases_predict_day52_lower,0), 
+           " - ", round(cases_predict_day52_upper,0), " cases were averted\n"))
+
+DATA_cases_Prediction_Day_110 = DATA %>%
+       dplyr::filter(date_index==110) %>%
+       dplyr::group_by(date_index==110) %>%
+       dplyr::summarize(total_cases = sum(cases),
+                        total_cases_predict = sum(cases_predict),
+                        wmean_cases_discount1_factor = weighted.mean(cases_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_cases_discount2_factor = weighted.mean(cases_discount2_factor,TOTALPOP_2019,na.rm=T))
+cases_predict_day110_lower = (DATA_cases_Prediction_Day_110$wmean_cases_discount2_factor*DATA_cases_Prediction_Day_110$total_cases_predict) - DATA_cases_Prediction_Day_110$total_cases
+cases_predict_day110_upper =(DATA_cases_Prediction_Day_110$wmean_cases_discount1_factor*DATA_cases_Prediction_Day_110$total_cases_predict) - DATA_cases_Prediction_Day_110$total_cases
+# 5,249,232 - 6,042,554 cases averted as of July 19, 2020...Interval spans 793,322 cases 
+# July 19, 2020 | 3,755,800 actual cases | 5,249,232 - 6,042,554 cases averted (Interval is 793,322 cases)
+
+cat(paste0("On 05/22/2020, there were 1,597,220 actual cases and ", round(cases_predict_day110_lower,0), 
+           " - ", round(cases_predict_day110_upper,0), " cases were averted\n"))
+}
+
+# cases - predictions days 1-110
+{   
+DATA_cases_Prediction = DATA %>%
+       dplyr::group_by(date_index) %>%
+       dplyr::summarize(total_cases = sum(cases),
+                        total_cases_predict = sum(cases_predict),
+                        wmean_cases_discount1_factor = weighted.mean(cases_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_cases_discount2_factor = weighted.mean(cases_discount2_factor,TOTALPOP_2019,na.rm=T),
+                        predicted_lower_cases = round((wmean_cases_discount2_factor*total_cases_predict),0),
+                        predicted_upper_cases = round((wmean_cases_discount1_factor*total_cases_predict),0),
+                        averted_lower_cases = round((wmean_cases_discount2_factor*total_cases_predict) - total_cases,0),
+                        averted_upper_cases = round((wmean_cases_discount1_factor*total_cases_predict) - total_cases,0))
+}
+
+}
+
+# -----------------------------------------------------------------------------#
+# ### deaths
+# -----------------------------------------------------------------------------#
+{
+  
+# deaths - growth rate feols 
+{   
+feols7_deaths_med = feols(deaths_growth_rate ~ fm_effect_10::period_bin7_med_lbl(ref="FM_B1to7") + 
+                         clschool_10 + stayhome_10 + clbsns_10 + clrest_10 + clgym_10 + clmov_10 + clbar_10 + tests_growth_rate_per | 
+                         FIPS + date_index, data=DATA, weights= ~TOTALPOP_2019, panel.id=c('FIPS', 'date_index'))
+
+DATA$deaths_growth_rate_residuals = feols7_deaths_med$residuals
+DATA$deaths_growth_rate_wmean_residual = weighted.mean(exp(DATA$deaths_growth_rate_residuals),DATA$TOTALPOP_2019)
+DATA$deaths_growth_rate_fitted = feols7_deaths_med$fitted.values
+
+summary_feols7_deaths_med = summary(feols7_deaths_med, cluster = ~STATE)
+table_feols7_deaths_med = etable("Main Model" = summary_feols7_deaths_med, 
+                                drop=c("stemerg_10","clschool_10","stayhome_10","clbsns_10",
+                                       "clrest_10","clgym_10","clmov_10","clbar_10","tests_growth_rate_per")) 
+
+coefplot_feols7_deaths_med = coefplot(feols7_deaths_med, only.inter = T, cluster = ~STATE)
+d_coefplot_feols7_deaths_med = coefplot_feols7_deaths_med$prms
+}
+   
+# deaths - table output
+{
+xlabels=c("\u2264 -15","-14 to -8","-7 to -1",
+          "1 to 7","8 to 14","15 to 21","22 to 28","29 to 35","\u2265 36")
+summary_feols7_deaths_med = summary(feols7_deaths_med, cluster = ~STATE)
+      coeftable_feols7_deaths_med = summary_feols7_deaths_med$coeftable
+      coeftable_feols7_deaths_med = coeftable_feols7_deaths_med[1:8,] 
+      data.table::setDT(coeftable_feols7_deaths_med, keep.rownames = TRUE)[]
+      
+coefplot_feols7_deaths_med = coefplot(feols7_deaths_med, only.inter = T, cluster = ~STATE)
+      prms_coefplot_feols7_deaths_med = coefplot_feols7_deaths_med$prms
+      
+coef_feols7_deaths_med = left_join(prms_coefplot_feols7_deaths_med,coeftable_feols7_deaths_med,by=c("estimate_names_raw"="rn")) 
+      coef_feols7_deaths_med = round_df(coef_feols7_deaths_med,3)
+            coef_feols7_deaths_med$pvalue = ifelse(!(is.na(coef_feols7_deaths_med$'Pr(>|t|)'))&coef_feols7_deaths_med$'Pr(>|t|)'<0.05,
+                                                             "*","")
+            coef_feols7_deaths_med$pvalue = ifelse(!(is.na(coef_feols7_deaths_med$'Pr(>|t|)'))&coef_feols7_deaths_med$'Pr(>|t|)'<0.01,
+                                                             "**",coef_feols7_deaths_med$pvalue)
+            coef_feols7_deaths_med$pvalue = ifelse(!(is.na(coef_feols7_deaths_med$'Pr(>|t|)'))&coef_feols7_deaths_med$'Pr(>|t|)'<0.001,
+                                                             "***",coef_feols7_deaths_med$pvalue)
+      finalcoef_feols7_deaths_med = cbind(xlabels,coef_feols7_deaths_med[c("estimate_names","Estimate","Std. Error",
+                                                                                               "ci_low","ci_high","pvalue","Pr(>|t|)")]) 
+      finalcoef_feols7_deaths_med$'feols7_deaths_med' = paste0(finalcoef_feols7_deaths_med$Estimate,"",
+                                                                             finalcoef_feols7_deaths_med$pvalue,"\n(",
+                                                                             finalcoef_feols7_deaths_med$'Std. Error',")\n",
+                                                                             "[",finalcoef_feols7_deaths_med$ci_low,", ",
+                                                                             finalcoef_feols7_deaths_med$ci_high,"]")
+      finalcoef_feols7_deaths_med = finalcoef_feols7_deaths_med[c("xlabels","estimate_names","feols7_deaths_med","pvalue")]
+      finalcoef_feols7_deaths_med = rbind(finalcoef_feols7_deaths_med,c("N","N",summary_feols7_deaths_med$nobs,""))
+      finalcoef_feols7_deaths_med = DataCombine::InsertRow(finalcoef_feols7_deaths_med, NewRow = rep(NA, 4), RowNum = 10)
+      finalcoef_feols7_deaths_med   
+}
+   
+# deaths - add DID estimates to DATA
+{
+deaths_did = d_coefplot_feols7_deaths_med[c("estimate_names","estimate")]
+deaths_did = deaths_did %>% filter(estimate_names %in% c("FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+data.table::setnames(deaths_did, old = c("estimate"), new = c("deaths_growth_rate_did"))
+DATA = left_join(DATA,deaths_did,by=c("period_bin7_med_lbl"="estimate_names")) 
+DATA$period_bin7_med_lbl = factor(DATA$period_bin7_med,levels=c(1:9),
+                            labels=c("FM_B15plus","FM_B8to14","FM_B1to7",
+                                     "FM_A1to7","FM_A8to14","FM_A15to21","FM_A22to28","FM_A29to35","FM_A36plus"))
+
+DATA$deaths_growth_rate_did = ifelse(DATA$fm_effect_10==0,0,DATA$deaths_growth_rate_did)
+DATA$deaths_growth_rate_did = ifelse(DATA$fm_effect_10==1 & is.na(DATA$deaths_growth_rate_did),0,DATA$deaths_growth_rate_did)
+DATA$deaths_growth_rate_predict = DATA$deaths_growth_rate - DATA$deaths_growth_rate_did
+DATA$deaths_growth_rate_did
+
+# RELOCATE
+DATA = DATA %>% relocate(c(POSTCODE,FIPS,date_index,fm_effect,fm_effect_10,period_bin7_med_lbl), .after = last_col())
+DATA = DATA %>% relocate(c(deaths_growth_rate_did,deaths_growth_rate_predict,deaths_growth_rate_residuals,deaths_growth_rate_wmean_residual), .after = last_col())
+DATA = DATA %>% relocate(c(deaths_growth_rate,deaths_growth_rate_fitted), .after = last_col())
+}
+
+# deaths - instantiate deaths_predict, deaths_discount1, deaths_discount2, deaths_discount1_factor, deaths_discount2_factor
+{
+DATA = DATA %>%
+       dplyr::group_by(FIPS) %>%
+       dplyr::arrange(FIPS,date_index) %>%
+       dplyr::mutate(deaths_predict=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,deaths,NA),
+                     deaths_discount1=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,deaths,NA),
+                     deaths_discount2=ifelse(fm_effect_10==0 | fm_effect_10==1 & daysSince_fm_div_med<=0,deaths,NA))
+
+DATA = DATA %>% relocate(c(prior_day_deaths,deaths,deaths_predict), .after = last_col())
+DATA = DATA %>% relocate(c(deaths_discount1,deaths_discount2), .after = last_col())
+DATA = DATA %>% arrange(FIPS,date_index)
+
+DATA = DATA %>%
+       dplyr::group_by(FIPS) %>%
+       dplyr::arrange(FIPS,date_index) %>%
+       dplyr::mutate(deaths_predict=ifelse(daysSince_fm_div_med>0,recursive_calc(deaths_predict,deaths_growth_rate_predict,deaths_growth_rate_wmean_residual),deaths_predict),
+                     deaths_discount1=ifelse(daysSince_fm_div_med>0 & is.na(deaths_discount1),
+                                            round(prior_day_deaths*exp(deaths_growth_rate_fitted)*deaths_growth_rate_wmean_residual,0),deaths_discount1),
+                     deaths_discount1_factor=ifelse(deaths_discount1>deaths,deaths/deaths_discount1,1),
+                     deaths_discount2=ifelse(daysSince_fm_div_med>0,recursive_calc(deaths_discount2,deaths_growth_rate_fitted,deaths_growth_rate_wmean_residual),deaths_discount2),
+                     deaths_discount2_factor=ifelse(deaths_discount2>deaths,deaths/deaths_discount2,1))
+
+DATA = DATA %>% relocate(c(POSTCODE,FIPS,date_index,fm_effect,fm_effect_10,daysSince_fm_div_med,period_bin7_med_lbl), .after = last_col())
+DATA = DATA %>% relocate(c(prior_day_deaths,deaths,deaths_predict), .after = last_col())
+DATA = DATA %>% relocate(c(deaths_discount1_factor), .after = last_col())
+DATA = DATA %>% relocate(c(deaths_discount2_factor), .after = last_col())
+DATA = DATA %>% arrange(FIPS,date_index)
+} 
+
+# deaths -  predictions for day 52 & day 110
+{   
+DATA_deaths_Prediction_Day52 = DATA %>%
+       dplyr::filter(date_index==52) %>%
+       dplyr::group_by(date_index==52) %>%
+       dplyr::summarize(total_deaths = sum(deaths),
+                        total_deaths_predict = sum(deaths_predict),
+                        wmean_deaths_discount1_factor = weighted.mean(deaths_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_deaths_discount2_factor = weighted.mean(deaths_discount2_factor,TOTALPOP_2019,na.rm=T))
+deaths_predict_day52_lower = (DATA_deaths_Prediction_Day52$wmean_deaths_discount2_factor*DATA_deaths_Prediction_Day52$total_deaths_predict) - DATA_deaths_Prediction_Day52$total_deaths
+deaths_predict_day52_upper = (DATA_deaths_Prediction_Day52$wmean_deaths_discount1_factor*DATA_deaths_Prediction_Day52$total_deaths_predict) - DATA_deaths_Prediction_Day52$total_deaths
+# May 22, 2020 | 96,880 actual deaths | 33,566.51 - 40,833.44 deaths averted (Interval is 7,266.93 deaths)
+  
+DATA_deaths_Prediction_Day100 = DATA %>%
+       dplyr::filter(date_index==100) %>%
+       dplyr::group_by(date_index==100) %>%
+       dplyr::summarize(total_deaths = sum(deaths),
+                        total_deaths_predict = sum(deaths_predict),
+                        wmean_deaths_discount1_factor = weighted.mean(deaths_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_deaths_discount2_factor = weighted.mean(deaths_discount2_factor,TOTALPOP_2019,na.rm=T))
+deaths_predict_day110_lower = (DATA_deaths_Prediction_Day100$wmean_deaths_discount2_factor*DATA_deaths_Prediction_Day100$total_deaths_predict) - DATA_deaths_Prediction_Day100$total_deaths
+deaths_predict_day110_upper = (DATA_deaths_Prediction_Day100$wmean_deaths_discount1_factor*DATA_deaths_Prediction_Day100$total_deaths_predict) - DATA_deaths_Prediction_Day100$total_deaths
+# July 19, 2020 | 133,514 actual deaths | 406,806.5 - 476,255.8 deaths averted (Interval is 69,449.3 deaths)
+
+}
+
+# deaths - predictions days 1-110
+{   
+DATA_deaths_Prediction = DATA %>%
+       dplyr::group_by(date_index) %>%
+       dplyr::summarize(total_deaths = sum(deaths),
+                        total_deaths_predict = sum(deaths_predict),
+                        wmean_deaths_discount1_factor = weighted.mean(deaths_discount1_factor,TOTALPOP_2019,na.rm=T),
+                        wmean_deaths_discount2_factor = weighted.mean(deaths_discount2_factor,TOTALPOP_2019,na.rm=T),
+                        predicted_lower_deaths = round((wmean_deaths_discount2_factor*total_deaths_predict),0),
+                        predicted_upper_deaths = round((wmean_deaths_discount1_factor*total_deaths_predict),0),
+                        averted_lower_deaths = round((wmean_deaths_discount2_factor*total_deaths_predict) - total_deaths,0),
+                        averted_upper_deaths = round((wmean_deaths_discount1_factor*total_deaths_predict) - total_deaths,0))
+}
+
+}
+```
+
+### Results: Model Output 
+
+```{r graphs and results, message=FALSE, warning=FALSE}
+# cases - GRAPH cases growth rate feols - ribbon - KEEP THIS ONE
+{   
+# PAIR Colors" # Lapis Iazuli = #2F4DA4 | # Salmon = #F38C63 | # Lavender = #DAE6F7 | # BlueGreen = #2BABE2 | 
+# Penn Colors: # Red = #911123 | # Light Red = #FFE4E0 | # Blue = #002E5C | # Light Blue = #E4F0FF | # Aqua = #2BABE2
+
+xlabels=c("≤ -15","-14 to -8","-7 to -1",
+          "1 to 7","8 to 14","15 to 21","22 to 28","29 to 35","≥ 36")
+
+g_coefplot_feols7_cases_med = d_coefplot_feols7_cases_med
+g_coefplot_feols7_cases_med[c("y","estimate","ci_low","ci_high")] = round(g_coefplot_feols7_cases_med[c("y","estimate","ci_low","ci_high")]*100,1)
+         
+graph_coefplot_feols7_cases_med  =  ggplot(data=g_coefplot_feols7_cases_med,aes(x=x)) + theme_bw() +
+                                    geom_ribbon(aes(y=y,ymin=ci_low,ymax=ci_high),fill="#DAE6F7",alpha=.6) +
+                                    geom_line(aes(y=ci_low),color="#DAE6F7",size=1,) +
+                                    geom_line(aes(y=ci_high),color="#DAE6F7",size=1) +
+                                    # geom_errorbar(aes(y=y,ymin=ci_low,ymax=ci_high), width=0.15, size=0.55, color= "#2F4DA4") +
+                                    geom_vline(xintercept=3.5,color="#2BABE2",linetype="F1",size=1) + 
+                                       annotate("text",x=3.6,y=1.25,label="Mask Mandate Implemented",color="#2BABE2",size=3.2,fontface="bold",hjust=0) + 
+                                    geom_hline(yintercept=0,color="Dark Grey",size=1) + 
+                                    geom_line(aes(y=y),size=1,color="#2F4DA4") +
+                                    geom_point(aes(y=y),size=3,color="#2F4DA4") +
+                                       geom_point(data=d_coefplot_feols7_cases_med %>% filter(is_ref=="TRUE"),aes(x=x,y=y),size=2,color="#F38C63") +
+                                       annotate("text",x=3,y=-4.5,label="Reference\nPeriod",color="#F38C63",size=3.2,fontface="bold",hjust=0.5) + 
+                                    scale_y_continuous(breaks=seq(from=-5,to=2,by=1),expand=expansion(mult=c(0.01,0.01))) + 
+                                    scale_x_continuous(breaks=seq(from=1,to=9,by=1),labels=xlabels,expand=expansion(mult=c(0.02,0.02))) +
+                                    coord_cartesian(ylim=c(-5,2),clip="off") + 
+                                    labs(title="",
+                                         x="Time Since Mask Mandate (days)",
+                                         y="Difference in Growth Rate of COVID-19 Cases (%)") +
+                                    theme(panel.grid.minor.y=element_line(color="grey"), panel.grid.major.y=element_line(color="grey"),
+                                          panel.grid.minor.x=element_blank(), panel.grid.major.x=element_blank(),
+                                          panel.background=element_blank(),panel.border=element_blank()) +
+                                    theme(plot.title=element_text(size=12,color="black",hjust=0.5,face="bold"),
+                                          axis.title.y=element_text(size=12,color="black",hjust=0.5,face="bold",margin=margin(t=0,r=10,b=0,l=0)),
+                                          axis.title.x=element_text(size=12,color="black",face="bold",margin=margin(t=10,r=0,b=00,l=0)),
+                                          axis.text.y=element_text(size=9,color="black",face="bold"),
+                                          axis.text.x=element_text(size=9,color="black",face="bold"),
+                                          axis.line=element_line(color="black")) 
+print(graph_coefplot_feols7_cases_med)
+# ggsave(filename="coefplot_feols7_cases_med.svg",plot=graph_coefplot_feols7_cases_med,
+#        path="~/Google Drive/2020_Masks_EpiQualExam/Analysis_MaskMandate/4_Graphics/1_coefplot_feols7/", width = 10, height = 5) 
+}
+
+# cases - GRAPH cases actual versus cases averted - KEEP THIS ONE
+{
+gDATA_cases_Prediction = DATA_cases_Prediction %>% 
+                         select(date_index,total_cases,predicted_lower_cases,predicted_upper_cases) %>%
+                         pivot_longer(!date_index, names_to = "names",values_to = "counts") 
+gDATA_cases_Prediction$day = plyr::mapvalues(gDATA_cases_Prediction$date_index,from=dStudyRange$date_index,
+                                                                               to=dStudyRange$day)
+gDATA_cases_Prediction$month = plyr::mapvalues(gDATA_cases_Prediction$date_index,from=dStudyRange$date_index,
+                                                                               to=dStudyRange$month)
+gDATA_cases_Prediction$Mon = plyr::mapvalues(gDATA_cases_Prediction$month,from=c(1:length(month.abb)),
+                                                                               to=month.abb)
+gDATA_cases_Prediction$day_Mon = paste0(gDATA_cases_Prediction$day,"\n",gDATA_cases_Prediction$Mon)
+
+x_labels = gDATA_cases_Prediction %>% filter(date_index %in% c(1,seq(from=10, to=110, by = 10))) %>% 
+                                      dplyr::select(date_index,day_Mon) %>%
+                                      distinct()
+gDATA_cases_Prediction$names = factor(gDATA_cases_Prediction$names,
+                                             levels=c("predicted_upper_cases", 
+                                                      "predicted_lower_cases", 
+                                                      "total_cases"),
+                                             labels=c("Upper prediction\n(without mask mandate)",
+                                                      "Lower prediction\n(without mask mandate)",
+                                                      "Actual count \n(with mask mandate)"))
+
+ylims_log = c(200000, 500000, 1000000, 2500000, 5000000, 7500000, 10000000)
+ylabels_log = c("log 200K","log 500K","log 1M", "log 2.5M","log 5M", "log 7.5M","log 10M")
+
+graph_cases_Prediction = ggplot(data=gDATA_cases_Prediction,aes(x=date_index,y=counts,color=names)) + theme_bw() +
+                  scale_y_continuous(trans="log10",breaks=ylims_log,labels=ylabels_log,expand=expansion(mult=c(.03,.03))) + 
+                  scale_x_continuous(breaks=c(1,seq(from=10, to=110, by = 10)), labels=x_labels$day_Mon) + 
+                  coord_cartesian(xlim=c(0,110)) +
+                  geom_point(size=1) + 
+                  # ggrepel::geom_text_repel(data=gDATA_cases_Prediction %>% 
+                  #                 filter(date_index==110),
+                  #                 aes(x=date_index,y=counts,label=paste(names,": ",format(round(as.numeric(counts), 0), big.mark=",")
+                  #                                                      ,sep="")),
+                  #                 force=1, point.padding=unit(1,'lines'), direction = 'both', nudge_x = 5, nudge_y = 0, hjust=0, 
+                  #                 size=2.5, segment.size=.05, show.legend=FALSE) +
+                  labs(title="",
+                       y="Cummulative counts of COVID-19 cases",
+                       x="Date") +
+                  theme(plot.title=element_text(size=12,color="black",hjust=0.5,face="bold"),
+                        axis.title.x=element_text(size=12,color="black",face="bold"),
+                        axis.title.y=element_text(size=12,color="black",face="bold"),
+                        axis.text.x=element_text(size=10,color="black"),
+                        axis.text.y=element_text(size=10,color="black")) +
+                  theme(panel.grid.minor=element_blank()) +
+                  theme(legend.position="top", legend.title=element_blank())
+print(graph_cases_Prediction)
+}
+
+cat(paste0("05/22/2020 | 1,597,220 actual cases and ", 
+           format(round(cases_predict_day52_lower,0), nsmall=0, big.mark=","), 
+           " - ", 
+           format(round(cases_predict_day52_upper,0), nsmall=0, big.mark=","), 
+           " cases were averted\n"))
+
+cat(paste0("07/19/2020 | 3,755,800 actual cases and ", 
+           format(round(cases_predict_day110_lower,0), nsmall=0, big.mark=","), 
+           " - ", 
+           format(round(cases_predict_day110_upper,0), nsmall=0, big.mark=","), 
+           " cases were averted\n"))
+
+# deaths - GRAPH deaths growth rate feols - ribbon - KEEP THIS ONE
+{   
+# PAIR Colors" # Lapis Iazuli = #2F4DA4 | # Salmon = #F38C63 | # Lavender = #DAE6F7 | # BlueGreen = #2BABE2 | 
+# Penn Colors: # Red = #911123 | # Light Red = #FFE4E0 | # Blue = #002E5C | # Light Blue = #E4F0FF | # Aqua = #2BABE2
+
+xlabels=c("≤ -15","-14 to -8","-7 to -1",
+          "1 to 7","8 to 14","15 to 21","22 to 28","29 to 35","≥ 36")
+
+g_coefplot_feols7_deaths_med = d_coefplot_feols7_deaths_med
+g_coefplot_feols7_deaths_med[c("y","estimate","ci_low","ci_high")] = round(g_coefplot_feols7_deaths_med[c("y","estimate","ci_low","ci_high")]*100,1)
+                  
+graph_coefplot_feols7_deaths_med =  ggplot(data=g_coefplot_feols7_deaths_med,aes(x=x)) + theme_bw() +
+                                    geom_ribbon(aes(y=y,ymin=ci_low,ymax=ci_high),fill="#DAE6F7",alpha=.6) +
+                                    geom_line(aes(y=ci_low),color="#DAE6F7",size=1,) +
+                                    geom_line(aes(y=ci_high),color="#DAE6F7",size=1) +
+                                    # geom_errorbar(aes(y=y,ymin=ci_low,ymax=ci_high), width=0.15, size=0.55, color= "#2F4DA4") +
+                                    geom_vline(xintercept=3.5,color="#2BABE2",linetype="F1",size=1) + 
+                                       annotate("text",x=3.6,y=1.25,label="Mask Mandate Implemented",color="#2BABE2",size=3.2,fontface="bold",hjust=0) + 
+                                    geom_hline(yintercept=0,color="Dark Grey",size=1) + 
+                                    geom_line(aes(y=y),size=1,color="#2F4DA4") +
+                                    geom_point(aes(y=y),size=3,color="#2F4DA4") +
+                                       geom_point(data=d_coefplot_feols7_deaths_med %>% filter(is_ref=="TRUE"),aes(x=x,y=y),size=2,color="#F38C63") +
+                                       annotate("text",x=3,y=-4.5,label="Reference\nPeriod",color="#F38C63",size=3.2,fontface="bold",hjust=0.5) + 
+                                    scale_y_continuous(breaks=seq(from=-5,to=2,by=1),expand=expansion(mult=c(0.01,0.01))) + 
+                                    scale_x_continuous(breaks=seq(from=1,to=9,by=1),labels=xlabels,expand=expansion(mult=c(0.02,0.02))) +
+                                    coord_cartesian(ylim=c(-5,2),clip="off") + 
+                                    labs(title="",
+                                         x="Time Since Mask Mandate (days)",
+                                         y="Difference in Growth Rate of COVID-19 deaths (%)") +
+                                    theme(panel.grid.minor.y=element_line(color="grey"), panel.grid.major.y=element_line(color="grey"),
+                                          panel.grid.minor.x=element_blank(), panel.grid.major.x=element_blank(),
+                                          panel.background=element_blank(),panel.border=element_blank()) +
+                                    theme(plot.title=element_text(size=12,color="black",hjust=0.5,face="bold"),
+                                          axis.title.y=element_text(size=12,color="black",hjust=0.5,face="bold",margin=margin(t=0,r=10,b=0,l=0)),
+                                          axis.title.x=element_text(size=12,color="black",face="bold",margin=margin(t=10,r=0,b=00,l=0)),
+                                          axis.text.y=element_text(size=9,color="black",face="bold"),
+                                          axis.text.x=element_text(size=9,color="black",face="bold"),
+                                          axis.line=element_line(color="black")) 
+print(graph_coefplot_feols7_deaths_med)
+# ggsave(filename="coefplot_feols7_deaths_med.svg",plot=graph_coefplot_feols7_deaths_med,
+#        path="~/Google Drive/2020_Masks_EpiQualExam/Analysis_MaskMandate/4_Graphics/1_coefplot_feols7/", width = 10, height = 5) 
+}  
+
+# deaths - GRAPH deaths actual versus deaths averted - KEEP THIS ONE
+{
+gDATA_deaths_Prediction = DATA_deaths_Prediction %>% 
+                         select(date_index,total_deaths,predicted_lower_deaths,predicted_upper_deaths) %>%
+                         pivot_longer(!date_index, names_to = "names",values_to = "counts") 
+gDATA_deaths_Prediction$day = plyr::mapvalues(gDATA_deaths_Prediction$date_index,from=dStudyRange$date_index,
+                                                                               to=dStudyRange$day)
+gDATA_deaths_Prediction$month = plyr::mapvalues(gDATA_deaths_Prediction$date_index,from=dStudyRange$date_index,
+                                                                               to=dStudyRange$month)
+gDATA_deaths_Prediction$Mon = plyr::mapvalues(gDATA_deaths_Prediction$month,from=c(1:length(month.abb)),
+                                                                               to=month.abb)
+gDATA_deaths_Prediction$day_Mon = paste0(gDATA_deaths_Prediction$day,"\n",gDATA_deaths_Prediction$Mon)
+
+x_labels = gDATA_deaths_Prediction %>% filter(date_index %in% c(1,seq(from=10, to=110, by = 10))) %>% 
+                                      dplyr::select(date_index,day_Mon) %>%
+                                      distinct()
+gDATA_deaths_Prediction$names = factor(gDATA_deaths_Prediction$names,
+                                             levels=c("predicted_upper_deaths", 
+                                                      "predicted_lower_deaths", 
+                                                      "total_deaths"),
+                                             labels=c("Upper prediction\n(without mask mandate)",
+                                                      "Lower prediction\n(without mask mandate)",
+                                                      "Actual count \n(with mask mandate)"))
+
+ylims_log = c(1000, 10000, 100000, 250000, 500000, 750000, 1000000)
+ylabels_log = c("log 1K","log 10K", "log 100K", "log 250K", "log 500K", "log 750K","log 1M")
+
+graph_deaths_Prediction = ggplot(data=gDATA_deaths_Prediction,aes(x=date_index,y=counts,color=names)) + theme_bw() +
+                  scale_y_continuous(trans="log10",breaks=ylims_log,labels=ylabels_log,expand=expansion(mult=c(.03,.03))) + 
+                  scale_x_continuous(breaks=c(1,seq(from=10, to=110, by = 10)), labels=x_labels$day_Mon) + 
+                  coord_cartesian(xlim=c(0,110), ylim=c(1000,1000000)) +
+                  geom_point(size=1) + 
+                  # ggrepel::geom_text_repel(data=gDATA_deaths_Prediction %>% 
+                  #                 filter(date_index==110),
+                  #                 aes(x=date_index,y=counts,label=paste(names,": ",format(round(as.numeric(counts), 0), big.mark=",")
+                  #                                                      ,sep="")),
+                  #                 force=1, point.padding=unit(1,'lines'), direction = 'both', nudge_x = 5, nudge_y = 0, hjust=0, 
+                  #                 size=2.5, segment.size=.05, show.legend=FALSE) +
+                  labs(title="",
+                       y="Cummulative counts of COVID-19 deaths",
+                       x="Date") +
+                  theme(plot.title=element_text(size=12,color="black",hjust=0.5,face="bold"),
+                        axis.title.x=element_text(size=12,color="black",face="bold"),
+                        axis.title.y=element_text(size=12,color="black",face="bold"),
+                        axis.text.x=element_text(size=10,color="black"),
+                        axis.text.y=element_text(size=10,color="black")) +
+                  theme(panel.grid.minor=element_blank()) +
+                  theme(legend.position="top",legend.title=element_blank())
+print(graph_deaths_Prediction)
+}
+
+cat(paste0("05/22/2020 | 96,880 actual deaths and ", 
+           format(round(deaths_predict_day52_lower,0), nsmall=0, big.mark=","), 
+           " - ", 
+           format(round(deaths_predict_day52_upper,0), nsmall=0, big.mark=","), 
+           " deaths averted\n"))
+
+cat(paste0("07/19/2020 | 133,514 actual deaths and ", 
+           format(round(deaths_predict_day110_lower,0), nsmall=0, big.mark=","), 
+           " - ", 
+           format(round(deaths_predict_day110_upper,0), nsmall=0, big.mark=","), 
+           " deaths averted\n"))
+```
+
+***
+
+### **`r colorize("Conclusion", "#008080")`**
+
++ We found that mask mandates are associated with decreases in the growth rate as well as the cumulative counts of COVID-19 cases and deaths. Specifically, our study demonstrates that the piecemeal, state-by-state decisions for implementing statewide mask mandates likely resulted in countless averted COVID-19 cases and deaths. 
+
++ Our immediate, next steps are to explore effect modification by county-level political partisanship, poverity rates, and urban-rural designation. These variables have already been imported and merged into our final dataset.
+
++ The strengths of our study are that it is generalizable to U.S. population and is relatively cost effective in terms of time, money, and personnel involvement. 
+
++ Our study has several limitations. First, it is a natural experiment or commonly known an observational study. Thus, our findings may suggest associations between the exposure and outcome, but we cannot make inferences about any causal relationships with futher exploration. Second, our study assumes universal mask availability and mask compliance in states with mask mandates, which is most likely not true. Third, our outcome is at the county level so we are unable to make inferences about the effect of masking at a personal level. Lastly, the outcome is derived from confirmed COVID-19 cases, but our findings would presumably be larger if we were able to include all COVID-19 cases. 
+
++ Nonetheless, our findings support the implementation of a national mask mandate which has already been proposed by the incoming Biden-Harris administration. Additionally, our work supports an existing body of research and health policies advocating for universal masking among the public. Although COVID-19 vaccinations have begun, policies and efforts promoting masking in public settings will continue to slow the transmission of COVID-19 particularly among the overwhelming majority of unvaccinated individuals who eagerly await vaccination. 
+
+
+
+
+
