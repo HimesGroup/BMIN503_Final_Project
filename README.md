@@ -19,10 +19,7 @@ Using these publicly available datasets, the project aims to examine the impact 
 ### **Important File(s)**
   + **BMIN503_Final_Project.Rmd**. which contains the overview, analyses, results, and conclusion for this project
   + **Snow.Rmd**. which contains code to produce snowflakes on the html document.
-  + **DATA**. folder which contains the raw data. It is being ignored by git at the moment.
-
-
-*** 
+  + **DATA**. folder which contains the raw data. It is being ignored by git at the moment because of its files' large sizes
 
 ### **Instructions about forking repo** (from course)
 
