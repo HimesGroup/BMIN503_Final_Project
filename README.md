@@ -5,6 +5,13 @@
 
 *** 
 
+### **Important File(s)**
+  + **BMIN503_Final_Project_KuldeepYadav.Rmd**. which contains the overview, analyses, results, and conclusion for this project
+  + **Snow.Rmd**. which contains code to produce snowflakes on an html document.
+  + **DATA**. folder which contains the raw data. It is being ignored by git at the moment because of its files' large sizes
+
+*** 
+
 ### **Description**
 
 This repository comprises the documentation and code for my final project in the BMIN503/EPID600 class. This project incorporates publicly available datasets for the following variables: 
@@ -15,11 +22,6 @@ This repository comprises the documentation and code for my final project in the
 Using these publicly available datasets, the project aims to examine the impact of statewide mandates on COVID-19 incidence and mortality in order to provide further support for or against a nationwide masking mandate for public face coverings. Specifically, the objective of this project is to explore whether statewide mandates played a role in curtailing the COVID-19 pandemic across the United States of America, as examined by a decrease in the exponential growth rate in COVID-19 incidence and mortality.
 
 *** 
-
-### **Important File(s)**
-  + **BMIN503_Final_Project.Rmd**. which contains the overview, analyses, results, and conclusion for this project
-  + **Snow.Rmd**. which contains code to produce snowflakes on an html document.
-  + **DATA**. folder which contains the raw data. It is being ignored by git at the moment because of its files' large sizes
 
 ### **Instructions about forking repo** (from course)
 
