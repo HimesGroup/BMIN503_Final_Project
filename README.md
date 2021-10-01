@@ -4,7 +4,7 @@ This repository contains templates for your final written report and GitHub repo
 
 
 1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer. #how?
+1. **Clone** the forked repository to your computer.
 1. Modify the files provided, add your own, and **commit** changes to complete your final project.
 1. **Push**/sync the changes up to your GitHub account.
 1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
