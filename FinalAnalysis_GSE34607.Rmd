@@ -1,0 +1,327 @@
+---
+title: 'Effect of Airborne Patriculate Matter in Gene Expression of BEAS-2B Bronchial Epithelial Cells'
+author: 'Nisha Narayanan'
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: true
+        smooth_scroll: true
+    depth: 3 
+    theme: flatly
+    highlight: pygments
+---
+
+```{r global options, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```   
+
+***
+## Overview
+
+Airborne particulate matter is considered to be a hazard due to its effects in human health.(Valavidinis et al., 2008). Air inside workplaces/classrooms/household buildings can be more polluted than the outside air (Jovanovic et al., 2014). Undiagnosed respiratory disorders caused due to air pollutants can lead to short-term (frequent hospital visits) and long-term or cumulative health effects (morbidity, lung cancer, cardiovascular  and cardiopulmonary diseases). Relationships between Indoor air quality index and respiratory health of students in school are insufficiently explored (Annesei-Masinao et al., 2013). This project aims to analyze an existing dataset (GSE34607)  available in the GEO public repository that contains the gene expression data taken from classrooms with high concentrations of PM10 to study how air pollutants influence gene transcription in airway cells. This will help to understand the mechanisms involved in air pollution induced respiratory disorders and thereby understand lead to the understanding of whether interventions are required for the vulnerable people. 
+
+## Introduction
+
+According to World Health Organization, 24 % the global disease burden and 23 % of all deaths is attributed to environmental factors (Pruss-Ustun A et al., 2006). Air pollution is a growing environmental concern that is responsible for around 2 million premature deaths per year (World Health Organization, 2008). Among air pollutants, Particulate Matter (PM) is gaining wide popularity among researchers. Several studies have indicated that the exposure to high PM10 concentrations is associated to cause short- and long-term effects such as increased respiratory symptoms, alterations in tissue and lung structure and premature death (de Gennaro et al., 2014). Typical PM sources include pollens, spores, industrial emissions, cooking and smoking (Breysse et al., 2009). Although these aren’t common indoor activities in school environments, the concentration of PM10 is seen higher in schools. This could be due to insufficient ventilation, improper/infrequent cleaning and resuspension of particles from room surface. Most of the respiratory disorders are treatable through glucocorticoids which directly modifies the transcription of genes and their cell- and tissue-specific effects are poorly understood (Kan et al., 2018). Exploring the gene expression of airway cells in indoor and outdoor environment when exposed to PM10 can help in understanding the nuances of altered genes and pathways and thereby help to decide effective interventions. The purpose of this project is to study how airborne PM affects gene expression in BEAS-2B bronchial epithelial cells. 
+
+In order to perform the data analysis and interpret the results, we require an inter-disciplinary approach. Firstly, a basic understanding of air pollution and its effects on human respiratory system is required. In addition to this, based on the discussion with Dr. Aimin Chen, it is understood that knowledge on how indoor pollution varies from outdoor pollution is critical for the study. Secondly, having insights on the biology and disease mechanism of asthma and allergic responses will help in understanding the available treatment options better. Thirdly, having knowledge in genes and gene pathways (particularly the ones which are involved in respiratory disorders) is highly essential to interpret how air pollutants influence gene transcription in airway cells. Finally, statistics and R will aid in data analysis and data visualization thereby helping in making proper and accurate inferences. Thus project spans over several fields making the problem addressed highly inter-disciplinary. 
+
+## Methods
+
+The data used in this project is taken from Gene Expression Omnibus (GEO), a public functional genomics data repository. The microarray based data used here can be accessed under the GEO Accession ID GSE34607 (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE34607). To understand the data, an overview of the experiment performed is required. For obtaining the genome-wide expression analysis, BEAS-2B cells were incubated with PM10 (10 µg/ml) in six indoor and outdoor school environments and samples were tested for gene expression at 4th, 10th and 24th hours. The platform used is “Affymetrix” (Human Genome U133A 2.0 Array).  
+
+To start the analysis process, extensive data cleansing was required. This was performed with the helped of a reproducible tool called “RAVED”, developed by Himes Lab at the University of Pennsylvania. Quality Control (QC) analysis was first performed to understand the structure of the data and do data cleansing. From this a phenotype file containing GEO_ID, Tissue, Disease and Treatment information was generated. The generated report was used as an input to perform the Differential Expression (DE) analysis. This step was performed for six different combinations, namely, Indoor vs Control 4h, Indoor vs Control 10h, Indoor vs Control 24h, Outdoor vs Control 4h, Outdoor vs Control 10h and Outdoor vs Control 24h. The DE analysis output was stored as .csv files, which were used as input for the rest of the project. 
+Note: These corresponding and complete rmd files used to generate the phenotype and DE results are available in the Github Repository and can be accessed here (https://github.com/Narayanan-Nisha/BMIN503_Final_Project). 
+***
+
+Packages required for this project 
+```{r pkg, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE}
+install.packages("BiocManager")
+BiocManager::install("GEOquery", force=TRUE)
+BiocManager::install("ArrayExpress", force=TRUE)
+BiocManager::install("oligo", force=TRUE)
+BiocManager::install("affy", force=TRUE)
+BiocManager::install("viridis", force=TRUE)
+BiocManager::install("preprocessCore", force=TRUE)
+BiocManager::install("limma", force=TRUE)
+BiocManager::install("sva", force=TRUE)
+BiocManager::install("annotate", force=TRUE)
+BiocManager::install("fgsea", force=TRUE)
+install.packages("ggplot2")
+install.packages("knitr")
+install.packages("gplots")
+install.packages("Hmisc")
+install.packages("devtools")
+install.packages("dplyr")
+install.packages("pander")
+install.packages("DT")
+```
+
+Loading the libraries. dplyr and affy packages will be loaded if and when required as it will mask the other library functions.
+```{r lib, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+library(GEOquery)
+library(ArrayExpress)
+library(knitr)
+library(oligo)
+library(viridis) # heatmap colour
+library(ggplot2)
+library(gplots) # heatmap.2 plot
+library(Hmisc) # compute hoeffd (Hoeffding's D statistics) for MA plot
+library(devtools) # compuate PCs
+library(preprocessCore) # quantile normalization
+library(pander)
+library(limma)
+library(sva)
+library(annotate)
+library(DT)
+library(fgsea)
+```
+```{r var2, eval=T, echo=T}
+platform="Affymetrix"
+geo_GPL=""
+normdata=FALSE
+# The shortname_func function shortens the sample name shown in the plots. To start, define shortname_func <- function(x){x}
+shortname_func <- function(x){gsub("^(.*)\\.(cel|CEL).gz","\\1",x)}
+```
+The raw phenotype file was obtained from GEO and a summary table was generated to understand the data. The variables were uninformative. Hence, the raw phenotype was modified and saved as a .txt file through RAVED. The file is now being read into the project for further analysis. 
+```{r files, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+pheno <- read.delim("GSE34607_Phenotype_withoutQC.txt")
+pheno
+load("raw.data.Rdata")
+```
+### Raw Probe Intensity Boxplots and Density Histograms
+
+The log2-transformed/normalized intensity distributions of all samples (arrays) are expected to have the similar scale (i.e. the similar positions and widths of the boxes). Outlier detection is applied by computing a Kolmogorov-Smirnov statistic (Ka) between log-intensity distribution for one array and the pooled array data, where an array with a Ka beyond the upper whisker is designated as an outlier.
+
+
+```{r raw_intensity_utility, eval=T, echo=F, warning=F}
+# The subsamp function randomly selects 20000 probes
+subsamp <- function(x,num=20000, seed=123) {
+  set.seed(seed)
+  subsample=num # if number of probes are >20000, randomly select 20000 probes for plot or compute
+  if (nrow(x)>subsample) {
+    ss  = sample(nrow(x), subsample)
+    Mss = x[ss,,drop=FALSE]
+  } else {
+    ss  = TRUE
+    Mss = x
+  }
+  Mss
+}
+# The outlier_KS_func function computes KS statistics for outlier detection
+outlier_KS_func = function(exprs) { # matrix (row: probe intensities/RLE values etc., col: array (e.g. sample))
+  fx = ecdf(as.vector(exprs)) # get empirical cumulative distribution function of the data
+  KS=suppressWarnings(apply(exprs, 2, function(v)ks.test(v, y = fx, alternative="two.sided")$statistic))
+  stats = stats::fivenum(KS, na.rm = TRUE) # Tukey's five number summary (minimum, lower-hinge, median, upper-hinge, maximum)
+  iqr = diff(stats[c(2, 4)]) # lagged difference between the lower-hinge and upper-hinge
+  coef = 1.5
+  th = (stats[4] + coef * iqr)
+  list(threshold = th, stats=KS, outlier = which(KS > th))
+}
+# The boxplot_func function generates boxplots for raw data metrics (e.g. probe intensities, RLE, NUSE) 
+boxplot_func <- function(Mss,outlier,ylab) {
+  # use * to mark the outliers in boxplot
+  array_name <- shortname_func(colnames(Mss))
+  outlier <- shortname_func(outlier)
+  array_name[array_name%in%outlier] <- paste0("*",outlier)
+  # boxplot raw intensity by array
+  ylim = quantile(Mss, probs = c(0.01, 0.99), na.rm=TRUE) # create range of y-axsis
+  # create data frame for plot
+  df <- data.frame(
+    sample_id=rep(colnames(Mss),each=nrow(Mss)),
+    values=as.numeric(Mss),
+    scandate=rep(pData(raw.data)[,varuse],each=nrow(Mss)) # for color
+  )
+  cols <- colour_list
+  ggplot(df, aes(sample_id,values,fill=scandate)) + geom_boxplot(outlier.colour=NA) +
+    coord_flip() + theme_bw() +
+    ylim(ylim) +
+    scale_x_discrete(labels=array_name) +
+    ylab(ylab) +
+    scale_fill_manual(varuse,values=cols) +
+    theme(axis.title.y=element_blank())
+}
+# The densplot_func function plots density curve for raw data metrics (e.g. probe intensity)
+densplot_func <- function(Mss) {
+  # create data frame for plot
+  df <- data.frame(
+    sample_id=rep(colnames(Mss),each=nrow(Mss)),
+    values=as.numeric(Mss),
+    scandate=rep(pData(raw.data)[,varuse],each=nrow(Mss)) # for color
+  )
+  cols <- colour_list
+  ggplot(df,aes(x=values,colour=scandate)) + geom_line(aes(group=sample_id),stat="density") +
+    theme_bw() +
+    xlab("Raw Probe Intensities") +
+    ylab("Density") +
+    scale_color_manual(varuse,values=cols)
+}
+# The raw_intensity_func function outputs raw probe intensity metrics
+raw_intensity_func <- function() {
+  if (!normdata) {Mss=log2(subsamp(exprs(raw.data))) # use log2 transformed raw probe intensity
+  } else {
+    Mss=subsamp(exprs(raw.data))
+  }
+  outlier_res=outlier_KS_func(Mss)
+  outlier=names(outlier_res$outlier)
+  boxplot=boxplot_func(Mss=Mss, outlier=outlier, ylab="Raw Probe Intensities")
+  densplot=densplot_func(Mss=Mss)
+  return(list(outlier=outlier,boxplot=boxplot,densplot=densplot))
+}
+```
+1. Outlier detection for log2 raw probe intensity/normalized intensity
+
+Compute the Kolmogorov-Smirnov statistic Ka between each array's (i.e. sample) values (i.e. log2 transformed raw probe intensity values) and the 
+pooled, overall distribution of the values.
+
+```{r raw_intensity_outlier, eval=T, echo=F, warning=F}
+res_intensity=raw_intensity_func()
+outlier_intensity = res_intensity$outlier
+cat(length(outlier_intensity), "outlier(s) are detected in the raw intensity metrics.\n")
+if (length(outlier_intensity)>0) {cat("They are: ", shortname_func(outlier_intensity))}
+```
+
+2. Boxplots for log2 raw probe intensity
+
+```{r raw_intensity_boxplot, eval=T, echo=F, message=F, warning=F, fig.height=8, fig.width=6}
+res_intensity$boxplot
+```
+
+3. Density curves for log2 raw probe intensity
+
+The intensity curves of all samples (arrays) are expected to have the similar shapes and ranges. Samples with deviated curves are likely to have problematic experiments. For example, high levels of background will shift an array's distribution to the right. Lack of signal diminishes its right right tail. A bulge at the upper end of the intensity range often indicates signal saturation.
+
+```{r raw_intensity_densplot, eval=T, echo=F, message=F, warning=F}
+res_intensity$densplot
+```
+### RNA Digestion
+
+
+Overall RNA quality can be assessed by RNA degradation plots. In the gene expression array, each probe is represented by a probe set. Each probe set is 11-20 probes (pairs of oligos). This plot shows the average intensity of each probe across all probe sets, ordered from the 5' to the 3' end. It is expected that probe intensities are lower at the 5' end of a probe set when compared to the 3' end as RNA degradation starts from the 5' end of a molecule. RNA which is too degraded will shows a very high slope from 5' to 3'. Thus, the standardized slope of the RNA degradation plot serves as quantitative indicator of the RNA degradation. 
+
+This step requires R package affy that outputs the probes in each probe set matrix ordered from 5' to 3', while this function is not implemented in the oligo package.
+
+```{r RNAdegaffy_utility, eval=T, echo=F}
+# The RNAdegaffy_func function compute mean PM intensities in each probe position following 5' to 3' order. Adopted from the AffyRNAdeg function in the affy package but include a step that randomly selects 20,000 probe sets.
+RNAdegaffy_func <- function(data){ # input a list of probe set matrix with rows as probe ids and columns as samples
+  {
+    names <- colnames(data[[1]])
+    probe.set.size <- function(x) {
+      size <- dim(x)[1]
+      return(size)
+    }
+    max.num <- sapply(data, probe.set.size) # get the number of probes in each probe set
+    tab <- (table(max.num)) # summarize the frequencies of probe numbers in probe sets
+    ord <- order(-as.numeric(tab)) # order the frequency from large to small
+    K <- as.numeric(names(tab))[ord[1]] # K is the number of probes appearing in most probe sets
+    data <- data[max.num == K] # select data of probe sets only have K number of probes
+  }
+  
+  subsample=20000
+  if (length(data)>subsample) { # randomly select 10000 probe sets
+    set.seed(12345)
+    ss = sample(length(data),subsample)
+    data = data[ss,drop=FALSE]
+  }
+  N <- length(data) # number of probe sets
+  n <- dim(data[[1]])[2] # number of samples
+  
+  # create two matrices: number of samples * number of probes representing a probe set
+  mns <- matrix(nrow = n, ncol = K) # create matrix for mean values
+  sds <- mns # create matrix for sds values
+  get.row <- function(x, i = 1) {return(x[i, ])} # function to get each row (i.e. probe id, i) from one probe set x (i.e. probe list[[x]])
+  rowstack <- function(x, i = 1) {return(t(sapply(x, get.row, i)))} # function to combine the rows obtained using get.row (pms across samples by probe sets) to get a table (row: samples column: probe sets) and transpose the table (row: probe sets, column: samples)
+  for (i in 1:K) { # get probe id (position) from 1 to K from each probe set
+    data.stack <- rowstack(data, i) # get the probe pm values in a specific probe position across all samples from each probe set (rows are samples and columns are probe sets)
+    if(dim(data[[1]])[2]==1) data.stack <- t(data.stack)
+    mns[, i] <- colMeans(data.stack) # get the mean values at one probe position across all probe sets
+    sds[, i] <- apply(data.stack, 2, sd) # get the sd values at one probe position across all probe sets
+  }
+    
+  mns.orig <- mns # store the original mns data matrix
+  mn <- mns[, 1] # select values in the first probe position
+  mns <- sweep(mns, 1, mn) # adjust for the intensity at the first probe position
+  mns <- mns/(sds/sqrt(N)) # adjust for standard error
+  lm.stats <- function(x) {
+    index <- 0:(length(x) - 1)
+    ans <- summary(lm(x ~ index))$coefficients[2, c(1, 4)] # use linear model fit the relationship between intensity and probe position
+    return(ans)
+  }
+  stats <- apply(mns, 1, lm.stats)
+  answer <- list(N, names, mns.orig, sds/sqrt(N), stats[1,], stats[2, ])
+  names(answer) <- c("N", "sample.names", "means.by.number","ses", "slope", "pvalue")
+  return(answer)
+}
+# The RNAdeg_func function generates RNA degradation plots
+# return a logical variable whether this array type can be read by affy.
+RNAdeg_func <- function() {
+  # 1. Read in raw data as an AffyBatch object
+  library(affy) # for Affymetrix microarray-specific QC analysis
+  raw.data.affy <- read.affybatch(rawall_func(),compress=T)
+  # 2. Obtain a list of probe sets with a matrix of oligos (probes) by samples as an input and compute statistics of the mean PM intensities from 5' to 3' probe positions. 
+  PM_list <- affy::pm(raw.data.affy,LIST=T) 
+  PM_list <- lapply(PM_list,log2)
+  raw.data.rnadeg <- RNAdegaffy_func(PM_list) # Compute mean PM intensity for probes following 5' to 3' order.
+  # 3. Plot 5' to 3' mean PM intensity
+  status.cols <- unlist(lapply(pData(raw.data)[,varuse],function(x)colour_list[x])) # colour list to corresponding scan date list
+  plotAffyRNAdeg(raw.data.rnadeg,cols=status.cols)
+  legend("topleft",legend=names(colour_list),fill=colour_list,cex=0.6)
+  detach("package:affy", unload=TRUE) # detach the affy package
+}
+```
+
+```{r affy_exclude, eval=T, echo=F}
+# arrays not in affy package
+affy_exclude = c('hta.2.0', 'pd.hugene.2.0.st')
+```
+
+
+```{r RNAdeg_plot, eval=T, echo=F, message=F, warning=F}
+if (platform=="Affymetrix"&suppldata) {
+  if (any(sapply(affy_exclude, function(y){grepl(y, annotation(raw.data))}))) {cat("The affy package is not designed for this array type.\n")} else {RNAdeg_func()}
+}
+```
+
+### QC Summary
+The QC summary was generated through RAVED and saved locally. The file is being read and displayed through the below code.
+```{r files1, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+pheno.qc <- read.delim("GSE34607_Phenotype_withQC.txt")
+pheno
+```
+
+
+### Differential Expression Analysis
+
+The generated .csv files for gene exression and pathway analysis performed through RAVED is loaded and stored in corresponding variables. 
+
+```{r genefiles, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+indoorcontrol4h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_4h_vs_control_4h.csv")
+indoorcontrol10h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_10h_vs_control_10h.csv")
+indoorcontrol24h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_24h_vs_control_24h.csv")
+outdoorcontrol4h <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_4h_vs_control_4h.csv")
+outdoorcontrol10h <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_10h_vs_control_10h.csv")
+outdoorcontrol24h <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_24h_vs_control_24h.csv")
+```
+
+```{r pathwayfiles, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+indoorcontrol4h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_4h_vs_control_4h_fgsea_results.csv")
+indoorcontrol10h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_10h_vs_control_10h_fgsea_results.csv")
+indoorcontrol24h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_24h_vs_control_24h_fgsea_results.csv")
+outdoorcontrol4h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_4h_vs_control_4h_fgsea_results.csv")
+outdoorcontrol10h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_10h_vs_control_10h_fgsea_results.csv")
+outdoorcontrol24h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_24h_vs_control_24h_fgsea_results.csv")
+```
+
+## References
+
+1. Annesi-Maesano, I., Baiz, N., Banerjee, S., Rudnai, P., Rive, S., & Group, on behalf of the S. (2013). Indoor Air Quality and Sources in Schools and Related Health Effects. Http://Dx.Doi.Org/10.1080/10937404.2013.853609, 16(8), 491–550. https://doi.org/10.1080/10937404.2013.853609 
+2. Athanasios Valavanidis, Konstantinos Fiotakis, & Thomais Vlachogianni (2008). Airborne particulate matter and human health: toxicological assessment and importance of size and composition of particles for oxidative damage and carcinogenic mechanisms. Journal of Environmental Science and Health. Part C, Environmental Carcinogenesis & Ecotoxicology Reviews, 26(4), 339–362. https://doi.org/10.1080/10590500802494538
+3. Breysse, P. N., Diette, G. B., Matsui, E. C., Butz, A. M., Hansel, N. N., & McCormack, M. C. (2010). Indoor Air Pollution and Asthma in Children. Proceedings of the American Thoracic Society, 7(2), 102. https://doi.org/10.1513/PATS.200908-083RM
+4. de Gennaro, G., Dambruoso, P. R., Loiotile, A. D., di Gilio, A., Giungato, P., Tutino, M., Marzocca, A., Mazzone, A., Palmisani, J., & Porcelli, F. (2014). Indoor air quality in schools. Environmental Chemistry Letters 2014 12:4, 12(4), 467–482. https://doi.org/10.1007/S10311-014-0470-6
+5. Jovanović, M., Vučićević, B., Turanjanin, V., Živković, M., & Spasojević, V. (2014). Investigation of indoor and outdoor air quality of the classrooms at a school in Serbia. Energy, 77, 42–48. https://doi.org/10.1016/J.ENERGY.2014.03.080
+6. Kan, M., Shumyatcher, M., Diwadkar, A., Soliman, G., & Himes, B. E. (2018). Integration of Transcriptomic Data Identifies Global and Cell-Specific Asthma-Related Gene Expression Signatures. AMIA Annual Symposium Proceedings, 2018, 1338. /pmc/articles/PMC6371257/ 
+7. Pruss-Ustun Annette, Corvalan Carlos. Preventing disease through healthy environments: towards an estimate of the environmental burden of disease. Geneva, Switzerland: World Health Organization; 2006. https://apps.who.int/iris/handle/10665/43457
+8. GEO Accession viewer. (n.d.). Retrieved November 4, 2021, from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE34607
+9. World Health Organization, 2008. Air quality and health. Factsheet number 313./http://www.who.int/mediacentre/factsheets/fs313/en/index.html
+
