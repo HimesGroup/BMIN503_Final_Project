@@ -77,39 +77,38 @@ library(annotate)
 library(DT)
 library(fgsea)
 ```
+Defining variables required.
 ```{r var2, eval=T, echo=T}
 platform="Affymetrix"
 geo_GPL=""
 normdata=FALSE
 # The shortname_func function shortens the sample name shown in the plots. To start, define shortname_func <- function(x){x}
 shortname_func <- function(x){gsub("^(.*)\\.(cel|CEL).gz","\\1",x)}
+suppldata = TRUE
+datadir="/Users/nishanarayanan/Downloads/"
+geo_id="GSE34607"
 ```
 The raw phenotype file was obtained from GEO and a summary table was generated to understand the data. The variables were uninformative. Hence, the raw phenotype was modified and saved as a .txt file through RAVED. The file is now being read into the project for further analysis. 
 ```{r files, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+pheno.raw <- read.delim("RawPhenoFile_GEO") 
 pheno <- read.delim("GSE34607_Phenotype_withoutQC.txt")
 pheno
 load("raw.data.Rdata")
 ```
-### Raw Probe Intensity Boxplots and Density Histograms
 
-The log2-transformed/normalized intensity distributions of all samples (arrays) are expected to have the similar scale (i.e. the similar positions and widths of the boxes). Outlier detection is applied by computing a Kolmogorov-Smirnov statistic (Ka) between log-intensity distribution for one array and the pooled array data, where an array with a Ka beyond the upper whisker is designated as an outlier.
+Assigning colours based on scan date group. Before that, scandate_group variable is converted to factor level.
 
+```{r}
+pheno$ScanDate_Group <- as.factor(pheno$ScanDate_Group)
+colours=c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666", "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F") # first 8 colour names derived from Dark2, and last 12 names from Set3
+varuse="ScanDate_Group"
+i=nlevels(pheno[,varuse])
+colour_list <- colours[1:i]
+names(colour_list) <- levels(pheno[,varuse]) 
+```
 
-```{r raw_intensity_utility, eval=T, echo=F, warning=F}
-# The subsamp function randomly selects 20000 probes
-subsamp <- function(x,num=20000, seed=123) {
-  set.seed(seed)
-  subsample=num # if number of probes are >20000, randomly select 20000 probes for plot or compute
-  if (nrow(x)>subsample) {
-    ss  = sample(nrow(x), subsample)
-    Mss = x[ss,,drop=FALSE]
-  } else {
-    ss  = TRUE
-    Mss = x
-  }
-  Mss
-}
-# The outlier_KS_func function computes KS statistics for outlier detection
+### Outlier detection and raw intensity plots function definition
+```{r}
 outlier_KS_func = function(exprs) { # matrix (row: probe intensities/RLE values etc., col: array (e.g. sample))
   fx = ecdf(as.vector(exprs)) # get empirical cumulative distribution function of the data
   KS=suppressWarnings(apply(exprs, 2, function(v)ks.test(v, y = fx, alternative="two.sided")$statistic))
@@ -117,10 +116,11 @@ outlier_KS_func = function(exprs) { # matrix (row: probe intensities/RLE values 
   iqr = diff(stats[c(2, 4)]) # lagged difference between the lower-hinge and upper-hinge
   coef = 1.5
   th = (stats[4] + coef * iqr)
-  list(threshold = th, stats=KS, outlier = which(KS > th))
+  outlierfun <- list(threshold = th, stats=KS, outlier = sum(KS > th))
+  return(outlierfun$outlier)
 }
-# The boxplot_func function generates boxplots for raw data metrics (e.g. probe intensities, RLE, NUSE) 
-boxplot_func <- function(Mss,outlier,ylab) {
+
+plot_func <- function(Mss,outlier,ylab) {
   # use * to mark the outliers in boxplot
   array_name <- shortname_func(colnames(Mss))
   outlier <- shortname_func(outlier)
@@ -134,67 +134,32 @@ boxplot_func <- function(Mss,outlier,ylab) {
     scandate=rep(pData(raw.data)[,varuse],each=nrow(Mss)) # for color
   )
   cols <- colour_list
-  ggplot(df, aes(sample_id,values,fill=scandate)) + geom_boxplot(outlier.colour=NA) +
-    coord_flip() + theme_bw() +
-    ylim(ylim) +
-    scale_x_discrete(labels=array_name) +
-    ylab(ylab) +
-    scale_fill_manual(varuse,values=cols) +
-    theme(axis.title.y=element_blank())
+  boxplot <- ggplot(df, aes(sample_id,values,fill=scandate)) + geom_boxplot(outlier.colour=NA) +
+           coord_flip() + theme_bw() +
+           ylim(ylim) +
+           scale_x_discrete(labels=array_name) +
+           ylab(ylab) +
+           scale_fill_manual(varuse,values=cols) +
+           theme(axis.title.y=element_blank())
+  densityplot <- ggplot(df,aes(x=values,colour=scandate)) + geom_line(aes(group=sample_id),stat="density") +
+                 theme_bw() +
+                 xlab("Raw Probe Intensities") +
+                 ylab("Density") +
+                 scale_color_manual(varuse,values=cols)
+  return(list(boxplot, densityplot))
 }
-# The densplot_func function plots density curve for raw data metrics (e.g. probe intensity)
-densplot_func <- function(Mss) {
-  # create data frame for plot
-  df <- data.frame(
-    sample_id=rep(colnames(Mss),each=nrow(Mss)),
-    values=as.numeric(Mss),
-    scandate=rep(pData(raw.data)[,varuse],each=nrow(Mss)) # for color
-  )
-  cols <- colour_list
-  ggplot(df,aes(x=values,colour=scandate)) + geom_line(aes(group=sample_id),stat="density") +
-    theme_bw() +
-    xlab("Raw Probe Intensities") +
-    ylab("Density") +
-    scale_color_manual(varuse,values=cols)
-}
-# The raw_intensity_func function outputs raw probe intensity metrics
-raw_intensity_func <- function() {
-  if (!normdata) {Mss=log2(subsamp(exprs(raw.data))) # use log2 transformed raw probe intensity
-  } else {
-    Mss=subsamp(exprs(raw.data))
-  }
-  outlier_res=outlier_KS_func(Mss)
-  outlier=names(outlier_res$outlier)
-  boxplot=boxplot_func(Mss=Mss, outlier=outlier, ylab="Raw Probe Intensities")
-  densplot=densplot_func(Mss=Mss)
-  return(list(outlier=outlier,boxplot=boxplot,densplot=densplot))
-}
-```
-1. Outlier detection for log2 raw probe intensity/normalized intensity
 
-Compute the Kolmogorov-Smirnov statistic Ka between each array's (i.e. sample) values (i.e. log2 transformed raw probe intensity values) and the 
-pooled, overall distribution of the values.
-
-```{r raw_intensity_outlier, eval=T, echo=F, warning=F}
-res_intensity=raw_intensity_func()
-outlier_intensity = res_intensity$outlier
-cat(length(outlier_intensity), "outlier(s) are detected in the raw intensity metrics.\n")
-if (length(outlier_intensity)>0) {cat("They are: ", shortname_func(outlier_intensity))}
 ```
 
-2. Boxplots for log2 raw probe intensity
-
-```{r raw_intensity_boxplot, eval=T, echo=F, message=F, warning=F, fig.height=8, fig.width=6}
-res_intensity$boxplot
+### Outlier detection and raw intensity plots function call
+```{r}
+#Random selection of 20000 probes
+ss  <- sample(nrow(exprs(raw.data)), 20000)
+Mss <- exprs(raw.data)[ss,,drop=FALSE]
+outlier <- outlier_KS_func(Mss)
+plot_func(Mss=Mss, outlier=outlier, ylab="Raw Probe Intensities")
 ```
 
-3. Density curves for log2 raw probe intensity
-
-The intensity curves of all samples (arrays) are expected to have the similar shapes and ranges. Samples with deviated curves are likely to have problematic experiments. For example, high levels of background will shift an array's distribution to the right. Lack of signal diminishes its right right tail. A bulge at the upper end of the intensity range often indicates signal saturation.
-
-```{r raw_intensity_densplot, eval=T, echo=F, message=F, warning=F}
-res_intensity$densplot
-```
 ### RNA Digestion
 
 
@@ -202,7 +167,15 @@ Overall RNA quality can be assessed by RNA degradation plots. In the gene expres
 
 This step requires R package affy that outputs the probes in each probe set matrix ordered from 5' to 3', while this function is not implemented in the oligo package.
 
+
+
 ```{r RNAdegaffy_utility, eval=T, echo=F}
+# The rawall_func function obtains all files in the data directory with full path
+rawall_func <- function() {
+    raw_fn=list.files(path=paste0(datadir,"/",geo_id,"/data"))
+    # obtain supplementary data with path
+    paste0(datadir,"/",geo_id,"/data/",raw_fn[which(raw_fn%in%basename(as.character(pheno.raw$supplementary_file)))]) # only select cel files from datadir
+  }
 # The RNAdegaffy_func function compute mean PM intensities in each probe position following 5' to 3' order. Adopted from the AffyRNAdeg function in the affy package but include a step that randomly selects 20,000 probe sets.
 RNAdegaffy_func <- function(data){ # input a list of probe set matrix with rows as probe ids and columns as samples
   {
@@ -312,6 +285,63 @@ outdoorcontrol4h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure
 outdoorcontrol10h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_10h_vs_control_10h_fgsea_results.csv")
 outdoorcontrol24h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_24h_vs_control_24h_fgsea_results.csv")
 ```
+
+#### Extracting only the main pathways from the overall file because there are very similar pathways in the data frame.
+The final output is a dataframe that contains 9 columns: 
+
+* pathway - name of the pathway;
+* pval - an enrichment p-value;
+* padj - an adjusted p-value using Benjamini-Hochberg approach;
+* ES - enrichment score;
+* NES - enrichment score normalized to mean enrichment of random samples of the same size;
+* nMoreExtreme - a number of times a random gene set had a more extreme enrichment score value;
+* size - the number of pathway genes in the gene list.
+* main_pathway - main pathway
+* leadingEdge - genes that drive the enrichment
+
+```{r}
+library(dplyr)
+indoorcontrol4h_pathway <- indoorcontrol4h_pathway %>% filter(main_pathway == "main")
+indoorcontrol10h_pathway <- indoorcontrol10h_pathway %>% filter(main_pathway == "main")
+indoorcontrol24h_pathway <- indoorcontrol24h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol4h_pathway <- outdoorcontrol4h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol10h_pathway <- outdoorcontrol10h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol24h_pathway <- outdoorcontrol24h_pathway %>% filter(main_pathway == "main")
+detach("package:dplyr")
+```
+
+
+Note that because permutation is used, the p-value results might not be exactly the same every time you run fgsea.
+
+
+### Number of significant genes and pathways
+
+The csv files contains the details of the gene, log2, P values and adjusted values. These data will now be used to identify the number of signicantly differential expressed gene and number of significant pathways corresponding to all the six comparisons.
+
+```{r significantpathway, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+col1<- c("Indoor vs Control - 4h", "Indoor vs Control - 10h", "Indoor vs Control - 24h", "Outdoor vs Control - 4h","Outdoor vs Control - 10h", "Outdoor vs Control - 24h")
+col2 <- c(sum(indoorcontrol4h$adj.P.Val  < 0.05), sum(indoorcontrol10h$adj.P.Val < 0.05), sum(indoorcontrol24h$adj.P.Val < 0.05), sum(outdoorcontrol4h$adj.P.Val  < 0.05), sum(outdoorcontrol10h$adj.P.Val  < 0.05), sum(outdoorcontrol24h$adj.P.Val  < 0.05))
+col3 <- c(sum(indoorcontrol4h_pathway$padj  < 0.05), sum(indoorcontrol10h_pathway$padj < 0.05), sum(indoorcontrol24h_pathway$padj < 0.05), sum(outdoorcontrol4h_pathway$padj  < 0.05), sum(outdoorcontrol10h_pathway$padj  < 0.05), sum(outdoorcontrol24h_pathway$padj  < 0.05))
+tab <- data.frame(col1, col2, col3)
+names(tab) <- c("Compared Set", "Number of significant genes", "Number of significant pathways")
+tab1 <- as.table(as.matrix(tab))
+tab1
+```
+
+#### Volcano plot trial 
+```{r de}
+library(ggplot2)
+# Assign (in)significant genes
+indoorcontrol4h$significance <- rep("Insignificant", nrow(indoorcontrol4h))
+indoorcontrol4h$significance[which(indoorcontrol4h$adj.P.Val<0.05)] <- "Significant"
+ggplot(indoorcontrol4h, aes(x = logFC, y = -log10(adj.P.Val), color = significance)) + 
+  geom_point() +
+  theme_bw() +
+  ggtitle("Volcano plot") +
+  xlab("LogFC")+
+  ylab("-Log10(q-value)") 
+```
+
 
 ## References
 
