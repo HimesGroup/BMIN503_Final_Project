@@ -62,12 +62,12 @@ nutrition <- full_join(nutritiond1, nutritiond2)
 
 ```
 
-Next, the data was cleaned by creating age groups, renaming variables, and removing unneeded variables.
+Next, the data was cleaned by computing new values, renaming variables, and removing unneeded variables. Individuals were assigned to age groups in 10 year increments.
 
 ```{r}
-#Cleaning demographic data - creating age groups, renaming variables, removing unneeded variables
+
 demog <- demog %>%
-  select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH1, RIDRETH3, DMDEDUC2, DMDEDUC3, DMDMARTL, WTINT2YR, WTMEC2YR, INDHHIN2, INDFMPIR) %>%
+  select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC2, DMDEDUC3, DMDMARTL, WTINT2YR, WTMEC2YR, INDHHIN2, INDFMPIR) %>%
   mutate(age.grp = ifelse(RIDAGEYR %in% 10:19, "10-19",
                     ifelse(RIDAGEYR %in% 20:29, "20-29",
                            ifelse(RIDAGEYR %in% 30:39, "30-39",
@@ -76,7 +76,9 @@ demog <- demog %>%
                                                 ifelse(RIDAGEYR %in% 60:69, "60-69",
                                                        ifelse(RIDAGEYR %in% 70:79, "70-79",
                                                               ifelse(RIDAGEYR >79, "80+", "<10"))))))))) %>%
-  rename(gender = RIAGENDR, race = RIDRETH1, race2 = RIDRETH3, child.edu = DMDEDUC2, adult.edu = DMDEDUC3, marital = DMDMARTL, weight = WTINT2YR, weight2 = WTMEC2YR, income = INDHHIN2, poverty = INDFMPIR)
+  rename(gender = RIAGENDR, race = RIDRETH3, child.edu = DMDEDUC2, adult.edu = DMDEDUC3, marital = DMDMARTL, weight = WTINT2YR, weight2 = WTMEC2YR, income = INDHHIN2, poverty = INDFMPIR)
+
+
 ```  
 
 The Decayed, Missing, Filled Tooth (DMFT) score is a commonly used indicator of tooth health used in dental research. In adults, all teeth except for third molars are assessed for caries, fillings, and missingness due to caries, and assigned a score of either 1 (presence of the aforementioned criteria) or 0 (sound, or missing due to other causes). The DMFT score is a summation of the 1 and 0 values for the full mouth. NHANES examiners assigned each tooth a letter value indicating its status. These letter values were re-coded to either 0 or 1 so that a DMFT score could be calculated for each participant. Root tips were not included as part of this calculation.
@@ -123,6 +125,7 @@ nutrition <- nutrition %>%
   subset(DR1DRSTZ == 1 | DR2DRSTZ == 1) %>%
   select(SEQN, DRDINT, DR1TNUMF, DR2TNUMF, DR1TKCAL, DR1TPROT, DR1TCARB, DR1TSUGR, DR1TFIBE, DR1TTFAT, DR1TSFAT, DR1TCHOL, DR1TATOC, DR1TVARA, DR1TVB1, DR1TVB2, DR1TVB6, DR1TVB12, DR1TVC, DR1TVD, DR1TVK, DR1TCALC, DR1TIRON, DR1.300, DR1.320Z, DR2TKCAL, DR2TPROT, DR2TCARB, DR2TSUGR, DR2TFIBE, DR2TTFAT, DR2TSFAT, DR2TCHOL, DR2TATOC, DR2TVARA, DR2TVB1, DR2TVB2, DR2TVB6, DR2TVB12, DR2TVC, DR2TVD, DR2TVK, DR2TCALC, DR2TIRON, DR2.300, DR2.320Z)
 
+#Averaging nutrient intake per participant
 nutrition$calories <- rowMeans(subset(nutrition, select = c(DR1TKCAL, DR2TKCAL)), na.rm = TRUE)
 nutrition$protein <- rowMeans(subset(nutrition, select = c(DR1TPROT, DR2TPROT)), na.rm = TRUE)
 nutrition$carbs <- rowMeans(subset(nutrition, select = c(DR1TCARB, DR2TCARB)), na.rm = TRUE)
@@ -146,6 +149,38 @@ nutrition$water <- rowMeans(subset(nutrition, select = c(DR1.320Z, DR2.320Z)), n
 
 nutrition <- nutrition %>%
   select(SEQN, DRDINT, DR1TNUMF, DR2TNUMF, DR1.300, DR2.300, calories, protein, carbs, sugar, fiber, fat, satfat, cholesterol, vit.e, vit.a, vit.b1, vit.b2, vit.b6, vit.b12, vit.c, vit.d, vit.k, calcium, iron, water)
+
+#Calculating percent daily values based on age and gender
+data <-  full_join(demog, nutrition, by = "SEQN")
+data <- subset(data, age.grp!="<10" & age.grp!="10-19")
+data <- data %>%
+  mutate(p.calories = if_else(gender==1 & age.grp=="20-29", (calories/2400)*100, 
+                             if_else(gender==2 & age.grp=="20-29", (calories/2000)*100,
+                                    if_else(gender==1 & age.grp=="30-39" | age.grp=="40-49", (calories/2200)*100,
+                                           if_else(gender==2 & age.grp=="30-39" | age.grp=="40-49", (calories/1800)*100, 
+                                                  if_else(gender==1 & age.grp=="50-59" | age.grp=="60-69" | age.grp=="70-79" | age.grp=="80+", (calories/2000)*100, (calories/1600)*100)))))) %>%
+  mutate(p.protein = if_else(gender==1, (protein/56)*100, (protein/56)*100)) %>%
+  mutate(p.carbs = (carbs/130)*100) %>%
+  mutate(p.sugar = ((sugar/calories)/0.1)*100) %>%
+  mutate(p.fiber = if_else(gender==1 & age.grp=="20-29", (fiber/34)*100, 
+                             if_else(gender==2 & age.grp=="20-29", (fiber/28)*100,
+                                    if_else(gender==1 & age.grp=="30-39" | age.grp=="40-49", (fiber/31)*100,
+                                           if_else(gender==2 & age.grp=="30-39" | age.grp=="40-49", (fiber/25)*100, 
+                                                  if_else(gender==1 & age.grp=="50-59" | age.grp=="60-69" | age.grp=="70-79" | age.grp=="80+", (fiber/28)*100, (fiber/22)*100)))))) %>%
+  mutate(p.fat = (fat/35)*100) %>%
+  mutate(p.satfat = ((satfat/calories)/0.1)*100) %>%
+  mutate(p.vit.e = (vit.e/15)*100) %>%
+  mutate(p.vit.a = if_else(gender==1, (vit.a/900)*100, (vit.a/700)*100)) %>%
+  mutate(p.vit.b6 = if_else(gender==1 & age.grp=="50-59" | age.grp=="60-69" | age.grp=="70-79" | age.grp=="80+", (vit.b6/1.7)*100,
+                            if_else(gender==2 & age.grp=="50-59" | age.grp=="60-69" | age.grp=="70-79" | age.grp=="80+", (vit.b6/1.5)*100, (vit.b6/1.3)*100))) %>%
+  mutate(p.vit.b12 = (vit.b12/2.4)*100) %>%
+  mutate(p.vit.c = if_else(gender==1, (vit.c/90)*100, (vit.c/75)*100)) %>%
+  mutate(p.vit.d = if_else(age.grp=="70-79" | age.grp=="80+", (vit.d/800)*100, (vit.d/600)*100)) %>%
+  mutate(p.vit.k = if_else(gender==1, (vit.k/120)*100, (vit.k/90)*100)) %>%
+  mutate(p.calcium = if_else(gender==1 & age.grp=="70-79" | age.grp=="80+", (calcium/1200)*100,
+                             if_else(gender==2 & age.grp=="50-59" | age.grp=="60-69" | age.grp=="70-79" | age.grp=="80+", (calcium/1200)*100, (calcium/1000)*100))) %>%
+  mutate(p.iron = if_else(gender==2 & age.grp=="20-29" | age.grp=="30-39" | age.grp=="40-49", (iron/18)*100, (iron/8)*100))
+  
 
 
 ```
@@ -195,5 +230,7 @@ Describe your results and include relevant tables, plots, and code/comments used
     2. Listl S, Galloway J, Mossey PA, Marcenes W. Global Economic Impact of Dental Diseases. Journal of Dental Research. 2015;94(10):1355-1361. doi:10.1177/0022034515602879
     3. World Health Organization. World Health Assembly First Special Session: Sixtiety World Health Assembly. 2007. Retrieved from https://apps.who.int/gb/ebwha/pdf_files/WHASSA_WHA60-Rec1/E/WHASS1_WHA60REC1-en.pdf.
     4. Petersen, PE, Baez, RJ, Ogawa, H. Global application of oral disease prevention and health promotion as measured 10 years after the 2007 World Health Assembly statement on oral health. Community Dent Oral Epidemiol. 2020; 48: 338– 348. https://doi-org.proxy.library.upenn.edu/10.1111/cdoe.12538
+    
+   COMPLETE THIS CITATION!! Nutrient information https://ods.od.nih.gov/HealthInformation/Dietary_Reference_Intakes.aspx
   
 
