@@ -1,0 +1,197 @@
+---
+title: "Social Determinants of Cesearean Section: Analysis of Results from the National Survey of Family Growth"
+author: "Sabrina Morawej"
+output: 
+ html_document:
+    toc: true
+    toc_float: 
+        collapsed: false
+        smooth_scroll: true
+    depth: 3 
+    theme: united
+    highlight: tango
+
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+
+
+```  
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+### Overview
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+>   Medically unnecessary Cesarean sections (C-sections) are associated with poor health outcomes for mother and baby. This project will explore several social predictors of C-sections. 
+>   For this project, I conferred with Dr. Shimrit Keddem, PI at the Center for Health Equity, Research, and Promotion; she has used the NSFG in previous publications, and familiarized me with the National Survey of Family Growth which is a freely acessible dataset from the CDC to analyze my outcome. Dr. Keddem also helped me identify the revelant social predictors to explore this topic. Dr. Allison Curry, PI at the Center for Injury Research and Prevention helped me gather the background data on this topic and identify critical gaps in the literature. Finally, Professor Jessica Rast, STATA instructor and PhD Epidemiology candidate at Drexel University, taught me how to import the data into STATA so that it could then be imported into R.
+>   https://github.com/sem-22/BMIN503_Final_Project
+
+### Introduction 
+Describe the problem addressed, its significance, and some background to motivate the problem.
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+>   In 2020, about 26% of births in the United States ended in Cesarean delivery.[1] As C-section rates continue to rise in the United States, the Department of Health and Human Services announced one of the Healthy People 2030’s goals to reduce C-section rates among low-risk first births.[2] Compared to vaginal births, C-sections pose greater risks of complications at birth,[3] the postpartum period,[4] and negative long-term health outcomes.[5] These complications translate into high health care costs for patients, hospitals, and health insurance providers and diminished levels of maternal and infant health.[6–9]
+>   The issue of rising rates of medically unneccessary C-sections requires an interdisciplinary approach. The goal of public healh is to prevent negative healh outcomes. Healh care providers, government officials, insurance companies, and hospital systems all share this goal. Additionally, they share another goal which is to reduce unneccessary medical costs. An economic and policy analysis contribute to the understanding of this insidious trend. 
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+>   I will use the National Survey of Family Growth's (NSFG) 2017-2019 Female Pregnancy file for this analysis. The Female Pregnancy file is a subset of the NSFG that contains all relevant variables related to pregnancy and birth. The NSFG is a cross-sectional, nationally representative study conducted by the Centers for Disease Control and Prevention. For the purposes of this analysis, the analytic sample only includes first-births. The independent variables are prenatal care, age, insurance status, race/ethnicity, and smoking status during pregnancy. The dependent variable is C-section. Logistic regression will be used to explore the relationship between these social predictors and C-section.
+>   As of today, the NSFG does not have downloadable files available for use in RStudio; nevertheless, the data were imported into R by creating a .dta outfile in STATA and then read into R through the appropriate "Import Dataset" feature.
+>   To clean this dataset, I am filtering the dataset by first pregnancy. The literature shows that the strongest predictor of C-section is having a previous C-section. By excluding all pregnancies but the first, I am eliminating a known confounder. I will perform logistic regression to compare odds of having a c-section vs. a vaginal birth; therefore, I excluded all other pregnancy outcomes. The social predictors I am including in this analysis are: maternal age, number of cigarettes smoked per day during pregnancy, race, Hispanic origin, prenatal care, and insurance status.
+
+```{r}
+# packages
+library(tidyverse)
+library(ggplot2)
+```
+
+``` {r}
+clean_nsfg <- nsfg %>% #### error: object 'nsfg' not found
+    filter(pregordr == 1) %>% # filtering for responses about R's first pregnancy (all pregnancies after the first are excluded).
+    select(PREGEND1, agepreg, npostsmk, race, hispanic, pncarewk, paydeliv) %>% # selecting all relevant social predictors including my dependent variable.
+    rename(birth.outcome = PREGEND1, mom.age = agepreg, cigs.per.day = npostsmk, prenatal.care = pncarewk, delivery.payment.type = paydeliv) %>% # giving vars common sense names
+    mutate(birth.outcome = factor(birth.outcome, levels = c(5, 6), labels = c("C-section", "vaginal birth"))) %>% # by setting birth.outcome of first pregnancy to live c-section or live vaginal birth, I am creating a nominal, dichotomous outcome variable (which is what I need for logistic regression) 
+    mutate(cigs.per.day = factor(cigs.per.day, levels = c(1, 2, 3, 4, 6), labels = c("about 1", "2-4", "5-14", "15-24", "35-44"))) %>% # removed the "25-34" category (5th level) because this response was empty
+    mutate(hispanic = factor(hispanic, levels = c(1, 2), labels = c("Hispanic", "Non-hispanic"))) %>%
+    mutate(race = factor(race, levels = c(1, 2, 3), labels = c("Black", "White", "Other"))) %>%
+    mutate(prenatal.care = factor(prenatal.care, levels = c(1, 2, 3), labels = c("<13 weeks", ">14 weeks", "no prenatal care"))) %>%
+    mutate(delivery.payment.type = factor(delivery.payment.type, levels = c(1, 2, 3, 4, 5), labels = c("own income only", "insurance only", "own income & insurance only", "medicaid/govt assistance", "all other combinations of payment")))
+
+# There is a typo in the upload of 2017-2019 data which says this is the 2015-2017 NSFG, but each observation has a "Calendar year when interview occurred" (intvwyear) variable and all observations occurred within the stated 2017-2019 study period. 
+
+str(clean_nsfg)
+
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+# First, I am visualizing the bivariate relationships between the social predictors and birth outcome.
+
+``` {r}
+# number of women in our sample whose first birth was a C-section or vaginal birth
+clean_nsfg %>% 
+  group_by(birth.outcome) %>%
+  summarize(count = n())
+
+# bar chart of women whose first birth was a C-section or vaginal birth by race (Black, white, and other)
+clean_nsfg %>%
+    drop_na(birth.outcome, race) %>%
+    ggplot(aes(x = birth.outcome, fill = race)) +
+    geom_bar(position = "dodge") +
+    ggtitle("Birth Outcome by Race") +
+    xlab("Birth Outcome") +
+    ylab("Count")
+
+# number of women whose first birth was a C-section or vaginal birth by Hispanic origin (Hispanic vs. non-Hispanic)
+clean_nsfg %>%
+    drop_na(birth.outcome, hispanic) %>%
+    ggplot(aes(x = birth.outcome, fill = hispanic)) +
+    geom_bar(position = "dodge") +
+    ggtitle("Birth Outcome by Hispanic Origin") +
+    xlab("Birth Outcome") +
+    ylab("Count")
+
+# number of women whose first birth was a C-section or vaginal birth by the number of cigarettes she smoked during pregnancy after she knew she was pregnant
+clean_nsfg %>%
+    drop_na(birth.outcome, cigs.per.day) %>%
+    ggplot(aes(x = birth.outcome, fill = cigs.per.day)) +
+    geom_bar(position = "dodge") +
+    ggtitle("Birth Outcome by Amount Smoked during Pregnancy") +
+    xlab("Birth Outcome") +
+    ylab("Count")
+
+# number of women whose first birth was a C-section or vaginal birth by the number of weeks pregnant at first prenatal care visit
+clean_nsfg %>%
+    drop_na(birth.outcome, prenatal.care) %>%
+    ggplot(aes(x = birth.outcome, fill = prenatal.care)) +
+    geom_bar(position = "dodge") +
+    ggtitle("Birth Outcome by Number of Weeks Pregnant at First Prenatal Care Visit") +
+    xlab("Birth Outcome") +
+    ylab("Count")
+
+# Maternal Age by C-section and vaginal birth
+clean_nsfg %>%
+     drop_na(birth.outcome, mom.age) %>%
+    ggplot(aes(x = birth.outcome, y = mom.age)) +
+    geom_boxplot(color = "black", fill = "blue") +
+    ggtitle("Birth Outcome by Maternal Age") +
+    xlab("Birth Outcome") +
+    ylab("Maternal Age")
+
+# number of women whose first birth was a C-section or vaginal birth by the type of payment method for the delivery
+clean_nsfg %>%
+    drop_na(birth.outcome, delivery.payment.type) %>%
+    ggplot(aes(x = birth.outcome, fill = delivery.payment.type)) +
+    geom_bar(position = "dodge") +
+    ggtitle("Birth Outcome by Delivery Payment Type") +
+    xlab("Birth Outcome") +
+    ylab("Count")
+
+```
+
+
+# Next, I am going to get the crude odds ratios for each social predictor: maternal age, number of cigarettes smoked per day during pregnancy, race, Hispanic origin, prenatal care, and insurance status
+
+``` {r}
+# maternal age (I/R variable)
+summary(glm(birth.outcome ~ mom.age, data = clean_nsfg, 
+                  family = binomial()))
+exp(coef(glm(birth.outcome ~ mom.age, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and maternal age is significant. For every year increase in maternal age, X increases 0.93 times (p-value <0.0001).
+
+``` {r}
+# cigarettes smoked per day after confirming pregnancy (ordinal variable)
+summary(glm(birth.outcome ~ cigs.per.day, data = clean_nsfg, 
+                  family = binomial())) #### where are the other levels? I only see the first 3 levels #### 
+exp(coef(glm(birth.outcome ~ cigs.per.day, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and amount of cigarettes smoked during pregnancy is insignificant (p>0.05).
+
+``` {r}
+# race (nominal variable)
+summary(glm(birth.outcome ~ race, data = clean_nsfg, 
+                  family = binomial())) #### I only see raceWhite and raceOther
+exp(coef(glm(birth.outcome ~ race, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and race is insignicant (p>0.05).
+
+``` {r}
+# Hispanic origin (nominal, dichotomous variable)
+summary(glm(birth.outcome ~ hispanic, data = clean_nsfg, 
+                  family = binomial())) #### I only see raceWhite and raceOther
+exp(coef(glm(birth.outcome ~ hispanic, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and hispanic origin is significant (p<0.0001).
+
+``` {r}
+# prenatal care (nominal variable)
+summary(glm(birth.outcome ~ prenatal.care, data = clean_nsfg, 
+                  family = binomial())) #### I only see raceWhite and raceOther
+exp(coef(glm(birth.outcome ~ prenatal.care, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and prenatal care is significant (p<0.0001).
+
+``` {r}
+# payment type for delivery  (nominal variable)
+summary(glm(birth.outcome ~ delivery.payment.type, data = clean_nsfg, 
+                  family = binomial())) #### I only see raceWhite and raceOther
+exp(coef(glm(birth.outcome ~ delivery.payment.type, data = clean_nsfg, family = binomial())))
+```
+> The relationship between #### what is my reference group? #### birth outcome and payment type for delivery is insignicant (p>0.05).
+
+# Now, I will run a multivariate logistic regression with the above variables
+``` {r}
+#### doesn't seem to like the factored variables
+birth.outcome.glm <- glm(birth.outcome ~ mom.age + cigs.per.day, race, hispanic, prenatal.care, delivery.payment.type, data = clean_nsfg, 
+                  family = binomial())
+summary(birth.outcome.glm) 
+
+```
+
+>   github: Think of push as upload, commit as saving/override file online, and pull as download
+> personal access token:  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 
