@@ -19,7 +19,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ***
 ## Overview
 
-Airborne particulate matter is considered to be a hazard due to its effects in human health.(Valavidinis et al., 2008). Air inside workplaces/classrooms/household buildings can be more polluted than the outside air (Jovanovic et al., 2014). Undiagnosed respiratory disorders caused due to air pollutants can lead to short-term (frequent hospital visits) and long-term or cumulative health effects (morbidity, lung cancer, cardiovascular  and cardiopulmonary diseases). Relationships between Indoor air quality index and respiratory health of students in school are insufficiently explored (Annesei-Masinao et al., 2013). This project aims to analyze an existing dataset (GSE34607)  available in the GEO public repository that contains the gene expression data taken from classrooms with high concentrations of PM10 to study how air pollutants influence gene transcription in airway cells. This will help to understand the mechanisms involved in air pollution induced respiratory disorders and thereby understand lead to the understanding of whether interventions are required for the vulnerable people. 
+Airborne particulate matter is considered to be a hazard due to its effects in human health.(Valavidinis et al., 2008). Air inside workplaces/classrooms/household buildings can be more polluted than the outside air (Jovanovic et al., 2014). Undiagnosed respiratory disorders caused due to air pollutants can lead to short-term (frequent hospital visits) and long-term or cumulative health effects (morbidity, lung cancer, cardiovascular  and cardiopulmonary diseases). Relationships between Indoor air quality index and respiratory health of students in school are insufficiently explored (Annesei-Masinao et al., 2013). This project aims to analyze an existing dataset (GSE34607)  available in the GEO public repository that contains the gene expression data taken from classrooms with high concentrations of PM10 to study how air pollutants influence gene transcription in airway cells. This will help to understand the mechanisms involved in air pollution induced respiratory disorders and thereby lead to the understanding of whether interventions are required for vulnerable people. 
 
 ## Introduction
 
@@ -29,7 +29,7 @@ In order to perform the data analysis and interpret the results, we require an i
 
 ## Methods
 
-The data used in this project is taken from Gene Expression Omnibus (GEO), a public functional genomics data repository. The microarray based data used here can be accessed under the GEO Accession ID GSE34607 (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE34607). To understand the data, an overview of the experiment performed is required. For obtaining the genome-wide expression analysis, BEAS-2B cells were incubated with PM10 (10 µg/ml) in six indoor and outdoor school environments and samples were tested for gene expression at 4th, 10th and 24th hours. The platform used is “Affymetrix” (Human Genome U133A 2.0 Array).  
+The data used in this project is taken from Gene Expression Omnibus (GEO), a public functional genomics data repository. The microarray based data used here can be accessed under the GEO Accession ID GSE34607 (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE34607). To understand the data, an overview of the experiment performed is required. For obtaining the genome-wide expression analysis, BEAS-2B cells were incubated with PM10 (10 µg/ml) in six indoor and outdoor school environments and samples were tested for gene expression at the time intervals of 4, 10 and 24th hours. The platform used is “Affymetrix” (Human Genome U133A 2.0 Array).  
 
 To start the analysis process, extensive data cleansing was required. This was performed with the helped of a reproducible tool called “RAVED”, developed by Himes Lab at the University of Pennsylvania. Quality Control (QC) analysis was first performed to understand the structure of the data and do data cleansing. From this a phenotype file containing GEO_ID, Tissue, Disease and Treatment information was generated. The generated report was used as an input to perform the Differential Expression (DE) analysis. This step was performed for six different combinations, namely, Indoor vs Control 4h, Indoor vs Control 10h, Indoor vs Control 24h, Outdoor vs Control 4h, Outdoor vs Control 10h and Outdoor vs Control 24h. The DE analysis output was stored as .csv files, which were used as input for the rest of the project. 
 Note: These corresponding and complete rmd files used to generate the phenotype and DE results are available in the Github Repository and can be accessed here (https://github.com/Narayanan-Nisha/BMIN503_Final_Project). 
@@ -56,28 +56,46 @@ install.packages("devtools")
 install.packages("dplyr")
 install.packages("pander")
 install.packages("DT")
+install.packages("ftExtra")
+install.packages("ggrepel")
+install.packages("ggpubr")
 ```
 
 Loading the libraries. dplyr and affy packages will be loaded if and when required as it will mask the other library functions.
 ```{r lib, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
 library(GEOquery)
 library(ArrayExpress)
-library(knitr)
+#library(knitr)
 library(oligo)
 library(viridis) # heatmap colour
 library(ggplot2)
 library(gplots) # heatmap.2 plot
-library(Hmisc) # compute hoeffd (Hoeffding's D statistics) for MA plot
-library(devtools) # compuate PCs
-library(preprocessCore) # quantile normalization
+#library(Hmisc) # compute hoeffd (Hoeffding's D statistics) for MA plot
+library(devtools) # compute PCs
+#library(preprocessCore) # quantile normalization
 library(pander)
 library(limma)
-library(sva)
-library(annotate)
-library(DT)
+#library(sva)
+#library(annotate)
+#library(DT)
 library(fgsea)
+library(ftExtra)
+library(tidyr)
+#library(ggrepel)
+library(ggpubr)
 ```
-Defining variables required.
+
+The raw and supplementary data required for this project can be downloaded from GEO using the below chunk of code. 
+
+```{r raw and supplementary data, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+if (!file.exists("./GSE34607/GSE34607_RAW.tar"))
+  getGEOSuppFiles("GSE34607")
+untar("./GSE34607/GSE34607_RAW.tar", exdir = "./GSE34607/data")
+```
+
+Defining variables required - including platform used, whether the data  is normalized, shortname function to shorten variable names, whether supplementary data exists, GEO ID and datadir (note this needs to be changed depending upon where the required files are stored in the user's machine).
+
 ```{r var2, eval=T, echo=T}
 platform="Affymetrix"
 geo_GPL=""
@@ -88,18 +106,53 @@ suppldata = TRUE
 datadir="/Users/nishanarayanan/Downloads/"
 geo_id="GSE34607"
 ```
-The raw phenotype file was obtained from GEO and a summary table was generated to understand the data. The variables were uninformative. Hence, the raw phenotype was modified and saved as a .txt file through RAVED. The file is now being read into the project for further analysis. 
-```{r files, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
-pheno.raw <- read.delim("RawPhenoFile_GEO") 
-pheno <- read.delim("GSE34607_Phenotype_withoutQC.txt")
-pheno
-load("raw.data.Rdata")
+
+
+The raw probe intensity distributions for each sample is visualized by displaying them as boxplots. Next, Robust Multi-array Average (RMA) is used to normalize and transform the intensities to a comparable scale. The intensities for each sample vary widely and this does not reflect the biological variation we are interested in, which is why a function like RMA is used.
+```{r}
+celFiles <- list.celfiles("./GSE34607/data", full.names = TRUE, listGzipped = TRUE)
+raw.data <- read.celfiles(celFiles)
+boxplot(raw.data, col = "red", main = "Raw Probe Intensities")
+raw.data.rma <- oligo::rma(raw.data)
+boxplot(raw.data.rma, col = "blue", main = "RMA Expression Values")
 ```
 
-Assigning colours based on scan date group. Before that, scandate_group variable is converted to factor level.
+The raw phenotype file was obtained from GEO and a summary table was generated to understand the data using RAVED. The file is loaded below and displayed for understanding the data.
 
-```{r}
+```{r pheno_new, eval=T, echo=T, message=F, warning=F, results="hide"}
+pheno.raw <- read.delim("RawPhenoFile_GEO") 
+pheno.raw
+```
+
+The variables are uninformative. Hence, the raw phenotype is modified to generate a "pheno" dataframe with the required variables from the raw phenotype file for further analysis. Two columns, scan date group and filename is added to the pheno table and the corresponding data is extracted and added to the pheno dataframe.
+
+```{r pheno_new, eval=T, echo=T, message=F, warning=F, results="hide"}
+library(dplyr)
+cols <- c("title","geo_accession","source_name_ch1")
+pheno <- pheno.raw %>%
+  dplyr::select(cols) %>%
+  dplyr::mutate(GEO_ID=geo_accession) %>%
+  dplyr::mutate(Donor=gsub("\\S+_", "D", gsub(".rma-Signal","",title))) %>%
+  dplyr::mutate(Sample=paste(geo_accession,Donor,sep="_")) %>%
+  dplyr::mutate(Tissue="BEAS-2B") %>%
+  dplyr::mutate(treatment_time=gsub("^.*for (\\d+.*)$","\\1",source_name_ch1)) %>%
+  dplyr::mutate(treatment_time=gsub("PM10_Indoor_|PM10_Outdoor_|PM10_Untreated_|untreated_|PM_10_indoor_|PM10_ourtdoor_|PM_10_outdoor_","",treatment_time, ignore.case=T)) %>%
+  dplyr::mutate(treatment_drug=ifelse(grepl("indoor", ignore.case = T, source_name_ch1),"IndoorExposure",ifelse(grepl("outdoor", ignore.case = T, source_name_ch1),"OutdoorExposure",ifelse(grepl("ourtdoor", ignore.case = T, source_name_ch1),"OutdoorExposure", "control")))) %>%
+  dplyr::mutate(Treatment=paste(treatment_drug,treatment_time,sep="_")) %>%
+  dplyr::mutate(Disease="nonasthma") %>%
+  dplyr::mutate_if(is.character,as.factor) %>%
+  dplyr::select(-one_of(cols)) # remove original columns
+detach("package:dplyr")
+pheno$ScanDate_Group <- sapply(strsplit(as.character(protocolData(raw.data)$dates), "T| "), function(x) {x[[1]]})
 pheno$ScanDate_Group <- as.factor(pheno$ScanDate_Group)
+pData(raw.data) <- pheno # update pData
+row.names(pData(raw.data)) <- sampleNames(protocolData(raw.data))
+pheno$Filename <- rownames(pData(raw.data))
+```
+
+Assigning colours based on scan date group.
+
+```{r color, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
 colours=c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666", "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F") # first 8 colour names derived from Dark2, and last 12 names from Set3
 varuse="ScanDate_Group"
 i=nlevels(pheno[,varuse])
@@ -107,8 +160,42 @@ colour_list <- colours[1:i]
 names(colour_list) <- levels(pheno[,varuse]) 
 ```
 
-### Outlier detection and raw intensity plots function definition
+##Results
+
+###Quality Control Analysis 
+
+```{r pheno_check_raw, eval=T, warning=F,results="asis",echo=F}
+# show the first five rows
+pandoc.table(head(pData(raw.data),27), split.tables=Inf,caption="Show the first 5 rows of the modified phenotype file")
+# show the groups of interest
+avail_group=c("Tissue","Disease","Treatment")[c("Tissue","Disease","Treatment")%in%names(pheno)]
+res=as.data.frame(table(pheno[,avail_group]))
+names(res) <- c(avail_group,"Count")
+pandoc.table(res[which(res$Count>0),], split.tables=Inf, caption="Sample size in different tissue and disease/treatment groups")
+# show samples in different batch
+if ("ScanDate_Group"%in%names(pheno)) {
+  res=as.data.frame(table(droplevels(pheno[,"ScanDate_Group"])))
+  names(res) <- c("ScanDate_Group","Count")
+  pandoc.table(res, split.tables=Inf, caption="Sample size in different batch")
+} else {cat("No scan date information.")}
+```
+
+
+#### Outlier detection and raw intensity plots 
+
 ```{r}
+subsamp <- function(x,num=20000, seed=123) {
+  set.seed(seed)
+  subsample=num # if number of probes are >20000, randomly select 20000 probes for plot or compute
+  if (nrow(x)>subsample) {
+    ss  = sample(nrow(x), subsample)
+    Mss = x[ss,,drop=FALSE]
+  } else {
+    ss  = TRUE
+    Mss = x
+  }
+  Mss
+}
 outlier_KS_func = function(exprs) { # matrix (row: probe intensities/RLE values etc., col: array (e.g. sample))
   fx = ecdf(as.vector(exprs)) # get empirical cumulative distribution function of the data
   KS=suppressWarnings(apply(exprs, 2, function(v)ks.test(v, y = fx, alternative="two.sided")$statistic))
@@ -151,16 +238,16 @@ plot_func <- function(Mss,outlier,ylab) {
 
 ```
 
-### Outlier detection and raw intensity plots function call
+
 ```{r}
 #Random selection of 20000 probes
 ss  <- sample(nrow(exprs(raw.data)), 20000)
-Mss <- exprs(raw.data)[ss,,drop=FALSE]
+Mss <- log2(exprs(raw.data)[ss,,drop=FALSE]) #use log2 transformed raw probe intensity
 outlier <- outlier_KS_func(Mss)
 plot_func(Mss=Mss, outlier=outlier, ylab="Raw Probe Intensities")
 ```
 
-### RNA Digestion
+#### RNA Digestion
 
 
 Overall RNA quality can be assessed by RNA degradation plots. In the gene expression array, each probe is represented by a probe set. Each probe set is 11-20 probes (pairs of oligos). This plot shows the average intensity of each probe across all probe sets, ordered from the 5' to the 3' end. It is expected that probe intensities are lower at the 5' end of a probe set when compared to the 3' end as RNA degradation starts from the 5' end of a molecule. RNA which is too degraded will shows a very high slope from 5' to 3'. Thus, the standardized slope of the RNA degradation plot serves as quantitative indicator of the RNA degradation. 
@@ -168,8 +255,7 @@ Overall RNA quality can be assessed by RNA degradation plots. In the gene expres
 This step requires R package affy that outputs the probes in each probe set matrix ordered from 5' to 3', while this function is not implemented in the oligo package.
 
 
-
-```{r RNAdegaffy_utility, eval=T, echo=F}
+```{r RNAdegaffy_utility, eval=TRUE, echo=FALSE}
 # The rawall_func function obtains all files in the data directory with full path
 rawall_func <- function() {
     raw_fn=list.files(path=paste0(datadir,"/",geo_id,"/data"))
@@ -250,25 +336,90 @@ affy_exclude = c('hta.2.0', 'pd.hugene.2.0.st')
 ```
 
 
-```{r RNAdeg_plot, eval=T, echo=F, message=F, warning=F}
+```{r RNAdeg_plot, eval=T, echo=TRUE, message=F, warning=F}
 if (platform=="Affymetrix"&suppldata) {
   if (any(sapply(affy_exclude, function(y){grepl(y, annotation(raw.data))}))) {cat("The affy package is not designed for this array type.\n")} else {RNAdeg_func()}
 }
 ```
 
-### QC Summary
-The QC summary was generated through RAVED and saved locally. The file is being read and displayed through the below code.
-```{r files1, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
-pheno.qc <- read.delim("GSE34607_Phenotype_withQC.txt")
+
+#### Principal Component Analysis (PCA)
+
+PCA demonstrates information of the expression dataset in a reduced number of dimensions. Clustering and PCA plots enable to assess to what extent arrays resemble each other, and whether this corresponds to the known resemblances of the samples. In this step we compute PCs and the variance is explained by the first 10 PCs. PCA plots are generated using the first two principle components colored by known factors (e.g. treatment/disease conditions, tissue, donors and scan dates), visualizing similarities between arrays and these similarities' correlation to batch effects.
+
+```{r pca_utility, eval=T, echo=F}
+raw.data.pca <- na.omit(log2(exprs(raw.data)))
+ 
+  # As scale function divides by the variance, the probe with the expression sd=0 across samples must be removed.
+  sd <- apply(raw.data.pca,1,sd)
+  raw.data.pca <- raw.data.pca[!sd==0,]
+  # compute pcs
+  pca <- prcomp(t(raw.data.pca), retx = TRUE, center = TRUE, scale = TRUE)
+  pc <- data.frame(pca$x)
+  # compute variance explained by each PC
+  vars <- pca$sdev^2
+  pcs <- t(pc)
+  pvars <- vars*100.0/sum(vars) # proportion of variance (%) explained by each PC
+  cumsum_pvars <- cumsum(pvars) # Cumulative Proportion of Variance (%)
+  if (nrow(pcs)>10) {nres <- 10} else {nres=nrow(pcs)} # select top 10 PCs if number of PCs >10
+  res <- data.frame(rownames(pcs),pvars,cumsum_pvars)[1:nres,]
+  names(res) <- c("PC","Proportion of Variance (%)","Cumulative Proportion of Variance (%)")
+pandoc.table(res,split.tables=Inf, caption="Variance explained")
+
+# The pcaplot_func creates plots for pc1 and pc2
+pcaplot_func <- function(pc, group_var,legend) { # group_var: column name for a specific group; legend: legend name
+  group=pData(raw.data)[which(row.names(pData(raw.data))%in%row.names(pc)),group_var]
+  df <- data.frame(
+    PC1=pc$PC1,
+    PC2=pc$PC2,
+    group=group
+  )
+  i=length(levels(group))
+  group_col <- colours[1:i]
+  names(group_col) <- levels(pData(raw.data)[,group_var]) # colour to corresponding group for plot
+  ggplot(df,aes(PC1,PC2,color=group)) + geom_point() +
+    theme_bw() +
+    scale_color_manual(legend,values=group_col,na.value="grey")
+}
+# The pca_func function generates multiple pca plots for scan date, disease, treatment, and Donor
+pca_func <- function(pc) {
+  group_vars=c("ScanDate_Group", "Disease", "Treatment", "Tissue", "Donor")
+  legends=c("ScanDate_Group", "Disease", "Treatment", "Tissue", "Donor")
+  idx_exist=c(1:length(group_vars))[group_vars%in%names(pData(raw.data))] # obtain index of existing variables
+  plot_list=list() # store plots in a list
+  for (i in idx_exist) {
+    group_var=group_vars[i]
+    legend=legends[i]
+    nlevel=nlevels(pData(raw.data)[,group_var]) # levels of the variable
+    if (group_var=="ScanDate_Group"|(nlevel>=2&nlevel<=20)) {
+      plot_list[[group_var]]=pcaplot_func(pc, group_var=group_var,legend=legend)
+    }
+  }
+  return(plot_list)
+}
+plot_list=pca_func(pc=pc)
+for (i in plot_list) {print(i)}
+```
+
+
+#### QC Summary
+
+QC status is set to pass or fail depending upon the number of outliers detected. The outlier detection is based on the outliers detected in outlier intensity, MA, NUSE and spatial plots. By default, samples detected as an outlier more than twice are assigned to 0 otherwise to 1. Only the outlier intensity was coded in detail for this project. A more comprehensive QC report which includes the outliers for all other plots are discussed in detail in the QC_GSE34607.Rmd file at the Github repository (performed from RAVED tool). 
+The QC Pass status column is added to the "Pheno" table based on the number of outliers.  
+As we can see from the outlier detection plot above, the number of outliers detected are 0.
+
+```{r files1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+#pheno.qc <- read.delim("GSE34607_Phenotype_withQC.txt")
+pheno$QC_PASS <- rep("Pass")
 pheno
 ```
 
 
 ### Differential Expression Analysis
 
-The generated .csv files for gene exression and pathway analysis performed through RAVED is loaded and stored in corresponding variables. 
+The generated .csv files for gene expression and pathway analysis performed through RAVED is loaded and stored in corresponding variables. 
 
-```{r genefiles, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+```{r genefiles, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
 indoorcontrol4h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_4h_vs_control_4h.csv")
 indoorcontrol10h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_10h_vs_control_10h.csv")
 indoorcontrol24h <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_24h_vs_control_24h.csv")
@@ -277,7 +428,7 @@ outdoorcontrol10h <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_10h_vs
 outdoorcontrol24h <- read.csv("GSE34607_BEAS-2B_nonasthma_OutdoorExposure_24h_vs_control_24h.csv")
 ```
 
-```{r pathwayfiles, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+```{r pathwayfiles, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
 indoorcontrol4h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_4h_vs_control_4h_fgsea_results.csv")
 indoorcontrol10h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_10h_vs_control_10h_fgsea_results.csv")
 indoorcontrol24h_pathway <- read.csv("GSE34607_BEAS-2B_nonasthma_IndoorExposure_24h_vs_control_24h_fgsea_results.csv")
@@ -299,48 +450,279 @@ The final output is a dataframe that contains 9 columns:
 * main_pathway - main pathway
 * leadingEdge - genes that drive the enrichment
 
-```{r}
+```{r mainpathway, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
 library(dplyr)
-indoorcontrol4h_pathway <- indoorcontrol4h_pathway %>% filter(main_pathway == "main")
-indoorcontrol10h_pathway <- indoorcontrol10h_pathway %>% filter(main_pathway == "main")
-indoorcontrol24h_pathway <- indoorcontrol24h_pathway %>% filter(main_pathway == "main")
-outdoorcontrol4h_pathway <- outdoorcontrol4h_pathway %>% filter(main_pathway == "main")
-outdoorcontrol10h_pathway <- outdoorcontrol10h_pathway %>% filter(main_pathway == "main")
-outdoorcontrol24h_pathway <- outdoorcontrol24h_pathway %>% filter(main_pathway == "main")
+indoorcontrol4h_mainpathway <- indoorcontrol4h_pathway %>% filter(main_pathway == "main")
+indoorcontrol10h_mainpathway <- indoorcontrol10h_pathway %>% filter(main_pathway == "main")
+indoorcontrol24h_mainpathway <- indoorcontrol24h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol4h_mainpathway <- outdoorcontrol4h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol10h_mainpathway <- outdoorcontrol10h_pathway %>% filter(main_pathway == "main")
+outdoorcontrol24h_mainpathway <- outdoorcontrol24h_pathway %>% filter(main_pathway == "main")
 detach("package:dplyr")
 ```
 
 
-Note that because permutation is used, the p-value results might not be exactly the same every time you run fgsea.
-
-
-### Number of significant genes and pathways
+#### Number of significant genes and pathways
 
 The csv files contains the details of the gene, log2, P values and adjusted values. These data will now be used to identify the number of signicantly differential expressed gene and number of significant pathways corresponding to all the six comparisons.
 
-```{r significantpathway, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
-col1<- c("Indoor vs Control - 4h", "Indoor vs Control - 10h", "Indoor vs Control - 24h", "Outdoor vs Control - 4h","Outdoor vs Control - 10h", "Outdoor vs Control - 24h")
-col2 <- c(sum(indoorcontrol4h$adj.P.Val  < 0.05), sum(indoorcontrol10h$adj.P.Val < 0.05), sum(indoorcontrol24h$adj.P.Val < 0.05), sum(outdoorcontrol4h$adj.P.Val  < 0.05), sum(outdoorcontrol10h$adj.P.Val  < 0.05), sum(outdoorcontrol24h$adj.P.Val  < 0.05))
-col3 <- c(sum(indoorcontrol4h_pathway$padj  < 0.05), sum(indoorcontrol10h_pathway$padj < 0.05), sum(indoorcontrol24h_pathway$padj < 0.05), sum(outdoorcontrol4h_pathway$padj  < 0.05), sum(outdoorcontrol10h_pathway$padj  < 0.05), sum(outdoorcontrol24h_pathway$padj  < 0.05))
-tab <- data.frame(col1, col2, col3)
-names(tab) <- c("Compared Set", "Number of significant genes", "Number of significant pathways")
-tab1 <- as.table(as.matrix(tab))
-tab1
+```{r volcanoplot, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+volcanoplotfunc <- function(df,name){
+  df$sig <- rep("Insignificant", nrow(df))
+  df$sig[which(df$adj.P.Val<0.05)] <- "Significant"
+  volcanoplot <- ggplot(df, aes(x = logFC, y = -log10(adj.P.Val), color = sig)) + 
+    geom_point() +
+    theme_bw() +
+    ggtitle(name) +
+    xlab("LogFC")+
+    ylab("-Log10(q-value)") +
+    scale_color_manual(values = c("black", "red")) +
+    theme(legend.position = "none")
+  return(volcanoplot)
+}
+ind4hvp <- volcanoplotfunc(indoorcontrol4h, "Indoor vs Control 4h")
+ind10hvp <- volcanoplotfunc(indoorcontrol10h, "Indoor vs Control 10h")
+ind24hvp <- volcanoplotfunc(indoorcontrol24h, "Indoor vs Control 24h")
+out4hvp <- volcanoplotfunc(outdoorcontrol4h, "Outdoor vs Control 4h")
+out10hvp <- volcanoplotfunc(outdoorcontrol10h, "Outdoor vs Control 10h")
+out24hvp <- volcanoplotfunc(outdoorcontrol24h, "Outdoor vs Control 24h")
+
+ggarrange(ind4hvp, ind10hvp, ind24hvp, out4hvp, out10hvp, out24hvp, ncol = 3, nrow=2)
 ```
 
-#### Volcano plot trial 
-```{r de}
-library(ggplot2)
-# Assign (in)significant genes
-indoorcontrol4h$significance <- rep("Insignificant", nrow(indoorcontrol4h))
-indoorcontrol4h$significance[which(indoorcontrol4h$adj.P.Val<0.05)] <- "Significant"
-ggplot(indoorcontrol4h, aes(x = logFC, y = -log10(adj.P.Val), color = significance)) + 
-  geom_point() +
-  theme_bw() +
-  ggtitle("Volcano plot") +
-  xlab("LogFC")+
-  ylab("-Log10(q-value)") 
+```{r significantpathway, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+col1<- c("Indoor vs Control - 4h", "Indoor vs Control - 10h", "Indoor vs Control - 24h", "Outdoor vs Control - 4h","Outdoor vs Control - 10h", "Outdoor vs Control - 24h")
+col2 <- c(sum(indoorcontrol4h$adj.P.Val  < 0.05), sum(indoorcontrol10h$adj.P.Val < 0.05), sum(indoorcontrol24h$adj.P.Val < 0.05), sum(outdoorcontrol4h$adj.P.Val  < 0.05), sum(outdoorcontrol10h$adj.P.Val  < 0.05), sum(outdoorcontrol24h$adj.P.Val  < 0.05))
+col3 <- c(sum(indoorcontrol4h_mainpathway$padj  < 0.05), sum(indoorcontrol10h_mainpathway$padj < 0.05), sum(indoorcontrol24h_mainpathway$padj < 0.05), sum(outdoorcontrol4h_mainpathway$padj  < 0.05), sum(outdoorcontrol10h_mainpathway$padj  < 0.05), sum(outdoorcontrol24h_mainpathway$padj  < 0.05))
+tab <- data.frame(col1, col2, col3)
+names(tab) <- c("Comparison", "NO. of significant genes", "NO. of significant main pathways")
+pandoc.table(tab, style="grid", split.cells = 20)
 ```
+
+#### Required genes and pathway extraction
+
+For this step, we are going to try and subset the data frames so that the resultant data frame only contains the required gene symbols, namely, SERPINB2, CXCL1, ,CXCL6, CYP1A1, CYP1B1 and IL6. These genes are the significantly altered during the experiment and is confirmed through experiments and the official results can be found in GEO.
+
+```{r gene selection, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+genefunc <- function(genedf) {
+genedf <- genedf %>% 
+  filter(SYMBOL == "SERPINB2"| SYMBOL == "CXCL1"|SYMBOL == "CXCL6"|SYMBOL == "IL6"|SYMBOL == "CYP1A1"|SYMBOL == "CYP1B1"|SYMBOL == "IL8" | SYMBOL == "CXCL8" | SYMBOL == "TIPARP") %>%
+  group_by(SYMBOL) %>% 
+    arrange(adj.P.Val) %>% 
+    slice(1)
+return(genedf)
+}
+sel_gene_Ind4h <- genefunc(indoorcontrol4h)
+sel_gene_Ind10h <- genefunc(indoorcontrol10h)
+sel_gene_Ind24h <- genefunc(indoorcontrol24h)
+sel_gene_Out4h <- genefunc(outdoorcontrol4h)
+sel_gene_Out10h <- genefunc(outdoorcontrol10h)
+sel_gene_Out24h <- genefunc(outdoorcontrol24h)
+
+DE_Req_Genes <- data.frame(sel_gene_Ind4h$SYMBOL,sel_gene_Ind4h$ID, sel_gene_Ind4h$logFC, sel_gene_Ind4h$adj.P.Val, sel_gene_Ind10h$logFC, sel_gene_Ind10h$adj.P.Val, sel_gene_Ind24h$logFC, sel_gene_Ind24h$adj.P.Val, sel_gene_Out4h$logFC, sel_gene_Out4h$adj.P.Val, sel_gene_Out10h$logFC, sel_gene_Out10h$adj.P.Val, sel_gene_Out24h$logFC, sel_gene_Out24h$adj.P.Val)
+
+names(DE_Req_Genes) <- c("Gene Symbol", "GeneID", "Indoor4h.logFC", "Indoor4h.QVal","Indoor10h.logFC", "Indoor10h.QVal", "Indoor24h.logFC", "Indoor24h.QVal", "Outdoor4h.logFC", "Outdoor4h.QVal", "Outdoor10h.logFC", "Outdoor10h.QVal", "Outdoor24h.logFC", "Outdoor24h.QVal")
+ft <- DE_Req_Genes %>% as_flextable()
+ft %>% span_header()
+```
+
+
+```{r eval=T}
+library(dplyr)
+genearrangefunc <- function(genedf) {
+  genedf %>%
+    dplyr::filter(SYMBOL!="NA") %>%
+    dplyr::filter(!is.na(SYMBOL)) %>%
+    dplyr::group_by(SYMBOL) %>%
+    dplyr::arrange(adj.P.Val, -abs(logFC)) %>%
+    dplyr::filter(row_number()==1) %>%
+    data.frame()
+}
+detach("package:dplyr")
+```
+
+```{r eval=T}
+indoorcontrol4h.arranged <- genearrangefunc(indoorcontrol4h)
+indoorcontrol10h.arranged <- genearrangefunc(indoorcontrol10h)
+indoorcontrol24h.arranged <- genearrangefunc(indoorcontrol24h)
+outdoorcontrol4h.arranged <- genearrangefunc(outdoorcontrol4h)
+outdoorcontrol10h.arranged <- genearrangefunc(outdoorcontrol10h)
+outdoorcontrol24h.arranged <- genearrangefunc(outdoorcontrol24h)
+```
+
+```{r}
+indoorcontrol4h.gene <- indoorcontrol4h.arranged$SYMBOL[indoorcontrol4h.arranged$adj.P.Val<0.05&abs(indoorcontrol4h.arranged$logFC)>=1.3]
+indoorcontrol10h.gene <- indoorcontrol10h.arranged$SYMBOL[indoorcontrol10h.arranged$adj.P.Val<0.05&abs(indoorcontrol10h.arranged$logFC)>=1.3]
+indoorcontrol24h.gene <- indoorcontrol24h.arranged$SYMBOL[indoorcontrol24h.arranged$adj.P.Val<0.05&abs(indoorcontrol24h.arranged$logFC)>=1.3]
+outdoorcontrol4h.gene <- outdoorcontrol4h.arranged$SYMBOL[outdoorcontrol4h.arranged$adj.P.Val<0.05&abs(outdoorcontrol4h.arranged$logFC)>=1.3]
+outdoorcontrol10h.gene <- outdoorcontrol10h.arranged$SYMBOL[outdoorcontrol10h$adj.P.Val<0.05&abs(outdoorcontrol10h$logFC)>=1.3]
+outdoorcontrol24h.gene <- outdoorcontrol24h.arranged$SYMBOL[outdoorcontrol24h$adj.P.Val<0.05&abs(outdoorcontrol24h$logFC)>=1.3]
+sel.gene <- unique(c(indoorcontrol4h.gene, indoorcontrol10h.gene))
+```
+
+```{r eval=T}
+# get probe id
+library(dplyr)
+genedata.sel <- rbind(indoorcontrol4h.arranged, indoorcontrol10h.arranged) %>%
+  dplyr::filter(SYMBOL%in%sel.gene) %>%
+  dplyr::group_by(SYMBOL) %>%
+  dplyr::arrange(adj.P.Val, -abs(logFC)) %>%
+  dplyr::filter(row_number()==1) %>%
+  dplyr::select(ID, SYMBOL) %>%
+  data.frame() %>%
+  unique()
+detach("package:dplyr")
+```
+
+```{r eval=T}
+data.rma.sel <- exprs(raw.data.rma)
+data.rma.sel <- data.rma.sel[row.names(data.rma.sel)%in%genedata.sel$ID,]
+row.names(data.rma.sel) <- unname(sapply(row.names(data.rma.sel), function(x){genedata.sel$SYMBOL[genedata.sel$ID==x]}))
+colnames(data.rma.sel) <- unname(sapply(colnames(data.rma.sel), function(x){pheno$Treatment[pheno$Filename==x]}))
+colnames(data.rma.sel) <- gsub("Exposure","",colnames(data.rma.sel))
+```
+
+```{r eval=T}
+status=factor(pheno$Treatment)
+color.status = colours[c(1:nlevels(status))]
+names(color.status) = levels(status)
+color.status.list <- unlist(lapply(colnames(data.rma.sel),function(x){color.status[x]}))
+heatmap.2(data.rma.sel, scale = "none", col=viridis(256, option="B"),
+          ColSideColors=color.status.list,
+          labCol=colnames(data.rma.sel), labRow=row.names(data.rma.sel), 
+          trace = "none", 
+          density.info = "none", 
+          main="Gene Heat Map",
+          key=TRUE, keysize=1.5,key.xlab="Gene Expression Values")
+legend("bottomleft",legend=names(color.status),fill=color.status,cex=0.6)
+```
+
+#### Pathway analysis
+The selected genes are strongly associated with the below pathways (commonly altered in asthmatic patients). These pathways are selected from all comparisons. for further analysis.
+1. KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION
+2. KEGG_CHEMOKINE_SIGNALING_PATHWAY
+3. KEGG_EPITHELIAL_CELL_SIGNALING_IN_HELICOBACTER_PYLORI_INFECTION
+4. REACTOME_G_ALPHA_I_SIGNALLING_EVENTS
+5. REACTOME_SIGNALING_BY_INTERLEUKINS
+6. REACTOME_GPCR_LIGAND_BINDING
+7. REACTOME_CYTOCHROME_P450_ARRANGED_BY_SUBSTRATE_TYPE
+8. KEGG_METABOLISM_OF_XENOBIOTICS_BY_CYTOCHROME_P450
+
+```{r select pathway function, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+pathwayfunc <- function(df) {
+df <- df %>% filter(pathway == "KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION"| pathway == "KEGG_CHEMOKINE_SIGNALING_PATHWAY"| pathway == "KEGG_EPITHELIAL_CELL_SIGNALING_IN_HELICOBACTER_PYLORI_INFECTION"| pathway == "REACTOME_G_ALPHA_I_SIGNALLING_EVENTS"|pathway == "REACTOME_SIGNALING_BY_INTERLEUKINS"|pathway == "REACTOME_GPCR_LIGAND_BINDING"|pathway == "REACTOME_CYTOCHROME_P450_ARRANGED_BY_SUBSTRATE_TYPE"|
+pathway == "KEGG_METABOLISM_OF_XENOBIOTICS_BY_CYTOCHROME_P450"|pathway == "KEGG_DNA_REPLICATION"| pathway == "REACTOME_ACTIVATION_OF_THE_PRE_REPLICATIVE_COMPLEX"| pathway == "REACTOME_CELL_CYCLE_CHECKPOINTS")
+return(df)
+}
+sel_pathway_Ind4h <- pathwayfunc(indoorcontrol4h_pathway)
+sel_pathway_Ind10h <- pathwayfunc(indoorcontrol10h_pathway)
+sel_pathway_Ind24h <- pathwayfunc(indoorcontrol24h_pathway)
+sel_pathway_Out4h <- pathwayfunc(outdoorcontrol4h_pathway)
+sel_pathway_Out10h <- pathwayfunc(outdoorcontrol10h_pathway)
+sel_pathway_Out24h <- pathwayfunc(outdoorcontrol24h_pathway)
+```
+
+#### NES vs Pathway Table
+For the selected pathways, the NES and padj values of all different combinations are pulled into a table comparison. 
+
+```{r NES-Pathway table, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+FGSEA_Req_Pathway <- data.frame(sel_pathway_Ind4h$pathway, sel_pathway_Ind4h$padj, sel_pathway_Ind4h$NES,sel_pathway_Ind10h$padj, sel_pathway_Ind10h$NES,sel_pathway_Ind24h$padj, sel_pathway_Ind24h$NES, sel_pathway_Out4h$padj, sel_pathway_Out4h$NES,sel_pathway_Out10h$padj, sel_pathway_Out10h$NES, sel_pathway_Out24h$padj, sel_pathway_Out24h$NES)
+names(FGSEA_Req_Pathway) <- c("Pathway", "Indoor4h.padj", "Indoor4h.NES","Indoor10h.padj", "Indoor10h.NES", "Indoor24h.padj", "Indoor24h.NES", "Outdoor4h.padj", "Outdoor4h.NES", "Outdoor10h.padj", "Outdoor10h.NES", "Outdoor24h.padj", "Outdoor24h.NES")
+FGSEA_Req_Pathway_Table <- FGSEA_Req_Pathway %>% as_flextable()
+FGSEA_Req_Pathway_Table %>% span_header()
+```
+
+#### NES vs Pathway Barplot
+For the selected pathways, the NES and padj values of all different combinations are plotted into a barplot for more detailed comparison. The indoor and outdoor results are plotted separately and the pathways which are significant are found. 
+
+
+```{r plot relevant pathways, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+pathwaylabels = c("K: DNA Replication", "K:Cytokine-Cytokine Receptor Interaction", "K:Chemokine Signalling Pathway", "K:Epithelial Cell Signalling (in Helicobacter pylori infection)", "R:G-Alpha1 Signalling Events", "R:Signalling by Interleukins", "R:GPCR Ligand Binding", "R: Activation of Pre-Replicative Complex", "R: Cell Cycle Checkpoints", "R:Cytochrome P450 (arranged by susbtrate type)", "K:Metabolism of Xenobiotics by Cytochrome P450" )
+df.nes <- data.frame(Pathway = pathwaylabels, Indoor4h = FGSEA_Req_Pathway$Indoor4h.NES, Outdoor4h = FGSEA_Req_Pathway$Outdoor4h.NES, Indoor10h = FGSEA_Req_Pathway$Indoor10h.NES, Outdoor10h = FGSEA_Req_Pathway$Outdoor10h.NES, Indoor24h = FGSEA_Req_Pathway$Indoor24h.NES, Outdoor24h = FGSEA_Req_Pathway$Outdoor24h.NES)
+
+long <- df.nes %>% gather("Condition", "Value", -Pathway)
+df.padj <- data.frame(Pathway = pathwaylabels, Indoor4h = FGSEA_Req_Pathway$Indoor4h.padj, Outdoor4h = FGSEA_Req_Pathway$Outdoor4h.padj, Indoor10h = FGSEA_Req_Pathway$Indoor10h.padj, Outdoor10h = FGSEA_Req_Pathway$Outdoor10h.padj, Indoor24h = FGSEA_Req_Pathway$Indoor24h.padj, Outdoor24h = FGSEA_Req_Pathway$Outdoor24h.padj)
+
+long_padj <- df.padj %>% gather("Condition", "PValue", -Pathway)
+long$Condition <- c(rep("Indoor", 11), rep("Outdoor", 11), rep("Indoor", 11), rep("Outdoor", 11), rep("Indoor", 11), rep("Outdoor", 11))
+long$adjpval <- long_padj$PValue
+long$significance <- ifelse(long_padj$PValue < 0.05, "*", NA)
+long$time <- c(rep("4h", 22), rep("10h", 22), rep("24h", 22))
+
+pathway_barplot <- ggplot(long, aes(x = Pathway, y = Value, fill = Condition)) +
+        geom_bar(width=0.8, position=position_dodge(width=0.8), stat="identity") +
+        #facet_wrap(~time) +
+        facet_wrap(~factor(time, levels=c('4h','10h','24h'))) +
+        coord_flip() +
+        xlab("KEGG (K) & Reactome (R) Pathways")
+        ylab("Normalized Enrichment Score")+
+        theme_bw()+
+        theme(
+          axis.title.y=element_blank(),
+          axis.text.y=element_text(size=11),
+          axis.title.x=element_text(size=5)) 
+        
+pathway_barplot + geom_text(label=long$significance,hjust=0,vjust=0, size=4, position = position_dodge(width = 1))
+```
+
+```{r}
+toppathwayfunc <- function(pathwaydf, genedf){
+  pathwaydf %>% filter(NES>=0)
+  toppathwaypos <- which.max(pathwaydf$NES)
+  toppathwaydf <- pathwaydf[toppathwaypos,]
+  gene_list <- genedf$t
+  names(gene_list) <- genedf$SYMBOL
+  gene_list <- gene_list[!duplicated(names(gene_list))]
+  fgseaRes <- fgsea(pathways = pathways, stats = gene_list, minSize = 15, 
+                  maxSize = 500, nperm = 10000, gseaParam = 1)
+  fgseaRes <- fgseaRes[order(fgseaRes$pval), ]
+  topplot <- plotEnrichment(pathway = pathways[[toppathwaypos]], stats = gene_list) + 
+              labs(title= toppathwaydf$pathway)
+  return(topplot)
+}
+ind4toppospath <- toppathwayfunc(indoorcontrol4h_mainpathway, indoorcontrol4h)
+ind10toppospath <- toppathwayfunc(indoorcontrol10h_mainpathway, indoorcontrol10h)
+ind24toppospath <- toppathwayfunc(indoorcontrol24h_mainpathway, indoorcontrol24h)
+out4toppospath <- toppathwayfunc(outdoorcontrol4h_mainpathway, outdoorcontrol4h)
+out10toppospath <- toppathwayfunc(outdoorcontrol10h_mainpathway, outdoorcontrol10h)
+out24toppospath <- toppathwayfunc(outdoorcontrol24h_mainpathway, outdoorcontrol24h)
+ggarrange(ind4toppospath, ind10toppospath, ind24toppospath, out4toppospath, out10toppospath, out24toppospath, ncol = 3, nrow=2)
+```
+
+```{r, warning=FALSE}
+topnegpathwayfunc <- function(pathwaydf, genedf){
+  pathwaydf <- pathwaydf %>% dplyr::filter(NES<=0)
+  toppathwaypos <- which.min(pathwaydf$NES)
+  toppathwaydf <- pathwaydf[toppathwaypos,]
+  gene_list <- genedf$t
+  names(gene_list) <- genedf$SYMBOL
+  gene_list <- gene_list[!duplicated(names(gene_list))]
+  fgseaRes <- fgsea(pathways = pathways, stats = gene_list, minSize = 15, 
+                  maxSize = 500, nperm = 10000, gseaParam = 1)
+  fgseaRes <- fgseaRes[order(fgseaRes$pval), ]
+  topplot <- plotEnrichment(pathway = pathways[[toppathwaypos]], stats = gene_list) + 
+              labs(title= toppathwaydf$pathway)
+  return(topplot)
+}
+ind4topnegpath <- topnegpathwayfunc(indoorcontrol4h_mainpathway, indoorcontrol4h)
+ind10topnegpath <- topnegpathwayfunc(indoorcontrol10h_mainpathway, indoorcontrol10h)
+ind24topnegpath <- topnegpathwayfunc(indoorcontrol24h_mainpathway, indoorcontrol24h)
+out4topnegpath <- topnegpathwayfunc(outdoorcontrol4h_mainpathway, outdoorcontrol4h)
+out10topnegpath <- topnegpathwayfunc(outdoorcontrol10h_mainpathway, outdoorcontrol10h)
+out24topnegpath <- topnegpathwayfunc(outdoorcontrol24h_mainpathway, outdoorcontrol24h)
+ggarrange(ind4topnegpath, ind10topnegpath, ind24topnegpath, out4topnegpath, out10topnegpath, out24topnegpath, ncol = 3, nrow=2)
+```
+
+Let's list all of the leading edge genes for the pathway REACTOME_INTERFERON_GAMMA_SIGNALING. They are in the leadingEdge column of fgsea results.
+```{r, eval = TRUE}
+indoorcontrol4h_pathway %>% 
+  filter(pathway== "KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION") %>% 
+  dplyr::select(leadingEdge) %>% 
+  unlist() %>% 
+  unname()
+```
+
 
 
 ## References
