@@ -1,0 +1,1232 @@
+---
+title: 'RAVED: Differential Expression Analysis for Gene Expression Microarry Data -- GSE34607 Outdoor vs Control at 24h'
+author: 'Nisha Narayanan'
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: TRUE
+    depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+***
+
+This report shows the differential analysis for gene expression microarry data from GEO study, including:
+
+* Raw probe intensity normalization
+* Differential expression
+* Adjusting for batch effect
+
+Input:
+
+A pre-prepared phenotype file contains GEO_ID, Tissue, Disease and Treatment information.
+
+Outputs:
+
+* Gene differential expression result file(s) (.csv)
+* A gene expression analysis report (.html)
+
+Mannually change the variables for GEO ID (geo_id), data directory (datadir), result directory (resdir), tissue, disease/treatment status, and comparison conditions
+
+```{r, var, eval=T, echo=T}
+# GEO id
+geo_id="GSE34607"
+# direcotry stores GEO data
+datadir="/Users/nishanarayanan/Downloads/"
+# directory stores generated files
+resdir="/Users/nishanarayanan/Documents/R-GEO"
+# tissue
+tissue= "BEAS-2B" # naming is rigid, should be same as the Tissue defined in QC
+# reference condition
+con0="control_24h" # naming is rigid, should be same as the Treatment defined in QC
+# altered condition
+con1="OutdoorExposure_24h" # naming is rigid, should be same as the Treatment defined in QC
+# treatment. Assign "comparison" if this column is used for DE.
+treatment=c(con0,con1)
+# disease. Assign "comparison" if this column is used for DE.
+disease="nonasthma"
+```
+
+Manually change these variables according to dataset:
+**Note that** four variables, platform (platform), geo_GPL (GPL id for analysis if the samples in the study were scanned on multiple platforms), usesuppl (whether to use supplementary data for DE analysis), and normdata (whether the expression matrix is normalized), need to be **manually** defined based on the QC reports. A shortname_func function is suggested to be updated.
+
+```{r var2, eval=T, echo=T}
+platform="Affymetrix"
+geo_GPL=""
+usesuppl=TRUE
+normdata=FALSE
+# The shortname_func function shortens the sample name shown in the plots. To start, define shortname_func <- function(x){x}
+shortname_func <- function(x){gsub("^(.*).(cel|CEL).gz","\\1",x)} # remove .cel.gz or .CEL.gz from sample
+```
+
+Automatically generate phenotype file variable pheno_fn if it is generated from QC step, otherwise manually assign this variable.
+
+```{r pheno_fn, eval=T, echo=F}
+if (geo_GPL=="") {pheno_fn=paste0(resdir,"/",geo_id,"_Phenotype_withQC.txt")} else {pheno_fn=paste0(resdir,"/",geo_id,"_",geo_GPL,"_Phenotype_withQC.txt")}
+```
+
+```{r pheno_fn_show, eval=T, echo=F}
+cat(paste0("pheno_fn = '", pheno_fn,"'"))
+```
+
+```{r check_var, eval=T, echo=F}
+varerror <- grepl("-",c(con0, con1))
+if (any(varerror)) {stop("Condition variables shoud not have sepcial character '-': ", paste0(c(con0, con1)[varerror]))}
+```
+
+```{r check_version, eval=T, echo=F}
+rversion <- as.numeric(paste0(R.Version()$major, ".", gsub("(\\d)\\..*", "\\1", R.Version()$minor)))
+```
+
+Install the prerequisite R packages if they do not exist
+
+* GEOquery 
+* oligo
+* limma
+* sva
+* annotate
+* DT
+* corresponding Bioconductor annotationData Packages
+* viridis (heatmap color)
+* ggplot2
+* gplots (heatmap2 plot)
+* devtools (compute pca)
+* pander
+* fgsea
+
+```{r pkginstall_func, eval=T, echo=F}
+pkginstall_func <- function(pkgs, rversion, Bioconductor=FALSE) {
+  if (Bioconductor) {
+    if (rversion<3.6) {
+      source("http://bioconductor.org/biocLite.R")
+      sapply(biocLite, pkgs)
+    } else {
+      sapply(pkgs, BiocManager::install)
+    }
+  } else {sapply(pkgs, install.packages)}
+}
+```
+
+
+```{r pkg, eval=T, echo=F, message=F, warning=F, results="hide"}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+all.pkgs <- installed.packages()[,"Package"]
+bioc.pkgs <- c("GEOquery", "ArrayExpress", "preprocessCore", "oligo", "limma", "sva", "annotate", "fgsea") # Bioconductor packages
+rcran.pkgs <- c("DT", "ggplot2", "gplots", "devtools", "pander")
+if (rversion<3.6) {bioc.pkgs <- c(bioc.pkgs, "viridis")} else {rcran.pkgs <- c(rcran.pkgs, "viridis")}
+miss.bioc.pkgs <- bioc.pkgs[!which(bioc.pkgs%in%all.pkgs)]
+miss.rcran.pkgs <- rcran.pkgs[!which(rcran.pkgs%in%all.pkgs)]
+if (length(miss.bioc.pkgs)>0) {pkginstall_func(pkgs=miss.bioc.pkgs, rversion = rversion, Bioconductor=T)}
+if (length(miss.rcran.pkgs)>0) {pkginstall_func(pkgs=miss.rcran.pkgs, rversion = rversion, Bioconductor=F)}
+```
+
+Load the necessary libraries
+
+```{r lib, eval=T, echo=F, message=F, warning=F}
+if (grepl("^GSE", geo_id)) {
+  library(GEOquery); geo=TRUE; arrayexpr=FALSE} else if (grepl("^E-", geo_id)) {
+  library(ArrayExpress); geo=FALSE; arrayexpr=TRUE
+}
+library(oligo)
+library(limma)
+library(sva)
+library(annotate)
+library(DT)
+library(viridis)
+library(ggplot2)
+library(gplots)
+library(devtools)
+library(preprocessCore)
+library(pander)
+library(fgsea)
+```
+
+## Obtain Phenotype and GEO Data
+
+### Phenotype data preparation
+
+```{r pheno_utility, eval=T, echo=F}
+# The phenosub_func function subsets phenotypes based on the user defined variables
+phenosub_func <- function(){
+  if (!all(tissue%in%pheno$Tissue)) {stop("Assigned tissue varialbes are not included in the Tissue column")}
+  if (!all(treatment%in%pheno$Treatment)) {stop("Assigned treatment variables are not included in the Treatment column")}
+  if  (!all(disease%in%pheno$Disease)) {stop("Assigned disease variables are not included in the Disease column")}
+  pheno.sub=subset(pheno,(Tissue%in%tissue)&(Treatment%in%treatment)&(Disease%in%disease))
+  pheno.sub=droplevels(pheno.sub)
+  # assign comparison to "Status" column
+  if (identical(sort(levels(pheno.sub$Treatment)),sort(c(con0,con1)))) {
+      pheno.sub$Status=pheno.sub$Treatment
+  }
+  if (identical(sort(levels(pheno.sub$Disease)),sort(c(con0,con1)))) {
+      pheno.sub$Status=pheno.sub$Disease
+  }
+  pheno.sub$Status <-factor(pheno.sub$Status,levels=c(con0,con1))
+  return(pheno.sub)
+}
+# The phenoqc_func function excludes outliers from phenotype file 
+phenoqc_func <- function(outlier,pheno) {
+  if (missing(outlier)) {pheno=subset(pheno, QC_Pass==1)} else {pheno=subset(pheno, Filename%in%outlier)}
+  droplevels(pheno)
+}
+# The phenopair_func function excludes unpaired donor from analysis
+phenopair_func <- function(dat) {
+  unpaired_samp=names(which(table(dat$Donor)==1))
+  dat=dat[which(!dat$Donor%in%unpaired_samp),]
+  droplevels(pheno)
+  if (length(unpaired_samp)>0) {
+    cat(paste0(length(unpaired_samp)," sample(s) with unpaired donor are excluded from analysis\n"))
+    cat(paste(unpaired_samp,collapse=", "),"\n")
+  }
+  return(dat)
+}
+# The tbsum_func function generates summary of variables of interest
+tbsum_func <- function(tb) {
+  vars=c("Status", "ScanDate_Group") # variables of interest
+  tb=as.data.frame(table(droplevels(tb[,names(tb)%in%vars])))
+  names(tb)[ncol(tb)]="Counts"
+  return(tb)
+}
+# The infosumm_function generates summary of the comparison
+infosumm_func <- function(pheno) {
+  N_Condition0 <- sum(pheno$Status==con0) # count number of samples under condition 0
+  N_Condition1 <- sum(pheno$Status==con1) # count number of samples under condition 1
+  if (identical(sort(levels(pheno$Treatment)),sort(c(con0,con1)))) {
+    App="Treatment"
+    disease=paste(disease,collapse="_")
+    if (geo_GPL=="") {name=paste(geo_id,tissue,disease,con1,"vs",con0, sep="_")} else {{name=paste(geo_id,geo_GPL,tissue,disease,con1,"vs",con0, sep="_")}}
+    Disease=disease
+    Treatment=con1
+  } else {
+    App="Disease"
+    treatment=paste(treatment,collapse="_")
+    if (geo_GPL=="") {name=paste(geo_id,tissue,treatment,con1,"vs",con0, sep="_")} else {name=paste(geo_id,geo_GPL,tissue,treatment,con1,"vs",con0, sep="_")}
+    Disease=con1
+    Treatment=treatment
+  }
+  
+  df <- data.frame(
+    GEO_ID=geo_id,
+    Tissue=tissue,
+    App=App,
+    Disease=Disease,
+    Treatment=Treatment,
+    N_Condition0=N_Condition0,
+    N_Condition1=N_Condition1,
+    Total=N_Condition0+N_Condition1,
+    Unique_ID=name
+  )
+  return(list(df=df,name=name))
+}
+```
+
+Read in pre-prepared phenotype data
+
+```{r pheno_readin, eval=T, echo=F}
+if (geo_GPL=="") {pheno_fn=paste0(resdir,"/",geo_id,"_Phenotype_withQC.txt")} else {pheno_fn=paste0(resdir,"/",geo_id,"_",geo_GPL,"_Phenotype_withQC.txt")}
+# read in the pre-prepared phenotype data
+if (!file.exists(pheno_fn)) {stop("The phenotype file does not exist. Please check!")} else {pheno <- read.table(pheno_fn, header=TRUE, sep="\t", stringsAsFactors = T)}
+```
+
+Subset phenotypes based on the comparison variables. Check variables (before and after QC if outliers are detected).
+
+```{r pheno_sub, eval=T, echo=F}
+pheno.sub=phenosub_func()
+outlier=as.character(pheno.sub$Filename)[pheno.sub$QC_Pass==0]
+if (length(outlier)>0) {
+  cat("Remove outlier(s)", outlier, "from phenotype file\n")
+  pheno.of.interest=phenoqc_func(pheno=pheno.sub)
+} else {pheno.of.interest=pheno.sub}
+```
+
+Define paired variable.
+
+If the same donors underwent treated and untreated condition, gene expression pattens are likely influenced by the same donor. Therefore, in this case, we adjust for Donor in limma regression as well as in sva batch-effect adjustment where both scan date and donor will be used as a known covariate (if donor is not correlated with scan date). For treatments/medication received by different patient groups, donor will not be adjusted.
+
+```{r paired, eval=T, echo=F, results="asis"}
+if (identical(sort(levels(pheno.of.interest$Disease)),sort(c(con0,con1)))) { # status is disease
+  paired=FALSE
+} else if (identical(sort(levels(pheno.of.interest$Treatment)),sort(c(con0,con1)))) {
+  if (all(table(pheno.of.interest$Donor)==1)) {paired=FALSE} # if treatment is in different donors
+  else {paired=TRUE} # if treatment is in samd donors
+}
+```
+
+```{r paired_show, eval=T, echo=F}
+cat("paired =",as.character(paired))
+```
+
+Exclude samples missing the other paired donors in treatment comparisons if paired analysis is applied
+```{r pheno_paired, eval=T, echo=F}
+if (paired) {
+  pheno.of.interest <- phenopair_func(pheno.of.interest)
+}
+```
+
+```{r pheno_sum, eval=T, echo=F, results="asis"}
+if (nrow(pheno.sub)!=nrow(pheno.of.interest)) {
+  pandoc.table(tbsum_func(tb=pheno.sub), split.tables=Inf, caption="Summary of subsetted samples without QC")
+  pandoc.table(tbsum_func(tb=pheno.of.interest), split.tables=Inf, caption="Summary of subsetted samples with QC")
+} else {pandoc.table(tbsum_func(tb=pheno.of.interest), split.tables=Inf, caption="Summary of subsetted samples")}
+# create a summary table for this comparison
+pandoc.table(t(infosumm_func(pheno=pheno.of.interest)$df),split.tables=Inf, caption="Summary of the comparison")
+```
+
+Assign colours to status and scan date (if available)
+
+```{r color, eval=T, echo=F}
+# assign colours to comparison status
+colour_status <- c("navy","red")
+names(colour_status) <- c(con0,con1) # assign red to condition 1 and navy to condition 2
+colour_status_list <- unlist(lapply(pheno.of.interest$Status,function(x){colour_status[x]}))
+# assign colours to scan date
+colours=c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666", "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F") # first 8 colour names derived from Dark2, and last 12 names from Set3
+if ("ScanDate_Group"%in%names(pheno)) {
+  i=nlevels(pheno.of.interest$ScanDate_Group)
+  colour_scandate <- colours[1:i]
+  names(colour_scandate) <- levels(pheno.of.interest$ScanDate_Group) # colour to corresponding scan date
+  colour_scandate_list <- unlist(lapply(pheno.of.interest$ScanDate_Group,function(x){colour_scandate[x]}))
+}
+```
+
+### Gene expression data preparation
+
+For data from Affymetrix platform, raw probe intensity data from supplementary files (usually .cel files) in GEO are downloaded and used for DE analysis. For data from Agilent platform, the intensity data is derived from GEO expression matrix.
+
+```{r suppldata_readin, eval=T, echo=F, message=F, warning=F, results="hide"}
+# The suppdownload_func function downloads the supplimentary raw data files from GEO and unextract the zip file
+suppldownload_func <- function() {
+  getGEOSuppFiles(geo_id,baseDir=datadir) #download GEO files
+  untar(paste0(datadir,"/",geo_id,"/",geo_id,"_RAW.tar"), exdir=paste0(datadir,"/",geo_id,"/data")) # extract the zip file
+}
+# If supplementary data is available, download supplimentary raw data files
+if (usesuppl) {
+  # The sampall_func function obtains the supplementary filenames of all samples of interest
+  sampall_func <- function() {basename(as.character(pheno$Filename))}
+  # The existall_func function check whether all supplementary files in GEO phenotype exist in the data directory
+  existall_func <- function() {
+    raw_fn=list.files(path=paste0(datadir,"/",geo_id,"/data"))
+    # check if all supplementary_file name from GEO phenotype are within the downloaded folder
+    return(all(sapply(sampall_func(),function(x)x%in%raw_fn)))
+  }
+  # The rawall_func function obtains all files in the data directory with full path
+  rawall_func <- function() {
+    raw_fn=list.files(path=paste0(datadir,"/",geo_id,"/data"))
+    # obtain supplementary data with path
+    paste0(datadir,"/",geo_id,"/data/",raw_fn[which(raw_fn%in%sampall_func())])
+  }
+  # Download raw data files (e.g. .cel) if available.
+  # Check whether the supplementary files already exist. Otherwise download from GEO
+  samp_exist=existall_func()
+  if (!samp_exist) {
+    suppldownload_func()
+  }
+  samp_exist=existall_func() # updated the existing samples
+  if (!samp_exist) {stop("The .cel files obtained from GEO do not include all the samples of interest")}
+  # Read in the raw data and generate an object "raw.data" under the ExpressionFeatureSet (oligo class).
+  raw.files=rawall_func()
+  tryerror=try(raw.data <- read.celfiles(raw.files), silent = T)
+}
+```
+
+
+```{r readcel_errorcheck, eval=T, echo=F, message=F, warning=F}
+if (usesuppl) {
+  if (class(tryerror)=="try-error") {
+    if (grepl("pd.primeview",tryerror)) { # if Affymetrix PrimeView is used
+      stop("NOTE: This platform is Affymetrix PrimeView which lacks corresponding annotation dataset, use the GEO expression matrix instead of raw intensity data.\n Set usesuppl=FALSE, and check QC to set normdata\n")
+      } else {stop(tryerror[1])}
+  }
+}
+```
+
+Generate raw.data object using expression matrix from GEO (for platforms other than Affymetrix).
+
+```{r geomatrix_readin_geo, eval=geo, echo=F, message=F, warning=F}
+# Use GEO data
+if ((!usesuppl)&geo) {
+  # check if GEO matrix file exists
+  geo_fn <- list.files(path=datadir)[grepl(geo_id,list.files(path=datadir))&grepl("matrix.txt.gz$",list.files(path=datadir))] # check if GEO matrix file exists
+  if (length(geo_fn)==0) { # # GEO matrix file is not downloaded
+    gselms <- getGEO(geo_id, destdir=datadir, GSEMatrix = TRUE) # dowanload matrix file
+    if (length(gselms)>1) {  # multiple platform
+      gpls=sapply(gselms,annotation)
+      cat("This study was performed in multiple platforms:\n")
+      cat(unname(gpls),"\n")
+      cat("Samples from same platform shoud be analyzed together. Assign a platform to the variable geo_GPL in the session coding.\n")
+      if (geo_GPL=="") {stop("This study has multiple platforms. Please assign the platform to the variable geo_GPL in the session coding.")} else {cat("Use platform", geo_GPL, "\n"); idx=which(grepl(geo_GPL,gpls))}
+    } else {idx=1}
+    gse <- gselms[[idx]]
+  } else if (length(geo_fn)==1) { # GEO matrix file is alreadly downloaded and only has one platform
+    gse <- getGEO(filename=paste0(datadir,"/",geo_fn),GSEMatrix = TRUE)
+  } else { # GEO matrix file is alreadly downloaded and has multiple platforms
+    cat("This study was performed in multiple platforms:\n")
+    cat(geo_fn)
+    cat("Samples from same platform shoud be analyzed together. Assign a platform to the variable geo_GPL in the session coding.\n")
+    if (geo_GPL=="") {stop("This study has multiple platforms. Please assign the platform to the variable geo_GPL in the session coding.")} else {cat("Use platform", geo_GPL, "\n"); geo_fn <-geo_fn[grep(geo_GPL,geo_fn)];gse <- getGEO(filename=paste0(datadir,"/",geo_fn),GSEMatrix = TRUE)}
+  }
+  # Read in the raw data and generate an object "raw.data" under the ExpressionFeatureSet (oligo class).
+  raw.data=gse
+}
+```
+
+
+```{r arrayexpr_readin, eval=arrayexpr, echo=F, message=F, warning=F}
+if ((!usesuppl)&arrayexpr) {
+  if (!file.exists(paste0(datadir,"/",geo_id,"/data"))) {dir.create(paste0(datadir,"/",geo_id,"/data"), recursive = T)}
+  gse <- ArrayExpress(geo_id, path=paste0(datadir,"/",geo_id,"/data"), save=T)
+  # Read in the raw data and generate an object "raw.data" under the ExpressionFeatureSet (oligo class).
+  raw.data=gse
+}
+```
+
+Obtain raw.data.of.interest by subsetting raw.data based on the phenotype of interest
+
+```{r sub_rawdata, eval=T, echo=F}
+# The subdat_func function subsets data based on the phenotype of interest
+subdat_func <- function(raw.data, pheno) {
+  # subset raw.data based on the phenotype of interest
+  raw.data=raw.data[,colnames(raw.data)%in%pheno$Filename]
+  # order phenotype file based on sample order in raw data
+  pheno <- do.call(rbind,lapply(colnames(raw.data),function(x)pheno[which(pheno$Filename==x),]))
+  # assign phenotype data to raw expression data
+  pData(raw.data) <- pheno
+  row.names(pData(raw.data)) <- sampleNames(protocolData(raw.data))
+  # check if the sample names derived from expression data match those in phenotype file
+  if (usesuppl) {matching=mapply(identical,row.names(pData(raw.data)),as.character(pheno$Filename))}
+  else {matching=mapply(grepl,row.names(pData(raw.data)),as.character(pheno$Filename))}
+  if (!all(matching)) {stop("The sample names derived from expression data do not match those in phenotype file. Please check!")}
+  return(raw.data)
+}
+raw.data.of.interest=subdat_func(raw.data=raw.data, pheno=pheno.of.interest)
+```
+
+Show expression dataset features
+```{r raw.data, eval=T, echo=F}
+raw.data.of.interest
+```
+
+## Differential Gene Expression Analysis
+
+### Normalize raw gene expression data
+
+Normalize gene expression raw data using robust multi-array average (RMA) method (if supplementary data is available) or quantile normalize (if use expression matrix), unless the raw.data object is already normalized (based on the variable normdata).
+
+
+If negative/zero intensity values are present, convert them to NAs.
+
+```{r infinite_convert, eval=T, echo=F, fig.height=10, fig.width=12}
+# check if any negative/zero intensity value in the expression data
+if (any(apply(exprs(raw.data.of.interest),2,function(x){min(x,na.rm=T)})<=0)) {
+  cat("Negative or zero intensity values are observed. Convert them to NA.\n")
+}
+exprs(raw.data.of.interest)=apply(exprs(raw.data.of.interest),2,function(x){replace(x,which(x<=0),NA)})
+```
+
+```{r rma, eval=T, echo=F, message=F, results="hide"}
+if (usesuppl) {
+  rma.data.of.interest = rma(raw.data.of.interest)
+  cat("RMA normalization is used.\n")
+} else {
+  rma.data.of.interest=raw.data.of.interest
+  if (!normdata) {exprs(rma.data.of.interest)=normalize.quantiles(log2(exprs(rma.data.of.interest)))
+  cat("Quantile normalization and log2 transformation is used.\n")
+  }
+}
+```
+
+```{r rma_plot, eval=T, echo=F}
+cols=colour_status_list
+boxplot(raw.data.of.interest,target="core",col=cols,main="Raw Probe Intensities",xaxt="n") # view raw data
+legend("topright",legend=names(colour_status),fill=colour_status)
+if (!normdata) {
+  boxplot(rma.data.of.interest,col=cols,main="Normalized Probe Intensities",xaxt="n") # view RMA-adjusted data
+  legend("topright",legend=names(colour_status),fill=colour_status)
+} else {cat("The raw data is already normalized")}
+```
+
+
+### Pairwise Comparison between Status
+
+```{r limma_utility, eval=T, echo=F, results="asis"}
+limma_func <- function(paired=FALSE) { # here only con0, con1 are used in comparisons. use a function to reduce the factor levels
+  if (paired) {
+    cat("Donor is adjusted in this regression\n")
+    # Create a design model matrix for linear model. Fit a linear model using design matrix model.
+    design = model.matrix(~ -1+factor(rma.data.of.interest$Status)+factor(rma.data.of.interest$Donor)) # create design model matrix
+    colnames(design) = c(levels(factor(rma.data.of.interest$Status)),levels(factor(rma.data.of.interest$Donor))[-1])
+  } else {
+    # Create a design model matrix for linear model. Fit a linear model using design matrix model.
+    design = model.matrix(~ -1+factor(rma.data.of.interest$Status)) # create design model matrix
+    colnames(design) = levels(factor(rma.data.of.interest$Status))
+  }
+  fit = lmFit(rma.data.of.interest, design) # fit a linear model to estimate the fold changes and standard error
+  # Create a contrast group and fit it in a linear model
+  data.contrast = makeContrasts(contrasts=paste(c(con1,con0),collapse="-"),levels = design) # create a contrast group by comparing con1 vs con0
+  fit2 = contrasts.fit(fit, data.contrast) # get the contrasts for samples of interest
+  fit2 = eBayes(fit2) # adjust fit coefficients using an empirical Bayes moderation of standard errors
+  return(list(design=design,data.contrast=data.contrast,fit2=fit2))
+}
+```
+
+Fit a linear model to RMA log-intensity values, fit this model to a contrast matrix for the comparison of interest, and apply empirical Bayes smoothing to obtain more precise standard errors.
+
+```{r limma, eval=T, echo=F, message=F, warning=F, results="asis"}
+res_DE=limma_func(paired=paired)
+fit2=res_DE$fit2
+pandoc.table(data.frame(Sample=rma.data.of.interest$GEO_ID,res_DE$design), split.tables=Inf, caption="A design model matrix for linear model")
+pandoc.table(as.data.frame(res_DE$data.contrast), caption="A contract matrix for comparison")
+contrast_table <- topTable(fit2, adjust="BH",num=Inf) # get full set of results for each hypothesis test
+col.sel=c("logFC","AveExpr","t","P.Value","adj.P.Val","B") # select the columns of DE results
+contrast_table <- data.frame(ID=row.names(contrast_table), contrast_table[,col.sel])
+```
+
+### Adjusting for Batch Effect
+
+```{r sva_utility, eval=T, echo=F}
+# The nbatch_func function obtains number of batches (scan date) in the data
+nbatch_func <- function() {
+  if (!"ScanDate_Group"%in%names(pData(rma.data.of.interest))) {nbatch=0} else {nbatch=nlevels(rma.data.of.interest$ScanDate_Group)}
+}
+# The svamod_func function creates full and null models, and Checks if the batch and comparison status are confounded
+svamod_func <- function(paired=FALSE) {
+  # Create a full model
+  modBatch = model.matrix(~factor(rma.data.of.interest$Status)+factor(rma.data.of.interest$ScanDate_Group)) # full model (adjusted variables and variables of interest)
+  # Create a null model only including batch variables
+  nullBatch =  model.matrix(~factor(rma.data.of.interest$ScanDate_Group)) # null model (adjusted variables only)
+  # Check if the scan date and comparison status are confounded
+  if (class(try(solve(t(modBatch)%*%modBatch),silent=T))=="matrix") {batchadj=TRUE} else {batchadj=FALSE; message("The scan date and comparison status are highly confounded")}
+  # summary of the full model
+  tb.fullmod <- as.data.frame(modBatch)
+  names(tb.fullmod) <- c("Intercept",levels(rma.data.of.interest$Status)[-1],levels(droplevels(rma.data.of.interest$ScanDate_Group))[-1])
+  # summary of the null model
+  tb.nullmod <- as.data.frame(nullBatch)
+  names(tb.nullmod) <- c("Intercept",levels(droplevels(rma.data.of.interest$ScanDate_Group))[-1])
+  donoradj=FALSE # assign variable is donor is adjusted
+  tb.nullmod1=NULL # assign null matrix for donor adjustment
+  if ((paired)&(batchadj)) { # same donor treatment adjust for donor
+    # Test if donor and scandate are correlated
+    modBatch1 = model.matrix(~factor(rma.data.of.interest$Status)+factor(rma.data.of.interest$ScanDate_Group)+factor(rma.data.of.interest$Donor)) # full model including donor
+    nullBatch1 =  model.matrix(~factor(rma.data.of.interest$ScanDate_Group)+factor(rma.data.of.interest$Donor)) # null model including donor
+    # summary of the full model
+    tb.fullmod1 <- as.data.frame(modBatch1)
+    names(tb.fullmod1) <- c("Intercept",levels(rma.data.of.interest$Status)[-1],levels(droplevels(rma.data.of.interest$ScanDate_Group))[-1],levels(droplevels(rma.data.of.interest$Donor))[-1])
+    # summary of the null model
+    tb.nullmod1 <- as.data.frame(nullBatch1)
+    names(tb.nullmod1) <- c("Intercept",levels(droplevels(rma.data.of.interest$ScanDate_Group))[-1],levels(droplevels(rma.data.of.interest$Donor))[-1])
+      
+    # check if scandate correlated with donor
+    if (class(try(solve(t(modBatch1)%*%modBatch1),silent=T))=="matrix") {
+      donoradj=TRUE
+      modBatch=modBatch1
+      nullBatch=nullBatch1
+      tb.fullmod=tb.fullmod1
+      tb.nullmod=tb.nullmod1
+    }
+  }
+  return(list(modBatch=modBatch, nullBatch=nullBatch, tb.fullmod=tb.fullmod, tb.nullmod=tb.nullmod, batchadj=batchadj, donoradj=donoradj, tb.nullmod_donor=tb.nullmod1))
+}
+# The batcherror_func function assigns a variable batcherror to decide whether to adjust for batch effect under various scenarios
+batcherror_func <- function() {
+  if (nbatch==0) {
+    batcherror="zero"
+  } else if (nbatch==1) {
+    batcherror="one"
+  } else {
+    if (batchadj) { # if scan date is not correlated with status
+      if (paired) {if (donoradj) {batcherror="no"} else {batcherror="correlate_donor_scandate"}}
+      else {batcherror="no"}}
+    else {batcherror="correlate"} # if scan date is correlated with status
+    }
+  return(batcherror)
+}
+# The batchadj_func function outputs table with batch effects adjusted p-values
+batchadj_func <- function(batcherror=batcherror, contrast_table=contrast_table, paired=paired) {
+  if (batcherror=="no") {
+    modBatch=svamod_func(paired=paired)$modBatch
+    nullBatch=svamod_func(paired=paired)$nullBatch
+    pValuesBatch=f.pvalue(exprs(rma.data.of.interest), modBatch, nullBatch) # get batch effect-adjusted p-values
+    qValuesBatch=p.adjust(pValuesBatch, method="BH") # get q-values
+    tb.sva <- data.frame(ID=names(pValuesBatch),pValuesBatch,qValuesBatch)
+    contrast_table <- merge(contrast_table, tb.sva, by="ID", all=TRUE)
+  } else { # batcherror=correlate, correlate_donor_scandate, one, zero
+    contrast_table$pValuesBatch=contrast_table$qValuesBatch=rep(NA,nrow(contrast_table))
+  }
+  return(contrast_table)
+}
+```
+
+Check whether to adjust for scan date and donor. Create a full model that includes all variables and a null model that only includes the batch variable. Note that as SVA computes the matrix x in t(batch model)%*%x=batch model, batch effect can be adjusted only when the solve function works.
+
+**The batch used for adjustment:**
+
+```{r sva_check, eval=T, echo=F}
+nbatch=nbatch_func()
+if (nbatch>1) {res_svamod=svamod_func(paired=paired);batchadj=res_svamod$batchadj;donoradj=res_svamod$donoradj}
+batcherror=batcherror_func()
+cat("batcherror =", batcherror)
+if (batcherror=="zero") {cat("No scan date is present in the data.")} else if (batcherror=="one") {cat("Only one batch is present in the data.")} else if (batcherror=="correlate") {cat("The scan date and the comparison status are highly confounded (See the model matrix). Cannot ajust for batch effect.")}
+```
+
+```{r sva_mod, eval=T, echo=F, results="asis"}
+if (paired) {
+  if (batcherror=="correlate_donor_scandate") {
+    cat("Scan date and donor are highly confounded. See the matrix below.\n")
+    pandoc.table(res_svamod$tb.nullmod_donor, split.tables=Inf, caption="Null model matrix with scan date and donor")
+  } else if (batcherror=="no") {cat("Both scan date and donor are adjusted.\n")
+    pandoc.table(res_svamod$tb.fullmod, split.tables=Inf, caption="Full model matrix")
+    pandoc.table(res_svamod$tb.nullmod, split.tables=Inf, caption="Null model matrix")
+  }
+} else {
+  if (batcherror=="no") {
+    cat("Both scan date and donor are adjusted.\n")
+    pandoc.table(res_svamod$tb.fullmod, split.tables=Inf, caption="Full model matrix")
+    pandoc.table(res_svamod$tb.nullmod, split.tables=Inf, caption="Null model matrix")
+  }
+}
+```
+
+
+Compute F statistic p-values adjusted for batch effect. Q-values are obtained by the Benjamini-Hochberg method. If the batch and the status are correlated, assign NA to the batch adjusted p- and q-values. If there is no batch variable or only one batch, assign p- and q-values computed by limma to the batch adjusted p-values
+
+```{r sva_tb, eval=T, echo=F, results="asis"}
+contrast_table=batchadj_func(batcherror=batcherror, contrast_table=contrast_table, paired=paired)
+pandoc.table(summary(contrast_table), split.tables=Inf, caption=paste0(con1, " vs. ", con0, " summary"))
+```
+
+### Assign Official Gene Symbol
+
+Annotate official gene symbol to probes. Install the [R annotation database package](https://bioconductor.org/packages/3.7/data/annotation/) corresponding to your gene expression data. For any newly installed annotation databases, it can be added to the list anno_list reserved for future use.
+
+```{r anno_list, eval=T, echo=F}
+anno_list=list()
+# Affymetrix
+anno_list[["pd.hg.focus"]]="hgfocus.db"
+anno_list[["pd.hg.u133a"]]="hgu133a.db"
+anno_list[["pd.hg.u133a.2"]]="hgu133a2.db"
+anno_list[["GPL571"]]="hgu133a2.db"
+anno_list[["pd.hg.u133.plus.2"]]="hgu133plus2.db"
+anno_list[["pd.ht.hg.u133.plus.pm"]]= "hgu133plus2.db"
+anno_list[["GPL96"]]="hgu133plus2.db"
+anno_list[["pd.hg.u95av2"]]="hgu95av2.db"
+anno_list[["GPL8300"]]="hgu95av2.db"
+anno_list[["pd.hta.2.0"]]="hta20transcriptcluster.db"
+anno_list[["pd.hugene.1.0.st.v1"]]="hugene10sttranscriptcluster.db"
+anno_list[["pd.hugene.2.0.st.v1"]]="hugene20sttranscriptcluster.db"
+anno_list[["pd.hugene.2.0.st"]]="hugene21sttranscriptcluster.db"
+anno_list[["pd.huex.1.0.st.v2"]]= "huex10sttranscriptcluster.db"
+anno_list[["GPL80"]] = "hu6800.db"
+# Agilent
+anno_list[["GPL6480"]]="hgug4112a.db"
+# Illumina
+anno_list[["GPL6947"]]="illuminaHumanv3.db"
+anno_list[["GPL10558"]]="illuminaHumanv4.db"
+anno_list[["GPL6101"]]="illuminaRatv1.db" # rat
+```
+
+If using GPL annotation from GEO, note that gene symbol annotation in different GPL may have different column names.
+
+```{r symbol_list, eval=T, echo=F}
+symbol_list=list()
+# Affymetrix
+symbol_list[["GPL15207"]]="Gene Symbol" # PrimeView
+# Agilent
+symbol_list[["GPL17077"]]="GENE_SYMBOL" # Agilent-039494 SurePrint G3 Human GE v2 8x60K Microarray 039381
+symbol_list[["GPL4133"]]="GENE_SYMBOL" # Agilent-014850 Whole Human Genome Microarray 4x44K G4112
+symbol_list[["GPL19462"]]="ID" #The official version of this platform is accession number GPL6885. This version includes ILMN_SYMBOL values in the ID column.
+symbol_list[["GPL1355"]]="Gene Symbol"
+```
+
+```{r glpanno_func, echo=F}
+# glpanno_func creates anntoation vector based on GPL annotation from GEO
+glpanno_func <- function(GPL_ID){
+  gpl <- Table(getGEO(GPL_ID, destdir=datadir))
+  if (GPL_ID%in%names(symbol_list)) {
+    symbol_col <- symbol_list[[GPL_ID]]
+    # set NA for gene symbols of the probes with more than one genes mapped
+    gpl[,symbol_col][which(grepl("///",gpl[,symbol_col]))] <- NA # GPL15207
+    anno_vect <- gpl[,symbol_col]
+  } else {stop("Find out gene symbol column name here: ","https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=",GPL_ID," \nDefine it in symbol_list.")}
+  names(anno_vect) <- gpl[,"ID"]
+  return(anno_vect)
+}
+# ranno_func creates anntoation vector based on R annotation database
+ranno_func <- function(anno_lib){
+  # check if the annotation database is installed
+  if (!anno_lib%in%all.pkgs){pkginstall_func(pkgs=anno_lib, rversion = rversion, Bioconductor=T)}
+  library(anno_lib, character.only=T)
+  anno_symbol=gsub(".db","SYMBOL",anno_lib) # The name of the R object mapping between probe id and gene symbol
+  x=get(anno_symbol)
+  # Get the probe identifiers that are mapped to a gene symbol
+  mapped_probes <- mappedkeys(x)
+  # Convert to a list
+  xx <- as.list(x[mapped_probes])
+  # Convert list to annotation vector
+  anno_vect <- sapply(xx,function(x){x})
+  return(anno_vect)
+}
+# geneannot_func annotates gene symbol to DE result table
+geneannot_func <- function(tb, anno_vect) {
+  remove.pm <- function(x) {gsub("_PM", "", x)} # Assign official gene symbol using hgu133plus2.db package if anntoation is based on pd.hg.u133.plus.2. Note that the probe names have additional "PM"s in the results will be removed to match the names in the gene symbol package.
+  if (exists("anno_lib")) {
+    if (anno_lib=="hgu133plus2.db") {tb$ID=sapply(as.character(tb$ID), remove.pm)}
+  }
+  tb$ID=as.character(tb$ID)
+  tb$SYMBOL=sapply(as.character(tb$ID), function(x){if (x%in%names(anno_vect)){anno_vect[x]} else {"NA"}})
+  tb$SYMBOL[which(tb$SYMBOL=="")]="NA"
+  # remove probes with NA in logFC column
+  tb <- tb[!is.na(tb$logFC),]
+  tb[order(tb$P.Value),]
+}
+```
+
+```{r anno_utility, eval=T, echo=F, warning=F, message=F}
+# install corresponding annotation database if it is not installed
+anno_array=annotation(rma.data.of.interest)
+cat("The platform used is", anno_array, "\n")
+if (!anno_array%in%names(anno_list)) {
+  cat("Annotate using GPL annotation in GEO\n")
+  # if annotation package is not GPL annotation
+  if (!grepl('GPL',anno_array)) {
+    if (geo_GPL==""){
+      GPL_ID=annotation(getGEO(geo_id,destdir=datadir)[[1]])
+    } else {
+      GPL_ID=geo_GPL
+    }
+  }
+  anno_vect=glpanno_func(GPL_ID=GPL_ID)
+  anno_lib="NA"
+} else {
+  anno_lib=anno_list[[anno_array]] # use the annotation database
+  cat("The corresponding R annotation database package is", anno_lib,"\n")
+  anno_vect <- ranno_func(anno_lib=anno_lib)
+}
+```
+
+```{r contrast_fn, eval=T, echo=F}
+contrast_name=infosumm_func(pheno=pheno.of.interest)$name # adopt Unique_ID created in the information summary table
+contrast_fn=paste0(resdir,"/", contrast_name, ".csv")
+```
+
+```{r anno_tb, eval=T, echo=F, warning=F, message=F}
+contrast_table <- geneannot_func(tb=contrast_table, anno_vect=anno_vect)
+write.csv(contrast_table, file=contrast_fn, row.names = FALSE)
+```
+
+```{r DE_readin, eval=T, echo=F}
+if (file.exists(contrast_fn)) {contrast_fn=paste0(resdir,"/", contrast_name, ".csv")}
+res=read.csv(contrast_fn)
+```
+
+## Gene Expression Results Visualization
+
+### Volcano Plots
+
+```{r vol_utility, eval=T, echo=F}
+# The volplot_func function generates volcano plots
+volplot_func <- function(df,qval_column,title) {
+  # get qvalue column
+  qval <- df[,qval_column]
+  if (!all(is.na(qval))) {          
+    df <- df[!is.na(qval),] # remove NA values
+    qval <- df[,qval_column]
+    if (min(df[,qval_column])>=0.05) {
+      df$sig <- "black" # assign colors to DE and non-DE genes
+    } else {
+      # assign colors to DE and non-DE genes
+      df$sig <- rep(NA,nrow(df))
+      df$sig[qval<0.05] <- "red"
+      df$sig[qval>=0.05] <- "black"
+    }
+    df$sig <- as.factor(df$sig)
+    color <- levels(df$sig)
+    # log10 transformed q values
+    df$logqval <- -log10(qval)
+    diffgenes <- df$ID[qval<0.05] #Create list of all DEG's
+    signum = paste0(length(diffgenes), " significant genes based on ", qval_column)
+    if (missing(title)) {title=signum}
+    print(
+    ggplot(df, aes(x = logFC, y = logqval, color=sig)) + geom_point(size=0.5) +
+      theme_bw() +
+      labs(title=title,x="logFC",y=paste0("-log10(",qval_column,")")) +
+      scale_color_manual(values=color) +
+      theme(legend.position="none")
+    )
+  }
+}
+```
+
+Volcano plot (probes with a q-value <0.05 are present in red)
+
+```{r vol, eval=T, echo=F, fig.height=4, fig.width=4.5}
+for (qval in c("adj.P.Val","qValuesBatch")) {volplot_func(res, qval)}
+```
+
+### Histograms
+
+```{r hist_utility, eval=T, echo=F}
+# The histplot_func function generates histogram for p-value distributions
+histplot_func <- function(df,qval_column,title) {
+  if (missing(title)) {title=""}
+  # get qvalue column
+  qval <- df[,qval_column]
+  if (!all(is.na(qval))) {hist(qval,main=title,xlab=qval_column)}
+}
+```
+
+Histograms of p-value distributions
+
+```{r histplot, eval=T, echo=F, fig.width=4.5, fig.height=4}
+for (pval in c("P.Value","pValuesBatch")) {histplot_func(res, pval)}
+for (qval in c("adj.P.Val","qValuesBatch")) {histplot_func(res, qval)}
+```
+
+### Top 50 Differentially Expression Results
+
+```{r top50_utility, eval=T, echo=F}
+# The datreform_func function reformats the DE table
+datreform_func <- function(dt,topnum=200) {
+  dt=dt[order(dt$P.Value),]
+  dt=dt[1:topnum,]
+  round2 <- function(x){round(x,2)}
+  dt[,c("logFC","AveExpr","t","B")] <- sapply(dt[,c("logFC","AveExpr","t","B")],round2)
+  sciform <- function(x){format(x,scientific=TRUE,digits =2)}
+  dt[,c("P.Value","adj.P.Val","pValuesBatch","qValuesBatch")] <- sapply(dt[,c("P.Value","adj.P.Val","pValuesBatch","qValuesBatch")],sciform)
+  dt
+}
+```
+
+Show top 50 probes sorted by un-adjusted p-values
+
+```{r top50, eval=T, echo=F, message=F, warning=F, results="asis"}
+res <- datreform_func(dt=res)
+rownames(res) <- NULL
+#pandoc.table(res[1:20,],split.tables=Inf)
+DT::datatable(res[1:50,],rownames=FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"))))
+```
+
+### Boxplots for Top 6 Differentially Expressed Genes
+
+This step helps to visualize and check the effect direction in the comparison.
+
+```{r boxplot_utility, eval=T, echo=F}
+# function for top gene boxplot
+topgene_boxplot_func <- function(tb,colour,comp) { # comp: comparison status
+  for (i in 1:nrow(tb)) {# top i probe in res
+    if (missing(comp)) {comp=""}
+    if (missing(colour)) {colour=colours[1]}
+    probe_top <- tb$ID[i]
+    gene_top <- tb$SYMBOL[i]
+    row.names(rma.data.of.interest) <- gsub("_PM","",row.names(rma.data.of.interest))
+    values=exprs(rma.data.of.interest)[row.names(rma.data.of.interest)%in%probe_top, ]
+    status=rma.data.of.interest$Status
+    df <- data.frame(values=values,status=status)
+    title=paste0(comp," top ",i," probe ", probe_top, " gene ", gene_top)
+    print(
+      ggplot(df,aes(x=status,y=values)) +
+        geom_boxplot(outlier.colour=NA,color="grey18",fill=colour) +
+        stat_boxplot(geom ='errorbar', color="grey18") +
+        geom_jitter(size=1,position = position_jitter(width=0.3)) +
+        labs(title=title) +
+        theme_bw() +
+        theme(legend.position="none",axis.title=element_blank())
+    )
+  }
+}
+```
+
+```{r boxplot, eval=T, echo=F, message=F, warning=F, fig.height=4, fig.width=4}
+topgene_boxplot_func(tb=res[1:6,])
+```
+
+### Heatmap for Top 200 Differentially Expressed Genes
+
+```{r heatmap_utility, eval=T, echo=F}
+# The heatmap_topgene_func function for top gene heatmap plots
+heatmap_topgene_func <- function(tb, topnum=200, colour_status_list, colour_status, main="") { # colour_status_list: color assigned to each sample; colour_status: colour vector for the legend plot
+  if (anno_lib=="hgu133plus2.db") { # remove "_PM" from probe name
+    remove.pm <- function(x) {gsub("_PM", "", x)}
+    top.rma <- rma.data.of.interest[remove.pm(row.names(rma.data.of.interest))%in%tb[1:topnum,"ID"],] # plot heatmap for top 200 genes after removing "PM" from probe names
+  } else {
+    top.rma <- rma.data.of.interest[row.names(rma.data.of.interest)%in%tb[1:topnum,"ID"],] # plot heatmap for top 200 genes
+  }
+  array_name <- shortname_func(colnames(exprs(top.rma))) # shorten the sample id
+  heatmap.2(na.omit(exprs(top.rma)), col=viridis(256, option="B"),
+    ColSideColors=colour_status_list, # use predefined colour_status_list, assign colors to status
+    labCol=array_name,labRow = "", # take out gene probe id
+    trace="none",
+    margins=c(12,20), # (bottom margin, left margin)
+    cexRow=1,cexCol=1,
+    keysize=1.5,key.title=NA,key.xlab="Gene Expression Values",key.ylab="Counts",
+    main=main)
+  legend("bottomleft",legend=names(colour_status),fill=colour_status,cex=0.8) # use predifined colour_status
+}
+```
+
+```{r heatmap1, eval=T, echo=F, fig.height=10, fig.width=12}
+heatmap_topgene_func(tb=res, topnum=200, colour_status_list=colour_status_list, colour_status=colour_status, main="Gene expression heatmap by comparison status")
+```
+
+```{r heatmap2, eval=T, echo=F, fig.height=10, fig.width=12}
+if ("ScanDate_Group"%in%names(pheno)) {
+  heatmap_topgene_func(tb=res, topnum=200, colour_status_list=colour_scandate_list, colour_status=colour_scandate, main="Gene expression heatmap by scan date")
+}
+```
+
+### Heatmap for Sample Correlation
+
+```{r corplot_utility, eval=T, echo=F, fig.height=10, fig.width=12}
+# The corplot_func function plots correlation between samples
+corplot_func <- function(m, colour_status_list, colour_status, main="") {  # m: correlation matrix, colour_status_list: color assigned to each sample; colour_status: colour vector for the legend plot
+  m <- cor(na.omit(m)) # compute correlation matrix
+  # compute distance based on 1-correlation efficient
+  dend = as.dendrogram(hclust(as.dist(1-m), method = "single"))
+  ord = order.dendrogram(dend)
+  array_name <- shortname_func(colnames(m)) # shorten the sample id
+  # heatmap plot
+  heatmap.2(m,Rowv=dend,Colv=dend,
+    col=viridis(256,option="B"), ColSideColors=colour_status_list, RowSideColors=colour_status_list,
+    labCol=array_name, labRow=array_name,
+    trace="none",
+    margins=c(12,20), # (bottom margin, left margin)
+    cexRow = 1,cexCol = 1,
+    keysize=1.5,key.title=NA,key.xlab="Dist2",key.ylab="Counts")
+  legend("bottomleft",legend=names(colour_status),fill=colour_status,cex=0.6)
+}
+```
+
+
+```{r corplot1, eval=T, echo=F, fig.height=10, fig.width=12}
+corplot_func(m=exprs(rma.data.of.interest),colour_status_list=colour_status_list, colour_status=colour_status, main="Correlation heatmap by comparison status")
+```
+
+```{r corplot2, eval=T, echo=F, fig.height=10, fig.width=12}
+if ("ScanDate_Group"%in%names(pheno)) {
+  corplot_func(m=exprs(rma.data.of.interest),colour_status_list=colour_scandate_list, colour_status=colour_scandate, main="Correlation heatmap by scan date")
+}
+```
+
+### Principal Component Analysis (PCA)
+
+```{r pca_utility, eval=T, echo=F, warning=F, message=F, results="asis"}
+# The pcastat_func function computes principal components
+pcastat_func <- function(m) {
+  # obtain original expression data
+  raw.data.pca <- na.omit(apply(m,2,function(x)replace(x,is.infinite(x),NA))) # replace infinite values to NAs and omit NAs
+  # As scale function divides by the variance, the probe with the expression sd=0 across samples must be removed.
+  sd <- apply(raw.data.pca,1,sd)
+  raw.data.pca <- raw.data.pca[!sd==0,]
+  # compute pcs
+  pca <- prcomp(t(raw.data.pca), retx = TRUE, center = TRUE, scale = TRUE)
+  pc <- data.frame(pca$x)
+  # compute variance explained by each PC
+  vars <- pca$sdev^2
+  pcs <- t(pc)
+  pvars <- vars*100.0/sum(vars) # proportion of variance (%) explained by each PC
+  cumsum_pvars <- cumsum(pvars) # Cumulative Proportion of Variance (%)
+  if (nrow(pcs)>10) {nres <- 10} else {nres=nrow(pcs)} # select top 10 PCs if number of PCs >10
+  res <- data.frame(rownames(pcs),pvars,cumsum_pvars)[1:nres,]
+  names(res) <- c("PC","Proportion of Variance (%)","Cumulative Proportion of Variance (%)")
+  return(list(tb=res,pc=pc))
+}
+# The pcaplot_func creates plots for pc1 and pc2
+pcaplot_func <- function(oligo.data, pc, group_var, legend) { # group_var: column name for a specific group; legend: legend name
+  df <- data.frame(
+    PC1=pc$PC1,
+    PC2=pc$PC2,
+    group=pData(oligo.data)[,group_var]
+  )
+  i=length(levels(pData(oligo.data)[,group_var]))
+  group_col <- colours[1:i]
+  names(group_col) <- levels(pData(oligo.data)[,group_var]) # colour to corresponding group for plot
+  ggplot(df,aes(PC1,PC2,color=group)) + geom_point() +
+    theme_bw() +
+    scale_color_manual(legend,values=group_col,na.value="grey")
+}
+# The pca_func function generates multiple pca plots for scan date, disease, treatment, and Donor
+pca_func <- function(oligo.data, pc) {
+  group_vars=c("ScanDate_Group", "Status", "Donor")
+  legends=c("ScanDate_Group", "Status", "Donor")
+  idx_exist=c(1:length(group_vars))[group_vars%in%names(pData(oligo.data))] # obtain index of existing variables
+  plot_list=list() # store plots in a list
+  for (i in idx_exist) {
+    group_var=group_vars[i]
+    legend=legends[i]
+    pData(oligo.data)[,group_var]=as.factor(as.character(pData(oligo.data)[,group_var])) # convert to factor
+    nlevel=nlevels(pData(oligo.data)[,group_var]) # levels of the variable
+    if (group_var=="ScanDate_Group"|(nlevel>=2&nlevel<=10)) {
+      if (group_var=="Status") {
+        plot_list[[group_var]]=pcaplot_func(oligo.data=oligo.data, pc=pc, group_var=group_var,legend=legend)+scale_color_manual(legend,values=colour_status,na.value="grey") # assign colour to comparison stauts
+      } else {plot_list[[group_var]]=pcaplot_func(oligo.data=oligo.data, pc=pc, group_var=group_var,legend=legend)}
+    }
+  }
+  return(plot_list)
+}
+```
+
+1. Compute PCs and variance explained by the first 10 PCs
+
+```{r pca_tb, eval=T, echo=F, warning=F, message=F, results="asis"}
+res_pca <- pcastat_func(m=exprs(rma.data.of.interest))
+pandoc.table(res_pca$tb, split.tables=Inf, caption="Variance explained")
+```
+
+2. PCA plots
+
+PCA plots are generated using the first two principle components colored by known factors (e.g. comparison status, donors and scan dates), visualizing similarities between arrays and these similarities' correlation to batch effects.
+
+```{r pca_plot, eval=T, echo=F, message=F, warning=F}
+plot_list=pca_func(oligo.data=rma.data.of.interest, pc=res_pca$pc)
+for (i in plot_list) {print(i)}
+```
+
+
+### Gene-Set Enrichment Analysis (GSEA)
+
+
+```{r eval=T, echo=F}
+# check if the pathway files exists
+kegg_fn <- paste0(datadir, "/c2.cp.kegg.v7.4.symbols.gmt.txt")
+reactome_fn <- paste0(datadir, "/c2.cp.reactome.v7.4.symbols.gmt.txt")
+if (!file.exists(kegg_fn)|!file.exists(reactome_fn)) {
+  stop("Pathway files do not exist under the data directory.")
+}
+```
+
+
+```{r eval=T, echo=F}
+pathways.msigkegg <- gmtPathways(kegg_fn)
+pathways.msigreactome <- gmtPathways(reactome_fn)
+pathways.msigkeggreac <- c(pathways.msigkegg,pathways.msigreactome)
+```
+
+Generate a vector of genes with z-statistics. Keep only one probe with the smallest p-value and the largest absolute log2 fold change if there are multiple probes mapped to the same gene.
+
+```{r eval=T, echo=F}
+de_modi <- contrast_table %>%
+  dplyr::filter(SYMBOL!="") %>% # remove probes cannot be mapped to genes
+  dplyr::filter(SYMBOL!="NA") %>% # remove probes ID cannot be mapped to genes
+  dplyr::arrange(SYMBOL, P.Value, -abs(logFC)) %>% # order by gene name, p-values and descending absolute logFC values
+  dplyr::group_by(SYMBOL) %>% # group by gene name
+  dplyr::filter(dplyr::row_number()==1) %>% # select first row in each gene
+  dplyr::ungroup() %>%
+  dplyr::mutate(stat=t) %>%
+  dplyr::select(SYMBOL,stat) %>% # replace column names
+  dplyr::arrange(stat) %>%
+  as.data.frame()
+gene_stat <- de_modi$stat
+names(gene_stat) <- de_modi$SYMBOL
+```
+
+Run GSEA with the fgsea function.
+
+```{r eval=T, echo=F, message=F, warning=F}
+# run fgsea
+res <- fgsea(pathways=pathways.msigkeggreac, stats=gene_stat, minSize=15, maxSize=500, nperm=10000, gseaParam=1)
+# collapse dependent pathways. create a list of mainPathways and parentPathways
+collapsedPathways <- collapsePathways(fgseaRes=res[order(pval),], pathways=pathways.msigkeggreac, stats=gene_stat, gseaParam=1)
+mainPathways <- collapsedPathways$mainPathways
+parentPathways <- collapsedPathways$parentPathways
+res=res %>% dplyr::arrange(padj) # order by padj value
+# annotate main pathways to fgsea results
+res$main_pathway <- sapply(res$pathway, function(x){if (x%in%mainPathways) {"main"} else {parentPathways[[x]]}})
+```
+
+```{r eval=T, echo=F}
+# convert the list column leadingEdge into character
+convtleadingEdge_func <- function(fgsea_res) {
+  leadingEdge <- rep(NA, nrow(fgsea_res))
+  leadingEdge <- sapply(fgsea_res$leadingEdge, function(x)paste(x,collapse=","))
+  fgsea_res$leadingEdge <- NULL
+  fgsea_res <- as.data.frame(do.call(cbind,lapply(fgsea_res,unlist)))
+  fgsea_res$leadingEdge <- leadingEdge
+  return(fgsea_res)
+}
+res_save <- convtleadingEdge_func(res)
+res_fn <- paste0(resdir,"/", contrast_name, "_fgsea_results.csv")
+write.csv(res_save, res_fn, row.names = F)
+```
+
+
+View top pathways in fgsea results. Only include the first five leading genes
+
+```{r eval=T, echo=F}
+res_show <- res[padj<0.05&main_pathway=="main"]
+cat(nrow(res_show), "main pathways are significant.\n")
+```
+
+```{r eval=T, echo=F}
+if (nrow(res_show)==0) {
+  res_show <- res[main_pathway=="main"][1:10] # if no significant pathway, take the top 10 main pathways
+}
+res_show <- res_show %>%
+  dplyr::mutate(pval=round(pval,4), padj=round(padj,4), ES=round(ES,3), NES=round(NES,3))
+leadingEdge <- rep(NA, nrow(res_show))
+leadingEdge <- sapply(res_show$leadingEdge, function(x)paste(x[1:5],collapse=","))
+res_show$leadingEdge <- NULL
+res_show$leadingEdge <- leadingEdge
+DT::datatable(res_show[1:50], rownames=FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"))))
+```
+
+Generate barplot if pathways with absoluate NES>=2 or top 10 pathways if no pathways pass the threshold
+
+```{r eval=T, echo=F}
+#Generate data barplots for top pathways
+res_barplot <- res[padj<0.05&abs(NES)>2]
+if (nrow(res_barplot)==0) {
+  res_barplot <- res[1:10]
+}
+if (nrow(res_barplot)<=10) {height=8} else {height=15/50*nrow(res_barplot)}
+```
+
+```{r, echo=F}
+textconv4plot_func <- function(x) {
+  if (x=="REACTOME_ACTIVATION_OF_THE_MRNA_UPON_BINDING_OF_THE_CAP_BINDING_COMPLEX_AND_EIFS_AND_SUBSEQUENT_BINDING_TO_43S") {x <- "REACTOME_MRNA_ACTIVATION_CAP_BINDING_COMPLEX_EIFS_43S_BINDING"}
+  if (x=="REACTOME_ANTIGEN_PRESENTATION_FOLDING_ASSEMBLY_AND_PEPTIDE_LOADING_OF_CLASS_I_MHC") {x<-"REACTOME_ANTIGEN_PRESENTATION_CLASS_I_MHC"}
+  if (x=="REACTOME_BIOSYNTHESIS_OF_THE_N_GLYCAN_PRECURSOR_DOLICHOL_LIPID_LINKED_OLIGOSACCHARIDE_LLO_AND_TRANSFER_TO_A_NASCENT_PROTEIN") {x <- "REACTOME_BIOSYNTHESIS_OF_N_GLYCAN_PRECURSOR_AND_TRANSFER_TO_A_NASCENT_PROTEIN"}
+  if (x=="REACTOME_TRANSPORT_OF_GLUCOSE_AND_OTHER_SUGARS_BILE_SALTS_AND_ORGANIC_ACIDS_METAL_IONS_AND_AMINE_COMPOUNDS") {x <- "REACTOME_TRANSPORT_OF_BILE_SALTS"}
+  if (x=="REACTOME_NEUROTRANSMITTER_RECEPTOR_BINDING_AND_DOWNSTREAM_TRANSMISSION_IN_THE_POSTSYNAPTIC_CELL") {x <- "REACTOME_NEUROTRANSMITTER_RECEPTORS"}
+  if (x=="REACTOME_RESPIRATORY_ELECTRON_TRANSPORT_ATP_SYNTHESIS_BY_CHEMIOSMOTIC_COUPLING_AND_HEAT_PRODUCTION_BY_UNCOUPLING_PROTEINS"){x<-"REACTOME_RESPIRATORY_ELECTRON_TRANSPORT_ATP_SYNTHESIS"}
+  return(x)
+}
+textconv_func <- function(x) {
+  x=tolower(x)
+  x=gsub("_"," ",x)
+  x=gsub("27 hydroxycholesterol", "27-hydroxycholesterol", x)
+  x=gsub("43s", "43S", x)
+  x=gsub("apc c mediated", "APC/C-mediated", x)
+  x=gsub("atp","ATP",x)
+  x=gsub("b cell","B cell",x)
+  x=gsub("bcr","BCR",x)
+  x=gsub("bmp","BMP",x)
+  x=gsub("ca2","Ca2",x)
+  x=gsub("cap binding complex", "cap-binding complex", x)
+  x=gsub("cct", "CCT", x)
+  x=gsub("CCT tric", "CCT/TriC", x)
+  x=gsub("class i mhc", "class I MHC", x)
+  x=gsub("class iii", "class III", x)
+  x=gsub("class ii", "class II", x)
+  x=gsub("class i", "class I", x)
+  x=gsub("c type lectin receptors clrs", "C-type lectin receptors (CLRs)",x)
+  x=gsub("c mediated","C mediated",x)
+  x=gsub("cdk2","Cdk2",x)
+  x=gsub("ddx58 ifih1", "DDX58/IFIH1", x)
+  x=gsub("dna", "DNA", x)
+  x=gsub(" eifs"," eIFs", x)
+  x=gsub("fceri", "FCERI", x)
+  x=gsub("g1 s","G1/S",x)
+  x=gsub("g alpha i","G alpha (i)",x)
+  x=gsub("gpcr","GPCR",x)
+  x=gsub("gtp","GTP",x)
+  x=gsub("hiv", "HIV", x)
+  x=gsub("ikks", "IKKs", x)
+  x=gsub("inf", "INF", x)
+  x=gsub("INFection","infection",x)
+  x=gsub("INFluenza","influenza",x) # convert INF back to inf
+  x=gsub("jak stat", "JAK-STAT", x)
+  x=gsub(" llo", " LLO", x) # DOLICHOL_LIPID_LINKED_OLIGOSACCHARIDE_LLO
+  x=gsub("kegg","KEGG:",x)
+  x=gsub("ksrp","KSRP",x) # archived
+  x=gsub(" m phase"," M phase",x)
+  x=gsub("ncam1","NCAM1",x)
+  x=gsub(" n glycan", " N glycan", x)
+  x=gsub("nfkb", "NFkB", x)
+  x=gsub("nf kb", "NFkB", x)
+  x=gsub("nod1 2", "NOD1/2", x)
+  x=gsub("nod like","NOD-like",x)
+  x=gsub("non lymphoid","non-lymphoid",x)
+  x=gsub("o linked", "O-linked",x)
+  x=gsub("orc1", "Orc1", x)
+  x=gsub("p 27 p21","p21/27",x)
+  x=gsub("p450","P450",x)
+  x=gsub("parkinsons", "Parkinson's", x)
+  x=gsub("perk", "PERK", x)
+  x=gsub("phospholipase c","phospholipase C",x)
+  x=gsub("phase iii","phase III",x)
+  x=gsub("phase ii","phase II",x)
+  x=gsub("phase i","phase I",x)
+  x=gsub("pol iii","pol III",x)
+  x=gsub("pol ii","pol II",x)
+  x=gsub("pol i","pol I",x)
+  x=gsub("pre initiation","pre-initiation",x)
+  x=gsub("pre mrna", "pre-mRNA",x)
+  x=gsub("reactome","Reactome:",x)
+  x=gsub("runx3","RUNX3",x)
+  x=gsub("mhc","MHC",x)
+  x=gsub("rho","Rho",x)
+  x=gsub("rig i like", "RIG-I-like", x)
+  x=gsub("rig i mda5", "RIG-I/MDA5", x)
+  x=gsub("rna","RNA",x)
+  x=gsub("teRNAry","ternary",x) # fix words replaced by RNA
+  x=gsub(" s phase"," S phase",x)
+  x=gsub("slits","SLITs",x)
+  x=gsub("robo","ROBO",x)
+  x=gsub("srp dependent","SRP-dependent",x)
+  x=gsub("scf skp2", "SCF(Skp2)", x)
+  x=gsub("tak1", "TAK1", x)
+  x=gsub("tca","TCA",x)
+  x=gsub("tcr signaling", "TCR signoaling", x)
+  x=gsub("tgf","TGF",x)
+  x=gsub("tp53","TP53",x)
+  x=gsub("3 utr","3' UTR",x)
+  x=gsub("cytokine cytokine receptor","cytokine-cytokine receptor",x)
+  return(x)
+}
+checkvar_func <- function(variable) {
+  if (variable!="") {
+    if (!file.exists(get(variable))) {
+      stop(variable,"='",get(variable),"' does not exist")
+    }
+  }
+}
+```
+
+```{r eval=T, echo=F, fig.height=height, fig.width=15}
+dat_barplot <- data.frame(pathway=res_barplot$pathway, NES=res_barplot$NES)
+dummies=paste0(rep(LETTERS,each=length(LETTERS)),rep(LETTERS,length(LETTERS)))
+dummy <- data.frame(pathway=c(dat_barplot[order(-dat_barplot$NES),"pathway"]),dummy=dummies[1:nrow(dat_barplot)])
+dat_barplot <- merge(dat_barplot,dummy,by="pathway")
+labels <- as.character(dummy$pathway)
+labels <- unname(sapply(labels,textconv_func))
+ggplot(dat_barplot,aes(y=NES,x=dummy)) + geom_bar(width=0.8, position=position_dodge(width=0.8), stat="identity", fill="#006d2c") + 
+  coord_flip() +
+  scale_x_discrete(labels=labels) +
+  ylab("normalized enrichment score")+
+  theme_bw()+
+  theme(
+    axis.title.y=element_blank(),
+    axis.text.y=element_text(size=11),
+    axis.title.x=element_text(size=9))
+```
+
+
+View leading edges in top pathways. Select top five pathways with positive and negative NES respectively
+
+```{r, eval=T, echo=F}
+res_pos = res_show[NES>=0]
+if (nrow(res_pos)>0) {
+  top_pos = res_pos[order(-NES)]$pathway[1:5]
+  for (i in top_pos[!is.na(top_pos)]) {
+    print(plotEnrichment(pathway = pathways.msigkeggreac[[i]], stats = gene_stat) + labs(title=i))
+  }
+}
+```
+             
+```{r, eval=T, echo=F}
+res_neg = res_show[NES<=0]
+if (nrow(res_neg)>0) {
+  top_neg = res_neg[order(NES)]$pathway[1:5]
+  for (i in top_neg[!is.na(top_neg)]) {
+    print(plotEnrichment(pathway = pathways.msigkeggreac[[i]], stats = gene_stat) + labs(title=i))
+  }
+}
+```
+  
+
+
+#### Session information
+
+```{r sessioninfo, eval=T, echo=F}
+pander(sessionInfo())
+```
+
