@@ -1,38 +1,36 @@
 ---
-title: 'Predictors of Acute Renal Failure Post-Heart Transplantation: A UNOS Analysis'
+title: 'Predictors of Acute Renal Failure Post-Heart Transplantation: A UNOS Analysis: BMIN503/EPID600 Final Project'
 author: 'Nosheen Reza, MD'
 output: 
   html_document:
-    toc: true
-    toc_float: 
-        collapsed: true
-        smooth_scroll: true
-    depth: 3 
-    theme: spacelab
-    highlight: pygments
+    theme: paper
+    highlight: tango
 ---
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
 
-## Background
+### Overview
+There are no widely accepted or employed methods to predict the risk of early postoperative ARF requiring RRT after cardiac transplantation. The objective of this research is to derive and internally validate a clinical prediction model for postoperative ARF requiring RRT in HT recipients during the index transplantation hospitalization that can be deployed at the time a patient undergoes heart transplantation. The United Network for Organ Sharing (UNOS) database, a registry containing patient-level data on all solid organ transplants performed in the United States, will be used for model training and internal validation (80% training, 20% testing). My mentors for this project are Thomas Cappola, MD, ScM; Marylyn D. Ritchie, PhD; and Marina Serper, MD. With Dr. Cappola, I discussed clinically relevant predictors for my model. With Dr. Ritchie, I discussed the pros and cons of various prediction algorithms utilized in large clinical registries. With Dr. Serper, I discussed the bias/variance tradeoff. My final project GitHub repository is [linked here:] (https://github.com/nosheenreza/BMIN503_Final_Project). 
+
+### Introduction 
 Acute kidney injury (AKI) is a frequent post-operative complication after heart transplantation (HT) with a reported incidence as high as 70%. Approximately 10% of HT recipients with post-operative AKI develop acute renal failure (ARF) requiring renal replacement therapy (RRT) during the index transplantation admission. Post-HT ARF is associated with significant morbidity — including serious infection, post-HT chronic kidney disease, and prolonged hospitalization — and with postoperative mortality rates as high as 35-50%. In addition, post-cardiac surgery AKI is associated with higher total postoperative costs with patients requiring RRT generating up to 3-fold increase in costs compared with those with AKI not requiring RRT. 
 
 While several older single center retrospective studies have identified various risk factors for post-HT ARF, such as preoperative serum creatinine level, preoperative insulin-dependent diabetes, and cardiopulmonary bypass time, there remains an urgent need for a clinically relevant method to identify patients at risk for early post-HT renal failure requiring RRT, especially in the current era of high-risk bridging to HT with temporary mechanical circulatory support platforms.
 
-## Objective
 In current practice, the pre-HT estimated glomerular filtration rate (eGFR) is the primary pre-HT clinical risk stratification tool for perioperative adverse renal events. Perioperative renoprotective strategies are limited to calcineurin inhibitor-sparing immunosuppression regimens and general avoidance of other potential nephrotoxins. Published single center inferential modeling studies of postoperative major adverse renal events have identified a range of predictor variables (e.g., age, serum albumin and creatinine levels, insulin-dependent diabetes, cardiopulmonary bypass time, cyclosporine use, intraoperative hypertension, intraoperative acidosis), although there are very few internal or external validation studies of these associations. There are no widely accepted or employed methods to predict the risk of early postoperative ARF requiring RRT after cardiac transplantation. 
 
-**The objective of this research is to derive and internally validate a clinical prediction model for postoperative ARF requiring RRT in HT recipients during the index transplantation hospitalization that can be deployed at the time a patient undergoes heart transplantation.**
+This project attempts to address an interdisciplinary issue that involves many medical disciplines, including cardiology, cardiothoracic surgery, critical care, anesthesia, and nephrology, and many types of clinicians, including physicians, advanced practice providers, nutritionists, pharmacists, and others. An important consideration of this modeling problem will be to create a model that is parsimonious and easily understood by clinicians given the nature of the input variables and the discrete outcome.
+
 
 ## Data Source and Outcomes
 The United Network for Organ Sharing (UNOS) database, a registry containing patient-level data on all solid organ transplants performed in the United States, will be used for model training and internal validation (80% training, 20% testing). Adult patients (>= 18 years old) who underwent heart transplantation between 2000 and 2020 will be included. Dual and triple organ recipients, retransplanted patients, and patients on pre-HT RRT will be excluded. Input variables will include pretransplant donor, recipient, and intraoperative characteristics provided by UNOS (i.e., demographics, comorbidities, hemodynamics, immunologic signatures). These are both continuous and discrete variables. Specifically, these data will be collected from the Transplant Candidate Registration (TCR), Transplant Recipient Registration (TRR), Deceased Donor Registration (DRR), and Donor Histocompatibility forms. Patients with >20% missing data will be excluded. Data from the Transplant Recipient Follow-up (TRF) form will not be used as these data are collected from a time horizon after the model’s intended use.
 
 The primary outcome (training label) is the occurrence of new-onset postoperative ARF requiring RRT on the index HT hospital admission. This outcome is discrete with two classes (Dialysis, No Dialysis). This training label is expected to be an accurate marker of the real-world outcome of interest in practice given the standardized nature of data collection by the Organ Procurement and Transplantation Network (OPTN).
 
-## Methods
-1. Load libraries & set working directory
-```{r, eval = FALSE}
+### Methods
+#### 1. Load libraries & set working directory
+```{r, eval = TRUE, message=FALSE}
 #Load libraries
 library(dplyr)
 library(tidyverse)
@@ -47,12 +45,14 @@ library(forcats)
 library(arsenal)
 library(dlookr)
 library(naniar)
+library(gtsummary)
+library(caret)
 
 setwd("/Users/nosheenrezamacbookpro/Desktop/MSTR/BMIN 503/BMIN503_Final_Project")
 
 ```
 
-2. Load and clean the data
+#### 2. Load and clean the data
 ```{r, include = TRUE}
 data <- read.csv("/Users/nosheenrezamacbookpro/Desktop/MSTR/BMIN 503/BMIN503_Final_Project/unos_data_chunk.csv", header = TRUE, sep = ",")
 
@@ -68,7 +68,7 @@ df <- data %>%
 write.table(df, "tempdata1.csv", row.names = FALSE, sep = "\t")
 ```
 
-3. Filter data to desired observations = 37297 observations remaining
+#### 3. Filter data to desired observations = 37297 observations remaining
 ```{r, include = TRUE}
 df2 <- df
 
@@ -92,7 +92,7 @@ df3 <- df2 %>%
   filter(pst_dial != "") # 284 observations dropped = missing data regarding if dialysis occurring on index transplant admission
 ```
 
-4. Remove columns in which all observations are NA
+#### 4. Remove columns in which all observations are NA
 ```{r, include = TRUE}
 not_all_na <- function(x) any(!is.na(x)) # Create function to capture columns that are all NA
 
@@ -103,20 +103,20 @@ df4 <- df3 %>%
 #  select(-where(not_all_na)) -> all_na_df # dataframe of all columns that were NA for all observations
 ```
 
-5. Drop features that are not relevant to the model and/or add bias by adding information from beyond the predictive time horizon.
+#### 5. Drop features that are not relevant to the model and/or add bias by adding information from beyond the predictive time horizon.
 ```{r, include = TRUE}
 df5 <- df4 %>%
   select(-c(grouping, inutero, citizenship, citizen_country, perm_state, education, pros_infus_tcr, prostacyclin_tcr, pri_payment_ctry_tcr, histry_cig_old, ssdmf_death_date, txed, wlhl, wlki, wlkp, wlli, wllu, wlpa, wl_id_code, init_llu_flg, init_rlu_flg, init_blu_flg, end_llu_flg, end_rlu_flg, end_blu_flg, val_dt_tcr, yr_entry_us_tcr, work_income_tcr, academic_prg_tcr, academic_level_tcr, academic_level_trr, status_trr, admission_date, pri_payment_trr, pri_payment_ctry_trr, perm_state_trr, work_income_trr, pst_airway, acute_rej_epi, pst_stroke, pst_pacemaker, post_tx_vent_support, reintubated, cod, cod_ostxt, cod2, cod2_ostxt, cod3, cod3_ostxt, gstatus, gtime, lastfuno, pstatus, ptime, px_stat, func_stat_trf, txkid, tx_procedur_ty, don_retyp, crsmatch_done, cpra, cpra_peak, trtrej1y, prev_tx_any, citizenship_don, home_state_don, hcv_riba_don, hcv_antibody_don, px_stat_date, discharge_date, multiorg, grf_fail_cause, grf_fail_cause_ostxt, grf_fail_date, grf_stat, share_ty, los, age_group, organ, trr_id_code, val_dt_trr, education_don, status_ldr, val_dt_ldr, recov_out_us, recov_country, admit_date_don, distance, status_ddr, val_dt_ddr, donor_id, lt_one_week_don, referral_date, listyr, po2_done_don, po2_fio2_don, pco2_don, data_transplant, data_waitlist, ctr_code, opo_ctr_code, init_opo_ctr_code, end_opo_ctr_code, listing_ctr_code, year, activate_date, end_date, init_date))
 ```
 
-6. Drop features that contain "_ostxt" (text strings) and are not relevant to the model
+#### 6. Drop features that contain "_ostxt" (text strings) and are not relevant to the model
 ```{r, include = TRUE}
 
 df6 <- df5 %>% 
   select(-contains("_ostxt"))
 ```
 
-7. Recode +/- relevel factor levels and make unknown and missing values for each feature NA to perform imputation later
+#### 7. Recode +/- relevel factor levels and make unknown and missing values for each feature NA to perform imputation later
 ```{r, include = TRUE}
 
 df7 <- df6 %>%
@@ -369,7 +369,7 @@ df9 <- df8 %>%
   set_variable_labels(antihype_don= "Deceased donor antihypertensives within 24 hours pre crossclamp") %>%
   mutate(blood_inf_don=fct_recode(blood_inf_don, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(blood_inf_don= "Deceased donor blood as infection source") %>%
-  mutate(blood_inf_conf_don=fct_recode(blood_inf_conf_don, "No" = "0", "Yes" = "1", NULL = "",)) %>%
+  mutate(blood_inf_conf_don=fct_recode(blood_inf_conf_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(blood_inf_conf_don= "Deceased donor blood infection confirmed by culture") %>%
   mutate(dobut_don_old=fct_recode(dobut_don_old, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(dobut_don_old= "Deceased donor dobutamine within 24 hours pre crossclamp") %>%
@@ -386,11 +386,11 @@ df9 <- df8 %>%
   set_variable_labels(pt_t4_don= "Deceased donor T4 between brain death to 24 hours prior to procurement") %>%
   mutate(pulm_inf_don=fct_recode(pulm_inf_don, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(pulm_inf_don= "Deceased donor pulmonary as infection source") %>%
-  mutate(pulm_inf_conf_don=fct_recode(pulm_inf_conf_don, "No" = "0", "Yes" = "1", NULL = "",)) %>%
+  mutate(pulm_inf_conf_don=fct_recode(pulm_inf_conf_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(pulm_inf_conf_don= "Deceased donor pulmonary infection confirmed") %>%
   mutate(urine_inf_don=fct_recode(urine_inf_don, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(urine_inf_don= "Deceased donor urine as infection source") %>%
-  mutate(urine_inf_conf_don=fct_recode(urine_inf_conf_don, "No" = "0", "Yes" = "1", NULL = "",)) %>%
+  mutate(urine_inf_conf_don=fct_recode(urine_inf_conf_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(urine_inf_conf_don= "Deceased donor urine infection confirmed") %>%
   mutate(vasodil_don=fct_recode(vasodil_don, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(vasodil_don= "Deceased donor vasodilators within 24 hours pre crossclamp") %>%  
@@ -454,8 +454,6 @@ df9 <- df8 %>%
   set_variable_labels(arginine_don= "Deceased donor given arginine vasopression within 24 hours of crossclamp") %>% 
   mutate(insulin_don=fct_recode(insulin_don, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(insulin_don= "Deceased donor given insulin within 24 hours of crossclamp") %>% 
-  mutate(insulin_don=fct_recode(insulin_don, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
-  set_variable_labels(insulin_don= "Deceased donor given insulin within 24 hours of crossclamp") %>% 
   mutate(hbv_nat_don=fct_recode(hbv_nat_don, "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "Pending" = "PD", NULL = "U", NULL = "")) %>%
   set_variable_labels(hbv_nat_don= "Donor HBV NAT result") %>% 
   mutate(hcv_nat_don=fct_recode(hcv_nat_don, "Indeterminate" = "I", "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "Pending" = "PD", NULL = "U", NULL = "")) %>%
@@ -468,15 +466,15 @@ df9 <- df8 %>%
   set_variable_labels(abo_mat= "Donor recipient ABO match level") %>%    
   mutate(diag=fct_recode(diag, "OTHER" = "999", "DILATED IDIOPATHIC" = "1000", "DILATED ADRIAMYCIN" = "1001", "DILATED POSTPARTUM" = "1002", "DILATED FAMILIAL" = "1003", "DILATED MYOCARDITIS" = "1004", "DILATED ALCOHOLIC" = "1005", "DILATED VIRAL" = "1006", "DILATED ISCHEMIC" = "1007", "DILATED OTHER" = "1049", "RESTRICTIVE IDIOPATHIC" = "1050", "RESTRICTIVE AMYLOIDOSIS" = "1051", "RESTRICTIVE ENDOCARDIAL FIBROSIS" = "1052", "RESTRICTIVE SARCOIDOSIS" = "1053", "RESTRICTIVE RADIAT/CHEM" = "1054", "RESTRICTIVE OTHER" = "1099", "HEART RE-TX/GF ACUTE REJECTION" = "1101", "HEART RE-TX/GF CORONARY ARTERY DISEASE" = "1102", "HEART RE-TX/GF RESTRICTIVE/CONSTRICTIVE" = "1104", "HEART RE-TX/GF CHRONIC REJECTION" = "1105", "HEART RE-TX/GF PRIMARY FAILURE" = "1106", "HEART RE-TX/GF OTHER" = "1199", "CORONARY ARTERY DISEASE" = "1200", "HYPERTROPHIC CARDIOMYOPATHY" = "1201", "VALVULAR HEART DISEASE" = "1202", "CONGENITAL HEART DEFECT PRIOR SURGERY UNKNOWN" = "1203", "CANCER" = "1204", "CONGENITAL HEART DEFECT HYPOPLASTIC LEFT HEART SYNDROME UNOPERATED" = "1205", "CONGENITAL HEART DEFECT WITHOUT SURGERY" = "1206", "CONGENITAL HEART DEFECT WITH SURGERY" = "1207", "ARRHYTHMOGENIC RIGHT VENTRICULAR DYSPLASIA/CARDIOMYOPATHY" = "1208", "MUSCULAR DYSTROPHY" = "1209")) %>%
   set_variable_labels(diag= "Recipient primary diagnosis") %>%
-  mutate(life_sup_trr=fct_recode(life_sup_trr, "No" = "0", "Yes" = "1", NULL = "")) %>%
+  mutate(life_sup_trr=fct_recode(life_sup_trr, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(life_sup_trr= "Recipient life support pretransplant at transplant") %>%
   mutate(prior_card_surg_trr=fct_recode(prior_card_surg_trr, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(prior_card_surg_trr= "Cardiac surgery between listing and transplant") %>%
   mutate(malig_ty=fct_recode(malig_ty, "SK MEL" = "1", "SK NON-MEL" = "2", "SK MEL SK NON-MEL" = "3", "CNS" = "4", "GENURIN" = "8", "SK MEL GENURIN" = "9", "SK NON-MEL GENURIN" = "10", "BREAST" = "16", "SK MEL BREAST" ="17", "SK NON-MEL BREAST" = "18", "CNS BREAST" = "20", "GENURIN BREAST" = "24", "THYR" = "32", "GENURIN THYR" = "40", "BREAST THYR" = "48", "TONGUE/THR/LAR" = "64", "LU" = "128", "SK NON-MEL LU" = "130", "BREAST LU" = "144", "LEUK" = "256", "SK MEL LEUK" = "257", "SK NON-MEL LEUK" = "258", "SK MEL SK NON-MEL LEUK" = "259", "CNS LEUK" = "260", "GENURIN LEUK" = "264", "BREAST LEUK" = "272", "THYR LEUK" = "288", "BREAST THYR LEUK" = "304", "TONGUE/THR/LAR LEUK" = "320", "UNK" = "512", "SK MEL UNK" = "513", "BREAST UNK" = "528", "OTH" = "1024", "SK MEL OTH" = "1025", "SK NON-MEL OTH" = "1026", "GENURIN OTH" = "1032", "SK NON-MEL GENURIN OTH" = "1034", "BREAST OTH" = "1040", "THYR OTH" = "1056", "BREAST THYR OTH" = "1072", "LU OTH" = "1152", "LEUK OTH" = "1280", "SK MEL LEUK OTH" = "1281", "BREAST LEUK OTH" = "1296", "UNK OTH" = "1536", "LI" = "2048", "LEUK LI" = "2304")) %>%
   set_variable_labels(malig_ty= "Previous malignancy type") %>%
-  mutate(malig=fct_recode(malig, "No" = "0", "Yes" = "1", NULL = "")) %>%
+  mutate(malig=fct_recode(malig, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(malig= "Any previous malignancy") %>%
-  mutate(vent_support_after_list=fct_recode(vent_support_after_list, "No" = "0", "Yes" = "1", NULL = "")) %>%
+  mutate(vent_support_after_list=fct_recode(vent_support_after_list, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(vent_support_after_list= "Episode of ventilatory support between listing and transplant") %>%
   mutate(proc_ty_hr=fct_recode(proc_ty_hr, "Orthotopic Bicaval" = "1", "Orthotopic Traditional" = "2", "Orthotopic Total" = "3", "Heterotopic" = "4")) %>%
   set_variable_labels(proc_ty_hr= "Heart transplant procedure type") %>%
@@ -558,9 +556,9 @@ df9 <- df8 %>%
   mutate(abn_congen_don=fct_recode(abn_congen_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(abn_congen_don= "Donor congenital abnormalities ") %>% 
   mutate(wall_abn_seg_don=fct_recode(wall_abn_seg_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
-  set_variable_labels(wall_abn_seg_don= "Donor segmental wall motion abnormalities ") %>%  
+  set_variable_labels(wall_abn_seg_don= "Donor segmental wall motion abnormalities") %>%  
   mutate(wall_abn_glob_don=fct_recode(wall_abn_glob_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
-  set_variable_labels(wall_abn_glob_don= "Donor global wall motion abnormalities ") %>%
+  set_variable_labels(wall_abn_glob_don= "Donor global wall motion abnormalities") %>%
   select(-c(prev_tx, wl_org, num_prev_tx, pt_code, composite_death_date, region, academic_prg_trr, pros_infus_trr, prostacyclin_trr, tracheostomy_trr, hiv_nat, hcv_nat, hbv_nat, txhrt, txliv, txlng, txpan, status_tcr, amis, bmis, hlamis, drmis, liv_don_ty, htlv1_old_don, htlv2_old_don, cmv_igg_don, cmv_igm_don, cmv_don, cmv_test_don, ebv_test_don, hbv_test_don, hcv_test_don, ebv_dna_don, ebv_igg_don, ebv_igm_don, ddavp_don, cmv_nucleic_don, recovery_date_don, heparin_don, controlled, ecd_donor, transfus_intraop_num_old_don, transfus_prior_num_old_don, other_inf_conf_don))
 
 analytic <- df9
@@ -568,8 +566,8 @@ analytic <- df9
 ```
 
 
-7. Exploratory data analyses
-```{r, include = TRUE}
+#### 8. Exploratory data analyses: will eventually make threshold of missingness to remove and/or impute variables
+```{r, include = TRUE, fig.width=20, fig.height=10}
 overview(analytic)
 diagnose(analytic)
 diagnose_category(analytic)
@@ -577,22 +575,30 @@ diagnose_numeric(analytic)
 diagnose_outlier(analytic)
 plot_na_pareto(analytic)
 univar_category(analytic)
-dlookr::relate(analytic, pst_dial)
 
-miss_var_summary(analytic)
+missing <- miss_var_summary(analytic)
 
 lessthan20pctmissing <- missing %>%
-  filter(pct_miss <20)
+  filter(pct_miss < 20)
 
-lessthan20pctmissing %>%
-  pivot_wider(names_from = variable, values_from = pct_miss) %>%
-  select(c(2:189)) %>%
-  colnames() -> colx
+#lessthan20pctmissing %>%
+#  pivot_wider(names_from = variable, values_from = pct_miss) %>%
+#  select(2:189) %>%
+#  colnames() -> colx
 
-str(analytic %>%
-  select(all_of(colx)))
-
-
-
+#str(analytic %>%
+ #select(all_of(colx)))
 ```
 
+
+### Results (not complete yet)
+#### 1. Will present some summary statistics here
+```{r, include=TRUE}
+summary(analytic$age) # median age is 56, IQR (47-62)
+
+tbl1 <- analytic %>% select(age, gender, ethcat, diag, diab, bmi_tcr, creat_trr, tbili, ventilator_tcr, iabp_tcr, vad_at_listing, icu, infect_iv_drug_trr, transfusions)
+
+tbl1 %>% tbl_summary()
+```
+
+#### 2. Plan to build prediction models using caret package: Plan to try elastic net, gradient boosting, GLM, random forest. Will report performance characteristics for each model including C-statistic, Brier Score, Scaled Brier Score, calibration plots.
