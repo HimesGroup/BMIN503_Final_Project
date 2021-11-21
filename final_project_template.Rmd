@@ -40,10 +40,109 @@ The Optum® COVID-19 data elements include demographics, encounter information, 
 
 An EHR-based retrospective cohort study of adult patients with or without COVID-19 vaccination who were diagnosed with SARS-CoV-2 infection for the first time between December 11th, 2020, and August 16th, 2021 (which was chosen as the cutoff date to allow for a 30-day follow-up period after infection since September 16, 2021 was the final date of the current database update). A case of SARS-CoV-2 infection was defined as on the first instance of a COVID-19-specific ICD-10 diagnosis or the first positive SARS-CoV-2 PCR or antigen test for a patient. The first administration date of a COVID-19 vaccine was defined as the date of the first dose and the second administration date (if one existed) of a COVID-19 vaccine ≥14 days from the first dose for a given patient as the date of the second dose. To avoid including vaccine trial doses (and thereby, possible placebo doses), only vaccinations on or after December 10, 2020 (date of FDA's first Emergency Use Authorization in the United States). Only patient's that received either BNT162b2 (Pfizer) or mRNA-1273 (Moderna) were included in the study. 
 
-Patients with categorized into four groups.Group 1A included individuals who developed SARS-CoV-2 infection after only a single dose of vaccine. Group 1B included individuals who developed SARS-CoV-2 infection after completing their two-dose mRNA immunization series but were diagnosed with SARS-CoV-2 infection <14 days from the second dose. Group 1C includes patients who were diagnosed with SARS-CoV-2 infection ≥14 days after the second dose of vaccination and were considered fully vaccinated per CDC definition7. Group 2 included patients who had SARS-CoV-2 infection but never received any vaccination. 
+Patients were categorized into four groups. Group 1A included individuals who developed SARS-CoV-2 infection after only a single dose of vaccine. Group 1B included individuals who developed SARS-CoV-2 infection after completing their two-dose mRNA immunization series but were diagnosed with SARS-CoV-2 infection <14 days from the second dose. Group 1C includes patients who were diagnosed with SARS-CoV-2 infection ≥14 days after the second dose of vaccination and were considered fully vaccinated per CDC definition7. Group 2 included patients who had SARS-CoV-2 infection but never received any vaccination. 
+
+```{r, eval = TRUE, message = FALSE}
+```
+
+I'll load in all the necessary libraries first.
+
+```{r, eval = TRUE, message = FALSE}
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+library(logistf)
+library(xlsx)
+library(caTools)
+library(stringr)
+library(lubridate)
+
+#For connected to PostgreSQL database
+library(RPostgres)
+library(DBI)
+install.packages('RPostgres')
+
+```
+
+First, I'll establish a connection to the PostgreSQL database.
+
+```{r, eval = TRUE, message = FALSE}
+install.packages("odbc")
+install.packages('RPostgreSQL')
+install.packages('RPostgres')
+
+con<-dbConnect(RPostgres::Postgres(), 
+               dbname = 'coviddb',
+               host = 'greenplum01.corral.tacc.utexas.edu',
+               port = 5432,
+               user = 'ssaleh2',
+               password = rstudioapi::askForPassword("Database password"))
+```
+Next, I'll define the key cohorts.
+
+```{r, eval = TRUE, message = FALSE}
+
+sql = 'SELECT * FROM g823429.sns_proj2_coh2_0916 coh WHERE coh.covid_pos_date > \'2020-12-10\';'
+coh2 <- dbGetQuery(con, sql)
+
+# Excluding those that were vaccinated within 3 months of COVID+ date.
+coh2 <- coh2 %>% 
+  dplyr::filter(is.na(coh2$first_imm_date) | (coh2$first_imm_date > coh2$covid_pos_date + days(90))) %>%
+  dplyr::mutate(cohort = '2')
+
+sql = 'SELECT * FROM g823429.sns_proj2_coh1_0916;'
+coh1 <- dbGetQuery(con, sql)
+
+coh1a <- coh1 %>%
+  dplyr::filter((days_second_imm_to_infxn <= 0) | (is.na(coh1$days_second_imm_to_infxn))) %>%
+  dplyr::mutate(cohort = '1a')
+
+coh1b <- coh1 %>%
+  dplyr::filter((0 < days_second_imm_to_infxn) & (days_second_imm_to_infxn <= 14)) %>%
+  dplyr::mutate(cohort = '1b')
+
+coh1c <- coh1 %>%
+  dplyr::filter(days_second_imm_to_infxn > 14) %>%
+  dplyr::mutate(cohort = '1c')
+
+cohorts <- c(coh1a, coh1b, coh1c, coh2)
+
+coh1b
+```
+
+```{r, eval = TRUE, message = FALSE}
+coh1a
+```
+
+```{r, eval = TRUE, message = FALSE}
+dem_query = "SELECT coh.ptid, p.birth_yr, p.gender, p.race, p.ethnicity, p.region 
+FROM g823429.sns_proj2_coh{s} coh 
+LEFT OUTER JOIN opt_20210401.pt p
+on coh.ptid = p.ptid
+where coh.covid_pos_date > \'2020-12-10\'
+"
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+# Run logistic model for death
+lf <- logistf(formula = death ~ age + gender + bmi + cci_score + is_Northeast + is_Other_Region + is_South + is_West + is_1a + is_1b + is_1c + is_African_American + is_Asian + is_Hispanic + is_Other + is_Medicare_Medicaid + is_Other_Ins, data=model_data)
+
+summary(lf)
+
+death_or <- exp(cbind(Odds=coef(lf), confint(lf)))
+
+```
 
 ### Results
 <!--Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.-->
+
+### Conclusions
+
+Limitations: study is looking at outcomes among vaccinated and unvaccinated individuals who tested positive for COVID-19, which may be very different from outcomes among all vaccinated and unvaccinated individuals infected with COVID-19.
+
 
 ### References
 1.  Dong E, Du H, Gardner L. An interactive web-based dashboard to track COVID-19 in real time. The Lancet Infectious Diseases. 2020;20(5):533-534. doi:10.1016/S1473-3099(20)30120-1
