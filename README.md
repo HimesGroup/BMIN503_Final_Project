@@ -7,5 +7,3 @@ final_project_giannini.RMD
 final_project_giannini.html
 
 README.md (this file)
-
-

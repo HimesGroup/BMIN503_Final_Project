@@ -7,6 +7,7 @@ output:
     highlight: tango
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 options(width = 400)
 ```  
 ***
@@ -52,6 +53,84 @@ library(ggpubr)
 library(rstatix)
 library(knitr)
 ```
+## Comparing the IL6- and IL8- Model Assignments
+
+First, we will look at descriptive characteristics of the IL6 and
+IL8-based models for distribution of probabilities and IL6/IL8 levels.
+Here we will also calculate an IL6:IL8 ratio, and test the association
+of this ratio (continuous variable) with the categorical assignments.
+
+```{r}
+## Comparing Performance of IL6 vs IL8 models
+# read in results from both models
+il6mod <- read_excel("~/R_Projects/MESSI_Gene_Exp/ards pars model/ards_model2_calc_done.xlsx")
+il8mod <- read_excel("~/R_Projects/MESSI_Gene_Exp/ards pars model/ards_model3_calc_done.xlsx")
+
+# remove bicarb/sTNFR1 so they aren't dupiclicated in the join
+il8mod <- il8mod %>% select(-Bicarbonate, -sTNFR1)
+
+#il6prob <- il6mod %>% select(IL6, Probability, Class)
+#il8prob <- il8mod %>% select(IL8, Probability, Class)
+
+# combine the model 2 and model 3 data
+mod_join <- left_join(il6mod, il8mod, by="messi_id")
+mod_join <- mod_join %>% select(-Model.x, -Model.y) %>%
+  rename("IL6_Model"=Class.x, "IL8_Model"=Class.y) %>%
+  rename("IL6_Probability"=Probability.x, "IL8_Probability"=Probability.y) %>%
+  mutate("IL6:IL8"=IL6/IL8)
+
+mod_join %>% 
+  select(IL6_Model, IL8_Model, IL6_Probability, IL8_Probability, IL6, IL8)%>% 
+  tbl_summary(by=IL6_Model)%>%
+  modify_caption("by IL6 Model Class Assignments")
+```
+
+## Evaluating discordance in Model Probabilities
+We will use a heatmap representing the probabilities for each
+model to demonstrate that while the models tend to agree most of the time,
+there are some samples which clearly diverge depending on IL6 vs IL8
+analyte.
+
+```{r}
+mat <- mod_join %>% select(IL6_Probability, IL8_Probability)
+mat <- as.matrix(mat)
+pheatmap(mat, cluster_cols = F)
+```
+
+We can see there is a group of patients at the top which were low
+Probability in IL6, but clearly very high in IL8. and a group in the
+middle which were low IL8, but high IL6.
+
+## Cohort that demonstrates class switching
+
+There are 98 patients that switch classes between IL6- and IL8-based
+models.
+
+```{r}
+# now make a new variables coding the dual-class assignments to evaluate groups
+mod_join <- mod_join %>% 
+  mutate(a = case_when(IL6_Probability >= 0.5 ~ "hyperIL6", IL6_Probability <= 0.5 ~ "hypoIL6"))%>% 
+  mutate(b = case_when(IL8_Probability >= 0.5 ~ "hyperIL8", IL8_Probability <= 0.5 ~ "hypoIL8"))%>%
+  unite("combined_models", a:b, remove = TRUE)
+
+mod_join %>% select(-messi_id, -IL6_Model, -IL8_Model) %>% 
+  tbl_summary(by="combined_models") %>%
+  modify_caption("Both Model Assignments")
+
+p1 <- ggplot(mod_join, aes(x=combined_models, y=IL6_Probability)) + geom_boxplot() + theme_bw()
+p2 <- ggplot(mod_join, aes(x=combined_models, y=IL8_Probability)) + geom_boxplot() + theme_bw()
+plot_grid(p1,p2)
+```
+It does appear that the probabilities - particularly for IL6 Model - are
+less extreme, from 0.88 - 0.68 for Hyper and 0.05 - 0.22 for Hypo. IL8
+probabilities mellow a bit as well, but maybe not as much.
+
+The more interesting thing here is that the IL8 values are **higher** in
+the hypoinflammatory group per IL6 model, which is likely why the IL8
+Model tends to put them in hyperinflamm.
+
+**So who are these patients who have relatively higher IL8, despite a
+lower IL6 value?**
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
