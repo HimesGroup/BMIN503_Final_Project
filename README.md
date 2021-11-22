@@ -1,5 +1,15 @@
-# BMIN503/EPID600 Final Project
+# Monique Arnold's BMIN503/EPID600 Final Project
 
+#### Overview:  
+The purpose of this project is to investigate the provision of timely and effective outpatient and emergency department care in Pennsylvania. Using CMS “Timely and Effective Care” data set, the goals of the project are:
++ To compare Pennsylvania to other states and national progress on emergency department access and care and display the results using interactive maps.  
++ To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: stroke interventions, heart attack interventions, wait time.
++ To investigate if there are any relationships between demographic variables and TEC using multivariable regressions.  
+
+
+----
+
+Original instructions:
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 
