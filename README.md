@@ -1,22 +1,34 @@
-test commit
+This project aims to clean and access protein crystal 
+structure data that comes from deposited structures in 
+the Protein Data Bank. The analysis goal is to identify
+disulfide bonds formed in the protein structure based
+on the proximity of cysteine residues in the protein. 
+When 2 cysteines are close enough together, they form a
+very strong bond (disulfide bond), and these are interesting
+bonds because they increase the stability of proteins. 
+From the Protein Data Bank, files can be downloaded as 
+.pdb files and opened as .txt files, which is the preferred
+format for this project code's input.
 
-# BMIN503/EPID600 Final Project
+This project contains the following files:
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+1. README.txt
+This file.
 
+2. 1igt_clean.txt
+This is the protein crystal structure file containing 
+all of the coordinate data required for analysis. This
+is the crystal structure for the IgG2a monoclonal antibody.
+The link to this structure in the database is given here:
+https://www.rcsb.org/structure/1igt
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+3. PDB Analysis.Rmd
+This is the main RMD file that does the data cleanup and
+analysis. Currently there is mostly just data cleaning
+and organizing into structures that will be useful for 
+the analysis portion of the project. I expect the cleaning
+portion to be more extensive than the analysis portion, although
+it is possible to keep optimizing the analysis. 
 
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/10/21 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+4. PDB Analysis.html
+The knitted version of PDB Analysis.Rmd.
