@@ -1,20 +1,23 @@
-# BMIN503/EPID600 Final Project
+## BMIN503 Final Project: Predicting SARS-CoV-2 Cases in the Delaware Valley Region
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains files related to the final project for BMIN503. The project uses publicly available data from the CDC and Google to predict SARS-CoV-2 cases in the following U.S. counties:
+1. Bucks County, PA
+2. Chester County, PA
+3. Delaware County, PA
+4. Montgomery County, PA
+5. Philadelphia County, PA
+6. Burlington County, NJ
+7. Camden County, NJ
+8. Gloucester County, NJ
+9. Mercer County, NJ
+10. Newcastle County, DE
 
+### Files
+The main file for running this analysis is **final_project_Cressman.Rmd.**
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+The accompanying files for this analysis are:
+1. Final_Project.Rproj - R project file; must be saved in same folder as final_project_Cressman.Rmd in order to run. 
+2. all_counties_population.csv - Contains 2019 population estimates for above counties.
+3. cdc_cases_bucks.csv, cdc_cases_burlington.csv, etc. - Each county has an individual case file downloaded from the CDC website.
 
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/10/21 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+All other files are smaller chunks of code which make up final_project_Cressman.Rmd and can be ignored.
