@@ -13,6 +13,7 @@ library(GGally)
 library(tibble)
 library(pROC)
 library(car)
+library(broom)
 
 
 # import final dataset
@@ -174,10 +175,10 @@ mod_vacc <- glm(next_week_increase ~ vacc_inc_per100thou_sc + mean_retail_rec,
                 data = covid, family = "binomial")
 
 # check model output
-tidy(mod_main, conf.int = TRUE, exponentiate = TRUE)
+tidy(mod_vacc, conf.int = TRUE, exponentiate = TRUE)
 
 # check for multicollinearity
-car::vif(mod_main) # variance inflation factors are low, so no issues 
+car::vif(mod_vacc) # variance inflation factors are low, so no issues 
 
 # store predicted values of training data
 vacc_pred <- predict(mod_vacc, covid, type = "response") 
