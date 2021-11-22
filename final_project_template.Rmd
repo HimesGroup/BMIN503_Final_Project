@@ -27,6 +27,104 @@ Lung cancer is still the leading cause of cancer death, and despite improvements
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+```{r eval = TRUE, message = FALSE}
+rt <- read.table("XXXXXXX.txt",sep="\t",header=T,check.names=F)  
+rt <- as.matrix(rt)
+rownames(rt)=rt[,1]
+exp <- rt[,2:ncol(rt)]
+dimnames <- list(rownames(exp),colnames(exp))
+data <- matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+data <- avereps(data)
+data <- data[rowMeans(data)>1,] 
+data <- round(data,0)
+
+group <- c(rep("normal",4),rep("tumor",178))   #group
+design <- factor(group)
+newTab <- newCountDataSet( data, design )
+newTab <- estimateSizeFactors(newTab)
+newData <- counts(newTab, normalized=TRUE )
+
+
+##heatmap
+library(gplots)
+# keep top 200 genes
+top_results <- smoking_results[1:200, ]
+top.eset <- GSE8823.qc.rma[row.names(exprs(GSE8823.qc.rma)) %in% row.names(top_results)]
+status.colors <- unlist(lapply(GSE8823.qc.rma$status, 
+                               function (x) {if (x == "smoker") "red" else "navy"}))
+heatmap.2(exprs(top.eset), col = viridis(256, option = "B"),
+          trace = "none", keysize = 1.5, key.title = NA,
+          ColSideColors = status.colors)
+legend("topright", legend = c("Smoker", "Nonsmoker"), fill = c("red", "navy")) 
+
+
+##volcano
+library(ggplot2)
+# Assign (in)significant genes
+smoking_results$sig <- rep("insignificant", nrow(smoking_results))
+smoking_results$sig[which(smoking_results$adj.P.Val<0.05)] <- "significant"
+ggplot(smoking_results, aes(x = logFC, y = -log10(adj.P.Val), color = sig)) + 
+  geom_point() +
+  theme_bw() +
+  ggtitle("Volcano plot") +
+  xlab("LogFC")+
+  ylab("-Log10(q-value)") +
+  scale_color_manual(values = c("black", "red")) +
+  theme(legend.position = "none")
+
+
+##WGCNA
+library(WGCNA)
+library(flashClust)
+library(iterators)
+
+options(stringsAsFactors = FALSE);
+enableWGCNAThreads();
+
+rt <- read.table("diffmRNAExp.txt",sep="\t",row.names=1,header=T,check.names=F,quote="!")#input
+datSummary <- rownames(rt)
+datExpr <- t(rt)
+
+#select beta value
+powers1 <- c(seq(1,10,by=1),seq(12,30,by=2))
+RpowerTable <- pickSoftThreshold(datExpr, powerVector=powers1)[[2]]
+cex1 <- 0.7
+
+#test beta value
+beta1 <- 2
+Connectivity <- softConnectivity(datExpr,power=beta1)
+pdf("scalefree.pdf",15,10)
+par(mfrow=c(1,1))
+scaleFreePlot(Connectivity, main=paste("soft threshold, power=",beta1), truncated=T)
+
+#module
+ConnectivityCut <- 2537
+ConnectivityRank <- rank(-Connectivity)
+restConnectivity <- ConnectivityRank <= ConnectivityCut
+ADJrest <- adjacency(datExpr[,restConnectivity],power=beta1)
+dissTOM <- TOMdist(ADJrest)
+hierTOM <- hclust(as.dist(dissTOM),method="average")
+colorh1 <- cutreeStaticColor(hierTOM,cutHeight=0.8, minSize=20)  #number of modules
+pdf("module.pdf")
+par(mfrow=c(2,1),mar=c(2,4,1,1))
+plot(hierTOM, main="Cluster Dendrogram", labels=F, xlab="", sub="")
+plotColorUnderTree(hierTOM,colors=data.frame(module=colorh1))
+title("Module (branch) color")
+
+##TOM
+pdf("TOM.pdf")
+tom.plot <- TOMplot(dissTOM, hierTOM, colorh1, terrainColors=TRUE)
+
+##cluster
+datME <- moduleEigengenes(datExpr[,restConnectivity], colorh1)[[1]]
+dissimME <- 1 - (t(cor(datME, method="p")))/2
+hclustdatME <- hclust(dist(dissimME), method="average")
+pdf("module_cluster.pdf")
+par(mfrow=c(1,1))
+plot(hclustdatME, main="Clustering tree based on the module eigengenes of modules")
+
+```
+
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
