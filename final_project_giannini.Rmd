@@ -59,21 +59,26 @@ IL8-based models for distribution of probabilities and IL6/IL8 levels.
 Here we will also calculate an IL6:IL8 ratio, and test the association
 of this ratio (continuous variable) with the categorical assignments.
 
-```{r}
+The two datasets we are reading in contain measures for each MESSI sample ID (each ID is a patient enrolled in the study), with corresponding IL6, IL8, sTNFR1 and bicarbonate level on day 1. The two datasets below also contain the subphenotype class assignments resulting from use of either IL6- or IL8- based model. Finally, the probability of assignment to "Hyperinflammatory" is also included.
+
+```{r reading in datasets}
 ## Comparing Performance of IL6 vs IL8 models
 # read in results from both models
 il6mod <- read_excel("~/R_Projects/MESSI_Gene_Exp/ards pars model/ards_model2_calc_done.xlsx")
 il8mod <- read_excel("~/R_Projects/MESSI_Gene_Exp/ards pars model/ards_model3_calc_done.xlsx")
 
 head(il6mod)
-
 ```
 
-```{r}
+We will need to simplify and merge these in order to compare how the patients are classified by each model.
+
+```{r data cleaning and organizing}
+
 # remove bicarb/sTNFR1 from one dataset so they aren't duplicated in the join
 il8mod <- il8mod %>% select(-Bicarbonate, -sTNFR1)
 
-# combine the model 2 and model 3 data for one datatable for analysis
+# combine the model 2 and model 3 data for one data table for analysis
+# make a new variable called IL6:IL8 ratio so we can use this in our analysis later
 mod_join <- left_join(il6mod, il8mod, by="messi_id")
 mod_join <- mod_join %>% select(-Model.x, -Model.y) %>%
   rename("IL6_Model"=Class.x, "IL8_Model"=Class.y) %>%
@@ -87,7 +92,7 @@ mod_join %>%
   modify_caption("by IL6 Model Class Assignments")
 ```
 
-We see that some of the class assignments are concordant, while a population of patients is notably discordant. We seek to further examine, who are these patients that demonstrate class switching based on classification with IL6 vs IL8?
+We see that some of the class assignments are concordant, while some of the class assignments are discordant between IL6 and IL8.
 
 ## Evaluating Discordance in Model Probabilities
 We will use a heatmap representing the probabilities for each
@@ -95,7 +100,7 @@ model to demonstrate that while the models tend to agree most of the time,
 there are some samples which clearly diverge depending on IL6 vs IL8
 analyte.
 
-```{r}
+```{r heatmap}
 mat <- mod_join %>% select(IL6_Probability, IL8_Probability)
 mat <- as.matrix(mat)
 pheatmap(mat, cluster_cols = F)
@@ -109,7 +114,7 @@ middle which were low IL8, but high IL6.
 There are 98 patients that switch classes between IL6- and IL8-based
 models.
 
-```{r}
+```{r dual-class assignments for statistics}
 # now make a new variables coding the dual-class assignments to evaluate groups
 mod_join <- mod_join %>% 
   mutate(a = case_when(IL6_Probability >= 0.5 ~ "hyperIL6", IL6_Probability <= 0.5 ~ "hypoIL6"))%>% 
@@ -134,6 +139,127 @@ Model tends to put them in hyperinflamm.
 
 **So who are these patients who have relatively higher IL8, despite a
 lower IL6 value?**
+
+## Acute Clinical Variables
+Next, we will bring in a dataset of clinical variables for each subject. These reflect details about acute illness and demographics including: **apacheIII, los, race, sex, age, hospMort30, mort90, sepsis source** but has a lot of other variables that we will not be working with. 
+
+```{r}
+# load in full MESSI clinical dataset, this is over 3000 patients
+working_MESSIdata2021_08 <- read_dta("~/R_Projects/MESSI_Gene_Exp/ards pars model/working MESSIdata2021_08.dta")
+head(working_MESSIdata2021_08)
+```
+
+```{r cleaning clinical data}
+pts <- c(mod_join$messi_id)
+pt_all <- working_MESSIdata2021_08 %>% 
+  filter(pt %in% pts) %>% 
+  select (pt, apacheIII, los, race, sex, age, hospMort30, source) %>%
+  rename ("messi_id" = pt) %>%
+  mutate(hospMort30 = factor(hospMort30, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(sex = factor(sex, levels = c(0, 1), 
+                           labels = c("Female", "Male")))
+
+# join the clinical variables with the model variables
+pt_all <- left_join(pt_all, mod_join, by="messi_id")
+
+# summarize the data to see what the patients look like
+pt_all %>% select(-messi_id, -IL6_Probability, -IL8_Probability, -IL8, -IL6, -IL6_Model, -IL8_Model) %>% 
+  tbl_summary(by=combined_models, missing="no") %>% 
+  add_overall() %>%
+  add_p() %>%
+  modify_caption("Split by Dual Class Assignments")
+```
+
+**Notable patterns here -- high percentage of race 1 (= white) in the
+hypoinflamm-IL6 group. Also we see that the patients
+Hypoinflammatory-IL6 have a very high 90-d mortality.**
+
+## Medical History
+Next we examine medical history, to see if any clinical factors from a
+patient's history correlates with classification and/or class switching. Medical comorbidities that are of interest include coronary disease, heart failure, liver failure/cirrhosis, and particularly, immunosuppression. We tend to have a high level of immune suppression in our ICU ARDS population, and we know from prior work that immunocompromise can affect the level of IL6 and IL8, and interestingly, can lead to relative over-expression of IL8, particularly in neutropenia. We will encode 'immunosuppression' per apacheiii guidelines, which includes hematologic malignancy, metastatic cancer, active chemotherapy, organ transplant (due to administration of immunosuppressant therapy) and use of high dose prednisone (>20mg/day).
+
+```{r}
+# first we have to encode immunosuppressed from the data provided, which includes the variables that contribute to immunosuppressed
+
+pt_mh <- working_MESSIdata2021_08 %>% 
+  filter(pt %in% pts) %>%
+  rename("messi_id"=pt) %>%
+  mutate(mhimmuno = ifelse((mhleuk == 1 | 
+                            mhmyelo == 1 | 
+                            mhlymp == 1 | 
+                            mhmeta == 1 |
+                            mhchemo == 1 |
+                            cmimmuno == 1 |
+                            mhorgtrans == 1	| 
+                            cmhighpred == 1), 1, 0) , 
+                 mhimmuno = ifelse(is.na(mhimmuno),0,mhimmuno) )
+```
+
+```{r}
+table(pt_mh$mhimmuno)
+table(pt_mh$mhimmuno, pt_all$combined_models)
+```
+
+There are 223 (47%) nonimmunosuppressed and 248 (53%) immunosuppressed patients in this cohort of ARDS patients.
+
+```{r, echo=FALSE}
+# now we will encode the other variables
+pt_mh <- pt_mh %>%
+  mutate(HTN = factor(mhhtn, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(Diabetes = factor(mhdm, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(CKD = factor(mhcri, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(Immunosuppressed = factor(mhimmuno, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(HF = factor(mhchf, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(CAD = factor(mhcad, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(Cirrhosis = factor(mhcirrhosis, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(LiverFailure = factor(mhence, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  mutate(COPD = factor(mhcopd, levels = c(0, 1), 
+                           labels = c("No", "Yes"))) %>%
+  select(messi_id, HTN, Diabetes, CKD, Immunosuppressed, HF, CAD, Cirrhosis, LiverFailure, COPD)
+
+c <- pt_all %>% select(messi_id, combined_models)
+pt_mh <- left_join (pt_mh, c, by="messi_id")
+# summarize
+pt_mh %>% select(-messi_id) %>%
+  tbl_summary(by=combined_models, missing = "no") %>%
+  add_overall() %>%
+  modify_caption("Medical Comorbidities") %>%
+  add_p()
+
+#join the clinical variables with the model variables pt_mh \<-
+left_join(pt_mh, pt_all, by="messi_id")
+#write.csv(pt_mh, file="ards_classifier_medhx.csv", row.names = F)
+```
+
+Here, we see the strongest signal in the Immunosuppressed population.
+
+```{r}
+table(pt_mh$Immunosuppressed, pt_mh$combined_models)
+
+ic <- chisq.test(table(pt_mh$Immunosuppressed, pt_mh$combined_models))
+ic
+```
+
+A chi-square test of independence was performed to examine class assignments and immunosuppression. The relation between these variables was significant, X2 (3, N=471) = 14.174, p=0.003).
+
+Class assignment, taking into account both algorithms, is affected by immunosuppression (X2, df=3, p=0.003).
+
+### Neutropenia
+Next we evaluate MESSI ARDS patients in this cohort with and without
+neutropenia (ANC \< 1), since, per prior publication Reilly et al.,
+neutrophil count is inversely correlated with IL6 and IL8 levels. We
+pull the neutrophil minumum count on study day 0 (enrollment). Since
+there is some missingness for this, we also used day 1 and day -1 to
+fill in the value from the 24hr period on either end of Study Day 0.
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
