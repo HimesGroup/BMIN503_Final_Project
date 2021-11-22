@@ -1,8 +1,17 @@
+<<<<<<< HEAD
 # Student Alcohol Consumption Project
 
 This repository contains a R script used to solve the student alcohol consumptio problem provided in [https://www.kaggle.com/uciml/student-alcohol-consumption](https://www.kaggle.com/uciml/student-alcohol-consumption)
 
 ##Introduction
+=======
+# BMIN503/EPID600 Final Project
+## Student Alcohol Consumption Project
+
+This is a R script used to solve the student alcohol consumption problem provided in [https://www.kaggle.com/uciml/student-alcohol-consumption](https://www.kaggle.com/uciml/student-alcohol-consumption)
+
+## Introduction
+>>>>>>> ab055f756dcd96ce69b0fd495964eda544835f01
 Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them.
 
 The data were obtained in a survey of students math and Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
@@ -58,7 +67,7 @@ These students can be identified by searching for identical attributes
 that characterize each student, as shown in the annexed R file.
 
 
-##Source Information
+## Source Information
 
 P. Cortez and A. Silva. Using Data Mining to Predict Secondary School Student Performance. In A. Brito and J. Teixeira Eds., Proceedings of 5th FUture BUsiness TEChnology Conference (FUBUTEC 2008) pp. 5-12, Porto, Portugal, April, 2008, EUROSIS, ISBN 978-9077381-39-7.
 
