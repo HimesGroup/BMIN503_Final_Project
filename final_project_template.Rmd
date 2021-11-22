@@ -1,22 +1,25 @@
 ---
-title: "BMIN503/EPID600 Project Template"
+title: "Timely and Effective Ambulatory Care in Pennsylvania"
 author: "Monique Arnold"
+date: "November 2021"
 output: 
   html_document:
     theme: paper 
     highlight: tango
+    toc: yes
+    toc_float: false
+    number_sections: false
 ---
-```{r set-options, echo=FALSE, cache=FALSE}
+```{r set-options, echo=FALSE, cache=FALSE, warning=FALSE}
 options(width = 400)
 ```  
 ***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
 
 #### Overview:  
-The purpose of this project is to investigate the provision of timely and effective outpatient and emergency department care in Pennsylvania. Using CMS “Timely and Effective Care” dataset, the goals of the project are:
-* To compare Pennsylvania to other states and national progress on emergency department access and care and display the results using interactive maps.
-* To investigate if there are any relationships between demographic variables and TEC using multivariable regressions.
-* To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: pediatrics, stroke, MI/valvular disorders, traumas. 
+The purpose of this project is to investigate the provision of timely and effective outpatient and emergency department care in Pennsylvania. Using CMS “Timely and Effective Care” data set, the goals of the project are:
++ To compare Pennsylvania to other states and national progress on emergency department access and care and display the results using interactive maps.  
++ To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: stroke interventions, heart attack interventions, wait time.
++ To investigate if there are any relationships between demographic variables and TEC using multivariable regressions.  
 
 
 #### Introduction:  
@@ -30,14 +33,339 @@ This is an interdisciplinary issue, requiring the input of physicians, public he
 
 
 #### Methods:
-Using the Timely and Effective Care (TEC) data from CMS through 2020, I will compare Pennsylvania to other states and national progress on emergency department access and care. The TEC dataset includes data for measures of cataract surgery outcome, colonoscopy follow-up, heart attack care, emergency department care, preventive care, pregnancy and delivery care, and cancer care. I will focus on some of the most general issues in emergency care -- pediatrics, stroke, MI/valvular disorders, traumas.
+Using the Timely and Effective Care (TEC) data from CMS through 2020, I will compare Pennsylvania to other states and national progress on emergency department access and care. The TEC data set includes data for measures of cataract surgery outcome, colonoscopy follow-up, heart attack care, emergency department care, preventive care, pregnancy and delivery care, and cancer care. I will focus on some of the most general issues in emergency care -- interventions for stroke, interventions for myocardial infarctions (MI; heart attacks), and wait time for patients in the ED.
 
-First I will generate static/interactive graphs to show general trends of TEC in Pennsylvania to other states. Second, I will merge this data with demographic data available in the US census dataset, and, controlling for certain demographic characteristics, will run multivariable regressions to determine if there are any relationships that can be deduced from the dataset.
+*First* I will generate graphs to visualize how TEC in Pennsylvania compares nationally. *Second*, I will compare TEC in Pennsylvania to its regional neighbors in the Northeast. *Next*, I will attempt to look at more granular data for Pennsylvania and compare within the state. The TEC data set contains hospital, state-level and national data but, unfortunately, does not contain county-level data. On the advice of advisers Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), in lieu of county-level data, I will attempt to calculate more granular data using very specific metrics. I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information. I will use CMS data to corroborate service areas for major hospitals. I will explain all assumptions made.
 
-Lastly, I will attempt to look at more granular data for Pennsylvania and compare within the state. The TEC dataset contains hospital, state-level and national data but, unfortunately, does not contain county-level data. On the advice of advisors Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), in lieu of county-level data, I will attempt to calculate more granular data using very specific metrics. I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information.
+*Finally*, I will merge the state-level data with demographic data available in the US census data set, and, controlling for certain demographic characteristics, will run multivariate regressions to determine if there are any relationships that can be deduced from the data set and help explain differences in TEC. I will explain all assumptions made.
 
 
-To create maps, the counties polygon dataset from BMIN503 Assignment 5 has been downloaded and used. I will use CMS data to corrobrate service areas for major hospitals.
+##### Preparing packages and data  
+
+All necessary packages are installed and loaded.
+```{r}
+#Setup
+require(knitr)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+mydirectory<-"/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/"
+knitr::opts_knit$set(root.dir = mydirectory)
+setwd("/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/")
+
+# Clear existing data and graphics
+rm(list = ls())
+graphics.off()
+
+# Load  library
+pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal, viridis, RColorBrewer, mapproj,cowplot,sf,raster,spData,spDataLarge,tmap)
+
+```
+
+Functions necessary for later processing are created.
+```{r}
+#Theme for maps
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(
+        axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.5, "cm"),          
+        legend.text = element_text(size = 8),       
+        legend.title = element_text(size = 10),
+        plot.title = element_text(size = 14),
+                                  #hjust = 0.5),
+       #panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+       #panel.grid.minor = element_blank(),
+       #plot.background = element_rect(fill = "#f5f5f2", color = NA), 
+       #panel.background = element_rect(fill = "#f5f5f2", color = NA), 
+       #legend.background = element_rect(fill = "#f5f5f2", color = NA),
+    panel.border = element_blank())
+}
+
+#Min for map scales
+prev_min <- function(x) {
+  min(c(x),na.rm=TRUE)
+}
+
+#Max for map scales
+prev_max <- function(x) {
+  max(c(x), na.rm=TRUE)
+}
+
+#Theme for bar graphs
+my_theme_bar <- function() {
+  theme_minimal() +                                  
+  theme(
+        axis.line = element_blank(),                 
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.5, "cm"),          
+        legend.text = element_text(size = 8),       
+        legend.title = element_text(size = 10),
+        plot.title = element_text(size = 14),
+       panel.border = element_blank())
+}
+```
+
+TEC data is downloaded directly from the [CMS website](https://data.cms.gov/provider-data/search?keyword=Timely%20and%20Effective%20Care). 
+```{r}
+#Get TEC data
+tec_hosp <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/350f34f9ef3d484925d49dfcce7a0f54_1632355520/Timely_and_Effective_Care-Hospital.csv")
+tec_state <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/0b2db52e1ce72942f369cc00c00649f8_1632355520/Timely_and_Effective_Care-State.csv")
+tec_natl <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/4766dbf7fd2de19618a27f5546954463_1632355520/Timely_and_Effective_Care-National.csv")
+
+#Cleaning data
+tec_state$NAME <- state.name[match(tec_state$State,state.abb)]
+tec_state$Score<- as.numeric(tec_state$Score)
+
+#County Data
+# counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds"))) 
+
+
+```
+
+##### Visualizing national data  
+First, national data is visualized using *us_states* dataset provided by the spData package. Note: 'total_pop_15' is the numerical vector of total population in 2015.  
+
+Metrics investigated are:
++ OP_18b: Average (median) time patients spent in the ED  
++ OP_18c: Average (median) time patients spent in the ED (Psychiatric/Mental Health Patients)  
++ OP_2: Percentage of outpatients with chest pain or possible heart attack who got drugs to break up blood clots within 30 minutes of arrival  
++ OP_3b: Percentage of patients who came to the ED with stroke symptoms who received brain scan results within 45 minutes of arrival  
++ OP_23: Average (median) number of minutes before outpatients with chest pain or possible heart attack who needed specialized care were transferred to another hospital  
+```{r, width=600}
+#Select variables to investigate
+varlist <- c("OP_18b","OP_18c","OP_2","OP_23","OP_3b")
+
+state_vars <- tec_state %>% 
+   dplyr::select(NAME,State,Measure.ID,Score) %>%
+   filter(Measure.ID %in% varlist) %>% 
+   drop_na() %>%
+   reshape(idvar = c("State","NAME"), timevar = "Measure.ID", direction = "wide", varying=varlist)
+
+#Merge to usa map data
+usa <- us_states
+to_map_natl<- merge(usa,state_vars, stringsAsFactors=FALSE)
+str(to_map_natl) #check
+
+to_map_northeast<- to_map_natl %>% filter(REGION=="Norteast")
+to_map_pa <- to_map_natl %>% filter(NAME=="Pennsylvania")
+
+#CANNOT GET THIS TO WORK
+# for (i in varlist){
+#    p <- ggplot() + 
+#       geom_sf(data = to_map_natl, aes(fill = i), lwd=0, colour="white") + 
+#       coord_sf() + 
+#       my_theme() + 
+#       scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "mako", direction = -1,
+#                          limit = range(prev_min(to_map_natl[[i]]), prev_max(to_map_natl[[i]]))) +
+#       labs(title= "Average (median) time patients spent in the ED",
+#         subtitle= "July - December 2020",
+#         caption = "Source: Centers for Disease Control") +
+#       theme(legend.position = "bottom")
+#    print(p)
+# }
+
+
+#Plot maps
+#OP_18b
+map_natl_OP_18b<-ggplot() + 
+   geom_sf(data = to_map_natl, aes(fill = OP_18b), lwd=0, colour="white") + 
+   geom_sf(data = to_map_pa, fill = NA, color = "red", size = 0.8) +
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "mako", direction = -1,
+                         limit = range(prev_min(to_map_natl$OP_18b), prev_max(to_map_natl$OP_18b))) +
+   labs(title= "Fig. 1: Average (median) time patients spent in the ED",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   theme(legend.justification = c(0, 1),legend.position = c(0, 0.35)) +
+   geom_text(aes(x = -85, y = 35, hjust="left", 
+                 label = "Pennslvania median = 156 mins \nUS national median = 148 mins"), stat = "unique")
+
+# map_natl_OP_18b_NE<-ggplot(to_map_northeast) + 
+#    geom_sf(aes(fill = OP_18b), lwd=0, colour="white") + 
+#    geom_sf_label(aes(label = State)) +
+#    coord_sf() + 
+#    my_theme() + 
+#    scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "mako", direction = -1,
+#                          limit = range(prev_min(to_map_natl$OP_18b), prev_max(to_map_natl$OP_18b))) +
+#    labs(subtitle= "Northeast") +
+#    theme(legend.position = "none")
+# 
+# lay <- rbind(c(1,1,1,NA),
+#              c(1,1,1,2),
+#              c(1,1,1,2))
+# grid.arrange(map_natl_OP_18b, map_natl_OP_18b_NE, layout_matrix = lay)
+
+map_natl_OP_18c<-ggplot() + 
+   geom_sf(data = to_map_natl, aes(fill = OP_18c), lwd=0) + 
+   geom_sf(data = to_map_pa, fill = NA, color = "red", size = 0.8) +
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "mako", direction = -1,
+                         limit = range(prev_min(to_map_natl$OP_18c), prev_max(to_map_natl$OP_18c))) +
+   labs(title= "Fig. 2: Average (median) time patients spent in the ED \n(Psychiatric/Mental Health Patients)",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   theme(legend.justification = c(0, 1),legend.position = c(0, 0.35)) +
+   geom_text(aes(x = -85, y = 35, hjust="left", 
+                 label = "Pennslvania median = 263 mins \nUS national median = 248 mins"), stat = "unique")
+
+map_natl_OP_2<-ggplot() + 
+   geom_sf(data = to_map_natl, aes(fill = OP_2), lwd=0) + 
+   geom_sf(data = to_map_pa, fill = NA, color = "red", size = 0.8) +   
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "% of patients", option = "magma", direction = -1,
+                         limit = range(prev_min(to_map_natl$OP_2), prev_max(to_map_natl$OP_2))) +
+   labs(title= "Fig. 3: Percentage of outpatients with chest pain or possible heart \nattack who got drugs to break up blood clots within 30 minutes of arrival",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   theme(legend.justification = c(0, 1),legend.position = c(0, 0.35)) +
+   geom_text(aes(x = -85, y = 35, hjust="left", 
+                 label = "Pennslvania median = 32% \nUS national median = 52%"), stat = "unique")   
+
+map_natl_OP_23<-ggplot() + 
+   geom_sf(data = to_map_natl, aes(fill = OP_23), lwd=0) +
+   geom_sf(data = to_map_pa, fill = NA, color = "red", size = 0.8) +
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "% of patients", option = "cividis", direction = 1,
+                         limit = range(prev_min(to_map_natl$OP_23), prev_max(to_map_natl$OP_23))) + 
+   labs(title= "Fig. 4: Percentage of patients who came to the ED with stroke symptoms \nwho received brain scan results within 45 minutes of arrival",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   theme(legend.justification = c(0, 1),legend.position = c(0, 0.35)) +
+   geom_text(aes(x = -85, y = 35, hjust="left", 
+                 label = "Pennslvania median = 65% \nUS national median = 72%"), stat = "unique")  
+
+map_natl_OP_3b<-ggplot() + 
+   geom_sf(data = to_map_natl, aes(fill = OP_3b), lwd=0) +
+   geom_sf(data = to_map_pa, fill = NA, color = "red", size = 0.8) +
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "magma", direction = -1,
+                         limit = range(prev_min(to_map_natl$OP_3b), prev_max(to_map_natl$OP_3b))) +
+   labs(title= "Fig. 5: Average (median) number of minutes before outpatients with chest pain \nor possible heart attack who needed specialized care were transferred to \nanother hospital",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   theme(legend.justification = c(0, 1),legend.position = c(0, 0.35)) +
+   geom_text(aes(x = -85, y = 35, hjust="left", 
+                 label = "Pennslvania median = 76 mins \nUS national median = 61 mins"), stat = "unique")  
+
+map_natl_OP_18b
+map_natl_OP_18c
+map_natl_OP_2
+map_natl_OP_23
+map_natl_OP_3b
+
+```
+
+##### Comparing PA to regional Northeast data  
+Next, median metrics of Pennsylvania are compared to those of other states in the Northeast.   
+Note: Since only the final median values and not the underlying data, I cannot perform any statistical comparisons.
+```{r}
+#Determine averages
+fg_northeast<- as.data.frame(to_map_natl) %>% 
+   filter(REGION=="Norteast") %>%
+   dplyr::select(NAME,OP_18b,OP_18c,OP_2,OP_23,OP_3b)
+
+#Reshape for barchart
+forgraph_northeast <- melt(setDT(fg_northeast), id.vars = c("NAME"), variable.name = "score")
+
+# fg_ne_sum<-summarize_all(fg_northeast,mean,na.rm = TRUE) %>% mutate(NAME="Northeast States")
+# 
+# fg_natl <- tec_natl %>% 
+#    dplyr::select(Measure.ID,Score) %>%
+#    mutate(NAME="US National") %>%
+#    filter(Measure.ID %in% varlist) %>% 
+#    reshape(idvar="NAME", timevar = "Measure.ID", direction = "wide", varying=varlist)
+#forgraph_all <- rbind(fg_northeast,fg_ne_sum)
+
+
+#Plot graphs
+bar_OP_18b18c <- forgraph_northeast %>% 
+   filter(variable=="OP_18b" | variable=="OP_18c") %>%
+   ggplot(aes(x=reorder(factor(NAME),value),  y=value, fill=variable)) + 
+   geom_bar(stat="identity", colour = "black", position = "stack") + 
+   my_theme_bar() + 
+   theme(axis.title.y=element_blank()) +
+   geom_text(aes(label=value), vjust=1, color="white", size=3.5) +
+   scale_y_continuous(name="Median Time (mins)") + 
+   coord_flip() + 
+   labs(title= "Fig. 6: Average (median) time patients spent in the ED",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   scale_fill_brewer(palette = "Set1",
+                     breaks=c("OP_18b", "OP_18c"),
+                     labels=c("All Patients", "Psychiatric/Mental Health Patients"))  + 
+   theme(legend.title=element_blank())
+
+bar_OP_2_23 <- forgraph_northeast %>% 
+   filter(variable=="OP_2" | variable=="OP_23") %>%
+   ggplot(aes(x=reorder(factor(NAME),value),  y=value, fill=variable)) + 
+   geom_bar(stat="identity", colour = "black", position = "stack") + 
+   my_theme_bar() + 
+   theme(axis.title.x=element_blank()) +
+   geom_text(aes(label=value), vjust=1, color="white", size=3.5) +
+   scale_y_continuous(name="% of patients") + 
+   labs(title="Fig. 7: Percent of ED Patients Presenting with Acute Symptoms who \nReceived Timely Care ",
+        subtitle= "July - December 2020",
+        caption = "Source: Centers for Disease Control. Pennsylvania state is highlighted.") +
+   scale_fill_brewer(palette = "Accent",
+                     breaks=c("OP_2", "OP_23"),
+                     labels=c("% pts with chest pain or possible heart attack \nwho got drugs to break up blood clots within 30 minutes of arrival", "% pts with stroke symptoms who received \nbrain scan results within 45 minutes of arrival"))  + 
+   theme(legend.title=element_blank(), legend.position="bottom")
+
+
+bar_OP_18b18c
+bar_OP_2_23
+
+
+
+
+
+
+```
+
+##### Investigating Access to Hospitals
+
+Next, I explore the availability of hospitals across Pennsylvania. I will map hospital densities using the hospital data from TEC. Using the package ggmap, I will get latitude and longitude data for each hospital address in the TEC data using the Google API. To do this, I registered for a free Google console account, generated an API key that I registered in R Studio, and enabled the following APIs on the Google Console:
++ Directions API  
++ Geocoding API  
++ Geolocation API  
++ Places API  
++ Maps Javascript AVI  
++ Maps Embed API  
+
+```{r}
+#Subset data to metrics of interest
+df_hosp <- tec_hosp %>% filter(Measure.ID %in% varlist & State=="PA")
+
+#Get list of hospital names
+df_hosp_fac <- df_hosp %>% 
+   mutate(addr=paste0(Address,", ",City, ", ",State," ",ZIP.Code)) %>%
+   distinct(Facility.Name,addr) %>% 
+   arrange(Facility.Name)
+#counties_pa <- counties %>% filter(STATE==42) #42 is Pennsylvania
+
+#Mapping addresses
+# library(tidygeocoder)
+# df_hosp_geo <- df_hosp_fac %>% geocode(addr, method = 'osm', lat = latitude , long = longitude)
+
+library(ggmap)
+#register_google(key = "", write = TRUE)
+pubs_ggmap_pa <- geocode(df_hosp_fac$addr, output = "more", source = "google", messaging = FALSE)
+  
+
+
+#Include population data column
+```
+
+
+
+
 
 
 Weissman:
@@ -48,49 +376,18 @@ Weissman:
 - Specialty care (pediatrics, stroke, MI/valvular disorders, trauma)
 
 Holmes:
-
 https://data.cms.gov/tools/mapping-medicare-disparities-by-hospital
-Holmes:
-https://data.cms.gov/tools/mapping-medicare-disparities-by-hospital
+https://data.cms.gov/provider-data/topics/hospitals/timely-effective-care
 https://data.cms.gov/provider-summary-by-type-of-service/medicare-inpatient-hospitals/hospital-service-area
-To create maps, the United States Census Bureau [TIGER/Line Shapefiles](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.2020.html) county- and state- level datasets for 2020 were used. 
-
-All necessary packages will be installed and loaded first.
-
-```{r}
-require(knitr)
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-mydirectory<-"/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project"
-knitr::opts_knit$set(root.dir = mydirectory)
-
-# Clear existing data and graphics
-rm(list = ls())
-graphics.off()
-
-# Load  library
-pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal)
-```
-
-TEC data and county polygon data will be loaded.
-
-```{r inputs, echo=FALSE}
-
-#TEC data
-tec_state <- read.csv(file = "/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/Timely_and_Effective_Care-State.csv")
-#tec_hosp <- read.csv(file = "/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/Timely_and_Effective_Care-Hospital.csv")
-tec_ntl <- read.csv(file = "/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/Timely_and_Effective_Care-National.csv")
-
-#County Data
-counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds"))) 
 
 
-#Subset to PA
-tec_state_pa <- tec_state %>% filter(State=="PA")
-#tec_hosp_pa <- tec_hosp %>% filter(State=="PA")
-#tec_hosp_pa_fac <- tec_hosp_pa %>% distinct(Facility.Name) %>% arrange(Facility.Name)
-counties_pa <- counties %>% filter(STATE==42)
+https://www.cdc.gov/nchs/fastats/emergency-department.htm
 
-plot(st_geometry(counties_pa))
-plot(st_geometry(counties))
+#### Discussion:  
+As shown in the above maps, patients in Pennsylvania, on average, spend more time waiting in the ED than the national average (Figures 1 and 2). Additionally, patients who go to the ED with signs of a possible heart attack or stroke, on average, were received timely care less often (Figures 3 and 4). Patients with chest pain in PA had to wait longer before transfer to a specialty hospital than the US national average (Figure 5). 
 
-```
+Though PA underperforms nationally, the regional graphs shows that PA performs the second best in the Northeast region (behind Vermont) with respect to general ED wait time (Fig. 6), but on par with the region for timely care for acute life-threatening symptoms (chest pain, stroke symptoms, Fig. 7).
+
+#### Acknowledgements:  
+
+#### References:  
