@@ -44,7 +44,7 @@ df2015thru2019 <- select(dfList2015thru2019[[1]], -`Formatted FIPS`)
 for(i in 2:length(dfList2015thru2019)){
   df2015thru2019 <- inner_join(df2015thru2019, select(dfList2015thru2019[[i]], -`Formatted FIPS`, -`FIPS Code`), by = c("County", "State", "year"))
 }
-colnames(df2015thru2019) <- c("county", "state", "fips", "meanHouseholdSize", "year", "prevDisabled", "gini", "prevHispanic", "medianAge", "prevMedicaid", "prevMinBachelors", "prevBlack", "prevWhite", "perCapIncome", "prevMen", "nPop", "prevPoverty", "medianRentCostBurden", "prevNoCar")
+colnames(df2015thru2019) <- c("county", "state", "fips", "prevPoverty", "year", "prevDisabled", "gini", "prevHispanic", "meanHouseholdSize", "medianAge", "prevMedicaid", "prevMinBachelors", "prevBlack", "prevWhite", "perCapIncome", "prevMen", "nPop", "medianRentCostBurden", "prevNoCar")
 
 # Combine into big data frame of all the covariates from the Census Bureau
 censusCovariates <- bind_rows(df2010thru2014, df2015thru2019)
@@ -102,7 +102,9 @@ finalData <- inner_join(cocaineDf, covariateDf, by = c("county", "state", "year"
 
 finalData$nPop <- as.numeric(finalData$nPop)
 
-finalData <- mutate(finalData, jailAdmit100k = totalJailAdmit/nPop*100000)
+finalData <- mutate(finalData, jailAdmit100 = totalJailAdmit/nPop*100)
+
+finalData[,6:22] <- apply(X = finalData[,6:22], MARGIN = 2, FUN = as.numeric)
 
 # Save Final Data
 write_csv(finalData, "./finalData.csv")
