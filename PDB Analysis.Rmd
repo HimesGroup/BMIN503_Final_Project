@@ -1,0 +1,312 @@
+---
+title: "BMIN503 Project: Protein Crystal Structure Disulfide Bond Analysis"
+author: "Shruthi Murali"
+output: 
+  html_document:
+    theme: lumen 
+    highlight: tango
+    
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+### Overview
+In proteins, disulfide bonds form when two cysteine residues are in close contact. These bonds increase the shelf stability of the protein and have been shown to increase melting temperature in mutation studies. The goal of my project is to take an input protein crystal structure text file of type .pdb from the Protein Data Bank (PDB) to clean and format the data into a usable dataframe with minimal manual changes and determine if I can find the existing disulfide bonds and propose
+new mutations to form new disulfide bonds. 
+
+The goal of my project has changed since I spoke to Dr. Tsourkas and a scientist in the lab, but much of what would be useful to use in PDB data is similar. I have learned from both of them that it is possible to find angles and positions of residues from the PDB data file, which I previously have not done, as I have mainly only used the common visualization tools in the field. I also have realized that excluding certain residues from the mutation analysis is important to retain function of the protein. Since every protein is different, these residues have to be hard-coded. 
+
+Link to my final project GitHub Repository: https://github.com/coffeebean21/BMIN503_Final_Project
+
+### Introduction 
+The problem being addressed with this code is how to process and make PDB data usable in R. More specifically, this project helps to identify disulfide bonds that are already formed in the protein based on cysteine pairs, or to identify residues to be mutated to a cysteine pair such that they form a disulfide bond. This information would be useful to engineer new disulfide bonds
+into a protein to increase stability, but would be preliminary data and likely need further validation with visualization tools to determine if mutations are in optimal positions. 
+
+This problem is interdisciplinary and contributes to protein engineering because it provides a high-throughput computational approach to determine information about a protein without using limited wet-lab resources.  
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+```{r eval = TRUE}
+#Load packages
+library(dplyr)
+library(ggplot2)
+```
+
+```{r eval = TRUE}
+#Load in text file with only "ATOM" entries. This is a limitation because I am not sure of a way to do this automatically in R, as every .pdb file may have a different header/number of rows at the beginning. 
+
+###STEP1: FINDING THE DATA IN THE TEXT FILE AND ARRANGING INTO A DATAFRAME
+
+#Import .pdb as .txt file. This is the protein data file for IgG2a monoclonal antibody.
+#The PDB website reference is: https://www.rcsb.org/structure/1igt
+#The website for the primary manuscript for this PDB file is: https://pubs.acs.org/doi/10.1021/bi962514%2B
+
+lines <- readLines("./1igt_clean.txt")
+
+#This is what the raw data looks like:
+head(lines)
+
+#Initialize vectors to contain the split entries and one to merge all of them together
+temp.clean.split <- c()
+temp.clean.merge <- c()
+
+#Loop through all of the lines in the .txt 
+for (i in 1:length(lines))
+{
+  temp.line <- lines[i] #Store the working line
+  temp.split <- as.data.frame(strsplit(temp.line, " ", fixed = FALSE)) #Split the working line
+  temp.index <- temp.split != ""
+  temp.no.space <- as.data.frame(temp.split[temp.index]) #Extracting only the values and not the spaces in between the values that are present in the original data format
+  temp.clean.merge <- c(temp.clean.merge, temp.no.space) #
+}
+
+#This list now contains only the values and no spaces from each of the rows in the .txt file:
+head(temp.clean.merge)
+```
+
+```{r eval = TRUE}
+###STEP2: ORGANIZING CLEANED TEXT FILE DATA INTO LABELED DATAFRAME COLUMNS
+
+#Initialize the new data frame with all columns labeled with information from .pdb
+pdb.df <- data.frame(matrix(ncol = 12))
+columns <- c("Type", "Atom Number", "Element", "Residue AA", "Chain", 
+             "Residue Number", "X-Position", "Y-Position", "Z-Position", 
+             "Occupancy Factor", "Temperature Factor", "Element2")
+colnames(pdb.df) <- columns
+  
+#Outer: loop through all the list rows and extract each row
+for (j in 1:length(temp.clean.merge))
+{
+  temp.atom <- temp.clean.merge[[j]]
+  
+  #Inner: loop through the columns of the stored row and store in labeled df column
+  for (k in 1:length(temp.atom))
+  {
+    pdb.df[j,k] <- temp.atom[k]
+  }
+}
+
+#This is what the organized data in a dataframe looks like:
+head(pdb.df)
+```
+
+```{r eval = TRUE}
+###STEP3: GENERATION OF A NEW DATAFRAME FOR EACH OF THE CHAINS PRESENT
+
+#.pdb files often contain multiple chains representing different parts of the protein structure. The structure being used in this case is the Human IgG structure (antibody), which consists of 4 chains: A, B, C, and D, where each chain consists of parts of the whole antibody, for example, the constant regions and variable regions. 
+
+#Remove "ter" type and retain "atom" type. These are some values that are not relevant to my question that I am removing.
+ter.type.index <- pdb.df$Type == 'TER'
+pdb.df <- pdb.df[!ter.type.index,]
+
+#Find the unique chains
+chains <- pdb.df %>% distinct(pdb.df$Chain)
+
+#Create a new dataframe for each chain
+#Loop: through the number of chains and find matching entries in the pdb.df large dataframe to assign to a new variable named as the chain. 
+for (l in 1:nrow(chains))
+{
+  df.name <- paste0("Chain", chains[[1]][l])
+  temp.df.index <- pdb.df$Chain == chains[[1]][l]
+  assign(df.name, pdb.df[temp.df.index,])
+}
+
+#This is what one of the new chain dataframes looks like. All the chain values should be the same and it should have split the entire pdb.df dataframe by chain label. 
+head(ChainA)
+```
+
+```{r eval = TRUE}
+###STEP4: GENERATION OF A NEW DATAFRAME WITH AVERAGE XYZ POSITION PER RESIDUE PER CHAIN
+
+#Calculation of avg positions of each residue = avg(all atoms for that residue). Needed to hard code for the chains I know are in this dataset. By this, I mean that there is no general loop to generate new dataframes for the average XYZ position. I have created and filled in using loops for each individual chain dataframe. Not sure how I can make this automatic for any pdb file.
+
+#Find number of residues total
+num.resi.A <- ChainA[nrow(ChainA), 6]
+num.resi.B <- ChainB[nrow(ChainB), 6]
+num.resi.C <- ChainC[nrow(ChainC), 6]
+num.resi.D <- ChainD[nrow(ChainD), 6]
+
+#Initialize new dataframes for the average values per residue. These avg dataframes will only have the relevant columns. I have removed "type", "atom number", "chain", "element", and "element2" since those are all atom-specific and chain is already specified by the DF name. 
+
+ChainA.avg <- data.frame(matrix(ncol = 7))
+ChainB.avg <- data.frame(matrix(ncol = 7))
+ChainC.avg <- data.frame(matrix(ncol = 7))
+ChainD.avg <- data.frame(matrix(ncol = 7))
+cols <- c("Residue Number", "Residue AA", "Avg X-Position", 
+          "Avg Y-Position", "Avg Z-Position", "Avg Occupancy Factor", 
+          "Avg Temperature Factor")
+colnames(ChainA.avg) <- cols
+colnames(ChainB.avg) <- cols
+colnames(ChainC.avg) <- cols
+colnames(ChainD.avg) <- cols
+
+##CREATING CHAIN A DF
+
+#Loop: Go through the number of residues per chain (not number of atoms)
+for (m in 1:num.resi.A)
+{
+  #Index out and access the residue matching the loop counter, m. This will contain all the atoms that correspond to that residue
+  temp.resi.index <- ChainA[,6] == m
+  temp.resi <- ChainA[temp.resi.index,]
+  
+  #Index out all the x-values from the temp.resi dataframe and take average
+  x.pos.vals <- as.numeric(temp.resi[,7])
+  x.avg <- mean(x.pos.vals)
+  
+  #Repeat on y values
+  y.pos.vals <- as.numeric(temp.resi[,8])
+  y.avg <- mean(y.pos.vals)
+  
+  #Repeat on z values
+  z.pos.vals <- as.numeric(temp.resi[,9])
+  z.avg <- mean(z.pos.vals)
+  
+  #Repeat on occupancy values
+  occ.vals <- as.numeric(temp.resi[,10])
+  occ.avg <- mean(occ.vals)
+  
+  #Repeat on temperature factors
+  temperature.vals <- as.numeric(temp.resi[,11])
+  temperature.avg <- mean(temperature.vals)
+  
+  #Assign all the values to each of the predefined columns (from the new dataframes initialized outside of the loop)
+  ChainA.avg[m,1] <- m               #Residue number
+  ChainA.avg[m,2] <- temp.resi[1,4]  #Residue amino acid
+  ChainA.avg[m,3] <- x.avg           #X-avg position for all atoms in this residue
+  ChainA.avg[m,4] <- y.avg           #Y-avg ''
+  ChainA.avg[m,5] <- z.avg           #Z-avg ''
+  ChainA.avg[m,6] <- occ.avg         #Occupancy ''
+  ChainA.avg[m,7] <- temperature.avg #Temperature ''
+}
+
+#Here's what the temp.resi looks like that is giving information to extract in the loop
+print(temp.resi)
+
+#Here's what the ChainA.avg dataframe now looks like
+head(ChainA.avg)
+
+##CREATING CHAIN B DF - same code as for chain A
+for (m in 1:num.resi.B)
+{
+  temp.resi.index <- ChainB[,6] == m
+  temp.resi <- ChainB[temp.resi.index,]
+  
+  x.pos.vals <- as.numeric(temp.resi[,7])
+  x.avg <- mean(x.pos.vals)
+  
+  y.pos.vals <- as.numeric(temp.resi[,8])
+  y.avg <- mean(y.pos.vals)
+  
+  z.pos.vals <- as.numeric(temp.resi[,9])
+  z.avg <- mean(z.pos.vals)
+  
+  occ.vals <- as.numeric(temp.resi[,10])
+  occ.avg <- mean(occ.vals)
+  
+  temperature.vals <- as.numeric(temp.resi[,11])
+  temperature.avg <- mean(temperature.vals)
+  
+  ChainB.avg[m,1] <- m
+  ChainB.avg[m,2] <- temp.resi[1,4]
+  ChainB.avg[m,3] <- x.avg
+  ChainB.avg[m,4] <- y.avg
+  ChainB.avg[m,5] <- z.avg
+  ChainB.avg[m,6] <- occ.avg
+  ChainB.avg[m,7] <- temperature.avg
+}
+
+##CREATING CHAIN C DF - same as above
+for (m in 1:num.resi.C)
+{
+  temp.resi.index <- ChainC[,6] == m
+  temp.resi <- ChainC[temp.resi.index,]
+  
+  x.pos.vals <- as.numeric(temp.resi[,7])
+  x.avg <- mean(x.pos.vals)
+  
+  y.pos.vals <- as.numeric(temp.resi[,8])
+  y.avg <- mean(y.pos.vals)
+  
+  z.pos.vals <- as.numeric(temp.resi[,9])
+  z.avg <- mean(z.pos.vals)
+  
+  occ.vals <- as.numeric(temp.resi[,10])
+  occ.avg <- mean(occ.vals)
+  
+  temperature.vals <- as.numeric(temp.resi[,11])
+  temperature.avg <- mean(temperature.vals)
+  
+  ChainC.avg[m,1] <- m
+  ChainC.avg[m,2] <- temp.resi[1,4]
+  ChainC.avg[m,3] <- x.avg
+  ChainC.avg[m,4] <- y.avg
+  ChainC.avg[m,5] <- z.avg
+  ChainC.avg[m,6] <- occ.avg
+  ChainC.avg[m,7] <- temperature.avg
+}
+
+
+##CREATING CHAIN D DF - same as above
+for (m in 1:num.resi.D)
+{
+  temp.resi.index <- ChainD[,6] == m
+  temp.resi <- ChainD[temp.resi.index,]
+  
+  x.pos.vals <- as.numeric(temp.resi[,7])
+  x.avg <- mean(x.pos.vals)
+  
+  y.pos.vals <- as.numeric(temp.resi[,8])
+  y.avg <- mean(y.pos.vals)
+  
+  z.pos.vals <- as.numeric(temp.resi[,9])
+  z.avg <- mean(z.pos.vals)
+  
+  occ.vals <- as.numeric(temp.resi[,10])
+  occ.avg <- mean(occ.vals)
+  
+  temperature.vals <- as.numeric(temp.resi[,11])
+  temperature.avg <- mean(temperature.vals)
+  
+  ChainD.avg[m,1] <- m
+  ChainD.avg[m,2] <- temp.resi[1,4]
+  ChainD.avg[m,3] <- x.avg
+  ChainD.avg[m,4] <- y.avg
+  ChainD.avg[m,5] <- z.avg
+  ChainD.avg[m,6] <- occ.avg
+  ChainD.avg[m,7] <- temperature.avg
+}
+```
+
+```{r eval = TRUE}
+###STEP 5: Remove CDRs and VH regions. 
+
+#These are the regions where the antibody binds its target, so for the mutation studies, avoiding mutations in these regions will ensure that the antibody's function is retained. From the PDB Entry, I know that Chain A and Chain C resi 1-107 is Variable Kappa (VL) and Chain B and Chain D resi 1-118 is Variable Heavy (VL). These new DFs will be the actual regions that we can mutate without altering Ab binding.
+
+ChainA.no.V <- ChainA.avg[108:nrow(ChainA.avg),]
+ChainB.no.V <- ChainB.avg[119:nrow(ChainB.avg),]
+ChainC.no.V <- ChainC.avg[108:nrow(ChainC.avg),]
+ChainD.no.V <- ChainD.avg[119:nrow(ChainD.avg),]
+
+```
+
+```{r eval = TRUE}
+###STEP 6: Find existing disulfide bonds 
+
+#Find residue pairs that are 3.5-7 Angstroms apart (which may form a disulfide bond)
+#Reference: https://www.nature.com/articles/s41598-020-67230-z#:~:text=3%2C%20the%20distances%20between%20the,acid%20pairs%20is%20significantly%20reduced.
+
+
+```
+
+```{r eval = TRUE}
+###STEP 7: Find new residues that we could mutate to form disulfide bonds 
+
+
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
