@@ -13,7 +13,8 @@ options(width = 400)
 ### **Overview**
 There are no widely accepted or employed methods to predict the risk of early postoperative ARF requiring RRT after cardiac transplantation. The objective of this research is to derive and internally validate a clinical prediction model for postoperative ARF requiring RRT in HT recipients during the index transplantation hospitalization that can be deployed at the time a patient undergoes heart transplantation. The United Network for Organ Sharing (UNOS) database, a registry containing patient-level data on all solid organ transplants performed in the United States, will be used for model training and internal validation (80% training, 20% testing). My mentors for this project are Thomas Cappola, MD, ScM; Marylyn D. Ritchie, PhD; and Marina Serper, MD. With Dr. Cappola, I discussed clinically relevant predictors for my model. With Dr. Ritchie, I discussed the pros and cons of various prediction algorithms utilized in large clinical registries. With Dr. Serper, I discussed the bias/variance tradeoff. My final project GitHub repository is [linked here:](https://github.com/nosheenreza/BMIN503_Final_Project). 
 
-### Introduction 
+
+### **Introduction** 
 Acute kidney injury (AKI) is a frequent post-operative complication after heart transplantation (HT) with a reported incidence as high as 70%. Approximately 10% of HT recipients with post-operative AKI develop acute renal failure (ARF) requiring renal replacement therapy (RRT) during the index transplantation admission. Post-HT ARF is associated with significant morbidity — including serious infection, post-HT chronic kidney disease, and prolonged hospitalization — and with postoperative mortality rates as high as 35-50%. In addition, post-cardiac surgery AKI is associated with higher total postoperative costs with patients requiring RRT generating up to 3-fold increase in costs compared with those with AKI not requiring RRT. 
 
 While several older single center retrospective studies have identified various risk factors for post-HT ARF, such as preoperative serum creatinine level, preoperative insulin-dependent diabetes, and cardiopulmonary bypass time, there remains an urgent need for a clinically relevant method to identify patients at risk for early post-HT renal failure requiring RRT, especially in the current era of high-risk bridging to HT with temporary mechanical circulatory support platforms.
@@ -23,13 +24,14 @@ In current practice, the pre-HT estimated glomerular filtration rate (eGFR) is t
 This project attempts to address an interdisciplinary issue that involves many medical disciplines, including cardiology, cardiothoracic surgery, critical care, anesthesia, and nephrology, and many types of clinicians, including physicians, advanced practice providers, nutritionists, pharmacists, and others. An important consideration of this modeling problem will be to create a model that is parsimonious and easily understood by clinicians given the nature of the input variables and the discrete outcome.
 
 
-## Data Source and Outcomes
+### **Data Source and Outcomes**
 The United Network for Organ Sharing (UNOS) database, a registry containing patient-level data on all solid organ transplants performed in the United States, will be used for model training and internal validation (80% training, 20% testing). Adult patients (>= 18 years old) who underwent heart transplantation between 2000 and 2020 will be included. Dual and triple organ recipients, retransplanted patients, and patients on pre-HT RRT will be excluded. Input variables will include pretransplant donor, recipient, and intraoperative characteristics provided by UNOS (i.e., demographics, comorbidities, hemodynamics, immunologic signatures). These are both continuous and discrete variables. Specifically, these data will be collected from the Transplant Candidate Registration (TCR), Transplant Recipient Registration (TRR), Deceased Donor Registration (DRR), and Donor Histocompatibility forms. Patients with >20% missing data will be excluded. Data from the Transplant Recipient Follow-up (TRF) form will not be used as these data are collected from a time horizon after the model’s intended use.
 
 The primary outcome (training label) is the occurrence of new-onset postoperative ARF requiring RRT on the index HT hospital admission. This outcome is discrete with two classes (Dialysis, No Dialysis). This training label is expected to be an accurate marker of the real-world outcome of interest in practice given the standardized nature of data collection by the Organ Procurement and Transplantation Network (OPTN).
 
-### Methods
-#### 1. Load libraries & set working directory
+
+### **Methods**
+#### **1. Load libraries & set working directory**
 ```{r, eval = TRUE, message=FALSE}
 #Load libraries
 library(dplyr)
@@ -47,12 +49,16 @@ library(dlookr)
 library(naniar)
 library(gtsummary)
 library(caret)
+library(modelr)
+library(broom)
+library(tidymodels)
+library(varhandle)
 
 setwd("/Users/nosheenrezamacbookpro/Desktop/MSTR/BMIN 503/BMIN503_Final_Project")
 
 ```
 
-#### 2. Load and clean the data
+#### **2. Load and clean the data**
 ```{r, include = TRUE}
 data <- read.csv("/Users/nosheenrezamacbookpro/Desktop/MSTR/BMIN 503/BMIN503_Final_Project/unos_data_chunk.csv", header = TRUE, sep = ",")
 
@@ -60,7 +66,7 @@ data <- read.csv("/Users/nosheenrezamacbookpro/Desktop/MSTR/BMIN 503/BMIN503_Fin
 
 df <- data %>%
   mutate(tx_date = dmy(tx_date), activate_date = dmy(activate_date), end_date = dmy(end_date), init_date = dmy(init_date), composite_death_date = dmy(composite_death_date), admission_date = dmy(admission_date), recovery_date_don = dmy(recovery_date_don), px_stat_date = dmy(px_stat_date), discharge_date = dmy(discharge_date), grf_fail_date = dmy(grf_fail_date), referral_date = dmy(referral_date), ssdmf_death_date = dmy(ssdmf_death_date), measurement_date_trr = dmy(measurement_date_trr), pretitera_date = dmy(pretitera_date), pretiterb_date = dmy(pretiterb_date), retxdate = dmy(retxdate), titera_date = dmy(titera_date), titerb_date = dmy(titerb_date), admit_date_don = dmy(admit_date_don)) %>% # Change all dates to DMY format
-  mutate(across(c(dial_ty_tcr, dial_after_list, dial_prior_tx, pst_dial, prev_tx, wl_org, thoracic_dgn, tah, vas, onvent, icu, inotropic, inutero, gender, abo, citizenship, citizen_country, perm_state, education, ecmo_tcr, iabp_tcr, pros_infus_tcr, prostacyclin_tcr, inhaled_no, inotropes_tcr, pge_tcr, oth_life_sup_tcr, oth_life_sup_ostxt_tcr, vad_device_ty_tcr, vad_brand1_tcr, vad_brand1_ostxt_tcr, vad_brand2_tcr, vad_brand2_ostxt_tcr, vad_tah_tcr, vad_tah_ostxt_tcr, func_stat_tcr, pri_payment_tcr, pri_payment_ctry_tcr, tcr_dgn, tcr_dgn_ostxt, diab, cereb_vasc, malig_tcr, malig_ty_ostxt_tcr, sud_death, impl_defibril, resist_inf, inotrop_vaso_sys_tcr, inotrop_vaso_dia_tcr, inotrop_vaso_mn_tcr, inotrop_vaso_pcw_tcr, inotrop_vaso_co_tcr, cig_use, tcr_dur_abstain, prior_card_surg_tcr, prior_card_surg_type_tcr, prior_card_surg_type_ostxt_tcr, histry_cig_old, contin_cig_old, cig_grt_10_old, sternotomy_tcr, pneumothorax_old, pneumored_old, left_vent_remodel_old, last_inact_reason, init_stat, rem_cd, txed, end_stat, life_sup_tcr, ethnicity, ethcat, wlhr, wlhl, wlin, wlki, wlkp, wlli, wllu, wlpa, wlpi, wlvc, ventilator_tcr, region, lvad_at_listing, lvad_while_listed, rvad_at_listing, rvad_while_listed, vad_at_listing, vad_while_listed, init_llu_flg, init_rlu_flg, init_blu_flg, end_llu_flg, end_rlu_flg, end_blu_flg, work_income_tcr, academic_prg_tcr, academic_level_tcr, inact_reason_cd, academic_level_trr, academic_prg_trr, func_stat_trr, med_cond_trr, status_trr, pri_payment_trr, pri_payment_ctry_trr, ecmo_trr, perm_state_trr, work_income_trr, cognitive_dev_trr, motor_dev_trr, pge_trr, iabp_trr, infect_iv_drug_trr, inotropes_trr, inotrop_vaso_co_trr, inotrop_vaso_dia_trr, inotrop_vaso_mn_trr, inotrop_vaso_pcw_trr, inotrop_vaso_sys_trr, oth_life_sup_ostxt_trr, oth_life_sup_trr, prior_lung_surg_trr, prior_lung_surg_type_trr, prior_lung_surg_type_ostxt_trr, pst_airway, acute_rej_epi, pst_stroke, pst_pacemaker, steroid, transfusions, vad_device_ty_trr, vad_brand1_trr, vad_brand1_ostxt_trr, vad_brand2_trr, vad_brand2_ostxt_trr, vent_support_trr, vent_timeframe_trr, ventilator_trr, inhaled_no_trr, prior_card_surg_type_trr, prior_card_surg_type_ostxt_trr, pros_infus_trr, prostacyclin_trr, tracheostomy_trr, post_tx_vent_support, reintubated, pretitera, pretiterb, hbv_core, hbv_sur_antigen, hbv_surf_total, cmv_status, hiv_serostatus, hcv_serostatus, ebv_serostatus, hiv_nat, hcv_nat, hbv_nat, cod, cod_ostxt, cod2, cod2_ostxt, cod3, cod3_ostxt, gstatus, lastfuno, pstatus, px_stat, func_stat_trf, txhrt, txkid, txliv, txlng, txpan, tx_procedur_ty, status_tcr, inhaled_no_tcr, sternotomy_trr, don_retyp, crsmatch_done, trtrej1y, prev_tx_any, amis, bmis, drmis, hlamis, malig_trr, malig_ty_trr, cmv_igg, cmv_igm, citizenship_don, hist_cocaine_don, ethcat_don, hbv_core_don, hbv_sur_antigen_don, hbv_dna_don, hcv_rna_don, abo_don, alcohol_heavy_don, don_ty, gender_don, home_state_don, hcv_riba_don, hcv_antibody_don, hep_c_anti_don, liv_don_ty, cod_ostxt_don, non_hrt_don, antihype_don, blood_inf_don, blood_inf_conf_don, dobut_don_old, dopamine_don_old, htlv1_old_don, htlv2_old_don, oth_don_med1_ostxt_don_old, oth_don_med2_ostxt_don_old, oth_don_med3_ostxt_don_old, other_inf_don, other_inf_conf_don, pretreat_med_don_old, pt_diuretics_don, pt_steroids_don, pt_t3_don, pt_t4_don, pt_oth2_ostxt_don, pt_oth3_ostxt_don, pt_oth4_ostxt_don, pt_oth1_ostxt_don, pulm_inf_don, pulm_inf_conf_don, urine_inf_don, urine_inf_conf_don, vasodil_don, vdrl_don, clin_infect_don, hypertens_dur_don, cancer_oth_ostxt_don, contin_alcohol_old_don, contin_cig_don, contin_iv_drug_old_don, contin_cocaine_don, contin_oth_drug_don, diet_don, diuretics_don, grouping, malig_ty_tcr), factor)) %>%
+  mutate(across(c(dial_ty_tcr, dial_after_list, dial_prior_tx, pst_dial, prev_tx, wl_org, thoracic_dgn, tah, vas, onvent, icu, inotropic, inutero, gender, abo, citizenship, citizen_country, perm_state, education, ecmo_tcr, iabp_tcr, pros_infus_tcr, prostacyclin_tcr, inhaled_no, inotropes_tcr, pge_tcr, oth_life_sup_tcr, oth_life_sup_ostxt_tcr, vad_device_ty_tcr, vad_brand1_tcr, vad_brand1_ostxt_tcr, vad_brand2_tcr, vad_brand2_ostxt_tcr, vad_tah_tcr, vad_tah_ostxt_tcr, func_stat_tcr, pri_payment_tcr, pri_payment_ctry_tcr, tcr_dgn, tcr_dgn_ostxt, diab, cereb_vasc, malig_tcr, malig_ty_ostxt_tcr, sud_death, impl_defibril, resist_inf, inotrop_vaso_sys_tcr, inotrop_vaso_dia_tcr, inotrop_vaso_mn_tcr, inotrop_vaso_pcw_tcr, inotrop_vaso_co_tcr, cig_use, tcr_dur_abstain, prior_card_surg_tcr, prior_card_surg_type_tcr, prior_card_surg_type_ostxt_tcr, histry_cig_old, contin_cig_old, cig_grt_10_old, sternotomy_tcr, pneumothorax_old, pneumored_old, left_vent_remodel_old, last_inact_reason, init_stat, rem_cd, txed, end_stat, life_sup_tcr, ethnicity, ethcat, wlhr, wlhl, wlin, wlki, wlkp, wlli, wllu, wlpa, wlpi, wlvc, ventilator_tcr, region, init_llu_flg, init_rlu_flg, init_blu_flg, end_llu_flg, end_rlu_flg, end_blu_flg, work_income_tcr, academic_prg_tcr, academic_level_tcr, inact_reason_cd, academic_level_trr, academic_prg_trr, func_stat_trr, med_cond_trr, status_trr, pri_payment_trr, pri_payment_ctry_trr, ecmo_trr, perm_state_trr, work_income_trr, cognitive_dev_trr, motor_dev_trr, pge_trr, iabp_trr, infect_iv_drug_trr, inotropes_trr, inotrop_vaso_co_trr, inotrop_vaso_dia_trr, inotrop_vaso_mn_trr, inotrop_vaso_pcw_trr, inotrop_vaso_sys_trr, oth_life_sup_ostxt_trr, oth_life_sup_trr, prior_lung_surg_trr, prior_lung_surg_type_trr, prior_lung_surg_type_ostxt_trr, pst_airway, acute_rej_epi, pst_stroke, pst_pacemaker, steroid, transfusions, vad_device_ty_trr, vad_brand1_trr, vad_brand1_ostxt_trr, vad_brand2_trr, vad_brand2_ostxt_trr, vent_support_trr, vent_timeframe_trr, ventilator_trr, inhaled_no_trr, prior_card_surg_type_trr, prior_card_surg_type_ostxt_trr, pros_infus_trr, prostacyclin_trr, tracheostomy_trr, post_tx_vent_support, reintubated, pretitera, pretiterb, hbv_core, hbv_sur_antigen, hbv_surf_total, cmv_status, hiv_serostatus, hcv_serostatus, ebv_serostatus, hiv_nat, hcv_nat, hbv_nat, cod, cod_ostxt, cod2, cod2_ostxt, cod3, cod3_ostxt, gstatus, lastfuno, pstatus, px_stat, func_stat_trf, txhrt, txkid, txliv, txlng, txpan, tx_procedur_ty, status_tcr, inhaled_no_tcr, sternotomy_trr, don_retyp, crsmatch_done, trtrej1y, prev_tx_any, amis, bmis, drmis, hlamis, malig_trr, malig_ty_trr, cmv_igg, cmv_igm, citizenship_don, hist_cocaine_don, ethcat_don, hbv_core_don, hbv_sur_antigen_don, hbv_dna_don, hcv_rna_don, abo_don, alcohol_heavy_don, don_ty, gender_don, home_state_don, hcv_riba_don, hcv_antibody_don, hep_c_anti_don, liv_don_ty, cod_ostxt_don, non_hrt_don, antihype_don, blood_inf_don, blood_inf_conf_don, dobut_don_old, dopamine_don_old, htlv1_old_don, htlv2_old_don, oth_don_med1_ostxt_don_old, oth_don_med2_ostxt_don_old, oth_don_med3_ostxt_don_old, other_inf_don, other_inf_conf_don, pretreat_med_don_old, pt_diuretics_don, pt_steroids_don, pt_t3_don, pt_t4_don, pt_oth2_ostxt_don, pt_oth3_ostxt_don, pt_oth4_ostxt_don, pt_oth1_ostxt_don, pulm_inf_don, pulm_inf_conf_don, urine_inf_don, urine_inf_conf_don, vasodil_don, vdrl_don, clin_infect_don, hypertens_dur_don, cancer_oth_ostxt_don, contin_alcohol_old_don, contin_cig_don, contin_iv_drug_old_don, contin_cocaine_don, contin_oth_drug_don, diet_don, diuretics_don, grouping, malig_ty_tcr, lvad_while_listed, lvad_at_listing, rvad_while_listed, rvad_at_listing, vad_while_listed, vad_at_listing), factor)) %>%
   mutate(across(c(extracranial_cancer_don, hist_alcohol_old_don, cancer_site_don, hist_cig_don, diabdur_don, hist_hypertens_don, hist_iv_drug_old_don, intracranial_cancer_don, other_hypertens_med_don, hist_cancer_don, hist_insulin_dep_don, insulin_dur_don, hist_diabetes_don, diabetes_don, hist_oth_drug_don, skin_cancer_don, cmv_igg_don, cmv_igm_don, cmv_don, cmv_test_don, ebv_test_don, hbv_test_don, hcv_test_don, cod_cad_don, ebv_dna_don, ddavp_don, cmv_nucleic_don, death_circum_don, death_mech_don, heparin_don, arginine_don, insulin_don, hbv_nat_don, hcv_nat_don, tx_type, multiorg, abo_mat, diag, grf_fail_cause, grf_fail_cause_ostxt, grf_stat, share_ty, diag_ostxt, age_group, o2_req_calc, life_sup_trr, titera, titerb, organ, prior_card_surg_trr, malig_ty, malig, malig_ty_ostxt, malig_ty_ostxt_trr, vent_support_after_list), factor)) %>%  # Factorize more variables
   mutate(across(c(proc_ty_hr, vad_tah_trr, vad_tah_ostxt_trr, education_don, status_ldr, recov_out_us, recov_country, protein_urine, cardarrest_neuro, hist_mi, lv_eject_meth, coronary_angio, vessels_50sten, biopsy_dgn, oth_dgn_ostxt, tattoos, controlled, status_ddr, hbsab_don, ebv_igg_cad_don, ebv_igm_cad_don, cdc_risk_hiv_don, ino_procure_agent_1, ino_procure_agent_2, ino_procure_agent_3, ino_procure_ostxt_1, ino_procure_ostxt_2, ino_procure_ostxt_3, ecd_donor, inotrop_support_don, lt_one_week_don, transfus_term_don, transfus_intraop_num_old_don, transfus_prior_num_old_don, po2_done_don, pulm_cath_don, broncho_lt_don, broncho_rt_don, chest_xray_don, abn_valves_don, abn_lvh_don, abn_congen_don, wall_abn_seg_don, wall_abn_glob_don, data_transplant, data_waitlist, ctr_code, opo_ctr_code, init_opo_ctr_code, end_opo_ctr_code, listing_ctr_code, ebv_igg_don, ebv_igm_don), factor)) %>% # Factorize more variables
   select(-c(cod_wl, cod_ostxt_wl, transplant_country, tcr_cdc_growth_bmi, tcr_cdc_growth_hgt, tcr_cdc_growth_wgt, init_o2, end_o2, init_creat, end_creat, init_calc_las, init_match_las, end_calc_las, end_match_las, calc_las_listdate, init_priority, end_priority, death_date, exercise_o2, fev1_trr, fvc_trr, pco2_trr, thoracot_lt_old, thoracot_rt_old, ecmo_72hours, fio2_72hours, inhaledno_72hours, intubated_72hours, pao2_72hours, perfused_prior, perfusion_location, perfused_by, total_perfusion_time, lu_received, lu2_received, dantiarr_old, creat2_old, txint, txvca, prvtxdif, cmv_old_liv_don, cod_liv_don)) # Remove variables that have no observations
@@ -68,7 +74,7 @@ df <- data %>%
 write.table(df, "tempdata1.csv", row.names = FALSE, sep = "\t")
 ```
 
-#### 3. Filter data to desired observations = 37297 observations remaining
+#### **3. Filter data to desired observations = 37297 observations remaining**
 ```{r, include = TRUE}
 df2 <- df
 
@@ -92,7 +98,7 @@ df3 <- df2 %>%
   filter(pst_dial != "") # 284 observations dropped = missing data regarding if dialysis occurring on index transplant admission
 ```
 
-#### 4. Remove columns in which all observations are NA
+#### **4. Remove columns in which all observations are NA**
 ```{r, include = TRUE}
 not_all_na <- function(x) any(!is.na(x)) # Create function to capture columns that are all NA
 
@@ -103,20 +109,20 @@ df4 <- df3 %>%
 #  select(-where(not_all_na)) -> all_na_df # dataframe of all columns that were NA for all observations
 ```
 
-#### 5. Drop features that are not relevant to the model and/or add bias by adding information from beyond the predictive time horizon.
+#### **5. Drop features that are not relevant to the model and/or add bias by adding information from beyond the predictive time horizon**
 ```{r, include = TRUE}
 df5 <- df4 %>%
   select(-c(grouping, inutero, citizenship, citizen_country, perm_state, education, pros_infus_tcr, prostacyclin_tcr, pri_payment_ctry_tcr, histry_cig_old, ssdmf_death_date, txed, wlhl, wlki, wlkp, wlli, wllu, wlpa, wl_id_code, init_llu_flg, init_rlu_flg, init_blu_flg, end_llu_flg, end_rlu_flg, end_blu_flg, val_dt_tcr, yr_entry_us_tcr, work_income_tcr, academic_prg_tcr, academic_level_tcr, academic_level_trr, status_trr, admission_date, pri_payment_trr, pri_payment_ctry_trr, perm_state_trr, work_income_trr, pst_airway, acute_rej_epi, pst_stroke, pst_pacemaker, post_tx_vent_support, reintubated, cod, cod_ostxt, cod2, cod2_ostxt, cod3, cod3_ostxt, gstatus, gtime, lastfuno, pstatus, ptime, px_stat, func_stat_trf, txkid, tx_procedur_ty, don_retyp, crsmatch_done, cpra, cpra_peak, trtrej1y, prev_tx_any, citizenship_don, home_state_don, hcv_riba_don, hcv_antibody_don, px_stat_date, discharge_date, multiorg, grf_fail_cause, grf_fail_cause_ostxt, grf_fail_date, grf_stat, share_ty, los, age_group, organ, trr_id_code, val_dt_trr, education_don, status_ldr, val_dt_ldr, recov_out_us, recov_country, admit_date_don, distance, status_ddr, val_dt_ddr, donor_id, lt_one_week_don, referral_date, listyr, po2_done_don, po2_fio2_don, pco2_don, data_transplant, data_waitlist, ctr_code, opo_ctr_code, init_opo_ctr_code, end_opo_ctr_code, listing_ctr_code, year, activate_date, end_date, init_date))
 ```
 
-#### 6. Drop features that contain "_ostxt" (text strings) and are not relevant to the model
+#### **6. Drop features that contain "_ostxt" (text strings) and are not relevant to the model**
 ```{r, include = TRUE}
 
 df6 <- df5 %>% 
   select(-contains("_ostxt"))
 ```
 
-#### 7. Recode +/- relevel factor levels and make unknown and missing values for each feature NA to perform imputation later
+#### **7. Recode +/- relevel factor levels and make unknown and missing values for each feature NA to perform imputation later**
 ```{r, include = TRUE}
 
 df7 <- df6 %>%
@@ -204,6 +210,7 @@ df7 <- df6 %>%
   mutate(prior_card_surg_type_tcr=fct_recode(prior_card_surg_type_tcr, "CABG" = "1", "Valve Replace/Repair" ="2", "CABG Valve Replace/Repair" = "3", "Congenital" = "4", "CABG Congenital" = "5", "Valve Replace/Repair Congenital" = "6", "CABG Valve Replace/Repair Congenital" = "7", "Left Vent. Remodeling" = "8", "CABG Left Vent. Remodeling" = "9", "Valve Replace/Repair Left Vent. Remodeling" = "10", "CABG Valve Replace/Repair Left Vent. Remodeling" = "11", "Congenital Left Vent. Remodeling" = "12", "CABG Congenital Left Vent. Remodeling" = "13", "Valve Replace/Repair Congenital Left Vent. Remodeling" = "14", "Other" = "16", "CABG Other" = "17", "Valve Replace/Repair Other" = "18", "CABG Valve Replace/Repair Other" = "19", "Congenital Other" = "20", "CABG Congenital Other" = "21", "Valve Replace/Repair Congenital Other" = "22", "Left Vent. Remodeling Other" = "24", "CABG Left Vent. Remodeling Other" = "25", "Valve Replace/Repair Left Vent. Remodeling Other" = "26", "CABG Valve Replace/Repair Left Vent. Remodeling Other" = "27", "Congenital Left Vent. Remodeling Other" = "28")) %>%
   set_variable_labels(prior_card_surg_type_tcr= "Prior cardiac surgery type at listing")
 
+as.double.factor <- function(x) {as.numeric(levels(x))[x]}
 
 df8 <- df7 %>%
   mutate(cig_grt_10_old=fct_recode(cig_grt_10_old, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
@@ -224,26 +231,32 @@ df8 <- df7 %>%
   set_variable_labels(life_sup_tcr= "Candidate life support at registration") %>%
   mutate(ethnicity=fct_recode(ethnicity, "Hispanic/Latino" = "1", NULL = "0")) %>%
   set_variable_labels(ethnicity= "Recipient Ethnicity") %>%
-  mutate(ethcat=fct_recode(ethcat, "White" = "1", "Black" = "2", "Hispanic" = "4", "Asian" = "5", "Amer Ind/Alaska Native" = "6", "Native Hawaiian/other Pacific Islander" = "7", "Multiracial"= "9")) %>%
+  mutate(ethcat=fct_recode(ethcat, "White" = "1", "Black" = "2", "Hispanic" = "4", "Asian" = "5", "American Indian/Alaskan Native" = "6", "Native Hawaiian/other Pacific Islander" = "7", "Multiracial"= "9")) %>%
   set_variable_labels(ethcat= "Recipient ethnicity category") %>%
   mutate(ventilator_tcr=fct_recode(ventilator_tcr, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(ventilator_tcr= "Patient on ventilator at registration") %>%
-  mutate(lvad_at_listing=fct_recode(lvad_at_listing, "Yes" = "1")) %>%
   set_variable_labels(lvad_at_listing= "LVAD at listing") %>%
-  mutate(lvad_while_listed=fct_recode(lvad_while_listed, "Yes" = "1")) %>%
+  mutate(lvad_at_listing=fct_explicit_na(lvad_at_listing, "No")) %>%
+  mutate(lvad_at_listing=fct_recode(lvad_at_listing, "No" = "No", "Yes" = "1")) %>%
   set_variable_labels(lvad_while_listed= "LVAD while listed") %>%
-  mutate(rvad_at_listing=fct_recode(rvad_at_listing, "Yes" = "1")) %>%
+  mutate(lvad_while_listed=fct_explicit_na(lvad_while_listed, "No")) %>%
+  mutate(lvad_while_listed=fct_recode(lvad_while_listed, "No" = "No", "Yes" = "1")) %>%
   set_variable_labels(rvad_at_listing= "RVAD at listing") %>%
-  mutate(rvad_while_listed=fct_recode(rvad_while_listed, "Yes" = "1")) %>%
+  mutate(rvad_at_listing=fct_explicit_na(rvad_at_listing, "No")) %>%
+  mutate(rvad_at_listing=fct_recode(rvad_at_listing, "No" = "No", "Yes" = "1")) %>%
   set_variable_labels(rvad_while_listed= "RVAD while listed") %>%
-  mutate(vad_at_listing=fct_recode(vad_at_listing, "Yes" = "1")) %>%
+  mutate(rvad_while_listed=fct_explicit_na(rvad_while_listed, "No")) %>%
+  mutate(rvad_while_listed=fct_recode(rvad_while_listed, "No" = "No", "Yes" = "1")) %>%
   set_variable_labels(vad_at_listing= "VAD at listing") %>%
-  mutate(vad_while_listed=fct_recode(vad_while_listed, "Yes" = "1")) %>%
+  mutate(vad_at_listing=fct_explicit_na(vad_at_listing, "No")) %>%
+  mutate(vad_at_listing=fct_recode(vad_at_listing, "No" = "No", "Yes" = "1")) %>%
   set_variable_labels(vad_while_listed= "VAD while listed") %>%
+  mutate(vad_while_listed=fct_explicit_na(vad_while_listed, "No")) %>%
+  mutate(vad_while_listed=fct_recode(vad_while_listed, "No" = "No", "Yes" = "1")) %>%
   mutate(inact_reason_cd=fct_recode(inact_reason_cd, "Temporarily too sick" = "7", "Temporarily too well" = "8", "Transplanted - removal pending UNET data correction" = "10", "Transplant Pending" = "12")) %>%
   set_variable_labels(inact_reason_cd= "Reason for inactivation")
 
-df8 <- df7 %>%
+df9 <- df8 %>%
   mutate(func_stat_trr=fct_recode(func_stat_trr, "Performs activities of daily living with NO assistance" = "1", "Performs activities of daily living with SOME assistance" = "2", "Performs activities of daily living with TOTAL assistance" = "3", "Not Applicable" = "996", "Unknown" = "998", "10% - Moribund, fatal processes progressing rapidly" = "2010", "20% - Very sick, hospitalization necessary: active treatment necessary" = "2020", "30% - Severely disabled: hospitalization is indicated, death not imminent" = "2030", "40% - Disabled: requires special care and assistance" = "2040", "50% - Requires considerable assistance and frequent medical care" = "2050", "60% - Requires occasional assistance but is able to care for needs" = "2060", "70% - Cares for self: unable to carry on normal activity or active work" = "2070", "80% - Normal activity with effort: some symptoms of disease" = "2080", "90% - Able to carry on normal activity: minor symptoms of disease" = "2090", "100% - Normal, no complaints, no evidence of disease" = "2100")) %>%
   set_variable_labels(func_stat_trr= "Candidate functional status at transplant") %>%
   mutate(med_cond_trr=fct_recode(med_cond_trr, "IN INTENSIVE CARE UNIT" = "1", "HOSPITALIZED NOT IN ICU" = "2", "NOT HOSPITALIZED" = "3")) %>%
@@ -277,7 +290,7 @@ df8 <- df7 %>%
   mutate(steroid=fct_recode(steroid, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(steroid= "Chronic steroid use at transplant") %>%
   mutate(transfusions=fct_recode(transfusions, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
-  set_variable_labels(steroid= "Transfusions between listing and transplant") %>%
+  set_variable_labels(transfusions= "Transfusions between listing and transplant") %>%
   mutate(vad_device_ty_trr=fct_recode(vad_device_ty_trr, "NONE" = "1", "LVAD" = "2", "RVAD" = "3", "TAH" = "4", "LVAD RVAD" = "5", "Unspecified" = "6")) %>%
   set_variable_labels(vad_device_ty_trr= "Candidate device type at transplant") %>%
   mutate(vad_brand1_trr=fct_recode(vad_brand1_trr, "Abiomed BVS 5000" = "201", "Arrow Lionheart" = "202", "Berlin Heart" = "203", "Biomedicus" = "204", "Heartmate II" = "205", "Heartmate IP" = "206", "Heartmate VE" = "207", "Heartmate XVE" = "208", "Heartsaver VAD" = "209", "Jarvik 2000" = "210", "Medos" = "211", "MicroMed DeBakey" = "212", "Novacor PC" = "213", "Novacor PCq" = "214", "Cardiac Assist Tandem Heart" = "215", "Thoratec" = "216", "Thoratec IVAD" = "217", "Toyobo" = "218", "Abiomed AB5000" = "221", "Berlin Heart EXCOR" = "222", "Evaheart" = "223", "Heartware HVAD" = "224", "Impella Recover 2.5" = "225", "Impella Recover 5.0" = "226", "CentriMag (Thoratec/Levitronix)" = "227", "Maquet Jostra Rotaflow" = "228", "Terumo DuraHeart" = "230", "Thoratec PVAD" = "231", "Ventracor VentrAssist" = "232", "PediMag (Thoratec/Levitronix)" = "234", "Cardiac Assist Protek Duo" = "235", "HeartMate III" = "236", "Impella CP" = "237", "Abiomed BVS 5000" = "301", "Berlin Heart" = "302", "Biomedicus" = "303", "Thoratec" = "305", "Thoratec IVAD" = "306", "Abiomed AB5000" = "309", "Berlin Heart EXCOR" = "310", "Cardiac Assist Tandem Heart" = "311", "Heartmate II" = "313", "Heartware HVAD" = "316", "Impella Recover 5.0" = "318", "Jarvik 2000" = "319", "CentriMag (Thoratec/Levitronix)" = "320", "Maquet Jostra Rotaflow" = "321", "Thoratec PVAD" = "325", "PediMag (Thoratec/Levitronix)" = "328", "Cardiac Assist Protek Duo" = "329", "HeartMate III" = "330", "Impella RP" = "332", "SynCardia CardioWest" = "402", "Other" = "999")) %>%
@@ -287,7 +300,7 @@ df8 <- df7 %>%
   mutate(vent_support_trr=fct_recode(vent_support_trr, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(vent_support_trr= "Episode of ventilatory support") %>%
   mutate(vent_timeframe_trr=fct_recode(vent_timeframe_trr, "At time of transplant" = "1", "Within 3 months of transplant" = "2", ">3 months prior to transplant" = "3")) %>%
-  set_variable_labels(vent_support_trr= "Most recent vent support timeframe") %>%
+  set_variable_labels(vent_timeframe_trr= "Most recent vent support timeframe") %>%
   mutate(ventilator_trr=fct_recode(ventilator_trr, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(ventilator_trr= "Patient on ventilator at transplant") %>%
   mutate(inhaled_no_trr=fct_recode(inhaled_no_trr, "No" = "0", "Yes" = "1")) %>%
@@ -297,7 +310,10 @@ df8 <- df7 %>%
   mutate(inhaled_no_tcr=fct_recode(inhaled_no_tcr, "No" = "0", "Yes" = "1")) %>%
   set_variable_labels(inhaled_no_tcr= "Recipient inhaled nitric oxide use") %>%
   mutate(sternotomy_trr=fct_recode(sternotomy_trr, "0" = "1", "1" = "2", "1+" = "3", NULL = "998")) %>%
-  set_variable_labels(inhaled_no_tcr= "Sternotomy between listing and transplant") %>%
+  set_variable_labels(sternotomy_trr= "Sternotomy between listing and transplant") %>%
+  set_variable_labels(age= "Age") %>% 
+  set_variable_labels(creat_trr= "Recipient serum creatinine at time of transplant") %>% 
+  set_variable_labels(tbili= "Most recent serum total bilirubin at transplant") %>% 
   set_variable_labels(da1= "Donor A1 antigen") %>% 
   set_variable_labels(da2= "Donor A2 antigen") %>%
   set_variable_labels(db1= "Donor B1 antigen") %>%
@@ -317,7 +333,7 @@ df8 <- df7 %>%
   set_variable_labels(prapk_cl1= "Recipient peak PRA% class I at transplant") %>% 
   set_variable_labels(prapk_cl2= "Recipient peak PRA% class II at transplant") %>% 
   mutate(amis=fct_recode(amis, "No" = "0", "Yes" = "1")) %>%
-  set_variable_labels(inhaled_no_tcr= "Recipient inhaled nitric oxide use") %>%
+  set_variable_labels(inhaled_no_tcr= "A locus mismatch level") %>%
   mutate(malig_trr=fct_recode(malig_trr, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(malig_trr= "Any known malignancy since listing at transplant") %>%
   mutate(malig_ty_trr=fct_recode(malig_ty_trr, "SK MEL" = "1", "SK NON-MEL" = "2", "GENURIN" = "8", "BREAST" = "16", "THYR" = "32", "LU" = "128", "LEUK" = "256", "SK MEL LEUK" = "257", "UNK" = "512", "OTH" = "1024", "LEUK OTH" = "1280")) %>%
@@ -330,7 +346,7 @@ df8 <- df7 %>%
   mutate(alcohol_heavy_don=fct_recode(alcohol_heavy_don, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(alcohol_heavy_don= "Donor heavy alcohol use") %>%
   mutate(don_ty=fct_recode(don_ty, "Deceased" = "C", "Living" = "L")) %>%
-  set_variable_labels(alcohol_heavy_don= "Donor type") %>%
+  set_variable_labels(don_ty= "Donor type") %>%
   mutate(hbv_core=fct_recode(hbv_core, "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "NULL" = "U", NULL = "")) %>%
   set_variable_labels(hbv_core= "Recipient hepatitis B core antibody ") %>%
   mutate(hbv_sur_antigen=fct_recode(hbv_sur_antigen, "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "NULL" = "U", NULL = "")) %>%
@@ -352,7 +368,7 @@ df8 <- df7 %>%
   mutate(hbv_core_don=fct_recode(hbv_core_don, "Indeterminate" = "I", "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "Pending" = "PD", NULL = "U", NULL = "")) %>%
   set_variable_labels(hbv_core_don= "Donor HBV core antibody") %>%    
   mutate(hbv_sur_antigen_don=fct_recode(hbv_sur_antigen_don, "Cannot disclose" = "C", "Indeterminate" = "I", "Negative" = "N", "Not Done" = "ND", "Positive" = "P", "NULL" = "U", NULL = "")) %>%
-  set_variable_labels(hbv_sur_antigen= "Donor hepatitis B surface antigen") %>%
+  set_variable_labels(hbv_sur_antigen_don= "Donor hepatitis B surface antigen") %>%
   mutate(hbv_dna_don=fct_recode(hbv_dna_don, "Negative" = "N", "Not Done" = "ND", NULL = "")) %>%
   set_variable_labels(hbv_dna_don= "Living donor HBV DNA") %>%  
   mutate(hcv_rna_don=fct_recode(hcv_rna_don, "Negative" = "N", "Not Done" = "ND",  NULL = "")) %>%
@@ -364,7 +380,7 @@ df8 <- df7 %>%
   mutate(non_hrt_don=fct_recode(non_hrt_don, "No" = "N", "Yes" = "Y", NULL = "")) %>%
   set_variable_labels(non_hrt_don= "Deceased Donor non heart beating donor")
 
-df9 <- df8 %>%
+df10 <- df9 %>%
   mutate(antihype_don=fct_recode(antihype_don, "No" = "N", "Yes" = "Y", NULL = "", NULL = "U")) %>%
   set_variable_labels(antihype_don= "Deceased donor antihypertensives within 24 hours pre crossclamp") %>%
   mutate(blood_inf_don=fct_recode(blood_inf_don, "No" = "0", "Yes" = "1")) %>%
@@ -561,13 +577,12 @@ df9 <- df8 %>%
   set_variable_labels(wall_abn_glob_don= "Donor global wall motion abnormalities") %>%
   select(-c(prev_tx, wl_org, num_prev_tx, pt_code, composite_death_date, region, academic_prg_trr, pros_infus_trr, prostacyclin_trr, tracheostomy_trr, hiv_nat, hcv_nat, hbv_nat, txhrt, txliv, txlng, txpan, status_tcr, amis, bmis, hlamis, drmis, liv_don_ty, htlv1_old_don, htlv2_old_don, cmv_igg_don, cmv_igm_don, cmv_don, cmv_test_don, ebv_test_don, hbv_test_don, hcv_test_don, ebv_dna_don, ebv_igg_don, ebv_igm_don, ddavp_don, cmv_nucleic_don, recovery_date_don, heparin_don, controlled, ecd_donor, transfus_intraop_num_old_don, transfus_prior_num_old_don, other_inf_conf_don))
 
-analytic <- df9
+analytic <- df10
 
 ```
 
-
-#### 8. Exploratory data analyses: will eventually make threshold of missingness to remove and/or impute variables
-```{r, include = TRUE, fig.width=20, fig.height=10}
+#### **8. Exploratory data analyses: will eventually make threshold of missingness to remove and/or impute variables**
+```{r, include = TRUE, fig.width=30, fig.height=10}
 overview(analytic)
 diagnose(analytic)
 diagnose_category(analytic)
@@ -591,14 +606,30 @@ lessthan20pctmissing <- missing %>%
 ```
 
 
-### Results (not complete yet)
-#### 1. Will present some summary statistics here
+### **Results (not complete yet)**
+#### **1. Will present some summary statistics here**
 ```{r, include=TRUE}
-summary(analytic$age) # median age is 56, IQR (47-62)
+ggplot(analytic, aes(x = age)) + geom_histogram(color="wheat", fill="violetred4", binwidth = 1) + ggtitle("Age Distribution")
+
+ggplot(analytic, aes(x = age, fill = gender)) + geom_histogram(position = "identity", alpha = 0.2, bins = 50) + ggtitle("Age Distribution by Gender")
+
+ggplot(analytic, aes(y = diag)) + geom_histogram(stat = "count") + ggtitle("Etiology")
 
 tbl1 <- analytic %>% select(age, gender, ethcat, diag, diab, bmi_tcr, creat_trr, tbili, ventilator_tcr, iabp_tcr, vad_at_listing, icu, infect_iv_drug_trr, transfusions)
 
-tbl1 %>% tbl_summary()
+tbl1 %>% tbl_summary() %>% modify_caption("**Table 1. Patient Characteristics**") %>% bold_labels()
 ```
 
-#### 2. Plan to build prediction models using caret package: Plan to try elastic net, gradient boosting, GLM, random forest. Will report performance characteristics for each model including C-statistic, Brier Score, Scaled Brier Score, calibration plots.
+#### **2. Plan to build prediction models using caret package: Plan to try elastic net, gradient boosting, GLM, random forest. Will report performance characteristics for each model including C-statistic, Brier Score, Scaled Brier Score, calibration plots.**
+
+```{r, include=TRUE}
+#Logistic regression for primary outcome of dialysis on index admission after heart transplantation with sample variables as predictors
+mylogit <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification") %>%
+  fit(pst_dial ~ age + gender + ethcat + diag + diab + bmi_tcr + creat_trr + tbili + ventilator_tcr + iabp_tcr + vad_at_listing, data = analytic)
+
+tidy(mylogit, exponentiate = TRUE) %>% filter(p.value < 0.05) 
+
+
+```
