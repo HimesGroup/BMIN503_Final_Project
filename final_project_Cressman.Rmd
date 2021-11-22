@@ -17,8 +17,8 @@ This analysis seeks to determine how changes in community mobility, SARS-CoV-2 v
 ### Introduction 
 Since the start of the SARS-CoV-2 pandemic, scientists have been developing statistical models to predict various epidemiologic outcomes in different areas of the world. This analysis will contribute to that knowledge base by examining how changes in community mobility, vaccine prevalence, and SARS-CoV-2 variants are related to weekly changes in case incidence in Philadelphia and the surrounding counties. As Google social mobility data is available starting February 15, 2020, the analysis spans from then through October 2, 2021, using MMWR week as time intervals. The above-referenced study in PSOM randomly samples SARS-CoV-2 positive specimens collected at UPHS facilities with cycle threshold (Ct) values < 30. Whole genome sequencing is performed on these specimens, which have higher viral loads, to identify the variant. The results of WGS will be used as an additional explanatory variable in this analysis to indicate which SARS-CoV-2 variants were dominant in each MMWR week in the greater Philadelphia metropolitan area during the study period.  
 
-This analysis draws upon microbiology for the identification of SARS-CoV-2 variants, and infectious disease epidemiology, biostatistics, and informatics to analyze and interpret the relationship between dominant SARS-CoV-2 variants, vaccination, and change in case incidence. Geographical epidemiology will also contribute to the analysis in the form of visualizing the change in vaccinations, cases, variants, and community mobility across time in the target geographic areas. In addition, this analysis incorporates the behavioral sciences, as it seeks to identify whether Google social mobility data is associated with case incidence. 
-One particular difficulty I had in the initial phase of this analysis was data harmonization. I examined a plethora of datasets from the CDC, the Pennsylvania Department of Health, Google, and OpenDataPhilly before I was able to find data that covered the time span and geographic areas of interest. My discussion with Dr. John Holmes was especially helpful for finalizing the data harmonization aspect of this analysis. He explained that if I were trying to publish this project, I would need express written permission from the CDC to link their data to other data sources. However, for a class project, it is fine to link the data to other sources without obtaining permission. In addition, I consulted Dr. Joseph Romano regarding the machine learning portion of this analysis. Finally, I spoke with Dr. Sherrie Xie, in geographic epidemiology, to gain insights on creating maps to effectively demonstrate the changes in my study variables over time.
+This analysis draws upon microbiology for the identification of SARS-CoV-2 variants, and infectious disease epidemiology, biostatistics, and informatics to analyze and interpret the relationship between dominant SARS-CoV-2 variants, vaccination, and change in case incidence. Geographical epidemiology will also contribute to the analysis in the form of visualizing the change in vaccinations, cases, variants, and community mobility across time in the target geographic areas. In addition, this analysis incorporates the behavioral sciences, as it seeks to identify whether social behavior (i.e., community mobility data) is associated with case incidence. 
+One particular difficulty I had in the initial phase of this analysis was data harmonization. I examined a plethora of datasets from the CDC, the Pennsylvania Department of Health, Google, and OpenDataPhilly before I was able to find data that covered the time span and geographic areas of interest. My discussion with Dr. John Holmes was especially helpful for finalizing the data harmonization aspect of this analysis. He explained that if I were trying to publish this project, I would need express written permission from the CDC to link their data to other data sources. However, for a class project, it is fine to link the data to other sources without obtaining permission. In addition, I consulted Dr. Joe Romano regarding the machine learning portion of this analysis. Finally, I spoke with Dr. Sherrie Xie, in geographic epidemiology, to gain insights on creating maps to effectively demonstrate the changes in my study variables over time.
 
 [My final project GitHub repository can be accessed here.](https://github.com/LeighCressman/BMIN503_Final_Project)
 
@@ -41,16 +41,24 @@ Each dataset (CDC vaccine, CDC case, and Google community mobility) contains cou
 The Google Community Mobility Reports date back to February 15, 2020. CDC case data did not exist prior to March 2020, and CDC vaccination data does not pick up fully vaccinated individuals prior to January 2021. Therefore, rows of zeros were added to vaccine and case data so that it could be merged with the social mobility dataset, joining on county and *MMWR* week.
 
 Suppressed values CDC
+### Suppressed cells need to be replaced with minimum observed cases by county.
+# 0 values are not included when considering minimum number of cases.
 
 Suppressed values Google
+### Mean_parks and mean_transit_stations contain NAs.
+# [Missing values are a result of activity being too 
+# low upon a specific day and therefore not achieving the 
+# anonymity threshold set by Google](https://support.google.com/covid19-mobility/answer/9825414?hl=en)
+
 
 Case and vaccine variables have been adjusted for county population based on estimates from the 2019 U.S. Census.
 
 Multiple vaccine variables
 
 Scaling case incidence and vaccine prevalence after adjusting for population
+base::scale 
 
-
+car::vif for checking variance inflation factor
 
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -125,7 +133,7 @@ counties <- c("Philadelphia County", "Bucks County",
               "Mercer County", "New Castle County")
 
 
-# subtract yesterday's # vaccine numbers # from today # to get n of new   # vaccinations 
+# subtract yesterday's # vaccine numbers # from today # to get n of new vaccinations 
 county_new <- data.frame()
 for (county in counties) {
   county_data <- cdc_coun %>% filter(recip_county == county)
@@ -140,9 +148,9 @@ for (county in counties) {
 county_agg <- county_new %>% 
   filter(between(date, "2020-02-15", "2021-10-09")) %>%
   group_by(recip_county, year_week) %>%
-  summarize(vacc_incidence_n = mean(new_vaccinations), # new fully vaccinated ind.                     
-            mean_per_pop_fully_vacc = mean(fully_vacc_per_pop), # per pop vaccinated 
-            mean_fully_vacc_n = mean(fully_vaccinated)) %>% # cum. fully vaccinated
+  summarize(vacc_incidence_n = mean(new_vaccinations), #mean new fully vaccinated individuals                     
+            mean_per_pop_fully_vacc = mean(fully_vacc_per_pop), # per pop fully vaccinated 
+            mean_fully_vacc_n = mean(fully_vaccinated)) %>% # mean cum. fully vaccinated
   arrange(recip_county, year_week)
 
 
@@ -197,10 +205,7 @@ google_week <- coun_g %>%
                    .names = "mean_{.col}")) %>% # add "mean" to each col name
   arrange(sub_region_2, year_week)
   
-### Mean_parks and mean_transit_stations contain NAs.
-# [Missing values are a result of activity being too 
-# low upon a specific day and therefore not achieving the 
-# anonymity threshold set by Google](https://support.google.com/covid19-mobility/answer/9825414?hl=en)
+### Variables Mean_parks and mean_transit_stations contain NAs
 
 # identify counties with missing data
 google_miss <- google_week %>%
@@ -265,7 +270,7 @@ add_vacc <- coun_g %>% distinct(sub_region_2, year_week) %>%
 all_vacc <- add_vacc %>% bind_rows(county_agg) %>%
   arrange(recip_county, year_week)
 
-# join vaccine and Google social mobility data
+# join vaccine and Google social mobility data on county and MMWR week
 explan <- all_vacc %>% 
   inner_join(google_na, by = c("recip_county" = "sub_region_2",
                                  "year_week" = "year_week")) %>%
@@ -281,10 +286,10 @@ explan <- all_vacc %>%
 #############################################
 #############################################
 
-# read in all CDC case files
+# import and combine all CDC case files
 case_files <- list.files(pattern = "cdc_cases.*\\.csv") 
-cdc_cases <- lapply(case_files, fread, sep = ",")
-cdc_case_data <- rbindlist(cdc_cases) # combine all county files into single df
+cdc_case_data <- rbindlist(sapply(case_files, fread, simplify = FALSE),
+                           use.names = TRUE) 
 
 # filter and reformat case data
 clean_case <- cdc_case_data %>% rename(state = "State Abbreviation",
@@ -488,13 +493,13 @@ ggpairs(df_clean2)
 ########################################################
 
 ###############################################
-# fit bivariate statistical models to find out 
+# Fit bivariate statistical models to find out 
 # which variables are individually associated 
 # with next_week_increase at a 
 # nominally significant level.
 ###############################################
 
-# scale vaccine variables
+# scale vaccine variables (without centering)
 covid$vacc_inc_per100thou_sc <- scale(covid$vacc_incidence_per100thou, center = FALSE)[, 1]
 covidvacc_prev_per100thou_sc <- scale(covid$vacc_prevalence_per100thou, center = FALSE)[, 1]
 

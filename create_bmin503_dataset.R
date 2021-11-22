@@ -219,10 +219,10 @@ explan <- all_vacc %>%
 #############################################
 #############################################
 
-# read in all CDC case files
+# import and combine all CDC case files
 case_files <- list.files(pattern = "cdc_cases.*\\.csv") 
-cdc_cases <- lapply(case_files, fread, sep = ",")
-cdc_case_data <- rbindlist(cdc_cases) # combine all county files into single df
+cdc_case_data <- rbindlist(sapply(case_files, fread, simplify = FALSE),
+                           use.names = TRUE) 
 
 # filter and reformat case data
 clean_case <- cdc_case_data %>% rename(state = "State Abbreviation",
