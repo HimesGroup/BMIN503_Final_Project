@@ -38,8 +38,12 @@ Using the top 3 proteins identified through the differential expression analysis
 
 B) Longitudinal Analysis (Cognitive Function)
 
-11/21/21
+Linear-mixed effects model was used to evaluate the effect of the top protein biomarkers identified in (A) on change in MoCA score over time, after age and sex were adjusted for.
+
+Model: MoCA ~ time x top proteins + age + sex
 
 C) Longitudinal Analysis (Motor Function)
 
-11/21/21
+Linear-mixed efefcts model was used to evaluate the effect of the top protein biomarekrs indentified in (A) on change in UPDRS-III score over time, after age and sex were adjusted for 
+
+Model: UPDRS ~ time x top proteins + age + sex
