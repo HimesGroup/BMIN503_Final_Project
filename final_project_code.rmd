@@ -10,12 +10,16 @@ highlight: tango
 options(width = 400)
 ```  
 ***
-  Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
 
 ### Overview
 My final project will be using the CHDB Southeastern Pennsylvania Household Health Survey to investigate the relationship between mental health outcomes and social predictors in adults living in the greater Philadelphia area. Another layer of this project will examine whether the strength of these relationships differs between geographical areas such as county.
 
->Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+Faculty Mentors:
+-Dr. Kate Rendle
+-Dr. John Holmes
+-Dr. David Mandell
+
+GitHub repository link: https://github.com/sarahrc121/BMIN503_Final_Project
 
 
 ### Introduction 
@@ -35,28 +39,27 @@ library(leaflet)
 library(tidyverse)
 library(zipcodeR)
 library(maps)
-
-
+library(sf)
 ```
 
 # DATA READ-IN AND CLEAN
-# READ IN DATA, CURRENTLY IN STATA
-# CREATE SEPARATE DATASET FOR POPULATION THAT HAS EVER BEEN DIAGNOSED WITH MENTAL HEALTH CONDITION
-# CREATE NEW DATASET WITH DESIRED VARIABLE AND LABEL VARIABLE VALUES SO THEY MAKE SENSE
 ``` {r}
 
+# READ IN DATA, CURRENTLY IN STATA DATA FORMAT
 chdb <- read_dta('H:\\MBMI\\Data Science\\Final Project\\HHS18AR.dta')
 
 head(chdb)
 
+# CHANGE 'NA'S TO ZEROES
 chdb[is.na(chdb)] <- 0
 
+# CHANGE CATEGORICAL VARIABLES TO CHARACTER
 chdb[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA')] <- lapply(chdb[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA')], as.character)
 
-
+# DAT1 WILL BE THE DATASET I WILL WORK WITH THAT HAS VARIABLES OF INTEREST
 dat1 <- data.frame()
 
-
+# RE-LABEL LEVELS OF ORIGINAL CATEGORICAL VARIABLES SO EASIER TO MAKE SENSE OF
 
 for (i in 1:nrow(chdb)) {
   if(chdb[i, 'MENTAL3A']=="1") {
@@ -195,13 +198,14 @@ for (i in 1:nrow(chdb)) {
 }
 
 
-
+# ADD ZIP CODE TO WORKING DATASET
 dat1$zip <- chdb$zipcode
 
+# CHANGE 'UNKNOWN' VALUES TO NA
 dat1[dat1=="Unknown"] <- NA
 
 
-
+# CREATE SUBSETTED DATASET WHERE ALL RESPONDENTS HAVE BEEN DIAGNOSED WITH A MENTAL HEALTH CONDITION
 dat1_mh <- dat1 %>%
            filter(mh_dx=="Yes")
 
@@ -210,7 +214,7 @@ dat1_mh <- dat1 %>%
 
 # EXAMINE VARIABLES OF INTEREST (GEOGRAPHIC, MENTAL HEALTH, AND SOCIAL) WITH BASIC FREQUENCIES AND PLOTS
 ``` {r}
-
+# EVER DIAGNOSED WITH MENTAL HEALTH CONDITION
 dat1 %>%
   group_by(mh_dx) %>%
   summarize(n())
@@ -218,6 +222,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=mh_dx)) +
   geom_bar()
 
+# IF HAVE BEEN DIAGNOSED WITH MENTAL HEALTH CONDITION EVER, CURRENTLY SEEKING TREATMENT
 dat1_mh %>%
   group_by(mh_trt) %>%
   summarize(n())
@@ -225,6 +230,7 @@ dat1_mh %>%
 ggplot(data=dat1_mh, aes(x=mh_trt)) +
   geom_bar()
 
+# NEIGHBORS WILLING TO HELP EACH OTHER
 dat1 %>%
   group_by(neigh_help) %>%
   summarize(n())
@@ -232,13 +238,15 @@ dat1 %>%
 ggplot(data=dat1, aes(x=neigh_help)) +
   geom_bar()
 
+# NEIGHBORS EVER WORKED TOGETHER
 dat1 %>%
-  group_by(neigh_help) %>%
+  group_by(neigh_toget) %>%
   summarize(n())
 
 ggplot(data=dat1, aes(x=neigh_toget)) +
   geom_bar()
 
+# FEEL I BELONG IN MY NEIGHBORHOOD
 dat1 %>%
   group_by(belong) %>%
   summarize(n())
@@ -246,6 +254,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=belong)) +
   geom_bar()
 
+# PEOPLE IN MY NEIGHBORHOOD CAN BE TRUSTED
 dat1 %>%
   group_by(trust) %>%
   summarize(n())
@@ -253,6 +262,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=trust)) +
   geom_bar()
 
+# PARK OR OUTDOOR SPACE COMFORTABLE VISITING
 dat1 %>%
   group_by(park) %>%
   summarize(n())
@@ -260,6 +270,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=park)) +
   geom_bar()
 
+# SOCIAL CAPITAL SCALE, 2 CATEGORIES (LOW, MEDIUM/HIGH)
 dat1 %>%
   group_by(soc_2cat) %>%
   summarize(n())
@@ -267,6 +278,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=soc_2cat)) +
   geom_bar()
 
+# SOCIAL CAPITAL SCALE, 3 CATEGORIES (LOW, MEDIUM, HIGH)
 dat1 %>%
   group_by(soc_3cat) %>%
   summarize(n())
@@ -291,15 +303,14 @@ dat1_zip <- dat1 %>%
 
 
 # CREATE BASE MAP OF PHILADELPHIA AREA
-phl_map <- map("county", "pennsylvania", xlim=c(-77,-74), ylim=c(39,41))
+phl.map <- map("county", "pennsylvania", xlim=c(-77,-74), ylim=c(39,41))
 
-phl_map2 <- map_data("phl_map")
+phl.map <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/philadelphia_tracts_2010.rds")))
+phl.geo <- st_geometry(phl_map)
 
 # PLOT EACH RESPONSE ON BASE MAP 
-
-ggplot(phl_map2, aes(x, y, group=names)) +
-  geom_point(data=dat1_zip, aes(x=lng, y=lat))
-
+plot(phl.geo)
+plot(st_geometry(dat1), col="red", add=TRUE)
 
 ```
 
@@ -307,10 +318,10 @@ ggplot(phl_map2, aes(x, y, group=names)) +
 # SOCIAL SCALE AND INDIVIDUAL SOCIAL VARIABLES BY MENTAL HEALTH DIAGNOSIS
 ``` {r}
 
-
+# SOCIAL CAPITAL SCALE (2 CATEGORIES) BY MENTAL HEALTH DIAGNOSIS
 table(dat1$soc_2cat, dat1$mh_dx)
 chisq.test(dat1$soc_2cat, dat1$mh_dx)
-# p<0.00001
+# p<0.00001**
 
 dat1 %>%
   filter(!is.na(mh_dx), !is.na(soc_2cat)) %>%
@@ -318,9 +329,10 @@ dat1 %>%
   geom_bar()
 
 
+# SOCIAL CAPITAL SCALE (3 CATEGORIES) BY MENTAL HEALTH DIAGNOSIS
 table(dat1$soc_3cat, dat1$mh_dx)
 chisq.test(dat1$soc_3cat, dat1$mh_dx)
-# p<0.00001
+# p<0.00001**
 
 dat1 %>%
   filter(!is.na(mh_dx), !is.na(soc_3cat)) %>%
@@ -332,31 +344,29 @@ dat1 %>%
 
 table(dat1$neigh_help, dat1$mh_dx)
 chisq.test(dat1$neigh_help, dat1$mh_dx)
-# p=0.001545
+# Neighbors willing to help each other x mental health dx; p=0.001545**
 
 table(dat1$neigh_toget, dat1$mh_dx)
 chisq.test(dat1$neigh_toget, dat1$mh_dx)
-# p=0.06143
+# Neighbors ever worked together x mental health dx; p=0.06143*
 
 table(dat1$belong, dat1$mh_dx)
 chisq.test(dat1$belong, dat1$mh_dx)
-# p<0.00001
+# Feeling of belonging in neighborhood x mental health dx; p<0.00001**
 
 table(dat1$trust, dat1$mh_dx)
 chisq.test(dat1$trust, dat1$mh_dx)
-# p<0.00001
+# People in neighborhood can be trusted x mental health dx; p<0.00001**
 
 table(dat1$park, dat1$mh_dx)
 chisq.test(dat1$park, dat1$mh_dx)
-# p=0.006208
+# Park comfortable visiting x mental health dx; p=0.006208**
 
 ```
-
-
 # SOCIAL SCALE AND INDIVIDUAL SOCIAL VARIABLES BY MENTAL HEALTH TREATMENT
 ``` {r}
 
-
+# SOCIAL CAPITAL SCALE (2 CATEGORIES) BY MENTAL HEALTH TREATMENT
 table(dat1_mh$soc_2cat, dat1_mh$mh_trt)
 chisq.test(dat1_mh$soc_2cat, dat1_mh$mh_trt)
 # p=0.6645
@@ -366,7 +376,7 @@ dat1_mh %>%
   ggplot(aes(x=mh_trt, fill=soc_2cat)) +
   geom_bar()
 
-
+# SOCIAL CAPITAL SCALE (3 CATEGORIES) BY MENTAL HEALTH TREATMENT
 table(dat1_mh$soc_3cat, dat1_mh$mh_trt)
 chisq.test(dat1_mh$soc_3cat, dat1_mh$mh_trt)
 # p=0.8656
@@ -381,30 +391,30 @@ dat1_mh %>%
 
 table(dat1_mh$neigh_help, dat1_mh$mh_trt)
 chisq.test(dat1_mh$neigh_help, dat1_mh$mh_trt)
-# p=0.5604
+# Neighbors willing to help each other x mental health treatment; p=0.5604
 
 table(dat1_mh$neigh_toget, dat1_mh$mh_trt)
 chisq.test(dat1_mh$neigh_toget, dat1_mh$mh_trt)
-# p=0.2028
+# Neighbors ever worked together x mental health treatment; p=0.2028
 
 table(dat1_mh$belong, dat1_mh$mh_trt)
 chisq.test(dat1_mh$belong, dat1_mh$mh_trt)
-# p=0.6033
+# Feeling of belonging in neighborhood x mental health treatment; p=0.6033
 
 table(dat1_mh$trust, dat1_mh$mh_trt)
 chisq.test(dat1_mh$trust, dat1_mh$mh_trt)
-# p=0.6915
+# People in neighborhood can be trusted x mental health dx; p=0.6915
 
 table(dat1_mh$park, dat1_mh$mh_trt)
 chisq.test(dat1_mh$park, dat1_mh$mh_trt)
-# p=0.6587
+# Park comfortable visiting x mental health treatment; p=0.6587
 
 ```
 
-> It appears that mental health treatment is not associated with any social determinants measured by this survey.
+> It appears that mental health treatment is not significantly associated with any social determinants measured by this survey, so I will not perform my analysis with this variable.
 
 
-# PERFORM LOGISTIC REGRESSION ON OUTCOME OF MENTAL HEALTH DIAGNOSIS VERSUS SOCIAL DETERMINANT VARIABLES
+# PERFORM LOGISTIC REGRESSION ON OUTCOME OF MENTAL HEALTH DIAGNOSIS VERSUS SOCIAL DETERMINANT VARIABLES, CONTROLLING FOR CERTAIN DEMOGRAPHIC VARIABLES 
 
 
 ### Results
