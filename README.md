@@ -3,7 +3,7 @@
 ### Deeksha Hegde
 ##### November 23, 2021
 
-This repository contains the data and code used to perform an exploratory and predictive ananlysis of animal usage in biomedical research over 12 years. The code is in progress and will be completed by December 10, 2021.
+This repository contains the data and code used to perform an exploratory and predictive analysis of animal usage in biomedical research over 12 years. The code is in progress and will be completed by December 10, 2021.
 
 This repo contains:
 1. BMIN503_Project_Hegde.rmd: An R markdown file containing code, comments and explanation of project
