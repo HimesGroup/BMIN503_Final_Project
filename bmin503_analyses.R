@@ -136,8 +136,8 @@ ggpairs(df_clean2)
 ###############################################
 
 # scale vaccine variables
-covid$vacc_inc_per100thou_sc <- scale(covid$vacc_incidence_per100thou)[, 1]
-covidvacc_prev_per100thou_sc <- scale(covid$vacc_prevalence_per100thou)[, 1]
+covid$vacc_inc_per100thou_sc <- scale(covid$vacc_incidence_per100thou, center = FALSE)
+covid$vacc_prev_per100thou_sc <- scale(covid$vacc_prevalence_per100thou, center = FALSE)
 
 covid_clean <- covid %>% select(-county, -year_week,
                                 -case_mean_per100thou, -case_mean,
@@ -230,4 +230,3 @@ legend("bottomright", legend = c("GLM Logistic", "GLM Logistic Cross-Validation"
 # the AUCs for both training and test data are not very high, so
 # predictive accuracy is not very good. Model does not distinguish well
 # between no increase and increase.
-# Not much better than a coin flip.
