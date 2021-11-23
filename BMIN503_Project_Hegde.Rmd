@@ -1,0 +1,268 @@
+---
+title: "Exploratory and Predictive Analysis of Animal Use in Biomedical Research in the US"
+author: "Deeksha Hegde"
+output: html_document
+#bibliography: references.bib
+---
+
+```{r setup, error = FALSE, warning = FALSE, message = FALSE, include = FALSE}
+options(scipen = 999)
+knitr::opts_chunk$set(echo = TRUE)
+library("gridExtra")
+```
+
+###Note to peer reviewer: 
+I am yet to clean up my code and add citations in the introduction. Right now, exploratory analysis is underway. Predictive analysis is not done yet.
+I have left notes in the document where I would appreciate feedback on specific points.
+
+## Overview
+
+My project aims to summarize and visualize the trends in the use of animals in biomedical research by species, pain levels and state in the US the over the period from 2008 to 2019. The data is obtained from the US Department of Agriculture’s [APHIS annual reports](https://www.aphis.usda.gov/aphis/ourfocus/animalwelfare/sa_obtain_research_facility_annual_report/ct_research_facility_annual_summary_reports). Following this exploratory analysis, a prediction for the number of animals that will be used over the next 5 years will be made.
+
+## Introduction
+
+The use of animals in biomedical research is ubiquitous. There are two main categories for animal use: basic biomedical sciences research and (mimicking a human disease in an animal model and studying gene expression, molecular mechanisms, etc.) and drug testing (toxicity and efficacy of an experimental drug). A growing body of studies and voices from the scientific community have pointed out the poor reliability and predictive value of animal models for human outcomes and for understanding human physiology. In 2004, the FDA estimated that 92% of drugs that pass preclinical tests in animal models fail in human clinical trials. More recent analysis suggests that, in spite of efforts to improve the predictability of animal testing, the failure rate has increased to 96%.
+
+In 1938, Congress passed the U.S. Federal Food, Drug, and Cosmetic Act, mandating animal toxicity testing. As of October 7, 2021, Congress introduced the bipartisan FDA Modernization Act to end animal testing mandates. This comes after the European Parliament resoundingly passed a resolution on September 16, 2021, with a vote of 667 to 4 to phase out animal testing. How has animal use in research changed over the past few years in the US? What is the significance of species, state, pain levels? Using the limited USDA data, I aim to answer these questions. Furthermore, a regression model will predict the number of animals that will be needed in the next few years if the same trends continue. This analysis could be of interest to biomedical companies to reduce their time and resources spent on animal models, FDA for revision of regulatory requirements, bioethics specialists and animal advocacy groups.
+
+The trends in animal use could be influenced by technologies that enhanced the ease of building animal models, technologies that performed better than animal models, change in the bioethical standards, change in public sentiment about the topic and even opinions voiced by the heads of government regulatory bodies. I am personally interested in this analysis because one of my career goals is to work towards developing and commercializing alternatives to animal methods in biomedical research.
+
+## Cleaning and Loading Data
+
+USDA publishes an annual report of the number of animals used by state, species and pain category. The report for every year is published in January two years later. Hence the latest data I could obtain was from 2019. The reports were published starting 2008, hence I have data for a 12 year period.
+
+The data is in the form of several PDFs. I cleaned the data manually into .txt format. The nomenclature is year_col_X where X is the pain category. The pain categories are:
+ - Column B: Animals held by a facility but not used in any research that year
+ - Column C: Animals used in research; no pain involved; no pain drugs administered
+ - Column D: Animals used in research; pain involved; pain drugs administered
+ - Column E: Animals used in research; pain involved; no pain drugs administered.
+ 
+The following code chunk loads the data as a dataframe, stacked by year and column. The loaded data has 53 rows per year per column. This includes the 50 states, District of Columbia, Puerto Rico, and "REPORT TOTAL" which is the sum of all columns (species). Note that the species column is not an exhaustive list of all animals used in biomedical research but only those covered by the Animal Welfare Act. The AWA does not cover rats, mice, birds and reptiles, which happen to be over 95% of all animals used. Columns B, C, D and E are assigned values 0, 1, 2 and 3 to reflect pain levels in a more intuitive way.
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+library("tidyverse")
+library("dplyr")
+datafr <- purrr::map_dfr(
+  .x = c(2008:2019), 
+  .f = function(x){
+    purrr::map_dfr(
+  .x = c("B", "C", "D", "E"),
+  .f = function(x, y){
+    dat <- read.table(file = paste0("C:/Users/Deeksha Hegde/Downloads/BMIN503_Final_Project/USDA_Data/",y,"_col_",x,".txt"), header = TRUE, sep = "\t")
+    dat %>%
+      mutate(across(.cols = All_Other_Covered_Species:Total, .fns =~ as.numeric(str_remove_all(string = .x, ","))), 
+        Year = y,
+        Column = x
+            )
+    }, y=x
+    )
+  }
+)
+
+#Checking if the data loaded is correct
+datafr %>% count(Year, Column)
+datafr <- mutate(datafr, pain.level = factor(Column, levels = c("B", "C", "D", "E"), labels = c(0, 1, 2, 3)))
+```
+
+## Data Visulation and Exploratory Analysis
+
+Now let us visualize the numbers! The first plot shows the total animals (all categories combined) by year. The second plot shows the same but with the breakup by column.
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+data.total <- filter(datafr, State == "REPORT TOTAL")
+
+#Total by year
+data.total1 <- summarise(group_by(data.total, Year), Total = sum(Total))
+ggplot(data = data.total1, aes(x = Year, y = Total)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + scale_y_continuous(breaks = seq(900000, 1300000, by = 100000), labels = seq(9, 13, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year")
+theme(
+        plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+#Total by year and column
+ggplot(data = data.total, aes(x = Year, y = Total, color = pain.level)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + scale_y_continuous(breaks = seq(100000, 700000, by = 100000), labels = seq(1, 7, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year by Pain Levels")
+theme(
+        plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+```
+
+We see that there is a huge rise in the total from 2009 to 2010, and a steady decline since then. Overall, there is a significant decline over the 12 year period.
+
+From the second plot, we see that pain category 1, which involves no pain and no pain drugs, has the highest number throughout.
+
+```{r, my-chunk, fig.height = 15, fig.width = 30, error = FALSE, warning = FALSE, message = FALSE}
+#Total by column by state
+data.by.state <- datafr %>%
+  filter(State != "REPORT TOTAL") %>%
+  group_by(State, pain.level) %>%
+  summarise(Total = sum(Total))
+  
+#max(data.by.state$Total, by = data.by.state$Column)   
+ggplot(data.by.state, aes(x = State, y = Total, color = pain.level)) + geom_point()
+```
+Highest by pain level:
+0 CA, MD, TX
+1 CA, MA, OH
+2 CA, TX, MA
+3 MO, MI, IA
+
+Note to peer reviewer: This is a messy plot, feedback on how to represent this better will be appreciated!
+
+Now, since we're in Pennsylvania, let us see what the plots for PA looks like.
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Total for PA
+data.PA <- filter(datafr, State == "PA")
+ggplot(data = summarise(group_by(data.PA, Year), Total = sum(Total)), aes(x = Year, y = Total)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year in Pennsylvania")
+
+#Total by column for PA
+ggplot(data = data.PA, aes(x = Year, y = Total, color = pain.level)) + geom_line() +
+  scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year by Pain Levels in Pennsylvania")
+```
+
+We see a huge decline from 2009 to 2015.
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Std dev of total for all states
+
+data.by.state.year <- datafr %>%
+  filter(State != "REPORT TOTAL") %>%
+  group_by(State, Year) %>%
+  summarise(Total = sum(Total))
+  
+state.std.dev <- summarise(data.by.state.year, mean = mean(Total), sd = sd(Total))
+state.std.dev[order(state.std.dev$sd, decreasing = TRUE),]
+#cv = sd/mean -- another column, sort by this
+state.std.dev <- state.std.dev %>% mutate(cv = sd/mean) %>% 
+                  arrange(desc(cv))
+
+#check the other 2 outliers
+```
+
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Total by column for AZ
+
+data.AZ <- filter(datafr, State == "AZ")
+ggplot(data = data.AZ, aes(x = Year, y = Total, color = Column)) + geom_line()+
+  scale_x_continuous(breaks = c(2008:2019))
+
+#replace outlier with mean without it
+#do the AZ and total plots again
+#from this point onwards, using imputed data
+```
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Total by column for NY
+
+data.NY <- filter(datafr, State == "NY")
+ggplot(data = data.NY, aes(x = Year, y = Total, color = Column)) + geom_line()+
+  scale_x_continuous(breaks = c(2008:2019))
+```
+
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Total by column for CA
+
+data.CA <- filter(datafr, State == "CA")
+ggplot(data = data.CA, aes(x = Year, y = Total, color = Column)) + geom_line()+
+  scale_x_continuous(breaks = c(2008:2019))
+```
+
+
+```{r, my-chunk, fig.height = 10, fig.width = 30, error = FALSE, warning = FALSE, message = FALSE}
+#Nested functions for 50 plots
+#par(mfrow = c(5, 10))
+state_plot <- purrr::map(
+   .x = unique(datafr$State)[unique(datafr$State) != "REPORT TOTAL"], 
+  .f = function(x){
+    ggplot(data = datafr %>% filter(State == x), aes(x = Year, y = Total, color = Column)) + geom_line() + ggtitle(label = x) +
+  scale_x_continuous(breaks = c(2008:2019)) +
+      theme(
+        plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+        axis.title = element_blank(),
+        axis.text = element_text(size = 8),
+        legend.position = "none"
+      )
+  }
+)
+
+#Note: How to integrate grid.arrange with for loop?
+grid.arrange(
+        state_plot[[1]],
+        state_plot[[2]],
+        state_plot[[3]],
+        state_plot[[4]],
+        state_plot[[5]],
+        state_plot[[6]],
+        ncol = 5
+        #widths = grid::unit(x = c(5, 5, 2), units = "in"),
+        #layout_matrix = matrix(data = 1:3, ncol = 3, byrow = FALSE),
+        #vp = grid::viewport(width = 0.99, height = 0.99)
+      )
+#legend at the end
+```
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Plot all states using for loop
+library("dplyr")
+library("ggplot2")
+library("data.table")
+
+data.for.plots <- datafr %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(State, Year, Column, Total) %>%
+  group_by(State) 
+
+states = unique(data.for.plots$State)
+state_plots = list()
+
+for(state_ in states) {
+  state_plots[[state_]] <- ggplot(data.for.plots %>% filter(State == state_), aes(x = Year, y = Total, color = Column)) + 
+  geom_line() + ggtitle(state_) +
+  scale_x_continuous(breaks = c(2008:2019)) + 
+  theme(
+        plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+      )
+  print(state_plots[[state_]])
+}
+#How to combine them all in one grid?  
+```
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Std dev of species for top states
+
+data.CA <- filter(datafr, State == "CA") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE))
+  
+#pivot_wider and pivot_longer -- transpose
+
+CA.std.dev <- summarise(data.CA, sd = sd(Total))
+CA.std.dev[order(state.std.dev$sd, decreasing = TRUE),]
+```
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+#Interactive Map
+```
