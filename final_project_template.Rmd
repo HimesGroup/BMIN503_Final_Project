@@ -42,28 +42,78 @@ The number of fatal cocaine overdoses in a county was calculated by the CDC base
 
 #### Statistical Analysis
 
-For continuous variables, descriptive statistics include mean and standard deviation. These data will be reported in Table 1. To find predictors for the number of cocaine overdoses in a US county, poisson linear mixed effect models were chosen for a few of reasons. First, they allow for longitudinal analysis. Second, they can be used to model clustered data, which is useful in this scenario, where counties are clustered in states. Lastly, they allow for random effects. The 5-year population estimate was used as an offset term for the regression model. To build predictive models, elastic net regression and random forest models were used.
+For continuous variables, descriptive statistics include mean, standard deviation, median, minimum ,and maximum. These data will be reported in Table 1. To find predictors for the number of cocaine overdoses in a US county, poisson linear mixed effect models were chosen for a few of reasons. First, they allow for longitudinal analysis. Second, they can be used to model clustered data, which is useful in this scenario, where counties are clustered in states. Lastly, they allow for random effects. The 5-year population estimate was used as an offset term for the regression model. To build predictive models, elastic net regression and random forest models were used.
 
 ### Results
 
+#### Table 1. Descriptive Statistics
+
 ```{r}
+# Load Table1
 library(table1)
-table1::table1(~meanHouseholdSize + prevDisabled + gini + prevHispanic + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + perCapIncome + prevMen + prevPoverty + medianRentCostBurden + prevNoCar + jailAdmit100, data = finalData)
+library(dplyr)
+
+# Create Other Race Variable
+finalData$otherRace <- 100 - finalData$prevBlack - finalData$prevWhite - finalData$prevHispanic
+
+# Create labels so that the rows in the table look nice
+label(finalData$meanHouseholdSize) <- "Mean Household Size"
+label(finalData$prevDisabled) <- "Proportion of Population with a Disability"
+label(finalData$gini) <- "Gini Coefficient"
+label(finalData$medianAge) <- "Median Age"
+label(finalData$prevMedicaid) <- "Proportion of Population on Medicaid"
+label(finalData$prevMinBachelors) <- "Proportion of Population with at least a Bachelors"
+label(finalData$prevBlack) <- "Proportion of Population that is Non-Hispanic Black Only"
+label(finalData$prevWhite) <- "Proportion of Population that is Non-Hispanic White Only"
+label(finalData$prevHispanic) <- "Proportion of Population that is Hispanic of All Races"
+label(finalData$otherRace) <- "Proportion of Population that is in an Other Race Group"
+label(finalData$perCapIncome) <- "Per Capita Income"
+label(finalData$prevMen) <- "Proportion of the Population that is Male"
+label(finalData$prevPoverty) <- "Proportion of Population in Poverty"
+label(finalData$medianRentCostBurden) <- "Median Rent Burden"
+label(finalData$prevNoCar) <- "Proportion of Population with No Car"
+label(finalData$jailAdmit100) <- "Jail Admissions per 100 People"
+
+# Create table and pass it to kable, which makes it pretty
+table1::table1(~meanHouseholdSize + prevDisabled + gini  + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + prevHispanic + otherRace + perCapIncome + prevMen + prevPoverty + medianRentCostBurden + prevNoCar + jailAdmit100, data = finalData) %>% kableExtra::kable()
 ```
 
 #### Predictive Model
 
-There have been convergence issues with the models, so the code blocks with these models are not being evaluated currently.
+Convergence issues have been solved, but models are still being built.
 
 ```{r, eval=FALSE}
 library(glmnet)
-elasticModel <- glmnet::cv.glmnet(x = as.matrix(select(finalData, prevPoverty, prevDisabled, prevHispanic, prevBlack, prevWhite, prevMinBachelors, prevMen, jailAdmit100)), y = as.matrix(finalData$cocaineDeath), offset = as.matrix(finalData$nPop), family = "poisson", alpha = 0.5)
+elasticModel <- glmnet::cv.glmnet(x = as.matrix(select(finalData, prevPoverty, prevDisabled, prevHispanic, prevBlack, prevWhite, prevMinBachelors, prevMen, jailAdmit100)), y = as.matrix(finalData$cocaineDeath), offset = as.matrix(log(finalData$nPop)), family = "poisson", alpha = 0.5)
 ```
 
 #### Risk Factor Model
 
 ```{r, eval=FALSE}
 library(lme4)
-poissonModel <- lme4::glmer(formula = cocaineDeath ~ year +  meanHouseholdSize + prevDisabled + gini + prevHispanic + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + perCapIncome + prevMen + prevPoverty + medianRentCostBurden + prevNoCar + jailAdmit100 + offset(nPop) + (1 | state), family = poisson(link = "log"), data = finalData)
+
+finalDataRescaled <- finalData
+finalDataRescaled[,c(6:16,18:22)] <- scale(finalDataRescaled[,c(6:16,18:22)])
+
+poissonModelRandom <- lme4::glmer(formula = round(cocaineDeath, 0) ~ year +  meanHouseholdSize + prevDisabled + prevHispanic + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + perCapIncome + prevMen + prevPoverty + prevNoCar + jailAdmit100 + offset(log(nPop)) + (1 | state), family = poisson(link = "log"), data = finalDataRescaled2))
+
+poissonModelRandomSummary <- summary(poissonModelRandom)
+zScore <- coef(poissonModelRandomSummary)[, 1] / (coef(poissonModelRandomSummary)[, 2]*sqrt(dp))
+pvals <- ifelse(zScore <= 0, pnorm(q = zScore)*2, pnorm(q = zScore, lower.tail = FALSE)*2)
+
+modelSummary <- data.frame(Estimate = coef(poissonModelRandomSummary)[, 1], RateRatio = exp(coef(poissonModelRandomSummary)[, 1]), StdError = (coef(poissonModelRandomSummary)[, 2]*sqrt(dp)),zScore = zScore, pvals = pvals) %>% mutate(lowerCiRR = exp(Estimate - 1.96*StdError), upperCiRR = exp(Estimate + 1.96*StdError))
+
+pvals[which(pvals < 0.05)]
+
+dp = sum(residuals(poissonModelRandom,type ="pearson")^2)/486
+
+nBinomModelRandom <- lme4::glmer(formula = round(cocaineDeath, 0) ~ year +  meanHouseholdSize + prevDisabled + gini + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + prevHispanic + perCapIncome + prevMen + prevPoverty + medianRentCostBurden + prevNoCar + jailAdmit100 + offset(log(nPop)) + (1 | state), family = negative.binomial(link = "log", theta = 1/dp), data = finalDataRescaled)
+
+nBinomModelRandom@
+
+summary(poissonModelRandom)
+
+poissonModel <- glm(formula = round(cocaineDeath, 0) ~  perCapIncome + jailAdmit100 + medianAge + gini, offset = log(nPop) , family = poisson(link = "log"), data = finalData)
+summary(poissonModel)
 ```
 
