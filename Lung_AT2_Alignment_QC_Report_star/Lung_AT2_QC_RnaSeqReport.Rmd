@@ -1,0 +1,776 @@
+---
+title: 'RNA-Seq Report of Sample QC and Alignment Summary Statistics for Lung_AT2'
+author: Mengyuan Kan (mengykan@pennmedicine.upenn.edu)
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    css: custom.css
+    toc: true
+    toc_float: true
+---
+
+**Project:** Lung_AT2
+
+**Aligner:** STAR (2.7.6a)
+
+**Genome:** For mouse, the UCSC mm10 assembly available in iGenomes was used.
+
+
+**Informatics tools used:**
+
+* Trimmomatic (0.39)
+* FastQC (v0.11.9)
+* STAR (2.7.6a)
+* samtools (1.10)
+* bamtools (2.5.1)
+* Picard Tools (2.22.0)
+
+
+**Sequencing parameters:**
+
+* library_type = PE
+* strand = nonstrand
+* ref_genome = mm10
+
+```{r vars, echo=F}
+project_name="Lung_AT2"
+path.start="/projects/RNASeq/Lung_AT2/Lung_AT2_Alignment_QC_Report_star/"
+sample.names.orig <- c('DF_927_1_GFP_tdt', 'DF_927_1_GFP', 'DF_980_3_GFP_tdt', 'DF_980_3_GFP')
+sample.names <- sample.names.orig
+genome="mm10"
+library_type="PE"
+aligner="star"
+sample_info_file='/projects/RNASeq/Lung_AT2/files/Lung_AT2_Phenotype_withoutQC.txt'
+count_data_file='/projects/RNASeq/Lung_AT2/Lung_AT2_Alignment_QC_Report_star/Lung_AT2_htseq_gene.txt'
+```
+
+For each sample, the following programs were run to generate the data necessary to create this report. Written as for unstranded paired-end data. For single-end reads, R2s and insert size metrics would be omitted. <br> 
+
+> java -Xmx1024m TrimmomaticPE -phred33 [raw_sample_R1] [raw_sample_R2] [sample_R1] [sample_R1_unpaired] [sample_R2] [sample_R2_unpaired] HEADCROP:[bases to trim, if any] ILLUMINACLIP:[sample_primer_fasta]:2:30:10 MINLEN:50<br> <br>
+> fastqc [sample_R1] [sample_R2] <br> <br>
+> cat [sample_R1/R2] | awk '((NR-2)%4==0){read=$1;total++;count[read]++}END{for(read in count){if(count[read]==1){unique++}};print total,unique,unique*100/total}' <br>
+
+
+The following STAR options were used: <br>
+
+> STAR --genomeDir [ref_genome_index] --runThreadN 12 --outReadsUnmapped Fastx --outMultimapperOrder Random --outSAMmultNmax 1 --outFilterIntronMotifs RemoveNoncanonical --outSAMstrandField intronMotif --outSAMtype BAM SortedByCoordinate --readFilesIn [sample_R1] [sample_R2] <br>
+
+
+Using aligned output files accepted_hits.bam and unmapped.bam:<br>
+
+> samtools sort accepted_hits.bam accepted_hits.sorted <br><br>
+> samtools index accepted_hits.sorted.bam <br><br>
+> samtools idxstats accepted_hits.sorted.bam > accepted_hits.sorted.stats <br><br>
+> bamtools stats -in accepted_hits.sorted.bam > accepted_hits.sorted.bamstats <br><br>
+> bamtools filter -in accepted_hits.sorted.bam -script cigarN.script | bamtools count <br><br>
+> samtools view -c unmapped.bam <br><br>
+> java -Xmx2g -jar CollectRnaSeqMetrics.jar REF_FLAT=[ref_flat file] STRAND_SPECIFICITY=NONE INPUT=accepted_hits.bam OUTPUT=RNASeqMetrics <br><br>
+> java -Xmx2g -jar CollectInsertSizeMetrics.jar HISTOGRAM_FILE=InsertSizeHist.pdf INPUT=accepted_hits.sorted.bam OUTPUT=InsertSizeMetrics (for paired-end library) <br>
+
+
+```{r, eval=T, echo=F, message=F}
+metrics.data <- read.table(paste(project_name,"_rnaseqmetrics_hist.txt", sep=""), header=T)
+counts.data <- read.table(paste(project_name,"_counts.txt", sep=""), header=T, sep="\t")
+#ercc.data <- read.table(paste(project_name,"_ERCC.txt", sep=""), header=T, as.is=T)
+summary.data <- read.table(paste(project_name,"_rnaseqmetrics_summary.txt", sep=""), header=T, as.is=T, sep="\t")
+bamstats.data <- read.table(paste(project_name,"_bamstats_counts.txt", sep=""), header=T, as.is=T, sep="\t")
+if (library_type %in% c("PE")) {
+  insert.summary.data <- read.table(paste(project_name,"_insertmetrics_summary.txt", sep=""), header=T, as.is=T, sep="\t")
+  insert.metrics.data <- data.frame(c(0:1))
+  names(insert.metrics.data) <- "Insert_Size"
+  for (i in c(1:length(sample.names))){
+    curr.hist.data <- read.table(paste(project_name,"_",sample.names[i],"_insertmetrics_hist.txt", sep=""), header=T, as.is=T, sep="\t")
+    insert.metrics.data <- merge(insert.metrics.data, curr.hist.data, all=TRUE)
+  }
+  write.table(insert.metrics.data,paste(project_name,"_insertmetrics_hist.txt", sep=""), col.names=T, row.names=F, sep='\t', quote=F)
+}
+unique.counts.data <- read.table(paste(project_name,"_unique_counts.txt", sep=""), header=T, sep="\t")
+duplicates <- read.table(paste(project_name,"_duplicates.txt", sep=""), header=T, sep="\t", as.is=T)
+```
+
+
+```{r lib, echo=F, message=F, warnings=F}
+library(tidyr)
+library(pander)
+library(RColorBrewer)
+library(DT)
+library(ggplot2)
+```
+
+## Summary Read Numbers 
+
+The number of raw reads correspond to those that passed Casava QC filters, were trimmed to remove adaptors by Trimmomatic, and were aligned by STAR to ref_genome+ERCC transcripts as reported in .info files. Unique read counts were obtained by using awk on trimmed fastq files. FastQC estimates of percentage of sequences remaining after deduplication were retrieved from fastqc_data.txt files. Bamtools statistics were based on sorted and indexed bam files. The mapped reads were those that mapped to reference and were output by STAR to accepted_hits.bam. The unmapped reads were output by STAR to unmapped.bam. Some reads may be mapped to multiple locations in the genome so that the number of total reads reported by bamstats may be greater than the number of raw reads. The Junction spanning reads are computed based on accepted_hits.bam CIGAR entries containing "N." Related text files that were saved:
+
+
+```{r, eval=T, echo=F, message=FALSE, results='asis'}
+cat(project_name, "_read_counts.txt\n\n", project_name, "_duplicates.txt\n\n", project_name, "_unique_counts.txt\n\n", project_name, "_bamstats_counts.txt\n\n")
+```
+
+### Total Number of Raw Reads Summary
+
+Read counts are shown by per million reads.
+
+
+```{r, eval=T, echo=F, message=FALSE}
+if (library_type %in% c("PE")) {	
+    R1_dups <- unname(unlist(duplicates[which(duplicates$Read_Number=="Total Deduplicated Percentage"),which(grepl("_R1$",names(duplicates)))])) # extract total duplicate reads for R1
+    unique.counts.data.2 <- cbind(unique.counts.data, R1_dups)
+    R2_dups <- unname(unlist(duplicates[which(duplicates$Read_Number=="Total Deduplicated Percentage"),which(grepl("_R2$",names(duplicates)))])) # extract total duplicate reads for R2
+    unique.counts.data.2 <- cbind(unique.counts.data.2, R2_dups)
+    unique.counts.data.2$Fastqc_Total_Deduplicated_Percentage_R1 <- unique.counts.data.2$R1_dups
+    unique.counts.data.2$Fastqc_Total_Deduplicated_Percentage_R2 <- unique.counts.data.2$R2_dups
+    unique.counts.data.2$R1_dups <- NULL
+    unique.counts.data.2$R2_dups <- NULL
+    # format the table
+    pct_cols <- c("R1_Percent_Unique","R2_Percent_Unique","Fastqc_Total_Deduplicated_Percentage_R1","Fastqc_Total_Deduplicated_Percentage_R2")
+    unique.counts.data.2[,pct_cols] <- round(unique.counts.data.2[,pct_cols],2)
+    ct_cols <- c("R1_Raw_Reads","R1_Unique_Reads","R2_Raw_Reads","R2_Unique_Reads")
+    unique.counts.data.2[,ct_cols] <- round(unique.counts.data.2[,ct_cols]/1000000,2)
+} else {
+    R1_dups <- unname(unlist(duplicates[which(duplicates$Read_Number=="Total Deduplicated Percentage"),which(grepl("_R1$",names(duplicates)))])) # extract total duplicate reads for R1
+    unique.counts.data.2 <- cbind(unique.counts.data, R1_dups)
+    unique.counts.data.2$Fastqc_Total_Deduplicated_Percentage <- unique.counts.data.2$R1_dups
+    unique.counts.data.2$R1_dups <- NULL
+    # format the table
+    pct_cols <- c("Percent_Unique","Fastqc_Total_Deduplicated_Percentage")
+    unique.counts.data.2[,pct_cols] <- round(unique.counts.data.2[,pct_cols],2)
+    ct_cols <- c("Raw_Reads","Unique_Reads")
+    unique.counts.data.2[,ct_cols] <- round(unique.counts.data.2[,ct_cols]/1000000,3)
+}
+DT::datatable(unique.counts.data.2, rownames = FALSE, options = list(pageLength = 25))
+```
+
+### Plot: Percentage of Unique Reads in Original Fastq File
+
+```{r, eval=T, echo=F, message=FALSE, warning=FALSE, , fig.width=13, fig.height=10}
+if (library_type %in% c("PE")) {
+	unique.counts.only <- unique.counts.data[,c("Sample","R1_Percent_Unique","R2_Percent_Unique")]	
+	#if sample names start with a number, append "x" to names - else get an error.
+	if (substring(unique.counts.only$Sample[1], 1, 1) %in% c("0","1","2","3","4","5","6","7","8","9")) { # only need to test one sample name
+		unique.counts.only$Sample <- paste0("x",unique.counts.only$Sample)
+	}
+	unique.counts.only <- unique.counts.only %>% tidyr::gather(variable, value, -Sample)
+	ggplot(unique.counts.only, aes(x=Sample, y=value, fill=variable))+ 
+		geom_bar(stat="identity", position="dodge") +
+		scale_fill_manual(values=c("navy", "firebrick")) +
+		labs(title=project_name, x="Sample", y="Percentage of Unique Reads in Original Fastq File") +
+		ylim(0, 100) +
+		theme_bw() +
+		theme(axis.text.x = element_text(angle = 90, hjust = 1, size=14),
+		legend.title = element_blank(),
+		legend.text = element_text(size = 16),
+            	axis.text.y = element_text(size=14),
+            	plot.title = element_text(size=18, hjust=0.5, face="bold"),
+            	axis.title = element_text(size=18))
+} else {
+	ggplot(data = unique.counts.data, aes(x = Sample, y = Percent_Unique)) + 
+		geom_bar(stat="identity", fill="firebrick") +
+		labs(title=project_name, x="Sample", y="Percentage of Unique Reads in Original Fastq File") +
+		ylim(0, 100) +
+		theme_bw() +
+		theme(axis.text.x = element_text(angle = 90, hjust = 1, size=14),
+            	axis.text.y = element_text(size=14),
+            	plot.title = element_text(size=18, hjust=0.5, face="bold"),
+		axis.title = element_text(size=18))
+}
+```
+
+### Plot: Sequence Duplication Level
+
+```{r dup_plot, eval=T, echo=F, message=FALSE, fig.width=12, fig.height=10}
+dup.data <- duplicates
+dup.data <- dup.data[which(dup.data$Read_Number!="Total Deduplicated Percentage"),]
+dup.data$Read_Number <- 1:(nrow(duplicates)-1)
+dup.data <- dup.data %>% tidyr::gather(Sample,value,-Read_Number)
+# dup.data$Sample2 <- sapply(as.character(dup.data$Sample), function(x){strsplit(x, "_R1|_R2")[[1]]}) # this command does not work for samples with _R1 and _R2 already in the sample name
+# create a temperaray sample data frame
+sampleframe_R1=data.frame(Sample2=sample.names, Sample=paste0(sample.names,"_R1"))
+sampleframe_R2=data.frame(Sample2=sample.names, Sample=paste0(sample.names,"_R2"))
+sampleframe = rbind(sampleframe_R1, sampleframe_R2)
+# create Sample2 column without read "_R1" or "_R2" suffix
+dup.data <- merge(sampleframe, dup.data, by="Sample", all.y=T)
+
+nsamp=ncol(duplicates)-1
+# dup.org <- 1:(nrow(duplicates)-1)
+# shift=unlist(lapply(1:nsamp, function(i){dup.org+delta*(i-1)}))
+# dup.data$Read_Number <- shift
+c <- rep(brewer.pal(12,"Paired"), nsamp)
+# plot
+ggplot(dup.data, aes(x=Read_Number,y=value,group=Sample2,color=Sample2)) +
+    geom_line() +
+    ggtitle(project_name) +
+    xlab("Sequence Duplication Level") +
+    ylab("Percentage of Total Sequences") +
+    scale_x_continuous(breaks=seq(0,nrow(duplicates)-1,by=2)) +
+    ylim(0, 100) +
+    #scale_y_continuous(breaks=seq(0,100,by=20)) +
+    scale_color_manual(values = c) +
+    theme_bw() +
+    theme(
+        plot.title = element_text(size=18, hjust=0.5, face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 16),
+        axis.text.y = element_text(size=16),
+        axis.text.x  = element_text(size=16),
+        axis.title = element_text(size=18))
+```
+
+### Bamtools Reads Summary
+
+```{r, eval=T, echo=F, message=FALSE}
+bamstats.summary <- bamstats.data
+row.names(bamstats.summary)=bamstats.summary$Type
+bamstats.summary$Type=NULL
+if (library_type %in% c("PE")) { # total read counts from fastq
+  total_reads=unique.counts.data$R1_Raw_Reads+unique.counts.data$R2_Raw_Reads
+  bamstats.summary <- bamstats.summary[!row.names(bamstats.summary)%in%c("Failed QC","Duplicates"), , drop=FALSE]
+} else {
+  # total read counts from fastq
+  total_reads=unique.counts.data$Raw_Reads
+  bamstats.summary <- bamstats.summary[!row.names(bamstats.summary)%in%c("Failed QC","Duplicates","Paired-end reads"), , drop=FALSE]
+}
+bamstats.summary["Total reads",]=total_reads
+unmapped_reads <- bamstats.summary["Total reads",] - bamstats.summary["Mapped reads",]
+row.names(unmapped_reads) <- "Unmapped reads"
+bamstats.summary <- rbind(bamstats.summary, unmapped_reads)
+DT::datatable(bamstats.summary, options = list(pageLength = 25))
+```
+
+
+### Bamtools Reads Summary As Percentage of Mapped Reads
+
+```{r, eval=T, echo=F, message=FALSE}
+bamstats.percent.table=do.call(rbind,apply(bamstats.summary,1,function(x){round(x/bamstats.summary[1,]*100,2)}))
+DT::datatable(bamstats.percent.table, options = list(pageLength = 25))
+```
+
+### Percentage of Mapped/Unmapped Reads
+
+```{r, eval=T, echo=F, message=FALSE}
+DT::datatable(bamstats.percent.table[c("Mapped reads","Unmapped"),], options = list(pageLength = 25))
+```
+
+### Plot: Percentage of Mapped/Unmapped Reads
+
+```{r, eval=T, echo=F, message=FALSE,fig.width=10, fig.height=8}
+mapped.percent.for.plot <- rbind(
+  data.frame(
+    variable=colnames(bamstats.percent.table),
+    value=as.numeric(bamstats.percent.table["Mapped reads",]),
+    Type=rep("Mapped",ncol(bamstats.percent.table))),
+  data.frame(
+    variable=colnames(bamstats.percent.table),
+    value=as.numeric(bamstats.percent.table["Unmapped reads",]),
+    Type=rep("Unmapped",ncol(bamstats.percent.table)))
+)
+mapped.percent.for.plot$Type <- factor(mapped.percent.for.plot$Type, levels=c("Unmapped", "Mapped")) # order so mapped reads are at the bottom 
+
+ggplot(data = mapped.percent.for.plot, aes(x = variable, y = value, fill=Type)) + 
+	geom_bar(stat="identity") +
+	scale_fill_manual(values=c("navy", "firebrick")) +
+	labs(title=project_name, x="Sample", y="Percentage of Total Reads") +
+	ylim(0, 100) +
+	theme_bw() +
+	theme(axis.text.x = element_text(angle = 90, hjust = 1, size=14),
+		legend.title = element_blank(),
+		legend.text = element_text(size = 16),
+           	axis.text.y = element_text(size=16),
+         	plot.title = element_text(size=18, hjust = 0.5, face="bold"),
+           	axis.title.x = element_text(size=18),
+         	axis.title.y = element_text(size=18))
+```
+
+### Plot: Percentage of Junction Spanning Reads Among Mapped Reads
+
+```{r junc_plot, eval=T, echo=F, message=FALSE, warning=F, fig.width=8, fig.height=10}
+
+junc.for.table <- data.frame(
+	Sample=colnames(bamstats.percent.table),
+	value=as.numeric(bamstats.percent.table["Junction Spanning Reads",])
+)
+
+ggplot(data = junc.for.table, aes(x = Sample, y = value)) + 
+	geom_bar(stat="identity", fill="firebrick") +
+	labs(title=project_name, x="Sample", y="Percentage of Junction Spanning Reads Among Mapped Reads") +
+	ylim(0, ceiling(max(junc.for.table$value, na.rm=T))) +
+	theme_bw() +
+	theme(axis.text.x = element_text(angle = 90, hjust = 1, size=14),
+		legend.title = element_blank(),
+		legend.text = element_text(size = 16),
+           	axis.text.y = element_text(size=16),
+         	plot.title = element_text(size=18, hjust = 0.5, face="bold"),
+           	axis.title.x = element_text(size=18),
+         	axis.title.y = element_text(size=18))
+```
+
+
+## RnaSeqMetrics Summary
+
+The Picard Tools RnaSeqMetrics function computes the number of bases assigned to various classes of RNA. It also computes the coverage of bases across all transcripts (normalized to a same-sized reference). Computations are based on comparison to a refFlat file. Related text files that were saved:
+
+```{r, eval=T, echo=F, message=FALSE, results='asis'}
+cat(project_name, "_rnaseqmetrics_summary.txt\n\n", project_name, "_rnaseqmetrics_hist.txt\n\n")
+```
+
+The Picard Tools RnaSeqMetrics function computes the number of bases assigned to various classes of RNA. It also computes the coverage of bases across all transcripts (normalized to a same-sized reference). Computations are based on comparison to a refFlat file. Related text files that were saved:
+
+```{r, eval=T, echo=F, message=FALSE, results='asis'}
+cat(project_name, "_rnaseqmetrics_summary.txt\n\n", project_name, "_rnaseqmetrics_hist.txt\n\n")
+```
+
+### Reference Genome Mapped Reads Summary
+
+```{r, eval=T, echo=F, message=FALSE}
+sum.data <- summary.data
+row.names(sum.data) <- sum.data$Type
+sum.data$Type <- NULL
+# exclude rows
+row_excl <- !row.names(sum.data)%in%c("RIBOSOMAL_BASES", "PCT_RIBOSOMAL_BASES", "SAMPLE", "LIBRARY", "READ_GROUP")
+sum.data <- sum.data[row_excl,]
+# row numbers that contain percentage
+pct_nrow <- grepl("PCT",row.names(sum.data))
+# replace percentage with round 2
+sum.data[pct_nrow,] <- apply(sum.data[pct_nrow,], 2, function(x){round(as.numeric(x)*100,2)})
+DT::datatable(sum.data, options = list(pageLength = 25))
+```
+
+### Plot: Percentages of Total Mapped Bases Mapping to mRNA, Intronic and Intergenic Regions
+
+```{r, eval=T, echo=F, message=FALSE, fig.width=10, fig.height=10}
+sum.data.for.plot <- sum.data[c("PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_MRNA_BASES"),]
+rownames(sum.data.for.plot) <- c("Intergenic", "Intronic", "mRNA")
+sum.data.for.plot$which  <- rownames(sum.data.for.plot)
+sum.data.melted <- sum.data.for.plot %>% tidyr::gather(Sample,value,-which)
+sum.data.melted$value <- as.numeric(sum.data.melted$value)
+sum.data.melted$which <- factor(sum.data.melted$which, levels=c("mRNA", "Intronic", "Intergenic")) # desired order
+
+ggplot(data = sum.data.melted, aes(x = Sample, y = value, fill=which)) + 
+	geom_bar(stat="identity", position = "dodge") +  #note stacked is default for ggplot2, so must specify "dodge" to get side-by-side bars
+	scale_fill_manual(values=c("firebrick", "darkblue", "darkgreen")) +
+	labs(title=project_name, x="Sample", y="Percentage of Total Mapped Bases") +
+	ylim(0, 100) +
+	theme_bw() +
+	theme(axis.text.x = element_text(angle = 90, hjust = 1, size=16),
+		legend.title = element_blank(),
+		legend.text = element_text(size = 16),
+           	axis.text.y = element_text(size=16),
+         	plot.title = element_text(size=20, hjust = 0.5, face="bold"),
+           	axis.title.x = element_text(size=18),
+         	axis.title.y = element_text(size=18))
+```
+
+### Plot: Normalized Coverage
+
+```{r, eval=T, echo=F, message=FALSE, fig.width=14, fig.height=10}
+pos.data <- metrics.data %>% tidyr::gather(Sample,coverage,-Normalized_Position)
+nsamp=ncol(metrics.data)-1
+# add slight shift to normalized position
+delta <- 1/(4*length(nsamp-1))
+pos.org <- metrics.data$Normalized_Position
+shift=unlist(lapply(1:nsamp, function(i){pos.org+delta*(i-1)}))
+pos.data$Normalized_Position <- shift
+# plot parameters
+x.max <- max(metrics.data$Normalized_Position)
+y.max <- max(metrics.data[ ,c(2:ncol(metrics.data)), drop=FALSE])
+c <- rep(brewer.pal(12,"Paired"), nsamp) 
+ggplot(pos.data, aes(x=Normalized_Position,y=coverage,group=Sample,color=Sample)) + 
+    geom_line() +
+    theme_bw() +
+    ggtitle(project_name) +
+    xlab("Normalized Position") +
+    ylab("Normalized Coverage") +
+    scale_x_continuous(breaks=seq(0,x.max,by=20)) +
+    scale_y_continuous(breaks=seq(0,y.max,by=0.2)) +
+    scale_color_manual(values = c) +
+    theme(
+    	legend.title = element_blank(),
+	legend.text = element_text(size = 16),
+	plot.title = element_text(size=20, hjust = 0.5, face="bold"),
+        axis.text = element_text(size=16),
+        axis.title = element_text(size=18)
+    )
+```
+
+```{r setup, echo=FALSE}
+library(knitr)
+pair_ended <- if (library_type %in% c("PE")) {TRUE} else {FALSE}   #use this to replace all the if conditions in subsequent code chunks
+```
+
+```{r, eval = pair_ended, echo=FALSE}
+knitr::asis_output("## InsertSizeMetrics Summary<br>") 
+```
+
+```{r, eval = pair_ended, echo=FALSE}
+knitr::asis_output("For paired-end data, the Picard Tools CollectInsertSizeMetrics function was used to compute the distribution of insert sizes in the accepted_hits.bam file and create a histogram. Related text files that were saved: ")
+```
+
+
+```{r, eval=pair_ended, echo=F, message=FALSE, results='asis'}
+cat(project_name, "_insertmetrics_summary.txt\n\n")
+```
+
+```{r insert_sum, eval=pair_ended, echo=F, message=FALSE, warning=F}
+# Insert Size Summary
+row.names(insert.summary.data) <- insert.summary.data$Type
+insert.summary.data$Type <- NULL
+metrics_row <- c("MEDIAN_INSERT_SIZE", "MEDIAN_ABSOLUTE_DEVIATION", "MIN_INSERT_SIZE", "MAX_INSERT_SIZE", "MEAN_INSERT_SIZE", "STANDARD_DEVIATION", "READ_PAIRS")
+insert.summary.data <- insert.summary.data[metrics_row, ]
+DT::datatable(insert.summary.data, options = list(pageLength = 25))
+```
+
+### Plot: Median of Insert Size
+
+```{r, median_insert_plot, eval=pair_ended, echo=F, message=FALSE, warning=F, fig.width=10, fig.height=10}
+insert.size <- data.frame(
+    value=as.numeric(as.character(unlist(insert.summary.data["MEDIAN_INSERT_SIZE",]))),
+    Sample=colnames(insert.summary.data))
+ggplot(insert.size, aes(x=Sample, y=value)) + geom_bar(stat="identity",fill="firebrick") +
+    ggtitle(project_name) +
+    xlab("Sample") +
+    ylab("Median Insert Size") +
+    theme_bw() +
+    theme(
+        plot.title = element_text(size=20, hjust = 0.5, face="bold"),
+	legend.title = element_blank(),
+	legend.text = element_text(size = 16),
+        axis.text.y = element_text(size=16),
+	axis.text.x  = element_text(angle=90, hjust=1, size=16),
+        axis.title = element_text(size=18))
+```
+
+### Plot: Insert Size Distribution
+
+```{r insert_distri_plot, eval=pair_ended, echo=F, message=FALSE, warning=F, fig.width=14, fig.height=10}
+# modify data from wide to long
+size.data <- insert.metrics.data %>% tidyr::gather(Sample,count,-Insert_Size)
+nsamp=ncol(insert.metrics.data)-1
+# add slight shift to normalized position
+delta <- 1/(4*length(nsamp-1))
+size.org <- insert.metrics.data$Insert_Size
+shift=unlist(lapply(1:nsamp, function(i){size.org+delta*(i-1)}))
+size.data$Insert_Size <- shift
+# plot parameters
+x.max <- max(insert.metrics.data$Insert_Size)
+y.max <- max(insert.metrics.data[ ,c(2:ncol(insert.metrics.data)), drop=FALSE], na.rm=T)
+c <- rep(brewer.pal(12,"Paired"), nsamp)
+# plot
+ggplot(size.data, aes(x=Insert_Size,y=count,group=Sample,color=Sample)) +
+    geom_line() +
+    ggtitle(project_name) +
+    xlab("Insert Size") +
+    ylab("Read Count") +
+    scale_color_manual(values = c) +
+    theme_bw() +
+    theme(
+        plot.title = element_text(size=18, hjust=0.5, face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 16),
+        axis.text.y = element_text(size=16),
+        axis.text.x  = element_text(size=16),
+        axis.title = element_text(size=18))
+```
+
+## Reads per Chromosome
+
+Samtools produces a summary document that includes the number of reads mapped to each chromosome. Related text files that were saved:
+```{r, eval=T, echo=F, message=FALSE, results='asis'}
+cat("\n\n", project_name, "_counts.txt\n\n")
+```
+
+```{r, eval=T, echo=F, message=FALSE}
+
+sample.names <- names(counts.data)[3:length(names(counts.data))]
+if (genome=="hg19") {
+	chr_order=c(1:22, "X", "Y", "Other", "rRNA")
+	counts.data.ordered.by.chr <- do.call(rbind,lapply(chr_order,function(x){counts.data[which(counts.data$Chromosome==x),]}))
+	counts.data.ordered.by.chr$Chromosome <- factor(counts.data.ordered.by.chr$Chromosome, levels = chr_order)
+	#cat("For human, the hg19 assembly was used. We estimate the number of rRNA reads as those mapped to chrM plus chrUn_gl000220, corresponding to 12S, 16S and 5.8S rRNA. The 'Other' category contains all other chr*_random and chrUn_* available. If using the 2014 updated version of the hg19 files, these categories are no longer present.")
+} else if (genome=="hg38") {
+	chr_order=c(1:22, "X", "Y", "Other", "rRNA")
+	counts.data.ordered.by.chr <- do.call(rbind,lapply(chr_order,function(x){counts.data[which(counts.data$Chromosome==x),]}))
+	counts.data.ordered.by.chr$Chromosome <- factor(counts.data.ordered.by.chr$Chromosome, levels = chr_order)
+	#cat("For human, the hg38 assembly was used. We estimate the number of rRNA reads as those mapped to chrM plus chrUn_GL000220v1, corresponding to 12S, 16S and 5.8S rRNA. The 'Other' category contains all other chr*_random and chrUn_* available.")
+ } else if (genome %in% c("mm38", "mm10")) {
+	counts.data[,1] <- sapply(counts.data[,1], function(x) gsub("chr", "", x))
+	counts.data.chr.order <- order(as.numeric(counts.data[1:19,1]))
+	counts.data.ordered.by.chr <- counts.data[1:19, ][counts.data.chr.order, ]
+	counts.data.ordered.by.chr <- rbind(counts.data.ordered.by.chr, counts.data[c(20:23), ])
+	#cat("For mouse, the ENSEMBL GRCm38 assmembly available in iGenomes was used.")
+} else if (genome=="rn6") {
+	counts.data[,1] <- sapply(counts.data[,1], function(x) gsub("chr", "", x))
+	counts.data.chr.order <- order(as.numeric(counts.data[1:20,1]))
+	counts.data.ordered.by.chr <- counts.data[1:20, ][counts.data.chr.order, ]
+	counts.data.ordered.by.chr <- rbind(counts.data.ordered.by.chr, counts.data[c(22,23,21), ])
+	#cat("For rat, the rn6 assembly was used.")
+} else if (genome=="susScr3"){
+	counts.data[,1] <- sapply(counts.data[,1], function(x) gsub("chr", "", x))
+	counts.data.chr.order <- order(as.numeric(counts.data[1:18,1]))
+	counts.data.ordered.by.chr <- counts.data[1:18, ][counts.data.chr.order, ]
+	counts.data.ordered.by.chr <- rbind(counts.data.ordered.by.chr, counts.data[c(19:22), ]) # "Error:  chunk 23 (label = count.plot) Error in plot.window(...) : need finite 'ylim' values" means incorrect number of chromosomes listed here
+	#cat("For pig, the susScr3 assembly was used.")
+    }else if (genome=="Zv9") {
+	counts.data <- counts.data[order(counts.data[, 1]), ]
+	counts.data.chr.order <- order(as.numeric(levels(counts.data[1:25,1])[as.integer(counts.data[1:25,1])]))
+	counts.data.ordered.by.chr <- counts.data[1:25, ][counts.data.chr.order, ]
+	counts.data.ordered.by.chr <- rbind(counts.data.ordered.by.chr, counts.data[26:27, ])
+	#cat("For zebrafish, the Zv9 assembly comprises a sequence length of 1.4 Gb in 26 chromosomes (labels 1-25 and MT) and 1,107 scaffolds (merged into label 'Other').")
+}
+# remove Length column
+counts.data.ordered.by.chr$Length <- NULL
+```
+
+```{r readbychr_plot, eval=T, echo=F, message=FALSE, fig.width=14, fig.height=10}
+c <- rep(brewer.pal(12,"Paired"), length(sample.names))
+counts.data.melted <- counts.data.ordered.by.chr %>% tidyr::gather(Sample,value,-Chromosome)
+ggplot(data = counts.data.melted, aes(x = Chromosome, y = value, fill=Sample)) + 
+    geom_bar(stat="identity", position = "dodge") +  #note stacked is default for ggplot2, so must specify "dodge" to get side-by-side bars
+    labs(title=project_name, x="Chromosome", y="Read Counts") +
+    scale_fill_manual(values = c) +
+    theme_bw() +
+    theme(
+	legend.title = element_blank(),
+	legend.text = element_text(size = 16),
+	axis.text = element_text(size=16),
+        plot.title = element_text(size=20, hjust = 0.5, face="bold"),
+	axis.title = element_text(size=18))
+```
+
+### Mapped Reads to Reference Genome
+
+```{r, eval=T, echo=F, message=FALSE}
+count.total.table <- counts.data.ordered.by.chr
+row.names(count.total.table) <-count.total.table$Chromosome
+count.total.table$Chromosome <- NULL
+#Add in the total row at bottom
+count.total <- colSums(count.total.table)
+count.total.table["Total",] <- count.total
+DT::datatable(count.total.table, options = list(pageLength = 30))
+```
+
+### Percent of Total Reads Mapped to Reference Genome
+ 
+```{r, eval=T, echo=F, message=FALSE}
+counts.percent.table <- do.call(rbind,apply(count.total.table,1,function(x){x/count.total.table["Total",]*100}))
+counts.percent.table[-nrow(counts.percent.table),] <- round(counts.percent.table[-nrow(counts.percent.table),], 2)
+counts.percent.table["Total",] <- round(counts.percent.table["Total",],0)
+DT::datatable(counts.percent.table, options = list(pageLength = 30))
+```
+
+```{r setup_ercc, echo=FALSE}
+library(knitr)
+ercc.exist <- exists("ercc.mixes")
+```
+
+```{r, eval = ercc.exist, echo=FALSE}
+knitr::asis_output("## ERCC Spike-in Dose Response Plots<br>") 
+```
+
+```{r, eval = ercc.exist, echo=FALSE}
+knitr::asis_output("For samples that contained External RNA Controls Consortium (ERCC) Spike-Ins, dose response curves (i.e. plots of ERCC transcript FPKM vs. ERCC transcript molecules) were created. Ideally, the slope and R2 would equal 1.0.")
+```
+
+```{r erccplot_func, eval=T, echo=F}
+erccplot_func=function(conc,count,colname){
+  conc=as.numeric(conc[which(count>0)])
+  count=as.numeric(count[which(count>0)])
+  dat=data.frame(logconc=log2(conc), logcount=log2(count))
+  linear.fit <- lm(logcount ~ logconc, data=dat)
+  r2 <- summary(linear.fit)$r.squared
+  slope <- as.numeric(linear.fit$coefficients[2])
+  if (grepl("count_",colname)) {ylab="Count"} else if (grepl("tpm_",colname)) {ylab="TPM"} else if (grepl("fpkm_",colname)) {ylab="FPKM"}
+  p=ggplot(data=dat,aes(x=logconc,y=logcount))+geom_point() +
+    geom_smooth(method='lm', se=FALSE, color="red") +
+    theme_bw() +
+    ggtitle(colname) +
+    xlab("Expected concentration (log2 scale)")+
+    ylab(paste0("Observed ",ylab," (log2 scale)")) +
+    theme(plot.title = element_text(hjust = 0.5))
+  if (grepl("FPKM|fpkm", colname)) {
+    p=p+annotate('text', 7.5, 0, label=paste0("R-sq =", round(r2,3))) +
+      annotate('text', 7.5, -1, label=paste0("slope =", round(slope,3)))}
+  else if (grepl("Count|count",colname)) {
+    p=p+annotate('text', 5, 0, label=paste0("R-sq =", round(r2,3))) +
+      annotate('text', 5, -0.8, label=paste0("slope =", round(slope,3)))}
+  else if (grepl("TPM|tpm",colname)) {
+    p=p+annotate('text', 5, 0, label=paste0("R-sq =", round(r2,3))) +
+      annotate('text', 5, -0.8, label=paste0("slope =", round(slope,3)))}
+  print(p)
+  return(data.frame(r2=r2, slope=slope))
+}
+```
+
+```{r, ercc_fit, eval=ercc.exist, echo=F, message=F, results="asis", fig.height=4, fig.width=4} 
+if ("1" %in% ercc.mixes | "2" %in% ercc.mixes) {
+	sample.names <- sample.names.orig
+	if (!file.exists(ambion_file)) {stop("ERCC concentration file", ambion_file, " does not exist")}
+
+	# read in ambion file
+	ambion=read.table(ambion_file,header=T, as.is=T, sep='\t')
+	ambion=ambion[order(ambion$ERCC.ID),c("ERCC.ID","concentration.in.Mix.1..attomoles.ul.")]
+	dilution.factor <- 0.02
+	
+	ercc.fit.table <- data.frame() # ERCC concordance results
+	# select mix type
+	for (i in c(1:length(sample.names))){
+		curr.sample.name <- names(ercc.data)[grepl(sample.names[i],names(ercc.data))]
+		curr.ercc.mix <- ercc.mixes[i]
+		# choose mix type
+		if (curr.ercc.mix=="1") {
+			ambion.sub=ambion[order(ambion$ERCC.ID),c("ERCC.ID","concentration.in.Mix.1..attomoles.ul.")]
+		} else if (curr.ercc.mix=="2") {
+			ambion.sub=ambion[order(ambion$ERCC.ID),c("ERCC.ID","concentration.in.Mix.2..attomoles.ul.")]
+		} else {
+			next
+		}
+	 
+		names(ambion.sub)=c("ERCC_ID","Concentration")
+		ambion.sub$Concentration=ambion.sub$Concentration*dilution.factor
+
+		# combine ambion concentration with read counts
+		dat = merge(ambion.sub, ercc.data[,c("Gene",curr.sample.name)],by.x="ERCC_ID",by.y="Gene" )
+		curr.count=dat[,curr.sample.name]
+		if (length(curr.count[which(curr.count>0)])>0) { # if not all ERCC counts equal zero, compute correlation
+		  curr.res=erccplot_func(conc=dat[,"Concentration"],count=dat[,curr.sample.name],colname=curr.sample.name)
+		  ercc.fit.table=rbind(ercc.fit.table,data.frame(Sample=sample.names[i],curr.res))
+		}
+	}
+	if (exists("ercc.fit.table")) {
+		write.table(ercc.fit.table, file=paste(project_name,"_ercc_fit.txt",sep=""), row.names=F, quote=F, sep="\t")
+	} else {cat("All ERCC read counts equal zero\n")}
+}
+```
+
+
+```{r, ercc_fit_tb, eval=ercc.exist, echo=F, message=F, results='asis'}
+if (exists("ercc.fit.table")) {
+  ercc.fit.table[,c("r2","slope")] <- round(ercc.fit.table[,c("r2","slope")],2)
+  try(HTML(print(xtable(ercc.fit.table, caption="ERCC Spike-in Dose Response Fit Details"), type="html", label="tab:nine", table.placement="tbp", caption.placement="top", floating=FALSE))) #added "try()" when doing pig_lung - else was getting thrown out of loop with 'Error: could not find function "HTML"'
+  DT::datatable(ercc.fit.table,rownames = FALSE, options = list(pageLength = 25))
+}
+```
+
+
+## Principal Component Analysis (PCA) Plot
+
+```{r pca_func, echo=F}
+# colour define
+colours=c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666", "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F") # first 8 colour names derived from Dark2, and last 12 names from Set3
+
+# rlog_func obtains rlog-transformed count matrix using DESeq2
+rlog_func <- function(coldata,countdata) {
+  library(DESeq2)
+  # match colnames in count data to phenotype data
+  names(countdata) <- gsub('count_','',names(countdata))
+  countdata <- countdata[,c('Gene',as.character(coldata$Sample))]
+  row.names(countdata) <- countdata$Gene
+  countdata$Gene <- NULL
+  #pre-filter low count genes before running the DESeq2 functions. Keep only genes (rows) that have at least 10 reads total.
+  # This helps to reduce the memory size of the dds data object, and we increase the speed of the transformation
+  keep <- rowSums(countdata)>=10
+  countdata <- countdata[keep,]
+  # Read in data
+  ddsFullCountTable <- DESeqDataSetFromMatrix(countData = countdata, colData = coldata, design=~Status)
+  dds <- DESeq(ddsFullCountTable)
+  # Transform data using regularized logarithm
+  rld<- rlogTransformation(dds, blind=FALSE)
+  return(rld)
+}
+
+# The pcastat_func function computes principal components
+pcastat_func <- function(m, ntop=500) {
+  # calculate the variance for each gene
+  rv <- rowVars(m)
+  # select the ntop genes by variance
+  select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+  m=m[select,]
+  # obtain original expression data
+  raw.data.pca <- na.omit(apply(m,2,function(x)replace(x,is.infinite(x),NA))) # replace infinite values to NAs and omit NAs
+  # As scale function divides by the variance, the probe with the expression sd=0 across samples must be removed.
+  sd <- apply(raw.data.pca,1,sd)
+  raw.data.pca <- raw.data.pca[!sd==0,]
+  # compute pcs
+  pca <- prcomp(t(raw.data.pca), retx = TRUE, center = TRUE, scale = TRUE)
+  pc <- data.frame(pca$x)
+  # compute variance explained by each PC
+  vars <- pca$sdev^2
+  pcs <- t(pc)
+  pvars <- vars*100.0/sum(vars) # proportion of variance (%) explained by each PC
+  cumsum_pvars <- cumsum(pvars) # Cumulative Proportion of Variance (%)
+  if (nrow(pcs)>10) {nres <- 10} else {nres=nrow(pcs)} # select top 10 PCs if number of PCs >10
+  res <- data.frame(rownames(pcs),pvars,cumsum_pvars)[1:nres,]
+  names(res) <- c("PC","Proportion of Variance (%)","Cumulative Proportion of Variance (%)")
+  return(list(tb=res,pc=pc))
+}
+
+# The pcaplot_func creates plots for pc1 and pc2
+pcaplot_func <- function(pc, group_var, legend) { # group_var: column name for a specific group; legend: legend name
+  df <- data.frame(
+    PC1=pc$PC1,
+    PC2=pc$PC2,
+    group=coldata[,group_var]
+  )
+  i=length(unique(coldata[,group_var]))
+  group_col <- colours[1:i]
+  names(group_col) <- unique(coldata[,group_var]) # colour to corresponding group for plot
+  ggplot(df,aes(PC1,PC2,color=group)) + geom_point() + theme_bw() + scale_color_manual(legend,values=group_col,na.value="grey")
+}
+
+# The pca_func function generates multiple pca plots for scan date, disease, treatment, and Donor
+pca_func <- function(pc) {
+  group_vars=c("Disease", "Treatment", "Tissue", "Donor", "Status")
+  legends=c("Disease", "Treatment", "Tissue", "Donor", "Status")
+  idx_exist=c(1:length(group_vars))[group_vars%in%names(coldata)] # obtain index of existing variables
+  plot_list=list() # store plots in a list
+  for (i in idx_exist) {
+    group_var=group_vars[i]
+    legend=legends[i]
+    nlevel=length(unique(coldata[,group_var])) # levels of the variable
+    if (group_var=="ScanDate_Group"|(nlevel>=2&nlevel<=20)) {
+      plot_list[[group_var]]=pcaplot_func(pc, group_var=group_var,legend=legend)
+    }
+  }
+  return(plot_list)
+}
+```
+
+
+```{r align_pca, eval=T, echo=F, message=F, warning=F}
+if (aligner=="star") {
+  coldata <- read.table(sample_info_file, sep='\t', header=TRUE, stringsAsFactors = TRUE)
+  countdata <- read.table(count_data_file, sep='\t', header=TRUE, check.names=FALSE)
+  rld <- rlog_func(coldata,countdata)
+  pca_dat <- assay(rld)
+}
+```
+
+1. Compute PCs and variance explained by the first 10 PCs
+
+```{r pca_tb, eval=T, echo=F, message=F, warning=F, results="asis"}
+res_pca <- pcastat_func(m=pca_dat)
+pandoc.table(res_pca$tb,split.tables=Inf, caption="Variance explained")
+```
+
+2. PCA plots
+
+PCA plots are generated using the first two principle components colored by known factors (e.g. treatment/disease conditions, tissue, and donors), visualizing similarities between arrays and these similarities' correlation to batch effects.
+
+```{r pca_plot, eval=T, message=F, warning=F, echo=F}
+plot_list=pca_func(pc=res_pca$pc)
+for (i in plot_list) {print(i)}
+```
+
+
+
+## HTSeq-count: No feature counts statistics
+
+Numbers of reads that can not mapped to any feature (Nofeature count) are shown by per million reads from htseq-count quantification results
+
+```{r nofeature, eval=T, echo=F, message=F, warning=F, results='asis'}
+nofeature.data <- read.table('Lung_AT2_htseq_nofeature.txt', sep='\t', header=T, as.is=T)
+DT::datatable(nofeature.data, rownames=FALSE, options = list(pageLength = 25))
+```
+
+```{r sessioninfo, echo=F}
+pander(sessionInfo())
+```
+
