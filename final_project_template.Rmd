@@ -35,14 +35,16 @@ This is an interdisciplinary issue, requiring the input of physicians, public he
 #### Methods:
 Using the Timely and Effective Care (TEC) data from CMS through 2020, I will compare Pennsylvania to other states and national progress on emergency department access and care. The TEC data set includes data for measures of cataract surgery outcome, colonoscopy follow-up, heart attack care, emergency department care, preventive care, pregnancy and delivery care, and cancer care. I will focus on some of the most general issues in emergency care -- interventions for stroke, interventions for myocardial infarctions (MI; heart attacks), and wait time for patients in the ED.
 
-*First* I will generate graphs to visualize how TEC in Pennsylvania compares nationally. *Second*, I will compare TEC in Pennsylvania to its regional neighbors in the Northeast. *Next*, I will attempt to look at more granular data for Pennsylvania and compare within the state. The TEC data set contains hospital, state-level and national data but, unfortunately, does not contain county-level data. On the advice of advisers Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), in lieu of county-level data, I will attempt to calculate more granular data using very specific metrics. I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information. I will use CMS data to corroborate service areas for major hospitals. I will explain all assumptions made.
+*First* I will generate graphs to visualize how TEC in Pennsylvania compares nationally. *Second*, I will compare TEC in Pennsylvania to its regional neighbors in the Northeast. *Next*, I will attempt to look at more granular data for Pennsylvania and compare within state access. The TEC data set contains hospital, state-level and national data but, unfortunately, does not contain county-level data. Using the hospital data, I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information. I will explain all assumptions made.
 
 *Finally*, I will merge the state-level data with demographic data available in the US census data set, and, controlling for certain demographic characteristics, will run multivariate regressions to determine if there are any relationships that can be deduced from the data set and help explain differences in TEC. I will explain all assumptions made.
+
+This project was supported by  Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), who both provided invaluable advice and guidance for mapping the data and assumptions for service areas.
 
 
 ##### Preparing packages and data  
 
-All necessary packages are installed and loaded.
+All necessary packages are installed and loaded, and necessary keys are registered.
 ```{r}
 #Setup
 require(knitr)
@@ -56,7 +58,17 @@ rm(list = ls())
 graphics.off()
 
 # Load  library
-pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal, viridis, RColorBrewer, mapproj,cowplot,sf,raster,spData,spDataLarge,tmap)
+pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal, viridis, RColorBrewer, mapproj,cowplot,sf,raster,spData,spDataLarge,tmap,choroplethr,choroplethrMaps, ggmap)
+
+library(ggmap)
+#register_google(key = "", write = TRUE)
+library(readxl)
+library(tigris)
+
+devtools::install_github("yutannihilation/ggsflabel")
+library(ggsflabel)
+
+
 
 ```
 
@@ -107,25 +119,50 @@ my_theme_bar <- function() {
 }
 ```
 
-TEC data is downloaded directly from the [CMS website](https://data.cms.gov/provider-data/search?keyword=Timely%20and%20Effective%20Care). 
+Necessary inputs are downloaded and/or read.  
++ TEC data is downloaded directly from the [CMS website](https://data.cms.gov/provider-data/search?keyword=Timely%20and%20Effective%20Care).  
++ Counties map data from the _tigris_ package.  
++ 2019 County population data downloaded from [US Census Bureau County Population Totals 2010-2019](https://www.census.gov/data/datasets/time-series/demo/popest/2010s-counties-total.html#par_textimage_70769902).  
 ```{r}
-#Get TEC data
+#TEC data
 tec_hosp <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/350f34f9ef3d484925d49dfcce7a0f54_1632355520/Timely_and_Effective_Care-Hospital.csv")
 tec_state <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/0b2db52e1ce72942f369cc00c00649f8_1632355520/Timely_and_Effective_Care-State.csv")
 tec_natl <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/4766dbf7fd2de19618a27f5546954463_1632355520/Timely_and_Effective_Care-National.csv")
+
+#PA counties data
+pa_counties<-tigris::counties(state = "42", cb = TRUE) #FIPS 42 is Pennsylvania
+
+#PA counties population data
+pa_pop<- readxl::read_xlsx("/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/co-est2019-annres-42.xlsx",range="A6:M72",
+   col_names = c("County","Census","Estimate Base",
+                 "pop_2010",
+                 "pop_2011",
+                 "pop_2012",
+                 "pop_2013",
+                 "pop_2014",
+                 "pop_2015",
+                 "pop_2016",
+                 "pop_2017",
+                 "pop_2018",
+                 "pop_2019"))
+
 
 #Cleaning data
 tec_state$NAME <- state.name[match(tec_state$State,state.abb)]
 tec_state$Score<- as.numeric(tec_state$Score)
 
-#County Data
-# counties <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds"))) 
+##using regular expressions to clean county names
+pa_pop$County<- gsub('^\\.|\\.$', '', pa_pop$County) 
+pa_pop$NAME<- gsub(" County[,%] Pennsylvania$","", pa_pop$County)
+
+
+
 
 
 ```
 
 ##### Visualizing national data  
-First, national data is visualized using *us_states* dataset provided by the spData package. Note: 'total_pop_15' is the numerical vector of total population in 2015.  
+First, national data is visualized using *us_states* dataset provided by the spData package. Note: 'total_pop_15' is the numerical vector of total population in 2015. For simplicity only the contiguous United States is considered.
 
 Metrics investigated are:
 + OP_18b: Average (median) time patients spent in the ED  
@@ -335,8 +372,10 @@ Next, I explore the availability of hospitals across Pennsylvania. I will map ho
 + Maps Javascript AVI  
 + Maps Embed API  
 
+I then converted the data frame of resultant cartesion coordinates to an sf object. I used the the projection WGS84, which is the CRS code #4326, a priori defined in the sf object. I mapped the hospitals onto a map of Pennsylvania using the counties dataset tigris library, overlayed with county population data.
+
 ```{r}
-#Subset data to metrics of interest
+#Subset data to metrics of interest and PA
 df_hosp <- tec_hosp %>% filter(Measure.ID %in% varlist & State=="PA")
 
 #Get list of hospital names
@@ -344,46 +383,96 @@ df_hosp_fac <- df_hosp %>%
    mutate(addr=paste0(Address,", ",City, ", ",State," ",ZIP.Code)) %>%
    distinct(Facility.Name,addr) %>% 
    arrange(Facility.Name)
-#counties_pa <- counties %>% filter(STATE==42) #42 is Pennsylvania
 
-#Mapping addresses
-# library(tidygeocoder)
-# df_hosp_geo <- df_hosp_fac %>% geocode(addr, method = 'osm', lat = latitude , long = longitude)
+df_hosp_fac$addr <- gsub('34TH ST &', '3400', df_hosp_fac$addr)
+df_hosp_fac$addr <- gsub('34TH &', '3400', df_hosp_fac$addr)
 
-library(ggmap)
-#register_google(key = "", write = TRUE)
-#pubs_ggmap_pa <- geocode(df_hosp_fac$addr, output = "more", source = "google", messaging = FALSE)
-  
+#Getting map coordinates (lat and long) of hospital addresses 
+for(i in 1:nrow(df_hosp_fac))
+{
+    ifelse(is.na(df_hosp_fac$addr[i]), NA,      
+    hosp_ggmap_pa <- geocode(df_hosp_fac$addr[i], output = "more", source = "google", messaging = FALSE))
+          df_hosp_fac$Longitude[i] <- as.numeric(hosp_ggmap_pa[1])
+          df_hosp_fac$Latitude[i] <- as.numeric(hosp_ggmap_pa[2])
+}
 
+df_hosp_fac_tib <- as_tibble(df_hosp_fac)
+df_hosp_fac_sf <- st_as_sf(df_hosp_fac_tib, coords = c("Longitude", "Latitude"), crs = 4326)
+mapview(df_hosp_fac_sf) #Quickly checking addresses geocoded correctly
 
-#Include population data column
+#Merge to PA county data to PA population data
+pa_tomap<-merge(pa_counties, pa_pop, by="NAME")
+class(pa_tomap) #check
+                 
+#Creating annotations for graph
+high_pa_tomap <- pa_tomap %>% filter(pop_2019 > 1000000) #labelling counties with pop > 1 million
+
+for(i in 1:nrow(high_pa_tomap)){
+    ifelse(is.na(high_pa_tomap$County[i]), NA,      
+    high_pa_tomap2 <- geocode(high_pa_tomap$County[i], output = "latlon", source = "google", messaging = FALSE))
+          high_pa_tomap$lon[i] <- as.numeric(high_pa_tomap2[1])
+          high_pa_tomap$lat[i] <- as.numeric(high_pa_tomap2[2])
+}
+
+#Map
+ggplot() + 
+   geom_sf(data = pa_tomap, aes(fill = pop_2019/100000), color="white") + 
+   geom_sf(data = df_hosp_fac_sf, size = 2, shape = 21, fill = "gold") +
+   geom_sf_label_repel(data = high_pa_tomap, aes(x=lon,y=lat,label=NAME), 
+                       size=3, force=4, nudge_y=-17, nudge_x=1, seed = 10) +
+   coord_sf() + 
+   my_theme() + 
+   scale_fill_viridis(discrete=FALSE, name = "Population \n(in 100,000s)", option = "mako", direction = -1,
+                         limit = range(prev_min(pa_tomap$pop_2019/100000), 
+                                       prev_max(pa_tomap$pop_2019/100000))) +
+   labs(title= "Fig. 8: Pennsylvania Population (2019 US Census) and Hospital Locations",
+        caption = "Source: Centers for Disease Control, US Census Bureau. \nHighlighting counties with population of at least 1 million.") +
+   theme(legend.justification = c(0, 1),legend.position = "right")
+
 ```
 
+Next, I will break down this distribution of hospitals across a few key service lines, namely pediatric hospitals, trauma centers and stroke centers.
 
 
 
+Still to do:
+1. Download list and map to locations for specialty care:
+Trauma centers: https://www.haponline.org/Resource-Center?resourceid=81
+Children's hospitals: https://www.childrenshospitals.org/directories/hospital-directory?state=PA
+Stroke centers: https://www.health.pa.gov/topics/Documents/EMS/Designated%20Stroke%20Centers.pdf
 
+
+HSA dataset: https://seer.cancer.gov/seerstat/variables/countyattribs/hsa.html
+https://link.springer.com/article/10.1007/s10661-019-7413-4
 
 Weissman:
-- R packages for state map level
 - pull demographics/aggregates around hospitals
 - ED assumptions of 2 mile radius
 - Assumptions to build in for diverting/critical divert
-- Specialty care (pediatrics, stroke, MI/valvular disorders, trauma)
+
 
 Holmes:
 https://data.cms.gov/tools/mapping-medicare-disparities-by-hospital
 https://data.cms.gov/provider-data/topics/hospitals/timely-effective-care
 https://data.cms.gov/provider-summary-by-type-of-service/medicare-inpatient-hospitals/hospital-service-area
-
-
 https://www.cdc.gov/nchs/fastats/emergency-department.htm
+
 
 #### Discussion:  
 As shown in the above maps, patients in Pennsylvania, on average, spend more time waiting in the ED than the national average (Figures 1 and 2). Additionally, patients who go to the ED with signs of a possible heart attack or stroke, on average, were received timely care less often (Figures 3 and 4). Patients with chest pain in PA had to wait longer before transfer to a specialty hospital than the US national average (Figure 5). 
 
 Though PA underperforms nationally, the regional graphs shows that PA performs the second best in the Northeast region (behind Vermont) with respect to general ED wait time (Fig. 6), but on par with the region for timely care for acute life-threatening symptoms (chest pain, stroke symptoms, Fig. 7).
+problem solving.
+As expected, the largest number of hospitals are in the most densely populated states.
 
-#### Acknowledgements:  
+
+
+Limitations: 
+1. Assumption that only pediatric hospitals see pediatric patients, which is not true. This underestimates access to pediatric care, but still exists as a proxy for access to high quality pediatric care.
+
+
+#### Acknowledgements:
+I would like to thank Dr. Gary Weissman and Dr. John Holmes for their guidance as described above. I would like to thank my classmates in BMIN 503 for providing inspiration as well as valuable peer-peer 
+
 
 #### References:  
