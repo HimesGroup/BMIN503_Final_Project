@@ -1,21 +1,10 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This project explores the gene expression difference between alveolar type 1-derived alveolar type 2 cells and other type alveolar 2 cells from genetically modified HopXCre R26Rtdtomato SPC-GFP mice which underwent neonatal hyperoxia injury. The motivation is to see which signaling pathways are involved in changing the cell fate of AT1 cells to AT2 cells so that we can manipulate these pathways to promote healing from neonatal lung injury such as bronchopulmonary dysplasia (BPD). The files present in this repository are: 
 
-hahahahaha
-
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/10/21 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+Final_Project_Wen.Rmd: R codes for the final project
+Final_Project_Wen.html: html version of the final project
+Lung_AT2_Alignment_QC_Report_star: folder which contains all the files needed for running the quality controls
+Lung_AT2_desep2_out: folder which contains all the files needed for running the differential gene expression
+files: folder which contains tables that are used for running alignment, quality control, and differential gene expression with linux commands
+scripts: folder which contains scripts that are used for running alignment, quality control, and differential gene expression with linux commands
