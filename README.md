@@ -3,8 +3,6 @@
 ### Deeksha Hegde
 ##### November 23, 2021
 
-Note to peer reviewer: I'm having issues pushing, please check back Tuesday afternoon!
-
 This repository contains the data and code used to perform an exploratory and predictive analysis of animal usage in biomedical research over 12 years. The code is in progress and will be completed by December 10, 2021.
 
 This repo contains:
