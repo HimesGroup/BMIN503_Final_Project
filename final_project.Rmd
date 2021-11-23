@@ -10,80 +10,178 @@ output:
 options(width = 400)
 ```  
 ```{r setup, include=FALSE}
+theme_set(theme_bw(base_size = 14))
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
-required packages
-```{r}
+```{r, include=FALSE}
 library(data.table)
 library(dplyr)
 library(corrr)
 library(ggplot2)
+library(ggridges)
 library(RColorBrewer)
+library(skimr)
+library(forcats)
 ```
 
-### Overview
+## Overview
 
-```{r}
-#Read in data
-Math <- fread(input = "https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-mat.csv", sep = ",", header = T)
-Portuguese <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
-
-#Raw data overview
-library(GGally)
-ggpairs(Math, mapping = aes(col = ), columns = c(), axisLabels = "show")
-
-```
-
-
-### Introduction 
+## Introduction 
 Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them.
 
 The data were obtained in a survey of students math and Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
+
+##Read in data
+```{r}
+Math <- fread(input = "https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-mat.csv", sep = ",", header = T)
+Portuguese <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
+```
+
+## A Brief Look at the dataset
+This will be a little bit messy but it is always good practice to summaries the whole data set and check every other variable.
+
+### Numeric Variables
+```{r}
+Math %>% 
+  select(where(is.numeric)) %>% 
+  skim()
+```
+
+### Numeric Variables
+```{r}
+Math %>% 
+  select(where(is.character)) %>% 
+  mutate(across(.cols = everything(), as.factor)) %>%
+  skim()
+```
+
+No missing values in both data sets.
+
+## The Analysis of Candidate Variables
+
+### The Response Variable
+The response variable is skewed to right so it's best to take the natural logarithm of it. This way the response variable is distributed normally and this makes the models perform better.
+
+```{r}
+Math %>% 
+  ggplot(aes(G3)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+  labs(y = NULL)
+
+Math %>% 
+  ggplot(aes(log(G3))) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+  labs(y = NULL)
+```
+
+### Relationships between G3 and Categorical Variables
+Before I start let's create a function for plotting categorical variables against the response variable. This way there will be less copy and paste. This function will also calculate the Standard Error of the Mean of particular factor level so that I can build 95% confidence intervals. In this case confidence intervals are used as a guide rather than inference purposes.
+
+```{r}
+autoplot_category <- function(dataset, x, y) {
+  summary_stats <- dataset %>% 
+    group_by({{y}}) %>% 
+    summarise(mean = mean({{x}}, na.rm = TRUE),
+              sd = sd({{x}}, na.rm = TRUE),
+              n = n(),
+              sem = sd/sqrt(n),
+              uppr = mean + 1.96*sem,
+              lwr = mean - 1.96*sem)
+  
+  ggplot(data = dataset,aes(x = {{x}}, y ={{y}}, fill = {{y}}))+
+    geom_vline(xintercept = mean(dataset %>% pull({{x}}), na.rm = TRUE), size = 1.5, alpha = 0.2)+
+    geom_density_ridges(alpha = 0.2,color = "#0000001A")+
+    geom_boxplot(width = 0.5, fill = NA, outlier.colour = "darkred", position = position_nudge(y = 0.5),
+                 size = 0.5, outlier.size = 1)+
+    geom_errorbar(data = summary_stats, aes(x = mean, xmin = lwr, xmax = uppr ), width = 0.5, color = "darkred",
+                  position = position_nudge(y = 0.5), size = 0.7, alpha = 0.9)+
+    geom_point(data = summary_stats, aes(x = mean), color = "darkred", shape = 18, size = 2,
+               position = position_nudge(y = 0.5))+
+    geom_label(data = summary_stats, aes(x = 0, label = n), fill = NA, position = position_nudge(y = 0.5))+
+    ggtitle(paste(substitute(x) ,"versus", substitute(y)))+
+    labs(x = NULL, y = NULL)+
+    theme(legend.position = "none")
+}
+
+```
+
+#### Mjob
+
+```{r}
+Math %>% 
+  mutate(Mjob = fct_reorder(Mjob, G3, .fun = "mean")) %>% 
+  autoplot_category(G3, Mjob)
+```
+Before I start the analysis let me explain the plot. Labels on the left show the number of the observations in a given strata. Density ridges and box plots are self explanatory. The red error bar is the 95% confidence interval for the mean of a given category and the red diamond in the middle is the mean. You can also see a thick vertical line that is the mean G3 of the whole data.
+
+### Relationships between Sale Price and Numerical Variables
+Similar to response variable, make the numerical variable distribute normally will benifit the models performance.
+
+#### age
+
+```{r}
+Math %>% 
+  ggplot(aes(age))+
+  geom_histogram(bins = 10, fill = "steelblue", color = "white")+
+  labs(y = NULL)
+
+Math %>% 
+  ggplot(aes(log(age+1)))+
+  geom_histogram(bins = 10, fill = "steelblue", color = "white")+
+  labs(y = NULL)
+```
+
+Taking the log of basement area is helpful but we still have 0 values to deal with. I am going to sum Basement Area with Area Above Ground. This way hopefully I'll get rid of zeros. Below you can see that there is somewhat nice correlation between Basement Area and Sale Price.
+
+```{r}
+Math %>% 
+  ggplot(aes(age, G3))+
+  geom_point(alpha = 0.8)+
+  geom_smooth()+
+  scale_x_continuous(n.breaks = 6)
+```
+
+### Methods
+
 ```{r}
 #Pre-processing
 #Convert binary character variables into numeric variables (1 or 0)
 Math <- Math %>% 
-  mutate(school = factor(school, levels = c("GP", "MS"), labels = c(1, 0))) %>%
-  mutate(sex = factor(sex, levels = c("M", "F"), labels = c(1, 0))) %>%
-  mutate(address = factor(address, levels = c("U", "R"), labels = c(1, 0))) %>%
-  mutate(famsize = factor(famsize, levels = c("GT3", "LE3"), labels = c(1, 0))) %>%
-  mutate(Pstatus = factor(Pstatus, levels = c("T", "A"), labels = c(1, 0))) %>%
-  mutate(schoolsup = factor(schoolsup, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(famsup = factor(famsup, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(paid = factor(paid, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(activities = factor(activities, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(nursery = factor(nursery, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(higher = factor(higher, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(internet = factor(internet, levels = c("yes", "no"), labels = c(1, 0))) %>%
-  mutate(romantic = factor(romantic, levels = c("yes", "no"), labels = c(1, 0)))
+  mutate(school = ifelse(school == "GP", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
+  mutate(address = ifelse(address == "U", 1, 0)) %>%
+  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
+  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
+  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
+  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
+  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
+  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
+  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
+  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
+  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
+  mutate(romantic = ifelse(romantic == "yes", 1, 0))
 
 #Apply one-hot coding convert category variables in to numeric variables
-Math.clean <- cbind(select_if(Math, is.numeric), select_if(Math, is.factor)) %>%
-  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
+Math.rdy <- cbind(select_if(Math, is.numeric), as.data.frame(model.matrix(~Mjob-1, Math))) %>%
   cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
   cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
   cbind(as.data.frame(model.matrix(~guardian-1, Math)))
-  
 ```
 
-
-### Methods
+### bi-variate correlation between G3 and all other variables
 ```{r}
-#bi-variate correlation test
-x <- Math.clean %>% correlate() %>% focus(G3)
+x <- Math.rdy %>% 
+  correlate(method = "pearson") %>% 
+  corrr::focus(G3)
 
-x %>% 
-  mutate(rowname = factor(rowname, levels = rowname[order(mpg)])) %>%  # Order by correlation strength
-  ggplot(aes(x = rowname, y = mpg)) +
+x %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
     geom_bar(stat = "identity") +
-    ylab("Correlation with mpg") +
-    xlab("Variable")
-
-
+    ylab("Correlation with G3") +
+    xlab("Variable") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
-
-
 
 
 
