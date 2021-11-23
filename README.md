@@ -1,6 +1,6 @@
 # BMIN503/EPID600 Final Project
 
-Hello, fellow BMIN503 student! I'm in the process of updating my repo. I would appreciate it if you could give me some time and come back Tuesday Nov 23, after 3pm, for the peer review assignment. Thanks you for understanding!
+This is the BMIN503 final project repo for Sy Hwang.
 
 ## Files in this repo:
 
