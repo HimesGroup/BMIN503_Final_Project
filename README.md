@@ -1,20 +1,17 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+# Deeksha Hegde
+# November 23, 2021
 
+This repository contains the data and code used to perform an exploratory and predictive ananlysis of animal usage in biomedical research over 12 years. The code is in progress and will be completed by December 10, 2021.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This repo contains:
+1. BMIN503_Project_Hegde.rmd: An R markdown file containing code, comments and explanation of project
+2. BMIN503_Project_Hegde.html: A final report of the above code with outputs
+3. USDA Data: A folder containing the cleaned data used for reproducing the results. The raw data taken from APHIS USDA Annual SUmmary reports was in the form of several PDFs. The cleaned data is presented here in .txt format. The nomenclature is year_col_X where X is the pain category. The pain categories are:
+    - Column B: Animals held by a facility but not used in any research that year
+    - Column C: Animals used in research; no pain involved; no pain drugs administered
+    - Column D: Animals used in research; pain involved; pain drugs administered
+    - Column E: Animals used in research; pain involved; no pain drugs administered
 
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/10/21 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+Should any questions on the project arise, please reach me at dhegde@seas.upenn.edu
