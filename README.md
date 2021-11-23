@@ -8,7 +8,7 @@ This repository contains the data and code used to perform an exploratory and pr
 This repo contains:
 1. BMIN503_Project_Hegde.rmd: An R markdown file containing code, comments and explanation of project
 2. BMIN503_Project_Hegde.html: A final report of the above code with outputs
-3. USDA_Data: A folder containing the cleaned data used for reproducing the results. The raw data taken from APHIS USDA Annual SUmmary reports was in the form of several PDFs. The cleaned data is presented here in .txt format. The nomenclature is year_col_X where X is the pain category. The pain categories are:
+3. USDA_Data: A folder containing the cleaned data used for reproducing the results. The raw data taken from APHIS USDA Annual Summary reports was in the form of several PDFs. The cleaned data is presented here in .txt format. The nomenclature is year_col_X where X is the pain category. The pain categories are:
     - Column B: Animals held by a facility but not used in any research that year
     - Column C: Animals used in research; no pain involved; no pain drugs administered
     - Column D: Animals used in research; pain involved; pain drugs administered
