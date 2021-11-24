@@ -14,7 +14,7 @@ The data were obtained in a survey of students math and Portuguese language cour
 
 ## Files Explanation
 - student-mat.csv ：raw data in math course.
-- student-por.csv ：raw test in portuguese course.
+- student-por.csv ：raw data in portuguese course.
 - data_description.txt ：features description file.
 
 ## Important Variables Explanation
