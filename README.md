@@ -6,7 +6,7 @@ The purpose of this project is to investigate the provision of timely and effect
 + To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: stroke interventions, heart attack interventions, wait time.
 + To investigate if there are any relationships between demographic variables and TEC using multivariable regressions.  
 
-
+[My project](https://raw.githack.com/moniquearnold/BMIN503_Final_Project/master/final_project_Arnold.html)
 ----
 
 Original instructions:
