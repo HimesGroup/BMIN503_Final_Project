@@ -2,15 +2,15 @@
 title: "BMIN503/EPID600 Project"
 author: "Xingyue Zhu"
 output: 
-  html_document:
-    theme: paper 
+  html_document: 
+    theme: paper
     highlight: tango
+    toc: yes
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
 ```{r setup, include=FALSE}
-theme_set(theme_bw(base_size = 14))
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
@@ -23,6 +23,9 @@ library(ggridges)
 library(RColorBrewer)
 library(skimr)
 library(forcats)
+library(tidymodels)
+
+theme_set(theme_bw(base_size = 14))
 ```
 
 ## Overview
@@ -32,23 +35,97 @@ Despite laws banning teenagers from drinking alcohol until they are adults, teen
 
 The data were obtained in a survey of students math and Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
 
-##Read in data
+## Read in data
+In this study, The Math and Portuguese data sets will be training and testing sets for each other, in order to verify the robustness for models.
 ```{r}
 Math <- fread(input = "https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-mat.csv", sep = ",", header = T)
 Portuguese <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
 ```
 
-## A Brief Look at the dataset
-This will be a little bit messy but it is always good practice to summaries the whole data set and check every other variable.
+## A brief look at the dataset
+This will be a little bit messy but it is always good practice to summaries the whole data set and check every variable. The purpose of this step is to check if our dataset contains missing values, variables with a single value, and duplicated observations
 
-### Numeric Variables
+### Numeric variables in Math
 ```{r}
 Math %>% 
   select(where(is.numeric)) %>% 
   skim()
 ```
 
-### Numeric Variables
+### Numeric variables in Portuguese
+```{r}
+Portuguese %>% 
+  select(where(is.numeric)) %>% 
+  skim()
+```
+
+### Bi-variate correlation analysis between G3 and all numeric variables
+```{r}
+x <- Math %>% 
+  select(where(is.numeric)) %>% 
+  correlate(method = "pearson") %>% 
+  corrr::focus(G3)
+
+x %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(x$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(x$G3, 2)) +
+    ylab("Correlation with G3") +
+    xlab("Numeric variables") +
+    labs(title = "Math") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+y <- Portuguese %>% 
+  select(where(is.numeric)) %>% 
+  correlate(method = "pearson") %>% 
+  corrr::focus(G3)
+
+y %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(y$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(y$G3, 2)) +
+    ylab("Correlation with G3") +
+    xlab("Numeric variables") +
+    labs(title = "Portuguese") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+In general, we take the natural logarithmic transformation for all numeric variables. This is because of: (1) to avoid numerical underflow or overflow, (2) To improve model learning efficiency by exploiting log concave/convex/linear property, (3) some variables may be linear to the response variable in the log scale space.
+
+However, in this case, after log transformation, the correlation coefficients between G3 and all other numeric variables are reduced to varying degrees (supplementary figure 1). In addition, the values of these numeric variables are relatively concentrated and have already shown a normal distribution pattern. So, I will not apply the log transformation this time. 
+
+Furthermore, I also noticed that two key variables in this study, Dalc and Walc, have weak and similar correlation coefficients with G3. Considering they are alike in meaning, I will try to merge these two variables into a new one as weekly alcohol consumption and see if this new variable has a better correlation performance with G3. If so, it will also improve the model learning efficiency.
+```{r}
+z <- Math %>% 
+  mutate(alc = Math$Dalc*5/7 + Math$Walc*2/7) %>%
+  dplyr::select(alc, G3) %>%
+  correlate(method = "pearson") %>%
+  corrr::focus(G3) %>%
+  rbind(x %>% filter(term %in% c("Dalc", "Walc")))
+
+ggplot(data = z, aes(x = term, y = G3)) +
+  geom_bar(stat = "identity", width = 0.4, fill = "#00BFC4") +
+  geom_text(aes(y = (G3 - 0.004)), label = round(z$G3, 3), size = 6) +
+  ylab("Correlation with G3") +
+  labs(title = "Math")
+
+z <- Portuguese %>% 
+  mutate(alc = Portuguese$Dalc*5/7 + Portuguese$Walc*2/7) %>%
+  dplyr::select(alc, G3) %>%
+  correlate(method = "pearson") %>%
+  corrr::focus(G3) %>%
+  rbind(y %>% filter(term %in% c("Dalc", "Walc")))
+
+ggplot(data = z, aes(x = term, y = G3)) +
+  geom_bar(stat = "identity", width = 0.4, fill = "#00BFC4") +
+  geom_text(aes(y = (G3 - 0.012)), label = round(z$G3, 3), size = 6) +
+  ylab("Correlation with G3") +
+  labs(title = "Portuguese")
+```
+It is ovbiously that the new variable "alc" has a better correlation coefficients with G3. Therefore, I am going to keep the new variable and remove the two old alcohol consumption variables.
+
+Other interesting finds includes: (1) Compared to math, which requires logical thinking, Portuguese, which emphasizes memory, was more likely to be affected by weekly alcohol consumption. (2) Children with higher educated parents tend to get better grades, possibly because educated parents place more emphasis on their children's education. (3) The two period grades are highly related to the final grade, which means they could gain overwhelming weights in the model learning. However, it will increase the risk of overfitting.
+
+### Categorical variables in Math
 ```{r}
 Math %>% 
   select(where(is.character)) %>% 
@@ -56,98 +133,19 @@ Math %>%
   skim()
 ```
 
-No missing values in both data sets.
-
-## The Analysis of Candidate Variables
-
-### The Response Variable
-The response variable is skewed to right so it's best to take the natural logarithm of it. This way the response variable is distributed normally and this makes the models perform better.
-
+### Categorical variables in Portuguese
 ```{r}
-Math %>% 
-  ggplot(aes(G3)) +
-  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
-  labs(y = NULL)
-
-Math %>% 
-  ggplot(aes(log(G3))) +
-  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
-  labs(y = NULL)
+Portuguese %>% 
+  select(where(is.character)) %>% 
+  mutate(across(.cols = everything(), as.factor)) %>%
+  skim()
 ```
 
-### Relationships between G3 and Categorical Variables
-Before I start let's create a function for plotting categorical variables against the response variable. This way there will be less copy and paste. This function will also calculate the Standard Error of the Mean of particular factor level so that I can build 95% confidence intervals. In this case confidence intervals are used as a guide rather than inference purposes.
-
+### Bi-variate correlation analysis between G3 and all categorical variables
+How to calculate the correlation between a continuous and categorical variable is very tricky. Here I used one-hot encoding to separate multivariate discrete variables into several binary discrete variable at first. Then, using Mann-Kendall test to calculate the correlation coefficients between these binary variable with G3.
 ```{r}
-autoplot_category <- function(dataset, x, y) {
-  summary_stats <- dataset %>% 
-    group_by({{y}}) %>% 
-    summarise(mean = mean({{x}}, na.rm = TRUE),
-              sd = sd({{x}}, na.rm = TRUE),
-              n = n(),
-              sem = sd/sqrt(n),
-              uppr = mean + 1.96*sem,
-              lwr = mean - 1.96*sem)
-  
-  ggplot(data = dataset,aes(x = {{x}}, y ={{y}}, fill = {{y}}))+
-    geom_vline(xintercept = mean(dataset %>% pull({{x}}), na.rm = TRUE), size = 1.5, alpha = 0.2)+
-    geom_density_ridges(alpha = 0.2,color = "#0000001A")+
-    geom_boxplot(width = 0.5, fill = NA, outlier.colour = "darkred", position = position_nudge(y = 0.5),
-                 size = 0.5, outlier.size = 1)+
-    geom_errorbar(data = summary_stats, aes(x = mean, xmin = lwr, xmax = uppr ), width = 0.5, color = "darkred",
-                  position = position_nudge(y = 0.5), size = 0.7, alpha = 0.9)+
-    geom_point(data = summary_stats, aes(x = mean), color = "darkred", shape = 18, size = 2,
-               position = position_nudge(y = 0.5))+
-    geom_label(data = summary_stats, aes(x = 0, label = n), fill = NA, position = position_nudge(y = 0.5))+
-    ggtitle(paste(substitute(x) ,"versus", substitute(y)))+
-    labs(x = NULL, y = NULL)+
-    theme(legend.position = "none")
-}
-
-```
-
-#### Mjob
-
-```{r}
-Math %>% 
-  mutate(Mjob = fct_reorder(Mjob, G3, .fun = "mean")) %>% 
-  autoplot_category(G3, Mjob)
-```
-Before I start the analysis let me explain the plot. Labels on the left show the number of the observations in a given strata. Density ridges and box plots are self explanatory. The red error bar is the 95% confidence interval for the mean of a given category and the red diamond in the middle is the mean. You can also see a thick vertical line that is the mean G3 of the whole data.
-
-### Relationships between Sale Price and Numerical Variables
-Similar to response variable, make the numerical variable distribute normally will benifit the models performance.
-
-#### age
-
-```{r}
-Math %>% 
-  ggplot(aes(age))+
-  geom_histogram(bins = 10, fill = "steelblue", color = "white")+
-  labs(y = NULL)
-
-Math %>% 
-  ggplot(aes(log(age+1)))+
-  geom_histogram(bins = 10, fill = "steelblue", color = "white")+
-  labs(y = NULL)
-```
-
-Taking the log of basement area is helpful but we still have 0 values to deal with. I am going to sum Basement Area with Area Above Ground. This way hopefully I'll get rid of zeros. Below you can see that there is somewhat nice correlation between Basement Area and Sale Price.
-
-```{r}
-Math %>% 
-  ggplot(aes(age, G3))+
-  geom_point(alpha = 0.8)+
-  geom_smooth()+
-  scale_x_continuous(n.breaks = 6)
-```
-
-### Methods
-
-```{r}
-#Pre-processing
-#Convert binary character variables into numeric variables (1 or 0)
-Math <- Math %>% 
+m <- Math %>% 
+  select(where(is.character), G3) %>% 
   mutate(school = ifelse(school == "GP", 1, 0)) %>%
   mutate(sex = ifelse(sex == "M", 1, 0)) %>%
   mutate(address = ifelse(address == "U", 1, 0)) %>%
@@ -160,30 +158,670 @@ Math <- Math %>%
   mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
   mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
   mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
-  mutate(romantic = ifelse(romantic == "yes", 1, 0))
-
-#Apply one-hot coding convert category variables in to numeric variables
-Math.rdy <- cbind(select_if(Math, is.numeric), as.data.frame(model.matrix(~Mjob-1, Math))) %>%
+  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
+  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
   cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
   cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~guardian-1, Math)))
+  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
+  dplyr::select(-Mjob, -Fjob, -reason, -guardian) %>%
+  correlate(method = "kendall") %>% 
+  corrr::focus(G3)
+
+m %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(m$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.01, -0.01))), label = round(m$G3, 2), size = 2.3) +
+    ylab("Correlation with G3") +
+    xlab("Categorical variables") +
+    labs(title = "Math") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+n <- Portuguese %>% 
+  select(where(is.character), G3) %>% 
+  mutate(school = ifelse(school == "GP", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
+  mutate(address = ifelse(address == "U", 1, 0)) %>%
+  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
+  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
+  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
+  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
+  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
+  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
+  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
+  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
+  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
+  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
+  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
+  dplyr::select(-Mjob, -Fjob, -reason, -guardian) %>%
+  correlate(method = "kendall") %>% 
+  corrr::focus(G3)
+
+n %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(n$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.015, -0.015))), label = round(n$G3, 2), size = 2.3) +
+    ylab("Correlation with G3") +
+    xlab("Categorical variables") +
+    labs(title = "Portuguese") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-### bi-variate correlation between G3 and all other variables
+## Methods
+
+### Pre-processing: feature tranformation and selection
+In order to improves the accuracy and avoids overfitting, also enables the machine learning algorithm to train faster, reduces the complexity of a model and makes it easier to interpret. I will apply a simple feature selection step after transform category variables in to numeric variables. According to the result of bi-variate correlation analysis shown above, I would take the cutoff of absolute correlation coefficients as 0.1 in both datasets to filter out variables which weakly related to G3.
 ```{r}
-x <- Math.rdy %>% 
+Math <- Math %>% 
+  mutate(alc = Math$Dalc*5/7 + Math$Walc*2/7) %>%
+  mutate(school = ifelse(school == "GP", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
+  mutate(address = ifelse(address == "U", 1, 0)) %>%
+  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
+  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
+  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
+  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
+  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
+  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
+  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
+  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
+  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
+  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
+  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
+  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
+  dplyr::select(-Dalc, -Walc, -Mjob, -Fjob, -reason, -guardian)
+
+Portuguese <- Portuguese %>% 
+  mutate(alc = Portuguese$Dalc*5/7 + Portuguese$Walc*2/7) %>%
+  mutate(school = ifelse(school == "GP", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
+  mutate(address = ifelse(address == "U", 1, 0)) %>%
+  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
+  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
+  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
+  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
+  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
+  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
+  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
+  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
+  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
+  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
+  cbind(as.data.frame(model.matrix(~Mjob-1, Portuguese))) %>%
+  cbind(as.data.frame(model.matrix(~Fjob-1, Portuguese))) %>%
+  cbind(as.data.frame(model.matrix(~reason-1, Portuguese))) %>%
+  cbind(as.data.frame(model.matrix(~guardian-1, Portuguese))) %>%
+  dplyr::select(-Dalc, -Walc, -Mjob, -Fjob, -reason, -guardian)
+drop_variables <- c(intersect(x$term[(abs(x$G3) < 0.1)], y$term[(abs(y$G3) < 0.1)]),
+                    intersect(m$term[(abs(m$G3) < 0.1)], n$term[(abs(n$G3) < 0.1)]))
+
+Math <- dplyr::select(.data = Math, setdiff(colnames(Math), drop_variables))
+Portuguese <- dplyr::select(.data = Portuguese, setdiff(colnames(Portuguese), drop_variables))
+```
+
+### Check the bi-variate correlation between G3 and all remaining variables
+```{r}
+xx <- Math %>% 
+  correlate(method = "pearson") %>% 
+  corrr::focus(G3)
+
+xx %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(xx$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(xx$G3, 2)) +
+    ylab("Correlation with G3") +
+    xlab("Numeric variables") +
+    labs(title = "Math") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+yy <- Portuguese %>% 
+  correlate(method = "pearson") %>% 
+  corrr::focus(G3)
+
+yy %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+  ggplot(aes(x = term, y = G3)) +
+    geom_bar(stat = "identity", fill = ifelse(yy$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(yy$G3, 2)) +
+    ylab("Correlation with G3") +
+    xlab("Numeric variables") +
+    labs(title = "Portuguese") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Candidate Models
+Here I am going to try out 5 different models. In this case, I approached the hyper-parameters in more manual way because I want to learn more about them. Most of the time, in the tuning process `tidymodels` gets you covered up but still you have to set hyper-parameters like `mtry` for Random Forests for Gradient Boosting Trees. 
+
+### Linear Regression
+!!Definition of linear regression, lasso regression(mixture = 1), ridge regression(mixture = 0) and elastic network(0<mixture<1).
+
+```{r}
+lr <- linear_reg(mode = "regression", engine = "glmnet", penalty = tune(), mixture = tune()) 
+
+lr_param <- parameters(lr) %>% 
+  update(penalty = penalty(seq(0.01, 0.1, by = 0.01)), mixture = mixture(c(0,1)))
+```
+
+### Support Vector Machine
+!!Definition of SVM
+
+```{r}
+svm <- svm_rbf(mode = "regression",engine = "kernlab", cost = tune(), rbf_sigma = tune(), margin = tune())
+
+svm_param <- parameters(svm) %>% 
+  update(cost = cost(c(-10, 5)), rbf_sigma = rbf_sigma(c(-5,0)), margin = svm_margin(c(0, 0.2)))
+```
+
+### Random Forest
+!!Definition of Random Forest
+
+```{r}
+rf <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>% 
+  set_engine("ranger") %>% 
+  set_mode("regression")
+
+rf_param <- parameters(rf) %>% 
+  update(mtry = mtry(c(10,20)),
+         trees = trees(c(1000, 2500)),
+         min_n = min_n(c(2, 20)))
+```
+
+### Artificial Neural Network
+
+```{r}
+
+```
+
+
+## Model Fitting
+
+### Creating Workflowsets
+
+Now I bring every model and recipe(formula) together and melt them in a workflow set. 
+
+```{r}
+exploratory_workflowset <- workflow_set(
+  
+  preproc = list("recipe_all" = recipe_all, "recipe_pars" = recipe_pars),
+  
+  models = list("neural_net" = nn, "xgboost" = xgb,"rand_for" = rf, "rad_svm" = rad_svm,
+                "cubist_rules" = cub_rules, "linear_reg" = lin_reg, "MARS" = mars_fit)
+)
+```
+
+#### Adding Parameter Information
+
+In this section I am adding the hyper-parameter information to the workflowset. You can add different parameters for different recipes. Again as I said this is the more manual way so excuse my copy-paste skills here.
+
+```{r}
+exploratory_workflowset <- exploratory_workflowset %>% 
+  option_add(param_info = xgb_param, id = "recipe_all_xgboost") %>% 
+  option_add(param_info = nn_param, id = "recipe_all_neural_net") %>% 
+  option_add(param_info = rf_param, id = "recipe_all_rand_for") %>% 
+  option_add(param_info = rad_svm_param, id = "recipe_all_rad_svm") %>% 
+  option_add(param_info = cub_rules_param, id = "recipe_all_cubist_rules") %>% 
+  option_add(param_info = lin_reg_param, id = "recipe_all_linear_reg") %>% 
+  option_add(param_info = mars_fit_param, id = "recipe_all_MARS") %>% 
+  option_add(param_info = xgb_param, id = "recipe_pars_xgboost") %>% 
+  option_add(param_info = nn_param, id = "recipe_pars_neural_net") %>% 
+  option_add(param_info = rf_param, id = "recipe_pars_rand_for") %>% 
+  option_add(param_info = rad_svm_param, id = "recipe_pars_rad_svm") %>% 
+  option_add(param_info = cub_rules_param, id = "recipe_pars_cubist_rules") %>% 
+  option_add(param_info = lin_reg_param, id = "recipe_pars_linear_reg") %>% 
+  option_add(param_info = mars_fit_param, id = "recipe_pars_MARS")  
+```
+
+### Fitting with Cross Validation
+
+I am going to use 10-Fold Cross-Validation and repeat this 5 times. I am also setting the seed to make this notebook more reproducible. 
+
+```{r}
+set.seed(1993)
+cv_folds <- vfold_cv(train, v = 5, repeats = 5)
+
+grid_control <- control_grid(
+  verbose = TRUE
+)
+```
+
+#### Parallel Processing
+
+`doParallel` package makes parallelization very easy. In this case I am going to use 3 cores. In theory this should decrease the computing time by %66. However, I can say from my experiments that in reality it is more like %50-52(for this notebook of course.) .
+
+```{r}
+cl <- makeCluster(3)
+registerDoParallel(cl)
+```  
+
+Lastly, in this chunk, I bring everything together. The most important thing here is the `grid` argument. Above, I set the hyper-parameter spaces. In this case `workflow_map()` function will fit 60 different models within these hyper-parameter spaces. 
+
+```{r}
+exploratory_results <- exploratory_workflowset %>% 
+  workflow_map(
+    verbose = TRUE,
+    seed = 1993,
+    resamples = cv_folds,
+    control = grid_control,
+    grid = 60,
+    metrics = metric_set(rmse)
+  )
+```
+
+## Model Evaluation and Finalization
+
+This section will be quite brief. First, We will see and compare the best results then for each model I'll be plotting hyper-parameters and their marginal effects on RMSE. Lastly, I am going to re-fit the models to whole training set by using the best hyper-parameters and submit the results.
+
+```{r, fig.width=8.5}
+autoplot(exploratory_results,
+         select_best = TRUE)+
+  geom_text(aes(label = wflow_id), angle = 90, nudge_x = -0.4)+
+  scale_y_continuous(n.breaks = 10)+
+  labs(y = NULL)+
+  theme(legend.position = "none")
+```
+
+Here except for Random Forests and MARS, models are performing quite well. Parsimonious models are always marginally worse but it doesn't mean that their test score will be bad too. Since nearly all models are comparable, I will need to decide which ones to work with after I get the test results. However, MARS and RF are out :(. 
+
+The reason why I want to analyze the hyper-parameter results is that I want to narrow down the parameter space so next time I try to get better results by doing some feature engineering re-fitting will be less time consuming computationally. 
+
+Below, there is a very lazy function that will help me compare hyper-parameters. I am going to plot both recipes but they have similar results. I hope this won't clutter the notebook too much.
+
+```{r}
+plot_compare <- function(id_all, id_pars) {
+
+p1 <- exploratory_results %>% 
+  pull_workflow_set_result(id = id_all) %>%
+  autoplot()+
+  ggtitle("Recipe All")
+
+p2 <- exploratory_results %>% 
+  pull_workflow_set_result(id = id_pars) %>%
+  autoplot()+
+  ggtitle("Recipe Parsimonious")
+
+return(p1 / p2) 
+}
+
+## pull_workflow_set_result() is deprecated but the new function
+## extract_workflow_set_result() doesn't work in Kaggle for this moment.
+```
+
+
+### XGBoost
+
+Here the only hyper-parameter that matters is the Learning Rate.
+
+```{r, fig.height=8, fig.width=8.5}
+plot_compare("recipe_all_xgboost",
+             "recipe_pars_xgboost")
+```
+
+You can also check the Top 10 models for both All and Parsimonious recipes respectively:
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_xgboost") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_xgboost") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+#### Final Fit
+
+For the last model I am choosing the best of the results and I will manually enter the hyper-parameters for reproducibility sake.
+
+```{r}
+set.seed(1993)
+best_model <- boost_tree(mtry = 9, trees = 2472, learn_rate = 0.05308297,
+                  tree_depth = 2, min_n = 2) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_all) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("XGB_All_NULL.csv")
+```
+
+```{r}
+set.seed(1993)
+best_model <- boost_tree(mtry = 11, trees = 1375, learn_rate = 0.01700219,
+                  tree_depth = 5, min_n = 4) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_pars) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("XGB_Pars_NULL.csv")
+```
+
+### Neural Nets
+
+Single hidden unit seems to be working well. Regularization amount is the most important factor here.
+
+```{r, fig.height=7, fig.width=8}
+plot_compare("recipe_all_neural_net",
+             "recipe_pars_neural_net")
+```
+
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_neural_net") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_neural_net") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+#### Final Fit
+
+```{r}
+set.seed(1993)
+best_model <- mlp(hidden_units = 1, penalty = 0.0008246147, epochs = 692) %>% 
+  set_engine("nnet") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_all) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("NN_All_NULL.csv")
+```
+
+```{r}
+set.seed(1993)
+best_model <- mlp(hidden_units = 1, penalty = 0.006460661, epochs = 470) %>% 
+  set_engine("nnet") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_pars) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("NN_Pars_NULL.csv")
+```
+
+### Random Forests
+
+Smaller Node Sizes and Bigger Randomly Selected Predictor amount are better.
+
+```{r, fig.height=8, fig.width=8}
+plot_compare("recipe_all_rand_for",
+             "recipe_pars_rand_for")
+```
+
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_rand_for") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_rand_for") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+### Radial SVM
+
+The results seem to be insensitive to Insensitivity Margin ;).
+
+```{r, fig.height=7, fig.width=8}
+plot_compare("recipe_all_rad_svm",
+             "recipe_pars_rad_svm")
+```
+
+You can actually observe that hyper-paremeters are same for all recipes here.
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_rad_svm") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_rad_svm") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+#### Final Fit
+
+```{r}
+set.seed(1993)
+best_model <- svm_rbf(cost = 7.5946669, rbf_sigma = 0.00144719017, margin = 0.010112632) %>% 
+  set_engine("kernlab") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_all) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("SVM_Rad_All_NULL.csv")
+```
+
+```{r}
+set.seed(1993)
+best_model <- svm_rbf(cost = 7.5946669, rbf_sigma = 0.00144719017, margin = 0.010112632) %>% 
+  set_engine("kernlab") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_pars) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("SVM_Rad_Pars_NULL.csv")
+```
+
+### Cubist Rules
+
+Nearest Neighbors is really affecting the results. It seems like higher the better.
+
+```{r, fig.height=7, fig.width=8}
+plot_compare("recipe_all_cubist_rules",
+             "recipe_pars_cubist_rules")
+```
+
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_cubist_rules") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_cubist_rules") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+#### Final Fit
+
+```{r}
+set.seed(1993)
+best_model <- cubist_rules(committees = 91, neighbors = 9, max_rules = 365) %>% 
+  set_engine("Cubist") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_all) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("Cubist_All_NULL.csv")
+```
+
+```{r}
+set.seed(1993)
+best_model <- cubist_rules(committees = 67, neighbors = 10, max_rules = 442) %>% 
+  set_engine("Cubist") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_pars) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("Cubist_Pars_NULL.csv")
+```
+
+### Linear Regression with Regularization
+
+```{r, fig.height=7, fig.width=8}
+plot_compare("recipe_all_linear_reg",
+             "recipe_pars_linear_reg")
+```
+
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_linear_reg") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_linear_reg") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+#### Final Fit
+
+```{r}
+set.seed(1993)
+best_model <- linear_reg(penalty = 0.00001222794, mixture = 0.005317853) %>% 
+  set_engine("glmnet") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_all) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("LinReg_All_NULL.csv")
+```
+
+```{r}
+set.seed(1993)
+best_model <- linear_reg(penalty = 0.00001222794, mixture = 0.005317853) %>% 
+  set_engine("glmnet") %>% 
+  set_mode("regression")
+
+workflow() %>% 
+  add_recipe(recipe_pars) %>% 
+  add_model(best_model) %>% 
+  fit(train) %>% 
+  predict(new_data = test) %>% 
+  bind_cols(Id = test$Id) %>% 
+  mutate(SalePrice = exp(.pred)) %>% 
+  select(-.pred) %>% 
+  write_csv("LinReg_Pars_NULL.csv")
+```
+
+### MARS
+
+```{r, fig.height=8, fig.width=8}
+plot_compare("recipe_all_MARS",
+             "recipe_pars_MARS")
+```
+
+
+```{r}
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_all_MARS") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+
+exploratory_results %>% 
+  pull_workflow_set_result(id = "recipe_pars_MARS") %>% 
+  collect_metrics() %>% 
+  arrange(mean) %>% 
+  slice_head(n = 10)
+```
+
+
+### Results
+
+
+## Supplementary material
+
+### figure 1
+Bi-variate correlation analysis between G3 and all numeric variables after natural logarithmic transformation.
+```{r}
+x <- Math %>% 
+  select(where(is.numeric)) %>% 
+  log1p() %>%
   correlate(method = "pearson") %>% 
   corrr::focus(G3)
 
 x %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
   ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity") +
+    geom_bar(stat = "identity", fill = ifelse(x$G3 > 0, "#F8766D", "#00BFC4")) +
+    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(x$G3, 2)) +
     ylab("Correlation with G3") +
-    xlab("Variable") +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+    xlab("Numeric variables") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
-
-### Results
 
