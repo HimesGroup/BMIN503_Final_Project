@@ -18,14 +18,19 @@ This analysis seeks to determine how changes in community mobility, SARS-CoV-2 v
 Since the start of the SARS-CoV-2 pandemic, scientists have been developing statistical models to predict various epidemiologic outcomes in different areas of the world. This analysis will contribute to that knowledge base by examining how changes in community mobility, vaccine prevalence, and SARS-CoV-2 variants are related to weekly changes in case incidence in Philadelphia and the surrounding counties. As Google social mobility data is available starting February 15, 2020, the analysis spans from then through October 2, 2021, using MMWR week as time intervals. The above-referenced study in PSOM randomly samples SARS-CoV-2 positive specimens collected at UPHS facilities with cycle threshold (Ct) values < 30. Whole genome sequencing is performed on these specimens, which have higher viral loads, to identify the variant. The results of WGS will be used as an additional explanatory variable in this analysis to indicate which SARS-CoV-2 variants were dominant in each MMWR week in the greater Philadelphia metropolitan area during the study period.  
 
 This analysis draws upon microbiology for the identification of SARS-CoV-2 variants, and infectious disease epidemiology, biostatistics, and informatics to analyze and interpret the relationship between dominant SARS-CoV-2 variants, vaccination, and change in case incidence. Geographical epidemiology will also contribute to the analysis in the form of visualizing the change in vaccinations, cases, variants, and community mobility across time in the target geographic areas. In addition, this analysis incorporates the behavioral sciences, as it seeks to identify whether social behavior (i.e., community mobility data) is associated with case incidence. 
-One particular difficulty I had in the initial phase of this analysis was data harmonization. I examined a plethora of datasets from the CDC, the Pennsylvania Department of Health, Google, and OpenDataPhilly before I was able to find data that covered the time span and geographic areas of interest. My discussion with Dr. John Holmes was especially helpful for finalizing the data harmonization aspect of this analysis. He explained that if I were trying to publish this project, I would need express written permission from the CDC to link their data to other data sources. However, for a class project, it is fine to link the data to other sources without obtaining permission. In addition, I consulted Dr. Joe Romano regarding the machine learning portion of this analysis. Finally, I spoke with Dr. Sherrie Xie, in geographic epidemiology, to gain insights on creating maps to effectively demonstrate the changes in my study variables over time.
+One particular difficulty I had in the initial phase of this analysis was data harmonization. I examined a plethora of datasets from the CDC, the Pennsylvania Department of Health, Google, and OpenDataPhilly before I was able to find data that covered the time span and geographic areas of interest. 
+My discussion with Dr. John Holmes was especially helpful for finalizing the data harmonization aspect of this analysis. He explained that if I were trying to publish this project, I would need express written permission from the CDC to link their data to other data sources. However, for a class project, it is fine to link the data to other sources without obtaining permission.
+I spoke with Dr. Joe Romano from IBI to discuss my questions regarding the logistic regression component of the analysis. Specifically, I was thinking about logistic regression in terms of traditional statistical modeling versus machine learning. I asked him whether I should only include predictor variables in the machine learning model if they are individually significantly associated with the outcome in univariate models. I also asked about the necessity of checking for multicollinearity among predictor variables. Joe explained that when building a logistic regression model in a machine learning context, we are less concerned with predictors being significant, or whether there are interactions between the features. The goal is to make a highly performant model, rather than having a precise understanding of how individual features contribute to the outcome variable. I found this especially interesting, as all of my experience to-date is using logistic regression in epidemiological studies. Joe added that possible ways to deal with interaction between features are through using regularization (i.e., lasso) or feature selection. However, he said that multicollinearity is not usually tested in real-world machine learning, and a good machine learning model should be able to deal with complex interactions among features. In addition, the ensemble approach used in random forest models is characteristically resistant to the effects of interactions among features.
+ Finally, I spoke with Dr. Sherrie Xie, in geographic epidemiology, to gain insights on creating maps to effectively demonstrate the changes in my study variables over time.
+
+
 
 [My final project GitHub repository can be accessed here.](https://github.com/LeighCressman/BMIN503_Final_Project)
 
 
 ### Methods
+## Data Cleaning and Transformation
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
-
 
 The majority of the data for this analysis was publicly available via the Internet. 
 [The county-level vaccination data is on the CDC website and can be accessed via the Socrata Open Data API (SODA).](https://data.cdc.gov/Vaccinations/COVID-19-Vaccinations-in-the-United-States-County/8xkx-amqh). The CDC's county-level case data is not accessible through SODA, but can be downloaded manually from the [COVID-19 Integrated County View page](https://covid.cdc.gov/covid-data-tracker/#county-view&list_select_map_data_parent=Risk&map-metrics-cv-comm-transmission=community_transmission_level&list_select_map_data_metro=all).
@@ -36,29 +41,43 @@ PA: Bucks, Chester, Delaware, Montgomery, Philadelphia
 NJ: Burlington, Camden, Gloucester, Mercer 
 DE: New Castle
 
-Each dataset (CDC vaccine, CDC case, and Google community mobility) contains county-level time-series data with days as the interval. This analysis uses MMWR week as the time interval, so the county-level data in each dataset is aggregated by MMWR week, using MMWRweek::MMWRweek. The *MMWR* week is used for disease incidence and public health reporting, with values ranging from 1 through 53, and Sunday being the first day of any *MMWR* week (1). 
+Each dataset (CDC vaccine, CDC case, and Google community mobility) contains county-level time-series data with days as the interval. This analysis increments time in weeks, which are defined by the Morbidity and Mortality Weekly Report (*MMWR* week). The *MMWR* week is used for disease incidence and public health reporting, with values ranging from 1 through 53, and Sunday being the first day of any *MMWR* week (1). The county-level data in each dataset is aggregated by *MMWR* week, using MMWRweek::MMWRweek. The study begins with *MMWR* week 2020-07 (mid-February 2020) and ends with week 2021-39 (end of September 2021).
 
-The Google Community Mobility Reports date back to February 15, 2020. CDC case data did not exist prior to March 2020, and CDC vaccination data does not pick up fully vaccinated individuals prior to January 2021. Therefore, rows of zeros were added to vaccine and case data so that it could be merged with the social mobility dataset, joining on county and *MMWR* week.
+# Vaccination Data
+As previously mentioned, the vaccination data for this study came from the CDC website. While these data were pulled through the API during the testing phase, due to the need for login credentials to access the API, the relevant vaccination file has been included in the GitHub repository. The file exceeded GitHub's size limit, so it has been restricted to observations in Pennsylvania, New Jersey, and Delaware in a previous step. The CDC includes multiple vaccination point prevalence variables which are used in this analysis: Percent of people who are fully vaccinated (have second dose of a two-dose vaccine or one dose of a single-dose vaccine) based on the jurisdiction and county where the recipient lives, and total number of people who are fully vaccinated (have second dose of a two-dose vaccine or one dose of a single-dose vaccine) based on the jurisdiction and county where recipient lives (2). The CDC includes all age groups in the vaccination data in order to give a better measure of community immunity (3).
 
-Suppressed values CDC
-### Suppressed cells need to be replaced with minimum observed cases by county.
-# 0 values are not included when considering minimum number of cases.
+With regard to vaccines, the investigators in charge of the study are interested in the relationship between vaccination point prevalence and case change, as they hypothesize that vaccination affects transmission as a function of point prevalence. However, out of personal interest, I used the available point prevalence data and created a variable for vaccine incidence.
 
-Suppressed values Google
-### Mean_parks and mean_transit_stations contain NAs.
-# [Missing values are a result of activity being too 
-# low upon a specific day and therefore not achieving the 
-# anonymity threshold set by Google](https://support.google.com/covid19-mobility/answer/9825414?hl=en)
+The Google Community Mobility Reports date back to February 15, 2020. CDC vaccination data does not pick up fully vaccinated individuals prior to January 2021. Therefore, rows of zeros have been added to vaccine so that it could be merged with the social mobility dataset, joining on county and *MMWR* week.
+
+Vaccine incidence and vaccine prevalence (total number of people fully vaccinated) have been adjusted for county population (based on estimates from the 2019 U.S. Census) and standardized (base::scale) prior to being included as independent variables in regression models.
 
 
-Case and vaccine variables have been adjusted for county population based on estimates from the 2019 U.S. Census.
+# Google's COVID-19 Community Mobility Reports
+Google has created publicly available datasets to reflect how community activity has changed throughout the pandemic. Daily activity is measured in percent change from baseline, which is defined as the median value of the corresponding day of the week from January 3, 2020, through February 6, 2020 (4).
 
-Multiple vaccine variables
+Google created categories of community mobility based on their relevance to social distancing efforts and access to essentials services. Mobility trends are available for the following places:
+1) Grocery and pharmacy
+2) Parks
+3) Transit stations
+4) Retail and recreation
+5) Residential
+6) Workplaces
 
-Scaling case incidence and vaccine prevalence after adjusting for population
-base::scale 
+County-level data data are available for each day, so these variables have been aggregated by county and MMWR and joined to vaccination and case data on county and week.
 
-car::vif for checking variance inflation factor
+The variables for parks and transit stations contain missing values. This is a result of activity being too low upon a a specific day and therefore not achieving the anonymity threshold set by Google (5). Multiple methods were considered for dealing with missing data. As the suppressed cells are related to low activity, missing values are dealt with by identifying the minimum absolute value by county and replacing corresponding NAs with the resulting value.
+
+
+# SARS-CoV-2 Case Data
+County-level time-series case data can be accessed through the CDC's county view site. The CDC reports the 7-day rolling average of new cases per 100,000 population based on 2019 U.S. Census estimates (6). 
+
+As CDC case data did not exist prior to March 2020, and Google social mobility data begins in February 2020, rows of zeros were added to case data so that it could be merged with social mobility and vaccine data, joining on county and *MMWR* week. 
+
+Each county in the CDC case dataset contains suppressed cells. This is due to case numbers falling below the required reporting threshold in the first weeks of the pandemic. Therefore, similar to the approach used for missing values in Google social mobility data, the data were grouped by county, and the minimum observed value of cases was selected to replace the suppressed cells. Of note, 0 values were not included when identifying the minimum number of cases per county.
+
+To deal with the time-series component of the data, the outcome in this analysis is binary: is there an increase in mean cases next week compared to this week? To create this binary outcome variable, the rolling 7-day average of new cases per 100,000 population is used, along with dplyr::lead, which retrieves next week's 7-day average of new cases per 100,000. These two values are compared, and the result is 1 = increase, 0 = no increase.
+
 
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -93,11 +112,6 @@ library(car)
 # county-level vaccine data
 ############################
 
-### because login credentials are required to connect to the Socrata Open Data API (SODA),
-# the file has already been downloaded
-### file exceeded GitHub's file size limit, so it was restricted to Pennsylvania,
-# New Jersey, and Delaware in a previous step
-
 # import CDC county-level vaccination data for PA, NJ, and DE
 cdc_vacc <- read_csv("cdc_vacc_pa_nj_de.csv")
 
@@ -130,7 +144,7 @@ counties <- c("Philadelphia County", "Bucks County",
               "Mercer County", "New Castle County")
 
 
-# subtract yesterday's # vaccine numbers # from today # to get n of new vaccinations 
+# subtract yesterday's vaccine numbers from today to get n of new vaccinations 
 county_new <- data.frame()
 for (county in counties) {
   county_data <- cdc_coun %>% filter(recip_county == county)
@@ -145,7 +159,7 @@ for (county in counties) {
 county_agg <- county_new %>% 
   filter(between(date, "2020-02-15", "2021-10-09")) %>%
   group_by(recip_county, year_week) %>%
-  summarize(vacc_incidence_n = mean(new_vaccinations), #mean new fully vaccinated individuals                     
+  summarize(vacc_incidence_n = mean(new_vaccinations), #mean new fully vaccinated individuals               
             mean_per_pop_fully_vacc = mean(fully_vacc_per_pop), # per pop fully vaccinated 
             mean_fully_vacc_n = mean(fully_vaccinated)) %>% # mean cum. fully vaccinated
   arrange(recip_county, year_week)
@@ -202,8 +216,6 @@ google_week <- coun_g %>%
                    .names = "mean_{.col}")) %>% # add "mean" to each col name
   arrange(sub_region_2, year_week)
   
-### Variables Mean_parks and mean_transit_stations contain NAs
-
 # identify counties with missing data
 google_miss <- google_week %>%
   filter(mean_parks == "NaN" | mean_transit_stations == "NaN")
@@ -253,10 +265,7 @@ google_na <- google_week %>%
 # combine vaccine and social mobility data
 ################################################
 
-### Google Social Mobility data starts 2/15/2021. 
-# Counts for fully vaccinated individuals do not appear until early January 2021. 
 # Add rows of 0s for vaccination variables prior to MMWR week 2020-51
-
 add_vacc <- coun_g %>% distinct(sub_region_2, year_week) %>%
   filter(between(year_week, "2020 - 07", "2020 - 50")) %>%
   rename(recip_county = sub_region_2) %>%
@@ -304,8 +313,7 @@ clean_case <- cdc_case_data %>% rename(state = "State Abbreviation",
   #mutate(cases_7d_avg = as.numeric(str_replace_all(cases_7d_avg, "suppressed", "0"))) %>%
   arrange(county, year_week)
 
-### Suppressed cells need to be replaced with minimum observed cases by county.
-# 0 values are not included when considering minimum number of cases.
+# identify minimum number of cases for each county for replacing missing values
 supp <- clean_case %>% filter(cases_7d_avg != "suppressed" &
                                 cases_7d_avg != 0) %>%
   mutate(cases_7d_avg = as.numeric(cases_7d_avg)) %>%
@@ -349,7 +357,7 @@ next_case <- weekly_case %>%
   mutate(next_week_mean = lead(case_mean, 1), # use dplyr::lead to return next week's value
          next_week_mean = replace_na(next_week_mean, 0))
            
-# add county population data to case data (based on 2019 U.S. Census estimates)
+# add county population data to case data
 all_coun <- read_csv("all_counties_population.csv")
 next_case_fi <- next_case %>% inner_join(all_coun, by = "county")
 
@@ -361,11 +369,11 @@ next_case_fi <- next_case %>% inner_join(all_coun, by = "county")
 full_df <- next_case_fi %>% mutate(county_pop = population) %>%
   inner_join(explan, by = c("county" = "recip_county",
                             "year_week" = "year_week")) %>%
-  mutate(vacc_incidence_per100thou = vacc_incidence_n / county_pop * 100000, 
-         case_mean_per100thou = case_mean / county_pop * 100000, # rolling 7-day average of new cases per 100,000 population
-         next_week_per100thou = next_week_mean / county_pop * 100000, # rolling 7-day average of next week's new cases per 100,000 population
+  mutate(vacc_incidence_per100thou = vacc_incidence_n / county_pop * 100000, # adjust by county population
+         case_mean_per100thou = case_mean, 
+         next_week_per100thou = next_week_mean, 
          vacc_prevalence_per100thou = mean_fully_vacc_n / county_pop * 100000,
-         next_week_increase = ifelse(next_week_per100thou > case_mean_per100thou, 1, 0)) %>% # is next week's mean greater than this week's mean?
+         next_week_increase = ifelse(next_week_per100thou > case_mean_per100thou, 1, 0)) %>% 
   select(county, year_week, case_mean, case_mean_per100thou, next_week_mean,
          next_week_per100thou, next_week_increase, vacc_incidence_n,
          vacc_incidence_per100thou, mean_per_pop_fully_vacc, mean_fully_vacc_n, 
@@ -375,9 +383,17 @@ full_df <- next_case_fi %>% mutate(county_pop = population) %>%
   filter(year_week != "2021 - 40") # this is first week of October; it was needed for 
                                    # comparing the final week of the study (2021-39) to 
                                    # next week, but it will not be included in analysis
+```
+
+### Methods
+## Descriptive Analysis
+
+After finalizing the analysis dataset, several data quality checks are performed. Specifically, we verify that the dataset contains the expected number of rows, and the start and end dates of the study are correct.
+
+We then note that of the 860 observations in the dataset, 440 saw an increase in cases in the next week, and 420 did not see an increase.
 
 
-
+``` {r, eval = TRUE, message = FALSE}
 
 ########################################################
 ########################################################
@@ -385,6 +401,7 @@ full_df <- next_case_fi %>% mutate(county_pop = population) %>%
 ########################################################
 ########################################################
 
+# convert outcome variable to factor
 covid <- full_df %>%
   mutate(next_week_increase = factor(next_week_increase,
                                      levels = c(0, 1),
@@ -400,12 +417,19 @@ table(covid$county)
 min(covid$year_week) # 2020-07
 max(covid$year_week) # 2021-39
 
+# next week increase or no increase 
+table(covid$next_week_increase) # split is close to 50/50
+
+```
+
+Next, we look at the three vaccination independent variables to determine how the "increase" and "no increase" groups compare.
+
+
+``` {r, eval = TRUE, message = FALSE}
+
 #################################
 # outcome variable x vaccination 
 #################################
-
-# next week increase or no increase 
-table(covid$next_week_increase) # split is close to 50/50
 
 # view summary stats of vaccine vars - overall
 summary_df <- covid %>%
@@ -413,7 +437,8 @@ summary_df <- covid %>%
          vacc_incidence_per100thou) %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
-  select(-vars, -trimmed, -mad) %>%
+  select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
   print()
 
 # observations with increase
@@ -422,7 +447,8 @@ summary_inc <- covid %>% filter(next_week_increase == "increase") %>%
          vacc_incidence_per100thou) %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
-  select(-vars, -trimmed, -mad) %>%
+  select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
   print()
 
 # observations with no increase
@@ -431,36 +457,69 @@ summary_noinc <- covid %>% filter(next_week_increase == "no increase") %>%
          vacc_incidence_per100thou) %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
-  select(-vars, -trimmed, -mad) %>%
+  select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
   print()
 
-### The mean for mean_per_pop_fully_vacc and vacc_prevalence_per100thou
-#  in the "increase" group is higher than for the "no increase" group. 
-#  We expected the "no increase" group to have higher means for these variables.
+```
+Interestingly, we observe that in the group that has an increase in next week's mean cases, the means of the prevalence-related vaccination variables are higher ((1) percent of population which are fully vaccinated: mean = 16.13% in "increase" group vs. 13.71% in "no increase" group; and (2) vaccination prevalence per 100,000 population: mean = 16131.71 (increase group) vs. 13714.27 (no increase group)). Please note that these two vaccination variables are essentially the same, just on different scales.
 
-### The mean for vacc_incidence_per100thou is higher in "no increase" group.
+We expected that the group which did not have an increase in mean cases in the following week would have higher means for these two vaccination variables. 
+
+When comparing the vaccine incidence variable (vaccine incidence per 100,000 population), we see the results we would expect: mean vaccine incidence densities are 122.77 and 74 in the "no increase"  and "increase" groups, respectively.
+
+The above findings are visualized in the boxplots below.
+
+``` {r, eval = TRUE, message = FALSE}
 
 # boxplot for mean percentage of population fully vaccinated by outcome
 ggplot(data = covid, aes(x = next_week_increase, y = mean_per_pop_fully_vacc)) +
-  geom_boxplot(color = "darkorchid4", fill = "mediumpurple2")
+  geom_boxplot(color = "darkorchid4", fill = "mediumpurple2") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 12)) +
+  xlab("Outcome: Next Week's SARS-CoV-2 Cases") +
+  ylab("Percent of Population Fully Vaccinated") +
+  labs(title = "Vaccination by Outcome Group") 
+  
 
 # boxplot for mean vaccine prevalence by outcome
 ggplot(data = covid, aes(x = next_week_increase, y = vacc_prevalence_per100thou)) +
-  geom_boxplot(color = "magenta4", fill = "thistle")
+  geom_boxplot(color = "magenta4", fill = "thistle") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 12)) +
+  xlab("Outcome: Next Week's SARS-CoV-2 Cases") +
+  ylab("Mean Vaccine Prevalence / 100,000 Population") +
+  labs(title = "Vaccination by Outcome Group") 
+
 
 # boxplot for mean vaccine incidence by outcome
 ggplot(data = covid, aes(x = next_week_increase, y = vacc_incidence_per100thou)) +
-  geom_boxplot(color = "darkblue", fill = "plum3")
+  geom_boxplot(color = "darkblue", fill = "plum3") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 12)) +
+  xlab("Outcome: Next Week's SARS-CoV-2 Cases") +
+  ylab("Mean Vaccine Incidence / 100,000 Population") +
+  labs(title = "Vaccination by Outcome Group") 
+
+```
 
 
+Finally, we plot the independent variables against each other, and against the outcome variable to identify relationships.
+
+``` {r, eval = TRUE, message = FALSE}
 
 ########################
 # plot with ggpairs
 ########################
-df_clean <- covid %>% filter(complete.cases(.))
 
 # limit dataframe to focus on specific predictor variables  
-df_clean2 <- df_clean %>% 
+df_clean <- covid %>% filter(complete.cases(.)) %>%
   select(-county, -year_week, -case_mean, -case_mean_per100thou,
          -next_week_mean, -next_week_per100thou, -vacc_incidence_n,
          -vacc_incidence_per100thou, -mean_fully_vacc_n,
@@ -474,14 +533,23 @@ df_clean2 <- df_clean %>%
          workplace = mean_workplaces,
          residential = mean_residential)
 
-# compare outcome and mean_per_pop_fully_vacc only
-ggpairs(df_clean, mapping = aes(col = next_week_increase),
-        columns = c("mean_per_pop_fully_vacc"),
-        axisLabels = "show")
-
-# compare all variables at once
+# compare all variables simultaneously
 ggpairs(df_clean2)
 
+```
+
+We identify strong correlations between some pairs of the Google social mobility variables. Additional tests will be used to check for multicollinearity in the subsequent regression models.
+
+
+### Methods
+## Regression Analysis
+
+The primary goal of this analysis is to identify how changes in community mobility, SARS-CoV-2 variants, and vaccination relate to weekly changes in SARS-CoV-2 case incidence using logistic regression. The next step in the analysis is to fit univariate statistical models to find out 
+which variables are individually associated with case increase at a nominally significant level.
+
+Prior to running the logistic regression models, the vaccine incidence per 100,000 population and vaccine prevalence per 100,000 population are standardized. The motivation for this is that all other independent variables in the dataset are percentages, and there is concern about the magnitude affecting the regression coefficients.
+
+``` {r, eval = TRUE, message = FALSE}
 
 ########################################################
 ########################################################
@@ -490,23 +558,20 @@ ggpairs(df_clean2)
 ########################################################
 
 ###############################################
-# Fit univariate statistical models to find out 
-# which variables are individually associated 
-# with next_week_increase at a 
-# nominally significant level.
+# Fit univariate statistical models 
 ###############################################
 
-# scale vaccine variables (without centering)
-covid$vacc_inc_per100thou_sc <- scale(covid$vacc_incidence_per100thou, center = FALSE)[, 1]
-covidvacc_prev_per100thou_sc <- scale(covid$vacc_prevalence_per100thou, center = FALSE)[, 1]
+# standardize vaccine variables (without centering)
+covid$vacc_inc_per100thou_st <- scale(covid$vacc_incidence_per100thou, center = FALSE)[, 1]
+covid$vacc_prev_per100thou_st <- scale(covid$vacc_prevalence_per100thou, center = FALSE)[, 1]
 
+# drop unneeded variables
 covid_clean <- covid %>% select(-county, -year_week,
                                 -case_mean_per100thou, -case_mean,
                                 -next_week_mean, -next_week_per100thou,
                                 -vacc_incidence_n, -mean_fully_vacc_n) 
 
-
-# generate multiple models and save output to df
+# generate multiple univariate models and save output to df
 glm_output <- covid_clean %>%
   select(-next_week_increase, -vacc_incidence_per100thou,
          -vacc_prevalence_per100thou) %>%
@@ -521,14 +586,22 @@ glm_output <- covid_clean %>%
   filter(term != "(Intercept)") %>%
   rename(odds.ratio = estimate) %>%
   arrange(p.value)
+glm_output
 
+```
+
+The above table shows that two of the independent variables are significantly associated with case increase: vaccine incidence per 100,000 population and the social mobility variable for retail and recreation.
+
+Based on the above univariate analysis, a multivariate model is fit using the standardized form of vaccine incidence and retail and recreation as independent variables. The model is checked for multicollinearity, which is not an issue in this model.
+
+``` {r, eval = TRUE, message = FALSE}
 
 #####################################
 # model using significant predictors
 #####################################
 
 # fit model
-mod_vacc <- glm(next_week_increase ~ vacc_inc_per100thou_sc + mean_retail_rec,
+mod_vacc <- glm(next_week_increase ~ vacc_inc_per100thou_st + mean_retail_rec,
                 data = covid, family = "binomial")
 
 # check model output
@@ -541,6 +614,11 @@ car::vif(mod_vacc) # variance inflation factors are low, so no issues
 vacc_pred <- predict(mod_vacc, covid, type = "response") 
 head(vacc_pred)
 
+```
+
+After fitting the model, 10-fold cross-validation is performed to train and test the model.
+
+``` {r, eval = TRUE, message = FALSE}
 
 ########################################################
 ########################################################
@@ -548,7 +626,6 @@ head(vacc_pred)
 ########################################################
 ########################################################
 
-# use 10-fold cross validation to train and test model
 N = nrow(covid)
 K = 10
 set.seed(1234)
@@ -580,10 +657,10 @@ head(cbind(pred_outputs, obs_outputs))
 ########################################################
 
 # fit model
-mod_all <- glm(next_week_increase ~ vacc_inc_per100thou_sc + mean_retail_rec +
-                  mean_grocery_pharm + 
-                  mean_parks + mean_workplaces +
-                  mean_transit_stations, data = covid, family = "binomial")
+mod_all <- glm(next_week_increase ~ vacc_inc_per100thou_st + vacc_prev_per100thou_st +
+                  mean_retail_rec + mean_grocery_pharm + mean_residential +
+                  mean_parks + mean_workplaces + mean_transit_stations, 
+               data = covid, family = "binomial")
 
 vif(mod_all)
 
@@ -631,7 +708,7 @@ roc(obs_outputs, pred_outputs, ci = TRUE) # test data
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 ### Independent Variables
-The investigators hypothesized that mean vaccine prevalence per population (vacc_prevalence_per100thou) would be significantly associated with change in case incidence per population. However, mean vaccine incidence per population was identified as significant at p < 0.05 in the bivariate modeling stage. In addition, one Google social mobility variable, mean retail and recreation, was significantly associated with mean case increase or no increase.
+Of particular interest is the finding that vaccine incidence is significantly related to case increase, as the investigators hypothesized that mean vaccine prevalence per population (vacc_prevalence_per100thou) would be significantly associated with change in case incidence per population. However, mean vaccine incidence per population was identified as significant at p < 0.05 in the univariate modeling stage. In addition, one Google social mobility variable, mean retail and recreation, was significantly associated with mean case increase or no increase.
 
 
 ``` {r, eval = TRUE, message = FALSE}
@@ -644,9 +721,11 @@ glm_output
 ```
 
 
-As a final step, the areas  under the curve (AUC) for training and test sets are calculated, and the corresponding receiver operating characteristic (ROC) curves are generated. The AUCs are 0.63 and 0.62 for training and test data, respectively. These numbers indicate that the predictive accuracy is not very good, and therefore, the model does not distinguish well between no case increase and case increase. The plot of the ROC curves illustrate that the model does not have a very good measure of separability.
+As a final step, the areas  under the curve (AUC) for training and test sets are calculated, and the corresponding receiver operating characteristic (ROC) curves are generated. The AUCs are 0.63 (95% CI: 0.59 - 0.66) and 0.62 (95% CI: 0.58 - 0.66) for training and test data, respectively. These numbers indicate that the predictive accuracy is not very good, and therefore, the model does not distinguish well between no case increase and case increase. The plot of the ROC curves illustrate that the model does not have a very good measure of separability. However, Joe Romano commented that because the AUC is better than random guessing, it means the model is learning something and is therefore of potential value.
 
-Additionally, the AUCs for training and test data are very similar.
+Additionally, the AUCs for training and test data are very similar, which could indicate that the model is not overfit.
+
+
  
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -666,6 +745,14 @@ legend("bottomright", legend = c("GLM Logistic", "GLM Logistic Cross-Validation"
 
 ```
 
+# Analysis of Time Series Data 
+
+
 
 ### References
-https://ndc.services.cdc.gov/wp-content/uploads/MMWR_Week_overview.pdf
+(1) https://ndc.services.cdc.gov/wp-content/uploads/MMWR_Week_overview.pdf
+(2) https://data.cdc.gov/Vaccinations/COVID-19-Vaccinations-in-the-United-States-County/8xkx-amqh
+(3) https://www.cdc.gov/coronavirus/2019-ncov/vaccines/distributing/about-vaccine-data.html
+(4) https://www.google.com/covid19/mobility/data_documentation.html?hl=en
+(5) https://support.google.com/covid19-mobility/answer/9825414?hl=en
+(6) https://covid.cdc.gov/covid-data-tracker/#county-view
