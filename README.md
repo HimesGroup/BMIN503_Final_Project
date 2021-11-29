@@ -11,8 +11,9 @@ The correlation analysis of G protein-coupled receptors (GPCRs) and the screenin
 
 
 ## Source Information
+The Cancer Genome Atlas (TCGA): https://www.cancer.gov/about-nci/organization/ccg/research/structural-genomics/tcga
 
-
+##
 1. To start, **fork** this BMIN503_Final_Project repository.
 1. **Clone** the forked repository to your computer.
 1. Modify the files provided, add your own, and **commit** changes to complete your final project.
