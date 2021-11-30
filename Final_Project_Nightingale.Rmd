@@ -2,9 +2,11 @@
 title: "BMIN503/EPID600 Project Template"
 author: Kira Nightingale
 output: 
-  html_document:
-    theme: paper 
-    highlight: tango
+  html_document: 
+    theme: paper
+    highlight: kate
+    toc: yes
+    fig_width: 8
 ---
 ```{r global options, include = FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
@@ -39,6 +41,7 @@ library(dplyr)
 library(ggplot2)
 library(table1)
 library(pscl)
+library(sjPlot)
 
 #Loading data - 2015-2016 and 2017-2018
 demog15 <- read.xport("C:/Users/nighki01/Box Sync/Course Materials/2021 Fall_Biomedical Informatics/BMIN503_Final_Project/Data/15-16.DEMO_I.XPT")
@@ -115,13 +118,11 @@ exam15 <- select(exam15, SEQN, dmft)
 exam17 <- select(exam17, SEQN, dmft)
 exam <- full_join(exam15, exam17)
 
+#Generating binary DMFT score variable and square root of DMFT for analysis
 exam <- exam %>%
   mutate(dmft1 = ifelse(dmft>=1, 1, 0)) %>%
-  mutate(dmft_sqrt = sqrt(dmft)) %>%
-  mutate(dmft_log = log(dmft))
+  mutate(dmft_sqrt = sqrt(dmft))
 
-ggplot(data=exam, aes(dmft_log)) +
-  geom_bar()
 
 ```
 
@@ -193,27 +194,12 @@ data <- data %>%
 
 data$age.grp <- as.factor(data$age.grp)
 
-```
-
-
-```{r eval=FALSE}
-#SAVING THIS STUFF FOR LATER JUST IN CASE
-#This one works
-exam15$OHX02CTC <- as.character(exam15$OHX02CTC)
-exam15$OHX02CTC <- factor(exam15$OHX02CTC, levels = c("A", "D", "M", "Q", "S", "U", "X", "Y", "E", "F", "J", "K", "P", "R", "T", "Z"), labels = c(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1)) 
-
-#Create new columns for variables %in% c("A", "B", ...) numeric
-
-exam15<- mutate(exam15, ohx02 = function(x) {if (x %in% c("M", "Q", "S")){1} else {0}})
-exam15<- mutate(exam15, ohx02 = ifelse(OHX02CTC %in% c("A", "D", "M", "Q", "S", "U", "X", "Y"), 1, 0))
-
-for (i in 37:64) {
-  print(i)
-  newname <- paste0(names(exam15)[i], "new")
-  print(newname)
-  print(names(exam15)[i])
-  exam15 <- mutate(exam15, !!newname := ifelse(!!as.name(names(exam15)[i]) %in% c("E", "F", "K", "P", "R", "Z", "A"), 1, 0))
+#Scaling percent values in 5% increments for analysis
+for (i in 35:50) {
+  scaled <- paste0(names(data)[i], "scaled")
+  data <- mutate(data, !!scaled := (!!as.name(names(data)[i])/5))                 
 }
+
 ```
 
 Finally, all remaining data files were combined into a single data frame, and cases that included both nutrition data and DMFT score were included in the final data set. Methods for analysis, the applicable code, and outputs are included in the Results section below.
@@ -255,7 +241,7 @@ table1(~gender + race + adult.edu + poverty | age.grp, data=data, overall="Total
 
 ```
 
-Histogram of DMFT score
+The majority of participants had a DMFT score of 0, indicating no current or prior caries experience. As expected, DMFT score frequency trends downwards as the scores get higher (as a higher score indicates more caries). The increase in frequency of DMFT score of 28 (the maximum possible score) may be due to the fact that oral health .......
 ```{r}
 ggplot(data=exam, aes(dmft)) +
   geom_bar(fill="lightblue") +
@@ -277,25 +263,23 @@ table1(~p.calories + p.sugar + p.carbs + p.protein + p.vit.c + p.calcium + p.vit
 ```
 
 
-To assess whether DMFT score is associated with diet, a zero inflated negative binomial regression was performed. This regression model was chosen because the mean DMFT score (11.32) was much lower than the variance of the DMFT score (65.15), and the data included more zeros than expected by the model. 
+To assess whether DMFT score is associated with diet, two separate analyses were performed. First, a logistic regression was run using a binomial outcome which indicated individuals with a DMFT score of 0 versus individuals with a DMFT score of 1 or greater. Then, a linear regression was run using the square root of all non-zero DMFT scores. For ease of interpretation, percent daily values were scaled to increments of 5%.
 ```{r}
+#Logistic regression
+logistic <- glm(dmft1 ~ p.caloriesscaled + p.carbsscaled + p.proteinscaled + p.vit.cscaled + p.vit.dscaled + p.sugarscaled + p.calciumscaled + age.grp + adult.edu + gender, data = data, family = binomial())
 
-model1 <- zeroinfl(dmft ~ p.calories + p.carbs + p.protein + p.vit.c + p.vit.d + p.sugar + p.calcium + age.grp + adult.edu + gender, data = data, dist = "negbin")
-summary(model1)
+tab_model(logistic)
+
+#Linear regression
+linear <- glm(dmft_sqrt ~ p.caloriesscaled + p.carbsscaled + p.proteinscaled + p.vit.cscaled + p.vit.dscaled + p.sugarscaled + p.calciumscaled + age.grp + adult.edu + gender, data = subset(data, dmft_sqrt != 0), family = gaussian())
+
+tab_model(linear)
 
 ```
-The only nutrient significantly associated with having a DMFT score of 0 versus >0 was sugar, with older adults and males having a higher probability of having a DMFT score of >0. Among those with DMFT scores >0, consumption of sugar was significantly associated with having a greater number of caries, whereas consumption of consumption of vitamin C was significantly associated with having fewer caries. Interestingly, increased carbohydrate consumption was also associated with having fewer caries. There was no significant impact of calcium or vitamin D consumption on caries. This is likely due to the fact that calcium and vitamin D may have a larger impact on tooth health close to the time of eruption, and this study was limited to individuals aged 20 years and older. Older adults were also more likely to have a greater number of caries, which intuitively makes sense as DMFT score can only increase over time, never decrease. Women were significantly more likely than men to have a greater number of caries, a finding that is supported in the literature. [10] Individuals who completed college or higher were significantly more likely to have fewer caries, which is also consistent with existing literature. [11]
+
+The only nutrient significantly associated with having a DMFT score of 0 versus >0 was sugar, with the likelihood of having a DMFT of 1 or greater increasing by 5% for each 5% of RDV sugar consumption. Older adults and females had a higher probability of having a DMFT score of >0. Among those with DMFT scores >0, consumption of sugar was significantly associated with having a greater number of caries, whereas consumption of consumption of vitamin C was significantly associated with having fewer caries. Interestingly, increased carbohydrate consumption was also associated with having fewer caries. There was no significant impact of calcium or vitamin D consumption on caries. This is likely due to the fact that calcium and vitamin D may have a larger impact on tooth health close to the time of eruption, and this study was limited to individuals aged 20 years and older. Older adults were also more likely to have a greater number of caries, which intuitively makes sense as DMFT score can only increase over time, never decrease. Women were significantly more likely than men to have a greater number of caries, a finding that is supported in the literature. [10] Individuals who completed college or higher were significantly more likely to have fewer caries, which is also consistent with existing literature. [11]
 
 
-```{r}
-#Maybe will break up into a logistic regression and linear regression ... start of code is here
-
-glm <- glm(dmft1 ~ p.calories + p.carbs + p.protein + p.vit.c + p.vit.d + p.sugar + p.calcium + age.grp + adult.edu + gender, data = data, family=binomial())
-
-summary(glm)
-exp(coef(glm))
-
-```
 
 
 ### References
