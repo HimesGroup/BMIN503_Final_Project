@@ -15,6 +15,7 @@ The correlation analysis of G protein-coupled receptors (GPCRs) and the screenin
 - Perl: https://www.perl.org/
   - Copy and paste the following command into your Command Prompt and hit Enter to install this runtime along with the State Tool, our command line package manager:
   - powershell -Command "& $([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://platform.activestate.com/dl/cli/AS652/install.ps1'))) -activate-default Claire-WenyueZhao/Perl-5.34.0-Windows"
+  - *The Perl used in this project is Perl 5.28.
 
 ##
 1. To start, **fork** this BMIN503_Final_Project repository.
