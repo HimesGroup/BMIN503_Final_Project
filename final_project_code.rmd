@@ -15,9 +15,9 @@ options(width = 400)
 My final project will be using the CHDB Southeastern Pennsylvania Household Health Survey to investigate the relationship between mental health outcomes and social predictors in adults living in the greater Philadelphia area. Another layer of this project will examine whether the strength of these relationships differs between geographical areas such as county.
 
 Faculty Mentors:
--Dr. Kate Rendle
--Dr. John Holmes
--Dr. David Mandell
+-Dr. Kate Rendle, Department of Family Medicine and Community Health
+-Dr. John Holmes, Department of Epidemiology and Biostatistics
+-Dr. David Mandell, Penn Center for Mental Health
 
 GitHub repository link: https://github.com/sarahrc121/BMIN503_Final_Project
 
@@ -40,49 +40,51 @@ library(tidyverse)
 library(zipcodeR)
 library(maps)
 library(sf)
+library(car)
+library(pROC)
 ```
 
 # DATA READ-IN AND CLEAN
 ``` {r}
 
 # READ IN DATA, CURRENTLY IN STATA DATA FORMAT
-chdb <- read_dta('H:\\MBMI\\Data Science\\Final Project\\HHS18AR.dta')
+chdb_raw <- read_dta('H:\\MBMI\\Data Science\\Final Project\\HHS18AR.dta')
 
-head(chdb)
+head(chdb_raw)
 
 # CHANGE 'NA'S TO ZEROES
-chdb[is.na(chdb)] <- 0
+chdb_raw[is.na(chdb_raw)] <- 0
 
 # CHANGE CATEGORICAL VARIABLES TO CHARACTER
-chdb[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA')] <- lapply(chdb[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA')], as.character)
+chdb_raw[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA', 'SEX01', 'RESPAGE_4CAT', 'RSPGRAD2', 'respempl', 'RESPRACE_4CAT', 'NPOV100', 'SEXIDENT2')] <- lapply(chdb_raw[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA', 'SEX01', 'RESPAGE_4CAT', 'RSPGRAD2', 'respempl', 'RESPRACE_4CAT', 'NPOV100', 'SEXIDENT2')], as.character)
+
+# SELECT ONLY RESPONSES FROM FORM A RESPONDENTS (FORM A INCLUDED SOCIAL DETERMINANT QUESTIONS)
+chdb <- chdb_raw %>%
+              filter(form==1)
 
 # DAT1 WILL BE THE DATASET I WILL WORK WITH THAT HAS VARIABLES OF INTEREST
 dat1 <- data.frame()
 
 # RE-LABEL LEVELS OF ORIGINAL CATEGORICAL VARIABLES SO EASIER TO MAKE SENSE OF
-
 for (i in 1:nrow(chdb)) {
   if(chdb[i, 'MENTAL3A']=="1") {
-    dat1[i, 'mh_dx'] <- "Yes"
-  } else if(chdb[i, 'MENTAL3A']=="2") {
-  dat1[i, 'mh_dx'] <- "No"
-  } else  {
-  dat1[i, 'mh_dx'] <- "Unknown"
+    dat1[i, 'mh_dx'] <- 1
+  }
+  else  {
+  dat1[i, 'mh_dx'] <- 0
   }
 }
 
 
 for (i in 1:nrow(chdb)) {
   if(chdb[i, 'tretmnta']=="1") {
-    dat1[i, 'mh_trt'] <- "Yes"
-  } 
-  else if(chdb[i, 'tretmnta']=="2") {
-  dat1[i, 'mh_trt'] <- "No"
+    dat1[i, 'mh_trt'] <- 1
   } 
   else  {
-  dat1[i, 'mh_trt'] <- "Unknown"
+  dat1[i, 'mh_trt'] <- 0
   }
 }
+
 
 
 for (i in 1:nrow(chdb)) {
@@ -198,21 +200,144 @@ for (i in 1:nrow(chdb)) {
 }
 
 
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'SEX01']=="1") {
+    dat1[i, 'sex'] <- "Male"
+  } 
+  else if(chdb[i, 'SEX01']=="2") {
+  dat1[i, 'sex'] <- "Female"
+  } 
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'RESPAGE_4CAT']=="1") {
+    dat1[i, 'age'] <- "18-34"
+  } 
+  else if(chdb[i, 'RESPAGE_4CAT']=="2") {
+  dat1[i, 'age'] <- "35-49"
+  } 
+  else if(chdb[i, 'RESPAGE_4CAT']=="3") {
+  dat1[i, 'age'] <- "50-64"
+  }
+  else if(chdb[i, 'RESPAGE_4CAT']=="4") {
+  dat1[i, 'age'] <- "65+"
+  }
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'RSPGRAD2']=="1") {
+    dat1[i, 'edu'] <- "Less than HS"
+  } 
+  else if(chdb[i, 'RSPGRAD2']=="2") {
+  dat1[i, 'edu'] <- "High school grad"
+  } 
+  else if(chdb[i, 'RSPGRAD2']=="3") {
+  dat1[i, 'edu'] <- "Tech/trade/vocational"
+  }
+  else if(chdb[i, 'RSPGRAD2']=="4") {
+  dat1[i, 'edu'] <- "Some college"
+  }
+  else if(chdb[i, 'RSPGRAD2']=="5") {
+  dat1[i, 'edu'] <- "College grad"
+  }
+  else if(chdb[i, 'RSPGRAD2']=="6") {
+  dat1[i, 'edu'] <- "Post-grad"
+  }
+  else  {
+  dat1[i, 'edu'] <- "Unknown"
+  }
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'respempl']=="1") {
+    dat1[i, 'emp'] <- "Full-time"
+  } 
+  else if(chdb[i, 'respempl']=="2") {
+  dat1[i, 'emp'] <- "Part-time"
+  } 
+  else if(chdb[i, 'respempl']=="3") {
+  dat1[i, 'emp'] <- "Unemployed but looking"
+  }
+  else if(chdb[i, 'respempl']=="4") {
+  dat1[i, 'emp'] <- "Unemployed, not looking"
+  }
+  else if(chdb[i, 'respempl']=="5") {
+  dat1[i, 'emp'] <- "Retired"
+  }
+  else if(chdb[i, 'respempl']=="6") {
+  dat1[i, 'emp'] <- "Unable to work/disabled"
+  }
+  else if(chdb[i, 'respempl']=="7") {
+  dat1[i, 'emp'] <- "Homemaker"
+  }
+  else if(chdb[i, 'respempl']=="8") {
+  dat1[i, 'emp'] <- "Student/training"
+  }
+  else  {
+  dat1[i, 'emp'] <- "Unknown"
+  }
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'RESPRACE_4CAT']=="1") {
+    dat1[i, 'race'] <- "White"
+  } 
+  else if(chdb[i, 'RESPRACE_4CAT']=="2") {
+  dat1[i, 'race'] <- "Black"
+  } 
+  else if(chdb[i, 'RESPRACE_4CAT']=="3") {
+  dat1[i, 'race'] <- "Asian"
+  }
+  else if(chdb[i, 'RESPRACE_4CAT']=="4") {
+  dat1[i, 'race'] <- "Other"
+  }
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'NPOV100']=="1") {
+    dat1[i, 'poverty'] <- "Yes"
+  } 
+  else if(chdb[i, 'NPOV100']=="2") {
+  dat1[i, 'poverty'] <- "No"
+  } 
+}
+
+
+for (i in 1:nrow(chdb)) {
+  if(chdb[i, 'SEXIDENT2']=="1") {
+    dat1[i, 'sex_or'] <- "Hetero/straight"
+  } 
+  else if(chdb[i, 'SEXIDENT2']=="2") {
+  dat1[i, 'sex_or'] <- "Gay/lesbian"
+  } 
+  else if(chdb[i, 'SEXIDENT2']=="3") {
+  dat1[i, 'sex_or'] <- "Bisexual"
+  }
+  else if(chdb[i, 'SEXIDENT2']=="4") {
+  dat1[i, 'sex_or'] <- "Other"
+  }
+  else {
+  dat1[i, 'sex_or'] <- "Unknown"  
+  }
+}
+
 # ADD ZIP CODE TO WORKING DATASET
 dat1$zip <- chdb$zipcode
 
 # CHANGE 'UNKNOWN' VALUES TO NA
 dat1[dat1=="Unknown"] <- NA
 
-
-# CREATE SUBSETTED DATASET WHERE ALL RESPONDENTS HAVE BEEN DIAGNOSED WITH A MENTAL HEALTH CONDITION
 dat1_mh <- dat1 %>%
            filter(mh_dx=="Yes")
 
 ```
 
-
-# EXAMINE VARIABLES OF INTEREST (GEOGRAPHIC, MENTAL HEALTH, AND SOCIAL) WITH BASIC FREQUENCIES AND PLOTS
+# EXAMINE VARIABLES OF INTEREST (MENTAL HEALTH AND SOCIAL) WITH BASIC FREQUENCIES AND PLOTS
 ``` {r}
 # EVER DIAGNOSED WITH MENTAL HEALTH CONDITION
 dat1 %>%
@@ -222,7 +347,7 @@ dat1 %>%
 ggplot(data=dat1, aes(x=mh_dx)) +
   geom_bar()
 
-# IF HAVE BEEN DIAGNOSED WITH MENTAL HEALTH CONDITION EVER, CURRENTLY SEEKING TREATMENT
+# IF DIAGNOSED WITH MENTAL HEALTH CONDITION, CURRENTLY IN TREATMENT
 dat1_mh %>%
   group_by(mh_trt) %>%
   summarize(n())
@@ -290,6 +415,7 @@ ggplot(data=dat1, aes(x=soc_3cat)) +
 ```
 
 
+
 # GEOGRAPHICAL DATA EXPLORATION
 ``` {r}
 
@@ -308,11 +434,28 @@ phl.map <- map("county", "pennsylvania", xlim=c(-77,-74), ylim=c(39,41))
 phl.map <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/philadelphia_tracts_2010.rds")))
 phl.geo <- st_geometry(phl_map)
 
+# CREATE SF OBJECT FROM ORIGINAL DATASET TO BE ABLE TO PLOT
+dat1.nona.geo <- dat1 %>%
+                 filter(!is.na(lat) & !is.na(lng))
+
+phl.shape <- st_crs(4326)
+
+dat1.geo <- st_as_sf(dat1.nona.geo,
+                    coords=c("lng", "lat"),
+                    crs=phl.shape)
+
+
 # PLOT EACH RESPONSE ON BASE MAP 
 plot(phl.geo)
 plot(st_geometry(dat1), col="red", add=TRUE)
 
+
+ggplot() +
+  geom_sf(data=phl.map) +
+  geom_sf(data=dat1.geo)
+
 ```
+
 
 
 # SOCIAL SCALE AND INDIVIDUAL SOCIAL VARIABLES BY MENTAL HEALTH DIAGNOSIS
@@ -328,7 +471,6 @@ dat1 %>%
   ggplot(aes(x=mh_dx, fill=soc_2cat)) +
   geom_bar()
 
-
 # SOCIAL CAPITAL SCALE (3 CATEGORIES) BY MENTAL HEALTH DIAGNOSIS
 table(dat1$soc_3cat, dat1$mh_dx)
 chisq.test(dat1$soc_3cat, dat1$mh_dx)
@@ -338,9 +480,6 @@ dat1 %>%
   filter(!is.na(mh_dx), !is.na(soc_3cat)) %>%
   ggplot(aes(x=mh_dx, fill=soc_3cat)) +
   geom_bar()
-
-
-
 
 table(dat1$neigh_help, dat1$mh_dx)
 chisq.test(dat1$neigh_help, dat1$mh_dx)
@@ -363,10 +502,68 @@ chisq.test(dat1$park, dat1$mh_dx)
 # Park comfortable visiting x mental health dx; p=0.006208**
 
 ```
+
+> Focus on most significant predictors: social capital scale (3 levels), neighbors willing to help each other, feeling of belonging in neighborhood, people in neighborhood can be trusted, and have a park comfortable visiting
+
+# EVALUATE INDEPENDENT SOCIAL VARIABLES FOR SUITABILITY FOR REGRESSION (MISSINGNESS, VARIABILITY, COLLINEARITY)
+``` {r}
+
+# NEIGHBORS WILLING TO HELP
+table(dat1$neigh_help, useNA="ifany")
+# Varied responses with not too many missing values
+
+chisq.test(dat1$neigh_help, dat1$neigh_toget)
+# p<0.0001; highly correlated
+chisq.test(dat1$neigh_help, dat1$belong)
+# p<0.0001; highly correlated
+chisq.test(dat1$neigh_help, dat1$trust)
+# p<0.0001; highly correlated
+chisq.test(dat1$neigh_help, dat1$park)
+# p<0.0001; highly correlated
+
+
+# NEIGHBORS EVER WORKED TOGETHER
+table(dat1$neigh_toget, useNA="ifany")
+# Varied responses with not too many missing values
+
+chisq.test(dat1$neigh_toget, dat1$belong)
+# p<0.0001; highly correlated
+chisq.test(dat1$neigh_toget, dat1$trust)
+# p<0.0001; highly correlated
+chisq.test(dat1$neigh_toget, dat1$park)
+# p<0.0001; highly correlated
+
+
+# FEELING OF BELONGING IN NEIGHBORHOOD
+table(dat1$belong, useNA="ifany")
+# Varied responses with not too many missing values
+
+chisq.test(dat1$belong, dat1$trust)
+# p<0.0001; highly correlated
+chisq.test(dat1$belong, dat1$park)
+# p<0.0001; highly correlated
+
+
+# PEOPLE IN NEIGHBORHOOD CAN BE TRUSTED
+table(dat1$trust, useNA="ifany")
+# Varied responses with not too many missing values
+
+chisq.test(dat1$trust, dat1$park)
+# p<0.0001; highly correlated
+
+
+# PARK COMFORTABLE VISITING
+table(dat1$park, useNA="ifany")
+# Varied responses with not too many missing values
+
+```
+
+> Since all of the social determinant variables are highly correlated with each other, they will not be included in the final logistic regression models. The main independent variable will be the social scale with 3 categories (low, medium, and high) that is calculated based on all social determinant responses.
+
 # SOCIAL SCALE AND INDIVIDUAL SOCIAL VARIABLES BY MENTAL HEALTH TREATMENT
 ``` {r}
 
-# SOCIAL CAPITAL SCALE (2 CATEGORIES) BY MENTAL HEALTH TREATMENT
+
 table(dat1_mh$soc_2cat, dat1_mh$mh_trt)
 chisq.test(dat1_mh$soc_2cat, dat1_mh$mh_trt)
 # p=0.6645
@@ -376,7 +573,7 @@ dat1_mh %>%
   ggplot(aes(x=mh_trt, fill=soc_2cat)) +
   geom_bar()
 
-# SOCIAL CAPITAL SCALE (3 CATEGORIES) BY MENTAL HEALTH TREATMENT
+
 table(dat1_mh$soc_3cat, dat1_mh$mh_trt)
 chisq.test(dat1_mh$soc_3cat, dat1_mh$mh_trt)
 # p=0.8656
@@ -391,30 +588,76 @@ dat1_mh %>%
 
 table(dat1_mh$neigh_help, dat1_mh$mh_trt)
 chisq.test(dat1_mh$neigh_help, dat1_mh$mh_trt)
-# Neighbors willing to help each other x mental health treatment; p=0.5604
+# p=0.5604
 
 table(dat1_mh$neigh_toget, dat1_mh$mh_trt)
 chisq.test(dat1_mh$neigh_toget, dat1_mh$mh_trt)
-# Neighbors ever worked together x mental health treatment; p=0.2028
+# p=0.2028
 
 table(dat1_mh$belong, dat1_mh$mh_trt)
 chisq.test(dat1_mh$belong, dat1_mh$mh_trt)
-# Feeling of belonging in neighborhood x mental health treatment; p=0.6033
+# p=0.6033
 
 table(dat1_mh$trust, dat1_mh$mh_trt)
 chisq.test(dat1_mh$trust, dat1_mh$mh_trt)
-# People in neighborhood can be trusted x mental health dx; p=0.6915
+# p=0.6915
 
 table(dat1_mh$park, dat1_mh$mh_trt)
 chisq.test(dat1_mh$park, dat1_mh$mh_trt)
-# Park comfortable visiting x mental health treatment; p=0.6587
+# p=0.6587
 
 ```
 
-> It appears that mental health treatment is not significantly associated with any social determinants measured by this survey, so I will not perform my analysis with this variable.
-
+> It appears that none of the social variables are significantly associated with seeking mental health treatment. Therefore, I will not move forward with this part of the analysis.
 
 # PERFORM LOGISTIC REGRESSION ON OUTCOME OF MENTAL HEALTH DIAGNOSIS VERSUS SOCIAL DETERMINANT VARIABLES, CONTROLLING FOR CERTAIN DEMOGRAPHIC VARIABLES 
+``` {r}
+
+# CREATE LOGISTIC REGRESSION MODEL
+mh.fit <- glm(mh_dx ~ soc_3cat+sex+age+edu+emp+race+poverty+sex_or, data=dat1, family=binomial())
+
+summary(mh.fit)
+exp(coef(mh.fit))
+
+# LOGISTIC REGRESSION PREDICTED OUTCOMES
+mh.pred <- predict(mh.fit, dat1, type="response")
+head(mh.pred)
+
+# CROSS-VALIDATION
+N = nrow(dat1)
+K = 10
+set.seed(1234)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.glm <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset <- 0
+for (i in 1:K) {
+    train <- filter(dat1, s != i)
+    test <- filter(dat1, s == i)
+  obs.outputs[1:length(s[s == i]) + offset] <- test$mh_dx
+    
+  #GLM train/test
+  glm <- glm(mh_dx ~ soc_3cat+sex+age+edu+emp+race+poverty+sex_or, data=train, family=binomial())
+  glm.pred.curr <- predict(glm, test, type = "response")
+  pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.pred.curr
+  
+  offset <- offset + length(s[s == i])
+}
+
+head(cbind(pred.outputs.glm, obs.outputs))
+
+# ROC CURVE
+roc(dat1$mh_dx, mh.pred, ci=TRUE)
+
+plot.roc(dat1$mh_dx, mh.pred, ci=TRUE)
+plot.roc(obs.outputs, pred.outputs.glm, col="red", add=TRUE)
+
+glm.roc <- plot.roc(dat1$mh_dx, mh.pred, col="red", lwd=3, grid=TRUE)
+plot(ci.thresholds(glm.roc), col="grey")
+legend("bottomright", legend=c("Training", "Cross-Validation"), col=c("black", "red"), lwd=2)
+
+
+```
 
 
 ### Results
