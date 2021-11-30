@@ -76,7 +76,7 @@ As CDC case data did not exist prior to March 2020, and Google social mobility d
 
 Each county in the CDC case dataset contains suppressed cells. This is due to case numbers falling below the required reporting threshold in the first weeks of the pandemic. Therefore, similar to the approach used for missing values in Google social mobility data, the data were grouped by county, and the minimum observed value of cases was selected to replace the suppressed cells. Of note, 0 values were not included when identifying the minimum number of cases per county.
 
-To deal with the time-series component of the data, the outcome in this analysis is binary: is there an increase in mean cases next week compared to this week? To create this binary outcome variable, the rolling 7-day average of new cases per 100,000 population is used, along with dplyr::lead, which retrieves next week's 7-day average of new cases per 100,000. These two values are compared, and the result is 1 = increase, 0 = no increase.
+To deal with the time-series component of the data, the outcome in this analysis is binary: is there an increase in mean cases next week compared to this week? To create this binary outcome variable, the rolling 7-day average of new cases per 100,000 population is used, along with dplyr::lead, which retrieves next week's 7-day average of new cases per 100,000 population. These two values are compared, and the result is 1 = increase, 0 = no increase.
 
 
 ``` {r, eval = TRUE, message = FALSE}
@@ -100,7 +100,9 @@ library(GGally)
 library(tibble)
 library(pROC)
 library(car)
-
+library(gtsummary)
+library(patchwork)
+library(stringr)
 
 ##########################
 ##########################
@@ -310,7 +312,6 @@ clean_case <- cdc_case_data %>% rename(state = "State Abbreviation",
   mutate(year_week = ifelse(mmwr_week < 10, paste0(mmwr_year, " - ", "0", mmwr_week),
                             paste0(mmwr_year, " - ", mmwr_week))) %>%
   select(state, county, year_week, date, cases_7d_avg) %>%
-  #mutate(cases_7d_avg = as.numeric(str_replace_all(cases_7d_avg, "suppressed", "0"))) %>%
   arrange(county, year_week)
 
 # identify minimum number of cases for each county for replacing missing values
@@ -354,7 +355,7 @@ weekly_case <- case_na %>% group_by(county, year_week) %>%
 # so that this week can be compared to next week
 next_case <- weekly_case %>%
   ungroup() %>%
-  mutate(next_week_mean = lead(case_mean, 1), # use dplyr::lead to return next week's value
+  mutate(next_week_mean = lead(case_mean, 1), # return next week's value
          next_week_mean = replace_na(next_week_mean, 0))
            
 # add county population data to case data
@@ -372,7 +373,7 @@ full_df <- next_case_fi %>% mutate(county_pop = population) %>%
   mutate(vacc_incidence_per100thou = vacc_incidence_n / county_pop * 100000, # adjust by county population
          case_mean_per100thou = case_mean, 
          next_week_per100thou = next_week_mean, 
-         vacc_prevalence_per100thou = mean_fully_vacc_n / county_pop * 100000,
+         vacc_prevalence_per100thou = mean_fully_vacc_n / county_pop * 100000, # adjust by county population
          next_week_increase = ifelse(next_week_per100thou > case_mean_per100thou, 1, 0)) %>% 
   select(county, year_week, case_mean, case_mean_per100thou, next_week_mean,
          next_week_per100thou, next_week_increase, vacc_incidence_n,
@@ -438,8 +439,8 @@ summary_df <- covid %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
   select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
-  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
-  print()
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) 
+summary_df
 
 # observations with increase
 summary_inc <- covid %>% filter(next_week_increase == "increase") %>%
@@ -448,8 +449,8 @@ summary_inc <- covid %>% filter(next_week_increase == "increase") %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
   select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
-  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
-  print()
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) 
+summary_inc
 
 # observations with no increase
 summary_noinc <- covid %>% filter(next_week_increase == "no increase") %>%
@@ -458,8 +459,8 @@ summary_noinc <- covid %>% filter(next_week_increase == "no increase") %>%
   psych::describe(quant=c(.25,.75)) %>%
   as_tibble(rownames="rowname")  %>%
   select(-vars, -trimmed, -mad, -range, -skew, -kurtosis, -se) %>%
-  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) %>%
-  print()
+  select(rowname, n, min, Q0.25, median, Q0.75, max, mean, sd) 
+summary_noinc
 
 ```
 Interestingly, we observe that in the group that has an increase in next week's mean cases, the means of the prevalence-related vaccination variables are higher ((1) percent of population which are fully vaccinated: mean = 16.13% in "increase" group vs. 13.71% in "no increase" group; and (2) vaccination prevalence per 100,000 population: mean = 16131.71 (increase group) vs. 13714.27 (no increase group)). Please note that these two vaccination variables are essentially the same, just on different scales.
@@ -510,7 +511,7 @@ ggplot(data = covid, aes(x = next_week_increase, y = vacc_incidence_per100thou))
 ```
 
 
-Finally, we plot the independent variables against each other, and against the outcome variable to identify relationships.
+Finally, we plot the independent variables against each other, and against the outcome variable to identify existing relationships.
 
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -534,20 +535,19 @@ df_clean <- covid %>% filter(complete.cases(.)) %>%
          residential = mean_residential)
 
 # compare all variables simultaneously
-ggpairs(df_clean2)
+ggpairs(df_clean)
 
 ```
 
-We identify strong correlations between some pairs of the Google social mobility variables. Additional tests will be used to check for multicollinearity in the subsequent regression models.
+We identify strong correlations (both negative and positive) between some pairs of the Google social mobility variables. Additional tests will be used to check for multicollinearity in the subsequent regression models.
 
 
 ### Methods
 ## Regression Analysis
 
-The primary goal of this analysis is to identify how changes in community mobility, SARS-CoV-2 variants, and vaccination relate to weekly changes in SARS-CoV-2 case incidence using logistic regression. The next step in the analysis is to fit univariate statistical models to find out 
-which variables are individually associated with case increase at a nominally significant level.
+The primary goal of this analysis is to identify how changes in community mobility, SARS-CoV-2 variants, and vaccination relate to weekly changes in SARS-CoV-2 case incidence using logistic regression. The next step in the analysis is to fit univariate statistical models to find out which variables are individually associated with case increase at a nominally significant level.
 
-Prior to running the logistic regression models, the vaccine incidence per 100,000 population and vaccine prevalence per 100,000 population are standardized. The motivation for this is that all other independent variables in the dataset are percentages, and there is concern about the magnitude affecting the regression coefficients.
+Prior to running the logistic regression models, the vaccine incidence per 100,000 population and vaccine prevalence per 100,000 population are standardized. The motivation for this is that all other independent variables in the dataset are percentages, and there is concern about the magnitude of unstandardized vaccine incidence and prevalence affecting the regression coefficients.
 
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -584,15 +584,21 @@ glm_output <- covid_clean %>%
                conf.int = TRUE, 
                exponentiate = TRUE)) %>%
   filter(term != "(Intercept)") %>%
-  rename(odds.ratio = estimate) %>%
-  arrange(p.value)
+  arrange(p.value) %>%
+  rename("Odds Ratio" = estimate,
+         Variable = term,
+         "Standard Error" = std.error,
+         Statistic = statistic,
+         "P-value" = p.value,
+         "95% CI Lower" = conf.low,
+         "95% CI Upper" = conf.high) 
 glm_output
 
 ```
 
 The above table shows that two of the independent variables are significantly associated with case increase: vaccine incidence per 100,000 population and the social mobility variable for retail and recreation.
 
-Based on the above univariate analysis, a multivariate model is fit using the standardized form of vaccine incidence and retail and recreation as independent variables. The model is checked for multicollinearity, which is not an issue in this model.
+Based on the above univariate analysis, a multivariate model is fit using the standardized form of vaccine incidence density and retail and recreation as independent variables. Table output is generated using gtsummary::tbl_regression. The model is checked for multicollinearity, which is not an issue.
 
 ``` {r, eval = TRUE, message = FALSE}
 
@@ -605,7 +611,12 @@ mod_vacc <- glm(next_week_increase ~ vacc_inc_per100thou_st + mean_retail_rec,
                 data = covid, family = "binomial")
 
 # check model output
-tidy(mod_vacc, conf.int = TRUE, exponentiate = TRUE)
+mod_table <- mod_vacc %>%
+  tbl_regression(
+    exponentiate = TRUE,
+    label = list(vacc_inc_per100thou_st ~ "Vaccine Incidence per 100,000 Population",
+                 mean_retail_rec ~ "Mean Retail and Recreation")) %>%
+  bold_labels()
 
 # check for multicollinearity
 car::vif(mod_vacc) # variance inflation factors are low, so no issues 
@@ -639,7 +650,7 @@ for (i in 1:K) {
   obs_outputs[1:length(s[s == i]) + offset] <- test$next_week_increase
   
   # GLM train/test
-  glm <- glm(next_week_increase ~ vacc_inc_per100thou_sc + mean_retail_rec, 
+  glm <- glm(next_week_increase ~ vacc_inc_per100thou_st + mean_retail_rec, 
              data = train, family = "binomial")
   glm_pred_curr <- predict(glm, test, type = "response")
   pred_outputs[1:length(s[s == i]) + offset] <- glm_pred_curr
@@ -647,6 +658,96 @@ for (i in 1:K) {
   offset <- offset + length(s[s == i])
 }
 head(cbind(pred_outputs, obs_outputs))
+
+
+```
+
+### Methods
+## Additional Analysis of Vaccine Incidence
+
+In an effort to identify why vaccine incidence and not vaccine prevalence was significantly associated with an increase in cases next week, time-series graphs are generated.
+
+``` {r, eval = TRUE, message = FALSE,  fig.width=10, fig.height=10}
+
+# reformat df for plots
+covid$County <- gsub(paste(stopwords, collapse="|"), "", covid$county)
+
+# vaccine plot
+vacc_plot <- ggplot(covid, aes(x = year_week, y = vacc_incidence_per100thou, color = County, group = County)) +
+  geom_line(size = 1) + 
+  scale_color_viridis(discrete = TRUE) + 
+  theme_bw() +
+    theme(
+          plot.title = element_text(size=rel(1.2), hjust = 0.5, lineheight=.9, face="bold", colour="black"),
+          axis.title.x = element_text(size=11, lineheight=.9, face="bold", colour="black"),
+          axis.title.y = element_text(size=11, lineheight=.9, face="bold", colour="black"),
+          axis.text.x = element_text(colour="black", angle = 60, hjust = 1.00),
+          axis.text.y = element_text(colour="black"),
+          legend.title = element_text(), 
+          legend.text = element_text(size = 10)) +
+  labs(title = "Vaccination Incidence in the Delaware Valley", 
+       x = "MMWR Week", 
+       y = "Mean Vaccination Incidence per 100,000") +
+  scale_y_continuous(expand = c(0,0), limit = c(0, 800)) +
+  scale_x_discrete(labels = c("2020-07", "", "", "", "", "", "", "2020-14", "", "",
+                              "", "", "", "", "2020-21", "", "", "", "", "", "",
+                              "2020-28", "", "", "", "", "", "", "2020-35", 
+                              "", "", "", "", "", "", "2020-42", "", "", "", "", "", "",
+                              "2020-49", "", "", "", "", "", "", "2021-03", "", "", "", 
+                              "", "", "", "2021-10", "", "", "", "", "", "", "2021-17",
+                              "", "", "", "", "", "", "2021-24", "", "", "", "", "", "",
+                              "2021-31", "", "", "", "", "", "", "", "2021-39"))
+
+
+# case plot
+case_plot <- ggplot(covid, aes(x = year_week, y = case_mean_per100thou, color = County, group = County)) +
+  geom_line(size = 1) + 
+  scale_color_viridis(discrete = TRUE) + 
+  theme_bw() +
+    theme(
+          plot.title = element_text(size=rel(1.2), hjust = 0.5, lineheight=.9, face="bold", colour="black"),
+          axis.title.x = element_text(size=11, lineheight=.9, face="bold", colour="black"),
+          axis.title.y = element_text(size=11, lineheight=.9, face="bold", colour="black"),
+          axis.text.x = element_text(colour="black", angle = 60, hjust = 1.00),
+          axis.text.y = element_text(colour="black"),
+          legend.title = element_text(), 
+          legend.text = element_text(size = 10)) +
+  labs(title = "SARS-CoV-2 Case Incidence in the Delaware Valley", 
+       x = "MMWR Week", 
+       y = "Mean Case Incidence per 100,000") +
+  scale_y_continuous(expand = c(0,0), limit = c(0, 1110)) +
+  scale_x_discrete(labels = c("2020-07", "", "", "", "", "", "", "2020-14", "", "",
+                              "", "", "", "", "2020-21", "", "", "", "", "", "",
+                              "2020-28", "", "", "", "", "", "", "2020-35", 
+                              "", "", "", "", "", "", "2020-42", "", "", "", "", "", "",
+                              "2020-49", "", "", "", "", "", "", "2021-03", "", "", "", 
+                              "", "", "", "2021-10", "", "", "", "", "", "", "2021-17",
+                              "", "", "", "", "", "", "2021-24", "", "", "", "", "", "",
+                              "2021-31", "", "", "", "", "", "", "", "2021-39"))
+
+vacc_plot / case_plot
+
+  
+
+
+  
+  
+
+
+-> p_vax
+
+bmin %>% qplot(data = ., x = year_week, y = case_mean_per100thou, color = county, geom = c("point", "line"), group = county) + scale_color_viridis_d() + 
+  theme(axis.text.x = element_text(angle = 270)) 
+
+library(patchwork)
+
+p_vax / p_case
+
+
+```
+
+
+``` {r, eval = TRUE, message = FALSE}
 
 
 
@@ -707,16 +808,24 @@ roc(obs_outputs, pred_outputs, ci = TRUE) # test data
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
-### Independent Variables
-Of particular interest is the finding that vaccine incidence is significantly related to case increase, as the investigators hypothesized that mean vaccine prevalence per population (vacc_prevalence_per100thou) would be significantly associated with change in case incidence per population. However, mean vaccine incidence per population was identified as significant at p < 0.05 in the univariate modeling stage. In addition, one Google social mobility variable, mean retail and recreation, was significantly associated with mean case increase or no increase.
-
+## Independent Variables
+Of particular interest is the finding that vaccine incidence is significantly related to case increase, as the investigators hypothesized that mean vaccine prevalence per population (vacc_prevalence_per100thou_st) would be significantly associated with change in case incidence per population. However, mean vaccine incidence per population (standardized form) was identified as significant at p < 0.05 in the univariate modeling stage. In addition, one Google social mobility variable, mean retail and recreation, was significantly associated with mean case increase or no increase.
 
 ``` {r, eval = TRUE, message = FALSE}
-
-# table of individual predictors of case increase
 glm_output
 
+```
 
+## Main Model
+Both independent variables identified as significant in the univariate modeling stage are significant at the <0.001 level when put into the multivariate logistic regression model. When mean retail and recreation was used as a single explanatory variable predicting case increase, it was significant at the <0.05 level, but when used in combination with vaccine incidence density, the p-value decreases.
+The odds ratio for vaccine incidence density is 0.62 (95% CI: 0.51 - 0.73). This can be interpreted as for each additional new vaccine in a given week, the odds of a case increase n the following week decrease by almost half.
+The odds ratio for mean retail and recreation is 1.02 (95% CI: 1.01 - 1.03). Even though retail and recreation is significantly associated with case increase, the effect is very small (i.e., the odds of cases increasing when retail and recreation activity increases by 1 percentage point are almost the same as they would be if retail and recreation activity did not increase).
+
+``` {r, eval = TRUE, message = FALSE}
+mod_table
+
+
+```
 
 ```
 
