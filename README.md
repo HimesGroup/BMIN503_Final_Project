@@ -8,7 +8,10 @@ Therefore, in order to benefit patients, it is necessary to continue research on
 The correlation analysis of G protein-coupled receptors (GPCRs) and the screening of GPCR ligands have always been the focus of new drug development. In recent years, new studies have demonstrated the existence of newly discovered intracellular and extracellular interactions of GPCRs. Therefore, whether LUAD has unstudied GPCR related targets may be a novel direction. In similar studies, accurate identification of target-drug interactions is one of the key steps in the design of targeted drugs. However, screening drugs on an experimental scale is very expensive. Therefore, it is important to predict the interaction between substrate and drug pair directly from molecular sequence.
 
 ## Required Packages
-- install.packages("rtracklayer")
+- install "rtracklayer":
+  - if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+    BiocManager::install("rtracklayer")
 - install.packages("readr")
 - library(data.table)
 - library(dplyr)
