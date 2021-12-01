@@ -11,10 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 library("gridExtra")
 ```
 
-###Note to peer reviewer: 
-I am yet to clean up my code (indentations, comments), plots (cosmetic improvements) and add citations in the introduction. Right now, exploratory analysis is underway. Predictive analysis is not done yet.
-I have left notes in the document where I would appreciate feedback on specific points.
-
 ## Overview
 
 My project aims to summarize and visualize the trends in the use of animals in biomedical research by species, pain levels and state in the US the over the period from 2008 to 2019. The data is obtained from the US Department of Agriculture’s [APHIS annual reports](https://www.aphis.usda.gov/aphis/ourfocus/animalwelfare/sa_obtain_research_facility_annual_report/ct_research_facility_annual_summary_reports). Following this exploratory analysis, a prediction for the number of animals that will be used over the next 5 years will be made.
@@ -25,7 +21,7 @@ The use of animals in biomedical research is ubiquitous. There are two main cate
 
 In 1938, Congress passed the U.S. Federal Food, Drug, and Cosmetic Act, mandating animal toxicity testing. As of October 7, 2021, Congress introduced the bipartisan FDA Modernization Act to end animal testing mandates. This comes after the European Parliament resoundingly passed a resolution on September 16, 2021, with a vote of 667 to 4 to phase out animal testing. How has animal use in research changed over the past few years in the US? What is the significance of species, state, pain levels? Using the limited USDA data, I aim to answer these questions. Furthermore, a regression model will predict the number of animals that will be needed in the next few years if the same trends continue. This analysis could be of interest to biomedical companies to reduce their time and resources spent on animal models, FDA for revision of regulatory requirements, bioethics specialists and animal advocacy groups.
 
-The trends in animal use could be influenced by technologies that enhanced the ease of building animal models, technologies that performed better than animal models, change in the bioethical standards, change in public sentiment about the topic and even opinions voiced by the heads of government regulatory bodies. I am personally interested in this analysis because one of my career goals is to work towards developing and commercializing alternatives to animal methods in biomedical research.
+The trends in animal use could be influenced by technologies that enhanced the ease of building animal models, technologies that performed better than animal models, change in bioethical standards, change in public sentiment about the topic and even opinions voiced by the heads of government regulatory bodies. I am personally interested in this analysis because one of my career goals is to work towards developing and commercializing alternatives to animal methods in biomedical research.
 
 ## Cleaning and Loading Data
 
@@ -42,6 +38,7 @@ The following code chunk loads the data as a dataframe, stacked by year and colu
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
 library("tidyverse")
 library("dplyr")
+
 datafr <- purrr::map_dfr(
   .x = c(2008:2019), 
   .f = function(x){
@@ -61,10 +58,11 @@ datafr <- purrr::map_dfr(
 
 #Checking if the data loaded is correct
 datafr %>% count(Year, Column)
+
 datafr <- mutate(datafr, pain.level = factor(Column, levels = c("B", "C", "D", "E"), labels = c(0, 1, 2, 3)))
 ```
 
-## Data Visulation and Exploratory Analysis
+## Data Visualization and Exploratory Analysis
 
 Now let us visualize the numbers! The first plot shows the total animals (all categories combined) by year. The second plot shows the same but with the breakup by column.
 
@@ -73,6 +71,7 @@ data.total <- filter(datafr, State == "REPORT TOTAL")
 
 #Total by year
 data.total1 <- summarise(group_by(data.total, Year), Total = sum(Total))
+
 ggplot(data = data.total1, aes(x = Year, y = Total)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + scale_y_continuous(breaks = seq(900000, 1300000, by = 100000), labels = seq(9, 13, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year") +
 theme(
         plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
@@ -108,7 +107,21 @@ data.by.state <- datafr %>%
   filter(State != "REPORT TOTAL") %>%
   group_by(State, pain.level) %>%
   summarise(Total = sum(Total))
-  
+
+data.by.state.total <- group_by(data.by.state, State) %>%
+  summarize(Total.all = sum(Total))
+ggplot(data.by.state.total, aes(x = State, y = Total.all)) + geom_point(size = 4) +
+theme(
+        plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 12, angle = 90, vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
 ggplot(data.by.state, aes(x = State, y = Total, color = pain.level)) + geom_point(size = 4) +
 theme(
         plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
@@ -121,13 +134,89 @@ theme(
         legend.text = element_text(size = 10)
       )
 ```
-Highest by pain level:
+
+From the graphs, we get the following information:
+
+States using the highest number of animals overall across all pain levels:
+CA, MA, NJ
+
+States using the highest number of animals by pain level:
 - 0 CA, MD, TX
 - 1 CA, MA, OH
 - 2 CA, TX, MA
 - 3 MO, MI, IA
 
-Note to peer reviewer: This is a messy plot, feedback on how to represent this better will be appreciated!
+An arguably better representation of the same data is the use of interactive maps.
+
+```{r}
+library("sf")
+library("spData")
+
+usa <- st_read("C:/Users/Deeksha Hegde/Downloads/us-state-boundaries/us-state-boundaries.shp") %>%
+  rename(State = stusab)
+head(usa)
+to_map <- inner_join(usa, data.by.state.total, by = "State")
+
+library(mapview)
+library(leaflet)
+pal_fun <- colorNumeric("BuPu", NULL)
+pu_message <- paste0(to_map$State,  
+                     "<br>Number of animals used: ",       
+                     prettyNum(to_map$Total.all, big.mark = ","))
+
+leaflet(to_map) %>%
+  addPolygons(stroke = FALSE,                        # remove polygon borders
+              fillColor = ~pal_fun(Total.all),
+              fillOpacity = 0.8, smoothFactor = 0.5, 
+              popup = pu_message) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~Total.all,                 
+            title = 'Total number of animals used',                  
+            opacity = 1) %>%                         
+  addScaleBar()
+```
+
+
+```{r}
+library("sf")
+library("spData")
+
+usa <- st_read("C:/Users/Deeksha Hegde/Downloads/us-state-boundaries/us-state-boundaries.shp") %>%
+  rename(State = stusab)
+head(usa)
+pl0 <- filter(data.by.state, pain.level == 0)
+to_map_0 <- inner_join(usa, pl0, by = "State")
+
+library(mapview)
+library(leaflet)
+pal_fun <- colorNumeric("BuPu", NULL)
+pu_message <- paste0(to_map_0$State,  # paste0 to append tract name with other relevant text 
+                     "<br>Number of animals used: ",       # <br> forces new line
+                     # use round function to round continuous poverty rate to one decimal point
+                     prettyNum(to_map_0$Total, big.mark = ","))
+
+leaflet(to_map_0) %>%
+  addPolygons(stroke = FALSE,                        # remove polygon borders
+              fillColor = ~pal_fun(Total),
+              fillOpacity = 0.8, smoothFactor = 0.5, # increase opacity and resolution
+              popup = pu_message) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%   # add third party provider tile
+  #addProviderTiles(providers$Stamen.Toner) %>%
+  #addProviderTiles(providers$Esri.NatGeoWorldMap)
+  addLegend("bottomright",                           # location of legend
+            pal=pal_fun,                             # palette function
+            values=~Total,                 # variable to be passed to palette function
+            title = 'Total number of animals used at pain level 0',                  # legend title
+            opacity = 1) %>%                         # legend opacity (1 = completely opaque)
+  addScaleBar()
+```
+
+Repeat for pain levels 1, 2, 3. 
+How do I make all maps appear in one grid?
+Different colors for pain levels or same?
+How to make a loop/function to repeat for all pain levels?
 
 Now, since we're in Pennsylvania, let us see what the plots for PA looks like.
 
@@ -168,14 +257,26 @@ The states having CV > 1 will be examined further.
 data.AZ <- filter(datafr, State == "AZ")
 ggplot(data = data.AZ, aes(x = Year, y = Total, color = Column)) + geom_line()+
   scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year by Pain Levels in Arizona")
-
-#AZ.C <- select(data.AZ, Column == "C", Year == 2010)
-#replace outlier with mean without it
-#do the AZ and total plots again
-#from this point onwards, using imputed data
 ```
 
-Column C of the year 2010 is clearly an outlier. I verified the data again from the USDA report. It is most likely a typographical error. I will replace this point with the mean of the rest of the points.
+Column C of the year 2010 is clearly an outlier. I verified the data again from the USDA report. It is most likely a typographical error. On examination, I found that the outlier is coming from the All_Other_Covered_Species. I first replaced that value with NA and found the mean along the column for the rest of the years. I replaced the NA with the rounded mean and finally updated the total. The updated plot for AZ is also shown.
+
+```{r}
+#Setting the outlier point to NA
+data.AZ[, 2][data.AZ['Column'] == "C" & data.AZ['Year'] == 2010] <- NA
+
+#Setting the outlier point to the mean of the column over the years excluding outlier year
+data.AZ[, 2][data.AZ['Column'] == "C" & data.AZ['Year'] == 2010] <- round(mean(data.AZ[, 2][data.AZ['Column'] == "C"], na.rm = TRUE), digits = 0)
+
+#Updating the Total column for the year
+data.AZ[, 'Total'][data.AZ['Column'] == "C" & data.AZ['Year'] == 2010] <- sum(data.AZ[2:12][data.AZ['Column'] == "C" & data.AZ['Year'] == 2010])
+
+#Updated plot with outlier adjusted
+ggplot(data = data.AZ, aes(x = Year, y = Total, color = Column)) + geom_line()+
+  scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year by Pain Levels in Arizona (Outlier adjusted)")
+```
+
+The second state having CV > 1 is Kansas. Let's look at its plot.
 
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
 #Total by column for KS
@@ -184,7 +285,10 @@ data.KS <- filter(datafr, State == "KS")
 ggplot(data = data.KS, aes(x = Year, y = Total, color = Column)) + geom_line()+
   scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year by Pain Levels in Kansas")
 ```
-2019 column C appears to be an outlier but cannot be sure.
+
+2019 column C is likely to be an outlier but unlike the case with Arizone, we cannot be sure since we don't have the data for the years after 2019.
+
+Finally, we have West Virginia.
 
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
 #Total by column for WV
@@ -193,27 +297,66 @@ data.WV <- filter(datafr, State == "WV")
 ggplot(data = data.WV, aes(x = Year, y = Total, color = Column)) + geom_line()+
   scale_x_continuous(breaks = c(2008:2019)) + ggtitle("Total number of animals vs. Year by Pain Levels in West Virginia")
 ```
-WV does not seem to have outliers. (mention across all columns)
+
+WV does not seem to have outliers, since there is an increase and decrease in all columns over 4 years from 2015-2019.
+
+Now that we have investigated outliers, let us go back to the Total number of animals vs. Year plots and revise them.
 
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
-#Total by column for CA
 
-data.CA <- filter(datafr, State == "CA")
-ggplot(data = data.CA, aes(x = Year, y = Total, color = Column)) + geom_line()+
-  scale_x_continuous(breaks = c(2008:2019))
+datafr[datafr['State'] == "AZ" & datafr['Column'] == "C" & datafr['Year'] == 2010, ] <- data.AZ[data.AZ['Column'] == "C" & data.AZ['Year'] == 2010, ]
+datafr[530, 2:13] <- colSums(datafr[478:529, 2:13])
+
+data.total <- filter(datafr, State == "REPORT TOTAL")
+
+#Total by year
+data.total1 <- summarise(group_by(data.total, Year), Total = sum(Total))
+ggplot(data = data.total1, aes(x = Year, y = Total)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + scale_y_continuous(breaks = seq(900000, 1300000, by = 100000), labels = seq(9, 13, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+#Total by year and column
+total.plot <- ggplot(data = data.total, aes(x = Year, y = Total, color = pain.level)) + geom_line() + scale_x_continuous(breaks = c(2008:2019)) + scale_y_continuous(breaks = seq(100000, 700000, by = 100000), labels = seq(1, 7, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year by Pain Levels") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+total.plot
+
+datafr[datafr['State'] == "REPORT TOTAL" & (datafr['Year'] == 2015 | datafr['Year'] == 2016), ]
+
+data.total1 <- mutate(data.total1, percentage.change = (Total/lag(Total) -1)*100) 
+data.total2 <- mutate(data.total1, percentage.change = 100*(Total - first(Total))/Total) #This gives the same as first plot with different y axis
+#This tells us that the overall change in 12 years is a 24% reduction.
+
+ggplot(data = data.total1, aes(x = Year, y = percentage.change)) + geom_line(na.rm = TRUE) + scale_x_continuous(breaks = c(2008:2019))
 ```
 
+Now we observe a more steady decline in the total number of animals over the years.
 
 ```{r, fig.height = 30, fig.width = 30, error = FALSE, warning = FALSE, message = FALSE}
 #Nested functions for 50 plots
 
+#This chunk not needed?
 state_plot <- purrr::map(
    .x = unique(datafr$State)[unique(datafr$State) != "REPORT TOTAL"], 
   .f = function(x){
-    ggplot(data = datafr %>% filter(State == x), aes(x = Year, y = Total, color = Column)) + geom_line() + ggtitle(label = x) +
+    ggplot(data = datafr %>% filter(State == x), aes(x = Year, y = Total, color = pain.level)) + geom_line() + ggtitle(label = x) +
   scale_x_continuous(breaks = c(2008:2019)) +
       theme(
-        plot.title = element_text(size = 8, face = "bold", hjust = 0.5),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
         axis.title = element_blank(),
         axis.text = element_text(size = 8),
         legend.position = "none"
@@ -221,52 +364,86 @@ state_plot <- purrr::map(
   }
 )
 
-ggplot(data = datafr %>% filter(State != "REPORT TOTAL"), aes(x = Year, y = Total, color = Column)) + geom_line() +
-  scale_x_continuous(breaks = c(2008:2019)) + facet_wrap( ~ State, ncol = 5, scales = "free")
+ggplot(data = datafr %>% filter(State != "REPORT TOTAL"), aes(x = Year, y = Total, color = pain.level)) + geom_line(size = 2) + ggtitle("Total number of animals used by each state by pain levels") +
+  scale_x_continuous(breaks = c(2008:2019)) + facet_wrap( ~ State, ncol = 5, scales = "free") + theme(
+        strip.text.x = element_text(size = 28, color = "blue", face = "bold"),
+        plot.title = element_text(size = 50, face = "bold", hjust = 0.5),
+        axis.title = element_blank(),
+        axis.text = element_text(size = 8),
+        legend.position = "bottom",
+        legend.justification = "right",
+        legend.title = element_text(size = 50),
+        legend.text = element_text(size = 48)
+      )
 
-#legend at the end
-#Make state names bigger
+#Bigger legend
 #Line patterns - don't bother about y axis, quantity doesn't matter
-#percentage change -- consider
 ```
 
-```{r, error = FALSE, warning = FALSE, message = FALSE}
-#Plot all states using for loop
-#library("dplyr")
-#library("ggplot2")
-#library("data.table")
-
-#data.for.plots <- datafr %>%
-#  filter(State != "REPORT TOTAL") %>%
-#  select(State, Year, Column, Total) %>%
-#  group_by(State) 
-
-#states = unique(data.for.plots$State)
-#state_plots = list()
-
-#for(state_ in states) {
-#  state_plots[[state_]] <- ggplot(data.for.plots %>% filter(State == state_), aes(x = Year, y = Total, color = Column)) + 
-#  geom_line() + ggtitle(state_) +
-#  scale_x_continuous(breaks = c(2008:2019)) + 
-# theme(
-#        plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
-#        axis.title = element_text(size = 10),
-#        axis.text = element_text(size = 10),
-#        legend.position = "bottom",
-#       legend.direction = "horizontal",
-#       legend.title = element_text(size = 10),
-#        legend.text = element_text(size = 10),
-#      )
-#  print(state_plots[[state_]])
-#}
-#How to combine them all in one grid?  
-```
-
-Doing the same standard deviation analysis for species
+Doing the same standard deviation analysis for species. Do bar plots for pain levels.
 
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
+library("ggplot2")
 #Std dev of species for top states
 data.CA <- filter(datafr, State == "CA") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+#colMeans(data.CA, na.rm = TRUE)
+#full join
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd") %>%
+  arrange(desc(sd)) %>% full_join(
+
+filter(datafr, State == "CA") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = ~mean(x = .x, na.rm = TRUE))) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "mean"), by = "species")
+
+ggplot(data.CA, aes(x = species, y = sd)) + geom_bar(stat="identity", fill="steelblue", width=0.5) + geom_bar(mapping = aes(y = mean), stat="identity", fill="steelblue", width=0.5, alpha = 0.5, position = "dodge") + ggtitle("Standard deviation of species over 12 years in CA") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+
+data.CA.1 <- filter(datafr, State == "CA") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year, pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd")
+
+  ggplot(data.CA.1, aes(x = pain.level, y = sd, fill = species)) + geom_bar(stat = "identity", width = 0.5) + ggtitle("Standard deviation of species over 12 years in CA by pain level") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+```
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+library("ggplot2")
+#Std dev of species for top states
+data.MA <- filter(datafr, State == "MA") %>%
   filter(State != "REPORT TOTAL") %>%
   select(-State) %>%
   group_by(Year) %>%
@@ -275,8 +452,110 @@ data.CA <- filter(datafr, State == "CA") %>%
   summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
   pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd") %>%
   arrange(desc(sd))
+
+ggplot(data.MA, aes(x = species, y = sd)) + geom_bar(stat="identity", fill="steelblue", width=0.5) + ggtitle("Standard deviation of species over 12 years in MA") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+data.MA.1 <- filter(datafr, State == "MA") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year, pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd")
+
+  ggplot(data.MA.1, aes(x = pain.level, y = sd, fill = species)) + geom_bar(stat = "identity", position = "dodge", width = 0.5) + ggtitle("Standard deviation of species over 12 years in MA by pain level") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
 ```
 
+
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
-#Interactive Map
+library("ggplot2")
+#Std dev of species for top states
+data.NJ <- filter(datafr, State == "NJ") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+#colMeans(data.NJ, na.rm = TRUE)
+  #mean needed?
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd") %>%
+  arrange(desc(sd))
+
+ggplot(data.NJ, aes(x = species, y = sd)) + geom_bar(stat="identity", fill="steelblue", width=0.5) + ggtitle("Standard deviation of species over 12 years in NJ") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+data.NJ.1 <- filter(datafr, State == "NJ") %>%
+  filter(State != "REPORT TOTAL") %>%
+  select(-State) %>%
+  group_by(Year, pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sum, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(pain.level) %>%
+  summarise(across(.cols = All_Other_Covered_Species:Total, .fns = sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = All_Other_Covered_Species:Total, names_to = "species", values_to = "sd")
+
+  ggplot(data.NJ.1, aes(x = pain.level, y = sd, fill = species)) + geom_bar(stat = "identity", position = "dodge", width = 0.5) + ggtitle("Standard deviation of species over 12 years in NJ by pain level") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust = 0.5),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+```
+
+
+```{r}
+m1 <- lm(Total ~ Year, data = data.total1)
+summary(m1)
+
+predict(m1, newdata = data.total1)
+data.total.1.predict <- data.frame(year = 2019:2024, predict(m1, newdata = tibble(Year = 2019:2024), interval = "predict"))
+
+ggplot(data = data.total1, aes(x = Year, y = Total)) + geom_line() + geom_smooth(formula = "y~x", method = "lm") + geom_line(data = data.total.1.predict, mapping = aes(x = year, y = fit), linetype = "dashed", color = "blue") + scale_x_continuous(breaks = c(2008:2024)) + scale_y_continuous(breaks = seq(700000, 1300000, by = 100000), labels = seq(7, 13, 1)) + xlab(label = "Year") + ylab(label = "Total in hundred thousands") + ggtitle("Total number of animals vs. Year") +
+theme(
+        plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)
+      )
+
+m.quad <- lm(Total ~ Year+Year.sq, data = mutate(data.total1, Year.sq = Year*Year))
+summary(m.quad)
+
+#make another column to scale year 0-12?
 ```
