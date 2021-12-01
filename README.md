@@ -1,6 +1,6 @@
 # BMIN503/EPID600 Final Project: Heather Giannini
 
-This repository contains the files for Heather Giannini's final project for BMIN503, entitled: Analysis of Clinical and Proteomic associated with Biomarker-Based ARDS Subphenotypes
+This repository contains the files for Heather Giannini's final project for BMIN503, entitled: Biomarker-Based Parsimonious Classifiers for ARDS Subphenotypes
 
 >Files herein:
 >final_project_giannini.RMD
