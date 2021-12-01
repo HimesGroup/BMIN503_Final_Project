@@ -24,106 +24,450 @@ The correlation analysis of G protein-coupled receptors (GPCRs) and the screenin
 
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+# R packages
+```{r eval = TRUE, message = FALSE}
+library(data.table)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(rtracklayer)
+library(ggplot2)
+library(RColorBrewer)
+library(pheatmap)
+library(limma)
+library(edgeR)
+library(WGCNA)
+library(flashClust)
+library(iterators)
+library(ggdendro)
+
+#read tsv files from TCGA
+clinical.raw <- readr::read_tsv('clinical.tsv')
+
+```
+
+# Clean data
+```{r eval = TRUE, message = FALSE}
+#read clinical.tsv
+clinical <- clinical.raw
+
+clinical <- clinical[,-c(5:8)] 
+clinical <- clinical[,-c(9:10)]
+clinical <- subset(clinical, select = -c(weeks_gestation_at_birth))
+clinical <- subset(clinical, select = -c(ajcc_clinical_m)) 
+clinical <- subset(clinical, select = -c(ajcc_clinical_n)) 
+clinical <- subset(clinical, select = -c(ajcc_clinical_stage)) 
+clinical <- subset(clinical, select = -c(ajcc_clinical_t)) 
+clinical <- clinical[,-c(19:56)]
+clinical <- clinical[,-c(20:30)]
+clinical <- clinical[,-c(21:35)]
+clinical <- clinical[,-c(22:32)]
+clinical <- clinical[,-c(27:48)]
+clinical <- clinical[,-c(20:43)]
+clinical <- subset(clinical, select = -c(treatment_outcome)) 
+
+```
+
+
+Clinical AJCC data visualization
+```{r eval = TRUE, message = FALSE}
+
+clinical[clinical == "'--"]<-NA
+clinical.tnm <- clinical[,14:17]
+colnames(clinical.tnm) <- c("ajccM", "ajccN", "stage", "ajccT")
+clinical.tnm[5] <- clinical[8]
+```
 
 ```{r eval = TRUE, message = FALSE}
-rt <- read.table("XXXXXXX.txt",sep="\t",header=T,check.names=F)  
-rt <- as.matrix(rt)
-rownames(rt)=rt[,1]
-exp <- rt[,2:ncol(rt)]
-dimnames <- list(rownames(exp),colnames(exp))
-data <- matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
-data <- avereps(data)
-data <- data[rowMeans(data)>1,] 
-data <- round(data,0)
+#AJCC data as factors
+clinical.tnm <- mutate(clinical.tnm, ajccM = factor(ajccM, labels = c(1:4), levels = c("M0", "M1", "M1b", "MX"))) 
+clinical.tnm <- mutate(clinical.tnm, ajccN = factor(ajccN, labels = c(1:4), levels = c("N0", "N1", "N2", "NX"))) 
+clinical.tnm <- mutate(clinical.tnm, ajccT = factor(ajccT, labels = c(1:10), levels = c("T0", "T1", "T1a", "T1b", "T2", "T2a", "T2b", "T3", "T4", "TX"))) 
+clinical.tnm <- mutate(clinical.tnm, 
+                       stage = factor(stage, labels = c(1:9), 
+                                      levels = c("Stage I","Stage IA","Stage IB","Stage II","Stage IIA","Stage IIB","Stage IIIA","Stage IIIB","Stage IV"))) 
+clinical.tnm <- mutate(clinical.tnm, gender = factor(gender, labels = c(0,1), levels = c("female","male")))
 
-group <- c(rep("normal",4),rep("tumor",178))   #group
-design <- factor(group)
-newTab <- newCountDataSet( data, design )
-newTab <- estimateSizeFactors(newTab)
-newData <- counts(newTab, normalized=TRUE )
+```
+
+# Result
+```{r eval = TRUE, message = FALSE}
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccN, fill = factor(ajccT))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ ajccM) + #Split by metastasis
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by tumor metastasis") 
+
+```
+
+Stage/M/N Over T
+```{r eval = TRUE, message = FALSE}
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccT, fill = factor(stage))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccT, fill = factor(ajccM))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccT, fill = factor(ajccN))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+```
 
 
-##heatmap
-library(gplots)
-# keep top 200 genes
-top_results <- smoking_results[1:200, ]
-top.eset <- GSE8823.qc.rma[row.names(exprs(GSE8823.qc.rma)) %in% row.names(top_results)]
-status.colors <- unlist(lapply(GSE8823.qc.rma$status, 
-                               function (x) {if (x == "smoker") "red" else "navy"}))
-heatmap.2(exprs(top.eset), col = viridis(256, option = "B"),
-          trace = "none", keysize = 1.5, key.title = NA,
-          ColSideColors = status.colors)
-legend("topright", legend = c("Smoker", "Nonsmoker"), fill = c("red", "navy")) 
+Stage/T/N Over M
+```{r eval = TRUE, message = FALSE}
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccM, fill = factor(stage))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccM, fill = factor(ajccT))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccM, fill = factor(ajccN))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+```
 
 
-##volcano
-library(ggplot2)
-# Assign (in)significant genes
-smoking_results$sig <- rep("insignificant", nrow(smoking_results))
-smoking_results$sig[which(smoking_results$adj.P.Val<0.05)] <- "significant"
-ggplot(smoking_results, aes(x = logFC, y = -log10(adj.P.Val), color = sig)) + 
-  geom_point() +
+Stage/T/M Over N
+```{r eval = TRUE, message = FALSE}
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccN, fill = factor(stage))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccN, fill = factor(ajccT))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = ajccN, fill = factor(ajccM))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+```
+
+
+T/M/N Over Stage
+```{r eval = TRUE, message = FALSE}
+#barplot
+ggplot(data = clinical.tnm, aes(x = stage, fill = factor(ajccT))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = stage, fill = factor(ajccM))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+
+#barplot
+ggplot(data = clinical.tnm, aes(x = stage, fill = factor(ajccN))) + 
+    geom_bar(position = "dodge") + facet_grid(. ~ gender) + #Split by gender
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    labs(title = "AJCC TNM - splited by gender") 
+```
+
+
+
+# Coding Gene
+
+Load GRCh38.gtf file & Match gene id
+```{r eval = TRUE, message = FALSE}
+#read mRNA expression matrix
+RNA.raw <- read.table(file = "mRNAmatrix.txt", header = TRUE, sep = "\t", na.strings = NA, quote = "")
+
+#rename
+RNA.raw <- dplyr::rename(RNA.raw, gene_id = id)
+```
+
+```{r eval = TRUE, message = FALSE}
+#read GRCh38.gtf
+gtf.data <- import('Homo_sapiens.GRCh38.103.chr.gtf') 
+gtf.data <- as.data.frame(gtf.data)
+
+```
+
+```{r eval = TRUE, message = FALSE}
+
+#keep 'gene_id', 'gene_name', and 'gene_biotype' in gtf.data
+gtf <- gtf.data[ , names(gtf.data) %in% c("gene_id", "gene_name", "gene_biotype")]
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#rename 'gene_id'
+for (i in 1:nrow(RNA.raw)) {
+  char <- RNA.raw[i,1]
+  RNA.raw[i,1] <- substr(char, 1,15)
+ 
+}
+```
+
+```{r eval = TRUE, message = FALSE}
+#merge by 'gene_id'
+RNA <- left_join(RNA.raw, gtf, "gene_id")
+
+```
+
+```{r eval = TRUE, message = FALSE}
+RNA <- subset(RNA, select = -c(gene_id))
+
+```
+
+
+# Coding Gene 
+```{r eval = TRUE, message = FALSE}
+RNA.coding <- filter(RNA, gene_biotype == "protein_coding")
+
+```
+
+```{r eval = TRUE, message = FALSE}
+RNA.coding <- subset(RNA.coding, select = -c(gene_biotype))
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#RNA.coding
+#reduce duplicate by taking the mean
+  #RNA.coding %>% group_by(gene_name) %>% summarise_each(funs(mean))
+mRNA <- group_by(RNA.coding, gene_name)
+mRNA <- summarise_each(mRNA, funs(mean))
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#removal of very low expression gene
+mRNA <- filter(mRNA, rowMeans(select(mRNA, where(is.numeric))) > 1)
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#output mRNA
+setwd("D:\\UPenn\\2021 F\\BMIN-503\\Final")
+write.table(mRNA, file="mRNA.txt",sep="\t",quote=F)
+
+```
+
+
+# egdeR
+```{r eval = TRUE, message = FALSE}
+#load mRNA file
+data <- read.table("mRNA.txt", sep="\t", header=T, check.names=F)
+data <- as.matrix(data)
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#gene name as column name
+data1 <- data[,2:ncol(data)]
+rownames(data1) <- data[,1]
+dimnames <- list(rownames(data1),colnames(data1))
+data.numeric <- matrix(as.numeric(as.matrix(data1)),nrow=nrow(data1),dimnames=dimnames)
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#group gene
+group <- c(rep("normal",24),rep("tumor",186))
+design <- model.matrix(~group)
+y <- DGEList(counts=data.numeric,group=group)
+y <- calcNormFactors(y)
+```
+
+```{r eval = TRUE, message = FALSE}
+y <- estimateCommonDisp(y)
+y <- estimateTagwiseDisp(y)
+```
+
+```{r eval = TRUE, message = FALSE}
+et <- exactTest(y,pair = c("normal","tumor"))
+head(et)
+```
+
+```{r eval = TRUE, message = FALSE}
+foldChange=2
+padj=0.01
+
+#output
+ordered_tags <- topTags(et, n=20000)
+
+all.diff <- ordered_tags$table
+all.diff <- all.diff[is.na(all.diff$FDR)==FALSE,]
+diff <- all.diff
+newData <- y$pseudo.counts
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#all diff gene
+write.table(diff,file="edgerOut.xls",sep="\t",quote=F)
+diff.sig <- diff[(diff$FDR < padj & (diff$logFC>foldChange | diff$logFC<(-foldChange))),]
+#significant
+write.table(diff.sig, file="diffSig.xls",sep="\t",quote=F)
+#up-regulate
+diff.up <- diff[(diff$FDR < padj & (diff$logFC>foldChange)),]
+write.table(diff.up, file="up.xls",sep="\t",quote=F)
+#down-regulate
+diff.down <- diff[(diff$FDR < padj & (diff$logFC<(-foldChange))),]
+write.table(diff.down, file="down.xls",sep="\t",quote=F)
+
+```
+
+```{r eval = TRUE, message = FALSE}
+#save & out put normalizeExp.txt
+normalize.exp <- rbind(id=colnames(newData), newData)
+write.table(normalize.exp, file="normalizeExp.txt", sep="\t", quote=F, col.names=F)
+```
+
+```{r eval = TRUE, message = FALSE}
+#save & out put diffmRNAExp.txt
+diff.exp <- rbind(id=colnames(newData),newData[rownames(diff.sig),])
+write.table(diff.exp, file="diffmRNAExp.txt", sep="\t", quote=F, col.names=F)
+```
+
+
+# heatmap
+```{r eval = TRUE, message = FALSE}
+
+rt <- read.table("diffmRNAExp.txt",sep="\t",header=T,row.names=1,check.names=F)
+rt <- log2(rt+1) # fold discrepancy
+m <- as.matrix(rt)
+
+case.type <- c(rep("Normal",24),rep("Tumor",186))
+names(case.type) <- colnames(rt)
+case.type <- as.data.frame(case.type)
+
+h <- pheatmap(m, annotation = case.type, color = colorRampPalette(c("blue", "white", "tomato"))(50), 
+              show_rownames = FALSE, show_colnames = FALSE, cluster_rows = TRUE, cluster_cols = TRUE,
+              scale = "none", na.rm = TRUE, main = "Heatmap")
+
+```
+
+        
+# volcano plot
+```{r eval = TRUE, message = FALSE}
+x.max <- max(diff.sig$logFC)
+y.max <- max(-log10(diff.sig$FDR))
+
+diff.sig$sig <- as.factor(ifelse(diff.sig$FDR < 0.01 & abs(diff.sig$logFC) > 2, 
+                                 ifelse(diff.sig$logFC > 2,"Up", "Down"), "Not"))
+
+ggplot(diff.sig, aes(x = logFC, y = -log10(FDR), color = sig)) + 
+  geom_point(aes(color=sig)) +
   theme_bw() +
   ggtitle("Volcano plot") +
   xlab("LogFC")+
   ylab("-Log10(q-value)") +
-  scale_color_manual(values = c("black", "red")) +
-  theme(legend.position = "none")
+  scale_color_manual(values = c("blue","tomato")) +
+  theme(plot.title=element_text(hjust=0.5))
 
 
-##WGCNA
-library(WGCNA)
-library(flashClust)
-library(iterators)
 
+
+```
+
+
+
+# WGCNA
+```{r eval = TRUE, message = FALSE}
 options(stringsAsFactors = FALSE);
-enableWGCNAThreads();
+
 
 rt <- read.table("diffmRNAExp.txt",sep="\t",row.names=1,header=T,check.names=F,quote="!")#input
 datSummary <- rownames(rt)
 datExpr <- t(rt)
 
-#select beta value
+
+###### select beta value ######
 powers1 <- c(seq(1,10,by=1),seq(12,30,by=2))
 RpowerTable <- pickSoftThreshold(datExpr, powerVector=powers1)[[2]]
 cex1 <- 0.7
+#pdf(file="softThresholding.pdf")
+par(mfrow=c(1,2))
+plot(RpowerTable[,1], -sign(RpowerTable[,3])*RpowerTable[,2],xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n")
+text(RpowerTable[,1], -sign(RpowerTable[,3])*RpowerTable[,2], labels=powers1,cex=cex1,col="red")
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.85,col="red")
+plot(RpowerTable[,1], RpowerTable[,5],xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n")
+text(RpowerTable[,1], RpowerTable[,5], labels=powers1, cex=cex1,col="red")
 
+```
+
+```{r eval = TRUE, message = FALSE}
 #test beta value
-beta1 <- 2
-Connectivity <- softConnectivity(datExpr,power=beta1)
-pdf("scalefree.pdf",15,10)
-par(mfrow=c(1,1))
-scaleFreePlot(Connectivity, main=paste("soft threshold, power=",beta1), truncated=T)
+beta1 <- 24
+connectivity1 <- softConnectivity(datExpr,power=beta1)
+s1 <- scaleFreePlot(connectivity1, main=paste("soft threshold, power=",beta1), truncated=T, cex.main=0.85)
 
+beta2 <- 12
+connectivity2 <- softConnectivity(datExpr,power=beta2)
+s2 <- scaleFreePlot(connectivity2, main=paste("soft threshold, power=",beta2), truncated=T, cex.main=0.85)
+
+beta3 <- 3
+connectivity3 <- softConnectivity(datExpr,power=beta3)
+s3 <- scaleFreePlot(connectivity3, main=paste("soft threshold, power=",beta3), truncated=T, cex.main=0.85)
+
+```
+
+```{r eval = TRUE, message = FALSE}
 #module
-ConnectivityCut <- 2537
-ConnectivityRank <- rank(-Connectivity)
-restConnectivity <- ConnectivityRank <= ConnectivityCut
-ADJrest <- adjacency(datExpr[,restConnectivity],power=beta1)
-dissTOM <- TOMdist(ADJrest)
-hierTOM <- hclust(as.dist(dissTOM),method="average")
-colorh1 <- cutreeStaticColor(hierTOM,cutHeight=0.8, minSize=20)  #number of modules
-pdf("module.pdf")
+connectivity.cut <- 500
+connectivity.rank <- rank(-connectivity)
+rest.connectivity <- connectivity.rank <= connectivity.cut
+
+ADJ.rest <- adjacency(datExpr[,rest.connectivity],power=beta1)
+diss.TOM <- TOMdist(ADJ.rest)
+
+hier.TOM <- hclust(dist(diss.TOM), method = "average")
+color.h <- cutreeStaticColor(hier.TOM,cutHeight=0.5, minSize=5)  #number of modules
 par(mfrow=c(2,1),mar=c(2,4,1,1))
-plot(hierTOM, main="Cluster Dendrogram", labels=F, xlab="", sub="")
-plotColorUnderTree(hierTOM,colors=data.frame(module=colorh1))
+plot(hier.TOM, main="Cluster Dendrogram", labels=F, xlab="", sub="")
+plotColorUnderTree(hier.TOM,colors=data.frame(module=color.h))
 title("Module (branch) color")
 
-##TOM
-pdf("TOM.pdf")
-tom.plot <- TOMplot(dissTOM, hierTOM, colorh1, terrainColors=TRUE)
 
-##cluster
-datME <- moduleEigengenes(datExpr[,restConnectivity], colorh1)[[1]]
-dissimME <- 1 - (t(cor(datME, method="p")))/2
-hclustdatME <- hclust(dist(dissimME), method="average")
-pdf("module_cluster.pdf")
+```
+
+```{r eval = TRUE, message = FALSE}
+#TOM plot
+t <- TOMplot(diss.TOM, hier.TOM, color.h)
+```
+
+```{r eval = TRUE, message = FALSE}
+#clustering tree based on the module eigengenes of modules
+data.ME <- moduleEigengenes(datExpr[,rest.connectivity], color.h)[[1]]
+diss.ME=1 - (t(cor(data.ME, method="p")))/2
+hclust.data.ME=hclust(dist(diss.ME), method="average")
 par(mfrow=c(1,1))
-plot(hclustdatME, main="Clustering tree based on the module eigengenes of modules")
+plot(hclust.data.ME, main="Clustering tree based on the module eigengenes of modules")
 
 ```
 
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+
+
+
+
