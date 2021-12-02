@@ -16,10 +16,10 @@ options(width = 400)
 ***
 
 #### Overview:  
-The purpose of this project is to investigate the provision of timely and effective outpatient and emergency department care in Pennsylvania. Using CMS “Timely and Effective Care” data set, the goals of the project are:  
-+ To compare Pennsylvania to other states and national progress on emergency department access and care and display the results using interactive maps.  
-+ To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: stroke interventions, heart attack interventions, wait time.
-+ To investigate if there are any relationships between demographic variables and TEC using multivariable regressions.  
+The purpose of this project is to investigate the provision of timely and effective outpatient and emergency department care in Pennsylvania. Using the CMS “Timely and Effective Care” dataset and US Census Bureau data, the goals of the project are:  
++ To compare Pennsylvania emergency department access and care metrics to that of other states, as well as to national averages.  
++ To approximate service areas for major hospitals in Pennsylvania and determine if timely and effective care is available for for certain domains in emergency care, specifically: stroke interventions, heart attack interventions, wait time.  
++ To investigate if there are any relationships between socioeconomic and demographic variables and TEC using multivariate regressions.  
 
 
 #### Introduction:  
@@ -35,17 +35,19 @@ This is an interdisciplinary issue, requiring the input of physicians, public he
 #### Methods:
 Using the Timely and Effective Care (TEC) data from CMS through 2020, I will compare Pennsylvania to other states and national progress on emergency department access and care. The TEC data set includes data for measures of cataract surgery outcome, colonoscopy follow-up, heart attack care, emergency department care, preventive care, pregnancy and delivery care, and cancer care. I will focus on some of the most general issues in emergency care -- interventions for stroke, interventions for myocardial infarctions (MI; heart attacks), and wait time for patients in the ED.
 
-*First* I will generate graphs to visualize how TEC in Pennsylvania compares nationally. *Second*, I will compare TEC in Pennsylvania to its regional neighbors in the Northeast. *Next*, I will attempt to look at more granular data for Pennsylvania and compare within state access. The TEC data set contains hospital, state-level and national data but, unfortunately, does not contain county-level data. Using the hospital data, I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information. I will explain all assumptions made.
+*First* I will generate graphs to visualize how TEC in Pennsylvania compares to other states and to national averages. I will also compare Pennsylvania to its regional neighbors in the Northeast.  
 
-*Finally*, I will merge the state-level data with demographic data available in the US census data set, and, controlling for certain demographic characteristics, will run multivariate regressions to determine if there are any relationships that can be deduced from the data set and help explain differences in TEC. I will explain all assumptions made.
+*Next*, I will attempt to look at more granular data for Pennsylvania and compare within state access and availability of care. The TEC data set contains hospital, state-level and national data but, unfortunately, does not contain county-level data. Using the hospital data, I will attempt to calculate service areas of emergency departments using ~2 mile radius of the ED hospital data, building in assumptions to build critical diversions and other necessary information. I will explain all assumptions made.  
 
-This project was supported by  Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), who both provided invaluable advice and guidance for mapping the data and assumptions for service areas.
+*Finally*, I will visualize socioconomic and demographic characteristics as they vary across PA by county, and then will I run multivariate regressions to determine if there are any relationships that can be deduced from the data set that correlate withexplain differences in TEC. I will explain all assumptions made.  
+
+This project was supported by  Dr. Gary Weissman, MD, MSHP (Assistant Professor of Medicine and Senior Fellow Leonard Davies Institute) and Dr. John Holmes PhD, FACE, FACMI (Professor of Medical Informatics in Epidemiology, Associate Director of the Institute for Biomedical Informatics), who both provided invaluable advice and guidance for mapping the data and assumptions for service areas.  
 
 
 ##### Preparing packages and data  
 
 All necessary packages are installed and loaded, and necessary keys are registered.
-```{r}
+```{r, echo=FALSE}
 #Setup
 require(knitr)
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -58,23 +60,16 @@ rm(list = ls())
 graphics.off()
 
 # Load  library
-pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal, viridis, RColorBrewer, mapproj,cowplot,sf,raster,spData,spDataLarge,tmap,choroplethr,choroplethrMaps, ggmap)
+pacman::p_load(devtools, rmarkdown, tidyverse, readxl, plyr, dplyr, knitr, tableone, data.table, reshape, kableExtra, broom, stringr, rgenoud, Hmisc, ggpubr, survey, lubridate, ggplot2, gridExtra, janitor, modelsummary, mapview, leaflet, ggsn, sf, sp, rgdal, viridis, RColorBrewer, mapproj, cowplot, sf, raster, spData, spDataLarge, tmap, choroplethr, choroplethrMaps, ggmap, readxl, tigris, DT, ggsflabel, tidycensus, scales)
 
-library(ggmap)
+# Registering keys
 #register_google(key = "", write = TRUE)
-library(readxl)
-library(tigris)
-
-devtools::install_github("yutannihilation/ggsflabel")
-library(ggsflabel)
-
-
 
 ```
 
 Functions necessary for later processing are created.
 ```{r}
-#Theme for maps
+# Theme for maps
 my_theme <- function() {
   theme_minimal() +                                  
   theme(
@@ -95,17 +90,17 @@ my_theme <- function() {
     panel.border = element_blank())
 }
 
-#Min for map scales
+# Min for map scales
 prev_min <- function(x) {
   min(c(x),na.rm=TRUE)
 }
 
-#Max for map scales
+# Max for map scales
 prev_max <- function(x) {
   max(c(x), na.rm=TRUE)
 }
 
-#Theme for bar graphs
+# Theme for bar graphs
 my_theme_bar <- function() {
   theme_minimal() +                                  
   theme(
@@ -117,22 +112,27 @@ my_theme_bar <- function() {
         plot.title = element_text(size = 14),
        panel.border = element_blank())
 }
+
+# Percent function
+percent <- function(x, format = "f"){ 
+  paste0(formatC(x, format = format, digits = 2), "%")
+}
 ```
 
 Necessary inputs are downloaded and/or read.  
-+ TEC data is downloaded directly from the [CMS website](https://data.cms.gov/provider-data/search?keyword=Timely%20and%20Effective%20Care).  
++ TEC data is downloaded directly from the [CMS website](https://data.cms.gov/provider-data/search?keyword=Timely%20and%20Effective%20Care).    
 + Counties map data from the _tigris_ package.  
 + 2019 County population data downloaded from [US Census Bureau County Population Totals 2010-2019](https://www.census.gov/data/datasets/time-series/demo/popest/2010s-counties-total.html#par_textimage_70769902).  
 ```{r}
-#TEC data
+# TEC data
 tec_hosp <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/350f34f9ef3d484925d49dfcce7a0f54_1632355520/Timely_and_Effective_Care-Hospital.csv")
 tec_state <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/0b2db52e1ce72942f369cc00c00649f8_1632355520/Timely_and_Effective_Care-State.csv")
 tec_natl <- read.csv(file = "https://data.cms.gov/provider-data/sites/default/files/resources/4766dbf7fd2de19618a27f5546954463_1632355520/Timely_and_Effective_Care-National.csv")
 
-#PA counties data
-pa_counties<-tigris::counties(state = "42", cb = TRUE) #FIPS 42 is Pennsylvania
+# PA counties data
+pa_counties<-tigris::counties(state = "42", cb = TRUE, progress_bar = FALSE) #FIPS 42 is Pennsylvania
 
-#PA counties population data
+# PA counties population data
 pa_pop<- readxl::read_xlsx("/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/co-est2019-annres-42.xlsx",range="A6:M72",
    col_names = c("County","Census","Estimate Base",
                  "pop_2010",
@@ -147,31 +147,26 @@ pa_pop<- readxl::read_xlsx("/Users/moniquearnold/Documents/PSOM/BMIN 503/Final P
                  "pop_2019"))
 
 
-#Cleaning data
+# Cleaning data
 tec_state$NAME <- state.name[match(tec_state$State,state.abb)]
 tec_state$Score<- as.numeric(tec_state$Score)
 
-##using regular expressions to clean county names
 pa_pop$County<- gsub('^\\.|\\.$', '', pa_pop$County) 
 pa_pop$NAME<- gsub(" County[,%] Pennsylvania$","", pa_pop$County)
-
-
-
-
 
 ```
 
 ##### Visualizing national data  
-First, national data is visualized using *us_states* dataset provided by the spData package. Note: 'total_pop_15' is the numerical vector of total population in 2015. For simplicity only the contiguous United States is considered.
+First, national data is visualized using *us_states* dataset provided by the spData package. Note: 'total_pop_15' is the numerical vector of total population in 2015. For simplicity only the contiguous United States is considered.  
 
-Metrics investigated are:
+Metrics investigated are:  
 + OP_18b: Average (median) time patients spent in the ED  
 + OP_18c: Average (median) time patients spent in the ED (Psychiatric/Mental Health Patients)  
 + OP_2: Percentage of outpatients with chest pain or possible heart attack who got drugs to break up blood clots within 30 minutes of arrival  
 + OP_3b: Percentage of patients who came to the ED with stroke symptoms who received brain scan results within 45 minutes of arrival  
 + OP_23: Average (median) number of minutes before outpatients with chest pain or possible heart attack who needed specialized care were transferred to another hospital  
 ```{r, width=600}
-#Select variables to investigate
+# Select variables to investigate
 varlist <- c("OP_18b","OP_18c","OP_2","OP_23","OP_3b")
 
 state_vars <- tec_state %>% 
@@ -180,7 +175,7 @@ state_vars <- tec_state %>%
    drop_na() %>%
    reshape(idvar = c("State","NAME"), timevar = "Measure.ID", direction = "wide", varying=varlist)
 
-#Merge to usa map data
+# Merge to usa map data
 usa <- us_states
 to_map_natl<- merge(usa,state_vars, stringsAsFactors=FALSE)
 str(to_map_natl) #check
@@ -190,10 +185,10 @@ to_map_pa <- to_map_natl %>% filter(NAME=="Pennsylvania")
 
 #CANNOT GET THIS TO WORK
 # for (i in varlist){
-#    p <- ggplot() + 
-#       geom_sf(data = to_map_natl, aes(fill = i), lwd=0, colour="white") + 
-#       coord_sf() + 
-#       my_theme() + 
+#    p <- ggplot() +
+#       geom_sf(data = to_map_natl, aes(fill = i), lwd=0, colour="white") +
+#       coord_sf() +
+#       my_theme() +
 #       scale_fill_viridis(discrete=FALSE, name = "Time (mins)", option = "mako", direction = -1,
 #                          limit = range(prev_min(to_map_natl[[i]]), prev_max(to_map_natl[[i]]))) +
 #       labs(title= "Average (median) time patients spent in the ED",
@@ -204,7 +199,7 @@ to_map_pa <- to_map_natl %>% filter(NAME=="Pennsylvania")
 # }
 
 
-#Plot maps
+# Plot maps
 #OP_18b
 map_natl_OP_18b<-ggplot() + 
    geom_sf(data = to_map_natl, aes(fill = OP_18b), lwd=0, colour="white") + 
@@ -234,6 +229,7 @@ map_natl_OP_18b<-ggplot() +
 #              c(1,1,1,2),
 #              c(1,1,1,2))
 # grid.arrange(map_natl_OP_18b, map_natl_OP_18b_NE, layout_matrix = lay)
+
 
 map_natl_OP_18c<-ggplot() + 
    geom_sf(data = to_map_natl, aes(fill = OP_18c), lwd=0) + 
@@ -303,12 +299,12 @@ map_natl_OP_3b
 Next, median metrics of Pennsylvania are compared to those of other states in the Northeast.   
 Note: Since only the final median values and not the underlying data, I cannot perform any statistical comparisons.
 ```{r}
-#Determine averages
+# Determine averages
 fg_northeast<- as.data.frame(to_map_natl) %>% 
    filter(REGION=="Norteast") %>%
    dplyr::select(NAME,OP_18b,OP_18c,OP_2,OP_23,OP_3b)
 
-#Reshape for barchart
+# Reshape for barchart
 forgraph_northeast <- melt(setDT(fg_northeast), id.vars = c("NAME"), variable.name = "score")
 
 # fg_ne_sum<-summarize_all(fg_northeast,mean,na.rm = TRUE) %>% mutate(NAME="Northeast States")
@@ -321,7 +317,7 @@ forgraph_northeast <- melt(setDT(fg_northeast), id.vars = c("NAME"), variable.na
 #forgraph_all <- rbind(fg_northeast,fg_ne_sum)
 
 
-#Plot graphs
+# Plot graphs
 bar_OP_18b18c <- forgraph_northeast %>% 
    filter(variable=="OP_18b" | variable=="OP_18c") %>%
    ggplot(aes(x=reorder(factor(NAME),value),  y=value, fill=variable)) + 
@@ -362,9 +358,78 @@ bar_OP_2_23
 
 ```
 
+A brief look at the wait times for the hospitals. 
+```{r}
+# Subset data to metrics of interest and PA
+df_hosp <- tec_hosp %>% filter(Measure.ID %in% varlist & State=="PA")
+
+## General hospitals
+# Get list of general hospital names
+df_hosp_fac <- df_hosp %>% 
+   mutate(addr=paste0(Address,", ",City, ", ",State," ",ZIP.Code)) %>%
+   distinct(Facility.Name,addr,Measure.ID,Score) %>% 
+   arrange(Facility.Name) %>%
+   reshape(idvar = c("Facility.Name","addr"), timevar = "Measure.ID", direction = "wide", varying=varlist)
+
+df_hosp_fac$OP_18b <- as.numeric(df_hosp_fac$OP_18b)
+df_hosp_fac$OP_18c <- as.numeric(df_hosp_fac$OP_18c)
+df_hosp_fac$OP_2 <- as.numeric(df_hosp_fac$OP_2)
+df_hosp_fac$OP_23 <- as.numeric(df_hosp_fac$OP_23)
+df_hosp_fac$OP_3b <- as.numeric(df_hosp_fac$OP_3b)
+
+df_hosp_fac$addr <- gsub('34TH ST &', '3400', df_hosp_fac$addr)
+df_hosp_fac$addr <- gsub('34TH &', '3400', df_hosp_fac$addr)
+
+# Format table
+dt_pahosp <- df_hosp_fac %>% dplyr::select(Facility.Name,OP_18b,OP_18c) %>% filter(! is.na(OP_18b) | ! is.na(OP_18c)) 
+dt_pahosp$Facility.Name<-str_to_title(dt_pahosp$Facility.Name) 
+dt_pahosp$OP_18b_time <- dt_pahosp$OP_18b %>% hms::as_hms() %>% as.POSIXlt() %>% format("%M:%S")
+dt_pahosp$OP_18c_time <- dt_pahosp$OP_18c %>% hms::as_hms() %>% as.POSIXlt() %>% format("%M:%S")
+
+dt_pahosp <- dt_pahosp %>% dplyr::rename('Hospital'=Facility.Name,
+                                 'Time Spent in ED - All Patients'=OP_18b_time,
+                                 'Time Spent in ED - Mental Health Patients'=OP_18c_time) 
+
+# Calculate means
+dt_pahosp_means <- dt_pahosp %>% dplyr::summarize(mean_wait_all=mean(OP_18b, na.rm = TRUE),
+                                                  mean_wait_bhv=mean(OP_18c, na.rm = TRUE))
+
+dt_pahosp_means$`All Patients` <- dt_pahosp_means$mean_wait_all %>% 
+   hms::as_hms() %>% as.POSIXlt() %>% format("%M:%S")
+dt_pahosp_means$`Mental Health Patients` <- dt_pahosp_means$mean_wait_bhv %>% 
+   hms::as_hms() %>% as.POSIXlt() %>% format("%M:%S")
+dt_pahosp_means <- dt_pahosp_means %>% dplyr::select(-mean_wait_all,-mean_wait_bhv) %>% gather()
+
+
+# Final tables
+head(dt_pahosp[order(dt_pahosp$`Time Spent in ED - All Patients`,decreasing=TRUE),],n=10) %>%
+   dplyr::select(-OP_18b,-OP_18c) %>%
+   kable(caption="Table 1. Longest Patient Wait Times at PA Hospitals (Top 10)", 
+        align="lcc",
+        row.names = FALSE) %>%
+   kable_styling(fixed_thead = T, bootstrap_options = c("hover", "condensed"), full_width = F)
+
+tail(dt_pahosp[order(dt_pahosp$`Time Spent in ED - All Patients`,decreasing=TRUE),],n=10) %>%
+   dplyr::select(-OP_18b,-OP_18c) %>%
+   kable(caption="Table 2. Shortest Patient Wait Times at PA Hospitals (Bottom 10)", 
+        align="lcc",
+        row.names = FALSE) %>%
+   kable_styling(fixed_thead = T, bootstrap_options = c("hover", "condensed"), full_width = F)
+
+dt_pahosp_means %>%
+  kable(caption="Table 3. Mean Patient Wait Times at PA Hospitals ", 
+        align="lr",
+        row.names = FALSE,
+        col.names=NULL) %>%
+   kable_styling(fixed_thead = T, bootstrap_options = c("hover", "condensed"), full_width = F)
+
+```
+
 ##### Investigating Access to Hospitals
 
-Next, I explore the availability of hospitals across Pennsylvania. I will map hospital densities using the hospital data from TEC. Using the package ggmap, I will get latitude and longitude data for each hospital address in the TEC data using the Google API. To do this, I registered for a free Google console account, generated an API key that I registered in R Studio, and enabled the following APIs on the Google Console:
+Next, I explore the availability of hospitals across Pennsylvania. I will map hospital densities using the hospital data from TEC.I will map all hospitals, then hospitals across a few key service lines, namely: [pediatric hospitals](https://www.childrenshospitals.org/directories/hospital-directory?state=PA), [trauma centers](https://www.haponline.org/Resource-Center?resourceid=81) and [stroke centers](https://www.health.pa.gov/topics/Documents/EMS/Designated%20Stroke%20Centers.pdf).  
+
+Using the package ggmap, I will get latitude and longitude data for each hospital address in the TEC data using the Google API. To do this, I registered for a free Google console account, generated an API key that I registered in R Studio, and enabled the following APIs on the Google Console:  
 + Directions API  
 + Geocoding API  
 + Geolocation API  
@@ -374,37 +439,65 @@ Next, I explore the availability of hospitals across Pennsylvania. I will map ho
 
 I then converted the data frame of resultant cartesion coordinates to an sf object. I used the the projection WGS84, which is the CRS code #4326, a priori defined in the sf object. I mapped the hospitals onto a map of Pennsylvania using the counties dataset tigris library, overlayed with county population data.
 
-```{r}
-#Subset data to metrics of interest and PA
-df_hosp <- tec_hosp %>% filter(Measure.ID %in% varlist & State=="PA")
+```{r, width = 600}
+## All hospitals
+   # getting map coordinates (lat and long) of hospital addresses 
+   for(i in 1:nrow(df_hosp_fac))
+   {
+       ifelse(is.na(df_hosp_fac$addr[i]), NA,      
+       hosp_ggmap_pa <- geocode(df_hosp_fac$addr[i], 
+                                output = "more", 
+                                source = "google", 
+                                messaging = FALSE))
+             df_hosp_fac$Longitude[i] <- as.numeric(hosp_ggmap_pa[1])
+             df_hosp_fac$Latitude[i] <- as.numeric(hosp_ggmap_pa[2])
+   }
+   
+   df_hosp_fac_tib <- as_tibble(df_hosp_fac)
+   df_hosp_fac_sf <- st_as_sf(df_hosp_fac_tib, coords = c("Longitude", "Latitude"), crs = 4326)
+   mapview(df_hosp_fac_sf) #Quickly checking addresses geocoded correctly
+   
+   # merge to PA county data to PA population data
+   pa_tomap<-merge(pa_counties, pa_pop, by="NAME")
+   class(pa_tomap) #check
 
-#Get list of hospital names
-df_hosp_fac <- df_hosp %>% 
-   mutate(addr=paste0(Address,", ",City, ", ",State," ",ZIP.Code)) %>%
-   distinct(Facility.Name,addr) %>% 
-   arrange(Facility.Name)
 
-df_hosp_fac$addr <- gsub('34TH ST &', '3400', df_hosp_fac$addr)
-df_hosp_fac$addr <- gsub('34TH &', '3400', df_hosp_fac$addr)
+## Specialty hospitals 
+varlist_hosp <- c("Childrens","Stroke","Trauma")
 
-#Getting map coordinates (lat and long) of hospital addresses 
-for(i in 1:nrow(df_hosp_fac))
-{
-    ifelse(is.na(df_hosp_fac$addr[i]), NA,      
-    hosp_ggmap_pa <- geocode(df_hosp_fac$addr[i], output = "more", source = "google", messaging = FALSE))
-          df_hosp_fac$Longitude[i] <- as.numeric(hosp_ggmap_pa[1])
-          df_hosp_fac$Latitude[i] <- as.numeric(hosp_ggmap_pa[2])
+for (var in varlist_hosp){
+   
+   # Initialize table
+   tablet <- as.character(paste0("list_pa_",var))
+   
+   # Import
+   list <- readxl::read_xlsx("/Users/moniquearnold/Documents/PSOM/BMIN 503/Final Project/BMIN503_Final_Project/Data/Specialty Hospitals.xlsx", sheet=var)
+   
+   # Getting map coordinates (lat and long) of specialty hospital addresses 
+   list2 <- cbind(list, 
+                  type_hosp=var,
+                  geocode(list$Hospital, 
+                          output = "more", 
+                          source = "google", 
+                          messaging = FALSE))
+   
+   list_tib <- as_tibble(list2)
+   list_sf <- st_as_sf(list_tib, coords = c("lon", "lat"), crs = 4326)
+   
+   # Assign final table
+   assign(tablet,list_sf)
+   
 }
 
-df_hosp_fac_tib <- as_tibble(df_hosp_fac)
-df_hosp_fac_sf <- st_as_sf(df_hosp_fac_tib, coords = c("Longitude", "Latitude"), crs = 4326)
-mapview(df_hosp_fac_sf) #Quickly checking addresses geocoded correctly
+# checking addresses geocoded correctly
+# mapview(list_pa_Childrens)
+# mapview(list_pa_Stroke)
+# mapview(list_pa_Trauma)
 
-#Merge to PA county data to PA population data
-pa_tomap<-merge(pa_counties, pa_pop, by="NAME")
-class(pa_tomap) #check
-                 
-#Creating annotations for graph
+spec_sf <- st_as_sf(rbind.fill(list_pa_Childrens,list_pa_Stroke,list_pa_Trauma)) %>% dplyr::select(-'...3')
+class(spec_sf)
+
+# Creating annotations for graphs
 high_pa_tomap <- pa_tomap %>% filter(pop_2019 > 1000000) #labelling counties with pop > 1 million
 
 for(i in 1:nrow(high_pa_tomap)){
@@ -414,66 +507,184 @@ for(i in 1:nrow(high_pa_tomap)){
           high_pa_tomap$lat[i] <- as.numeric(high_pa_tomap2[2])
 }
 
-#Map
+all_hosp_sf <- st_as_sf(rbind.fill(spec_sf,df_hosp_fac_sf) %>% 
+   mutate(type_hosp = ifelse(is.na(type_hosp),"All Hospitals",type_hosp)))
+
+
+# Map
 ggplot() + 
    geom_sf(data = pa_tomap, aes(fill = pop_2019/100000), color="white") + 
-   geom_sf(data = df_hosp_fac_sf, size = 2, shape = 21, fill = "gold") +
+   geom_sf(data = all_hosp_sf, size = 2, shape = 21, fill = "gold") +
    geom_sf_label_repel(data = high_pa_tomap, aes(x=lon,y=lat,label=NAME), 
-                       size=3, force=4, nudge_y=-17, nudge_x=1, seed = 10) +
+                       size=3, force=7, nudge_y=-5, nudge_x=1, seed = 10,
+                       alpha=0.8) +
+   facet_wrap(~type_hosp, shrink=FALSE, dir="h") +
    coord_sf() + 
    my_theme() + 
-   scale_fill_viridis(discrete=FALSE, name = "Population \n(in 100,000s)", option = "mako", direction = -1,
+   scale_fill_viridis(discrete=FALSE, name = "Population (in 100,000s)", option = "mako", direction = -1,
                          limit = range(prev_min(pa_tomap$pop_2019/100000), 
                                        prev_max(pa_tomap$pop_2019/100000))) +
-   labs(title= "Fig. 8: Pennsylvania Population (2019 US Census) and Hospital Locations",
-        caption = "Source: Centers for Disease Control, US Census Bureau. \nHighlighting counties with population of at least 1 million.") +
-   theme(legend.justification = c(0, 1),legend.position = "right")
+   labs(title= "Fig. 8: Pennsylvania Specialty Service Line Hospitals",
+        caption = "Source: Centers for Disease Control, US Census Bureau (2019 Census). \nHighlighting counties with population of at least 1 million.") +
+   theme(legend.justification = c(0, 1),legend.position = "bottom")
+
 
 ```
 
-Next, I will break down this distribution of hospitals across a few key service lines, namely pediatric hospitals, trauma centers and stroke centers.
+##### Investigating Demographic Differences by County
 
-Compare Philadelphia to comparable cities
-Baltimore
-Oakland
-NYC
-Boston
-Los Angeles
-Hartford
+Next, I will investigate different key demographic factors on average and by county in PA using the _tidycensus_ package and 5 year ACS data ending in 2019. Key factors investigated are:  
++ Poverty rate (DP03_0119PE)  
++ Median household income (DP03_0062E)  
++ Percentage population 25 years and over with high school grad or higher (DP02_0066PE)  
++ Unemployment rate (DP03_0009PE)  
++ Percentage population without health insurance coverage (DP03_0099PE)  
++ Percentage population with public health insurance coverage (DP03_0098PE)  
++ Percentage population with private health insurance  (DP03_0097PE)  
++ Percentage of population White (DP05_0037PE)  
++ Percentage of population Asian (DP05_0044PE)  
++ Percentage of population Black or African American (DP05_0038PE)    
++ Percentage of population Hispanic or Latino (DP05_0078PE)  
++ Percentage of population American Indian and Alaska Native (DP05_0039PE)  
+
+```{r, warnings=FALSE}
+# Obtaining 2019 acs5 variable list to investigate
+dp17 <- load_variables(2019, "acs5/profile", cache = TRUE)
+
+pa_factors <- get_acs(geography = "county", 
+              variables = c(povertyrate = "DP03_0119P",
+                            medincome = "DP03_0062",
+                            edurate = "DP02_0066P",
+                            unemploymentrate = "DP03_0009P",
+                            nohealthins = "DP03_0099P",
+                            pubhealthins = "DP03_0098P",
+                            privhealthins = "DP03_0097P",
+                            racewhite = "DP05_0037P",
+                            raceasian = "DP05_0044P",
+                            raceblack = "DP05_0038P",
+                            racehispanic = "DP05_0078P",
+                            raceamerind = "DP05_0039P"),
+              state = 42, #PA is 42 
+              year = 2019,
+              geometry=TRUE)
+
+unique(pa_factors$variable)
+
+tableout <- data.frame(cbind(unique(pa_factors$variable),
+                  c("Percentage population 25 years and over with high school grad or higher",
+                    "Unemployment rate (%)",
+                    "Median household income in millions of USD",
+                    "Percentage of population with private health insurance",
+                    "Percentage of population with public health insurance coverage",
+                    "Percentage of population without health insurance coverage ",
+                    "Poverty Rate (%)",
+                    "Percentage of population White", 
+                    "Percentage of population Black or African American",
+                    "Percentage of population American Indian and Alaska Native",
+                    "Percentage of population Asian", 
+                    "Percentage of population Hispanic or Latino")))
+
+table_soc <- data.frame(pa_factors) %>% 
+   group_by(variable) %>%
+   dplyr::select(NAME,variable, estimate) %>% 
+   mutate(estimate = as.numeric(estimate),
+          variable = as.character(variable)) %>%
+   dplyr::summarize(mean_estimate=mean(estimate, na.rm = TRUE)) %>%
+   mutate(mean_estimate = ifelse(variable %in% c("medincome"), 
+                             scales::dollar(mean_estimate), 
+                             percent(mean_estimate))) %>%
+   left_join(tableout,by=c("variable"="X1")) %>%
+   dplyr::rename(`Socioeconomic/Demographic Factor`=X2,
+                 `Mean Value`=mean_estimate)
+   
+table_soc %>% dplyr::select(`Socioeconomic/Demographic Factor`,`Mean Value`) %>%
+  kable(caption="Table 4. Socioeconomic Factors -- Averages across PA Counties", 
+        align="lr", 
+        digits = 3,  
+        col.names=c("Factor","Mean Value"))  %>%
+   kable_styling(fixed_thead = T, bootstrap_options = c("hover", "condensed"), full_width = F)
+   #pack_rows("Education factors", 1,1) %>% 
+#ORGANIZE BY CATEGORIES: education, economics, health insurance access, race
+
+
+```
+
+```{r}
+# Mapping variables
+counter = 0       
+for(i in unique(pa_factors$variable)){
+   # dynamic figure labelling
+   counter <- counter + 1
+   figletter <- toupper(letters[counter])
+   
+   # dynamic titling
+   tableout2 <- tableout %>% filter(X1==i)
+   titleout <- as.character(paste0("Fig. 9",figletter,". Pennsylvania ",tableout2$X2," by county"))
+   
+   # dynamic annotations
+   anno_soc <- table_soc %>% filter(variable==i)
+   meanlabel <- 
+      paste0("Calculated Estimated Mean in PA: ",anno_soc$`Mean Value`)
+
+   # subset data for variable of interest
+   spec_table <- pa_factors %>% filter(variable==i)
+   var_pa_tomap <- spec_table %>% 
+      filter(NAME=="Allegheny County, Pennsylvania" | NAME=="Philadelphia County, Pennsylvania") %>%
+      mutate(label=paste0(gsub(' County, Pennsylvania','',NAME),": ",estimate)) %>% 
+      st_join(high_pa_tomap)
+
+   # final maps
+   demo_map <- ggplot() + 
+      geom_sf(data = spec_table, aes(fill = estimate), color="white") + 
+      # geom_sf(data = all_hosp_sf, size = 2, shape = 21, fill = "gold") +
+      geom_sf_label_repel(data = var_pa_tomap, aes(x=lon,y=lat,label=label),
+                          size=3, force=7, nudge_y=-5, nudge_x=1, seed = 10,
+                          fill = alpha(c("white"),0.8)) +
+      coord_sf() + 
+      my_theme() + 
+      scale_fill_viridis(discrete=FALSE, option = "rocket", direction = -1,
+                            limit = range(prev_min(spec_table$estimate),
+                                          prev_max(spec_table$estimate))) +
+      labs(title = paste0(strwrap(titleout,width=50),collapse="\n"),
+           caption = "Source: US Census Bureau (2019 Census).",
+           subtitle = paste0(strwrap(meanlabel,width=50),collapse="\n")) +
+      theme(legend.justification = c(0, 1),
+            legend.position = "bottom")
+            # plot.tag.position = c(),
+            # plot.tag = element_text(vjust = 1, hjust = 1, size=8))
+   print(demo_map)
+}
+
+#PATCHWORK TO ORGANIZE BY CATEGORIES: education, economics, health insurance access, race
+
+#paste0(strwrap(titleout,width=50),collapse="\n")
+```
+
+Next, I run multivariate analyses to see if there are any relations between the socioeconomic/demographic variables and the TEC data.
+
+```{r}
+
+#Regressions of wate time vs. the characteristics
+# summary(glm((as.numeric(birthwt.clean$low.birth.wt)-1) ~ age, data = birthwt.clean, family = binomial()))
 
 
 
-Still to do:
-1. Download list and map to locations for specialty care:
-Trauma centers: https://www.haponline.org/Resource-Center?resourceid=81
-Children's hospitals: https://www.childrenshospitals.org/directories/hospital-directory?state=PA
-Stroke centers: https://www.health.pa.gov/topics/Documents/EMS/Designated%20Stroke%20Centers.pdf
 
 
-HSA dataset: https://seer.cancer.gov/seerstat/variables/countyattribs/hsa.html
-https://link.springer.com/article/10.1007/s10661-019-7413-4
-
-Weissman:
-- pull demographics/aggregates around hospitals
-- ED assumptions of 2 mile radius
-- Assumptions to build in for diverting/critical divert
-
-
-Holmes:
-https://data.cms.gov/tools/mapping-medicare-disparities-by-hospital
-https://data.cms.gov/provider-data/topics/hospitals/timely-effective-care
-https://data.cms.gov/provider-summary-by-type-of-service/medicare-inpatient-hospitals/hospital-service-area
-https://www.cdc.gov/nchs/fastats/emergency-department.htm
+```
 
 
 #### Discussion:  
 As shown in the above maps, patients in Pennsylvania, on average, spend more time waiting in the ED than the national average (Figures 1 and 2). Additionally, patients who go to the ED with signs of a possible heart attack or stroke, on average, were received timely care less often (Figures 3 and 4). Patients with chest pain in PA had to wait longer before transfer to a specialty hospital than the US national average (Figure 5). 
 
 Though PA underperforms nationally, the regional graphs shows that PA performs the second best in the Northeast region (behind Vermont) with respect to general ED wait time (Fig. 6), but on par with the region for timely care for acute life-threatening symptoms (chest pain, stroke symptoms, Fig. 7).
-problem solving.
-As expected, the largest number of hospitals are in the most densely populated states.
+problem solving. 
 
+*table 1-3*
+*table 4*
 
+As expected, the largest number of hospitals are in the most densely populated counties (Fig. 8).
+*fig 9, figs 10*
 
 Limitations: 
 1. Assumption that only pediatric hospitals see pediatric patients, which is not true. This underestimates access to pediatric care, but still exists as a proxy for access to high quality pediatric care.
@@ -484,3 +695,9 @@ I would like to thank Dr. Gary Weissman and Dr. John Holmes for their guidance a
 
 
 #### References:  
+https://www.ahrq.gov/research/findings/nhqrdr/chartbooks/access/elements.html
+https://books.google.com/books?hl=en&lr=&id=81bSBQAAQBAJ&oi=fnd&pg=PA119&dq=timely+and+effective+care&ots=_mCRAGdZHY&sig=2GyvgJgKH4jEvV7_XkF1H6pNQPE#v=onepage&q=timely%20and%20effective%20care&f=false
+https://jamanetwork.com/journals/jamainternalmedicine/article-abstract/770345
+https://www.cdc.gov/nchs/fastats/emergency-department.htm
+https://www.kff.org/health-reform/fact-sheet/the-pennsylvania-health-care-landscape/
+
