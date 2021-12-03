@@ -15,813 +15,389 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
 ```{r, include=FALSE}
+#required packages
 library(data.table)
 library(dplyr)
+library(tidyselect)
+library(moments)
 library(corrr)
 library(ggplot2)
 library(ggridges)
-library(RColorBrewer)
 library(skimr)
 library(forcats)
 library(tidymodels)
+library(glmnet)
+library(kernlab)
+library(ranger)
+library(kknn)
+library(nnet)
+library(doParallel)
 
+#set global setting for skimr and ggplot2
+my_skim <- skim_with(base = sfl(n_missing = n_missing),
+                     numeric = sfl(mean = mean, median = median,
+                                   sd = sd, mad = mad, 
+                                   min = min, max = max,
+                                   skewness = skewness, kurtosis = kurtosis, 
+                                   hist = function(x){inline_hist(x, 5)}),
+                     append = FALSE)
 theme_set(theme_bw(base_size = 14))
+
+#make custom functions for RMSE, MAE and R2_score
+mae <- function(response, prediction){
+  error = prediction - response
+  res = mean(abs(error))
+}
+r2 <- function(response, prediction){
+  ssr = sum((prediction - mean(prediction))^2)
+  sse = sum((prediction - response)^2)
+  sst = ssr + sse
+  res = 1 - (sse/sst)
+  return(res)
+  
+#set random seed
+set.seed(1997)
+}
 ```
 
-## Overview
+## Abstract
 
 ## Introduction 
 Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them.
 
-The data were obtained in a survey of students math and Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
+The data were obtained in a survey of Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
 
-## Read in data
-In this study, The Math and Portuguese data sets will be training and testing sets for each other, in order to verify the robustness for models.
+### Read in data from my github repo
 ```{r}
-Math <- fread(input = "https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-mat.csv", sep = ",", header = T)
-Portuguese <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
+Data <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
 ```
 
-## A brief look at the dataset
-This will be a little bit messy but it is always good practice to summaries the whole data set and check every variable. The purpose of this step is to check if our dataset contains missing values, variables with a single value, and duplicated observations
-
-### Numeric variables in Math
+### A brief look at the dataset
+This will be a little bit messy but it is always good practice to summaries the whole dataset and check every variable. The purpose of this step is to check if the dataset contains missing values, variables with a single value, and duplicated observations.
 ```{r}
-Math %>% 
-  select(where(is.numeric)) %>% 
-  skim()
+Data %>%
+  #convert character variables to factor variables, it makes the skimming result more clear and intelligible.
+  mutate(across(.cols = names(which(sapply(Data, mode) == "character")), as.factor)) %>%
+  my_skim()
 ```
+As can be seen from the table above, 13 of the 17 character variables are binary variables, which will be converted to 0-1 in the pre-processing step, and the rest 4 multivariate variables will be split by using one-hot encoding. In numeric variables, however, not all variables are normally distributed, with some are skewed to the left and others to the right. In addition, the variances of these numeric variables are varied. Therefore, the predictors needs appropriate normalization and centralization, because some models(support vector machines, K-nearest neighbors, and notably neural networks) require predictors that have been centered and scaled. 
 
-### Numeric variables in Portuguese
-```{r}
-Portuguese %>% 
-  select(where(is.numeric)) %>% 
-  skim()
-```
+In general, we take the natural logarithmic transformation for all numeric variables in the first place. This is because of: (1) to avoid numerical underflow or overflow, (2) To improve model learning efficiency by exploiting log concave/convex/linear property, (3) some variables may be linear to the response variable in the log scale space. After log transformation, all numeric variables will tend to be normally distributed. Then, I am going to simply convert these variables to be standard normal distributed(mean = 0 and sd = 1) by subtracting the mean and dividing by the standard deviation for each variable to achieve centralization and rescaling. The advantages of centralization include: (1) to lessen the correlation between a multiplicative term (interaction or polynomial term) and its component variables. (2) to make interpretation of parameter estimates easier. (3) to assign the penalty term to each variables in a more fair way.
 
 ### Bi-variate correlation analysis between G3 and all numeric variables
 ```{r}
-x <- Math %>% 
+Corr <- Data %>% 
   select(where(is.numeric)) %>% 
   correlate(method = "pearson") %>% 
-  corrr::focus(G3)
+  corrr::focus(G3) %>%
+  mutate(term = factor(term, levels = term[order(G3)]))
 
-x %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(x$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(x$G3, 2)) +
-    ylab("Correlation with G3") +
-    xlab("Numeric variables") +
-    labs(title = "Math") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    
-y <- Portuguese %>% 
-  select(where(is.numeric)) %>% 
-  correlate(method = "pearson") %>% 
-  corrr::focus(G3)
-
-y %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(y$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(y$G3, 2)) +
-    ylab("Correlation with G3") +
-    xlab("Numeric variables") +
-    labs(title = "Portuguese") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(data = Corr, mapping = aes(x = term, y = G3)) +
+  geom_bar(stat = "identity", fill = ifelse(Corr$G3 > 0, "#F8766D", "#00BFC4")) +
+  geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(Corr$G3, 2)) +
+  ylab("Correlation with G3") +
+  xlab("Numeric variables") +
+  labs(title = "Pearson Correlation Analysis") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
-In general, we take the natural logarithmic transformation for all numeric variables. This is because of: (1) to avoid numerical underflow or overflow, (2) To improve model learning efficiency by exploiting log concave/convex/linear property, (3) some variables may be linear to the response variable in the log scale space.
-
-However, in this case, after log transformation, the correlation coefficients between G3 and all other numeric variables are reduced to varying degrees (supplementary figure 1). In addition, the values of these numeric variables are relatively concentrated and have already shown a normal distribution pattern. So, I will not apply the log transformation this time. 
+An interesting find is after log transformation, the pearson correlation coefficient become worse(see supplementary figure 1). It indicates that the predictors and response variable G3 are not linear related in log space. Hence, the linear regression model may not have a good performance.
 
 Furthermore, I also noticed that two key variables in this study, Dalc and Walc, have weak and similar correlation coefficients with G3. Considering they are alike in meaning, I will try to merge these two variables into a new one as weekly alcohol consumption and see if this new variable has a better correlation performance with G3. If so, it will also improve the model learning efficiency.
 ```{r}
-z <- Math %>% 
-  mutate(alc = Math$Dalc*5/7 + Math$Walc*2/7) %>%
+Corr.alc <- Data %>% 
+  mutate(alc = Data$Dalc*5/7 + Data$Walc*2/7) %>%
   dplyr::select(alc, G3) %>%
   correlate(method = "pearson") %>%
   corrr::focus(G3) %>%
-  rbind(x %>% filter(term %in% c("Dalc", "Walc")))
+  rbind(Corr %>% filter(term %in% c("Dalc", "Walc")))
 
-ggplot(data = z, aes(x = term, y = G3)) +
+ggplot(data = Corr.alc, aes(x = term, y = G3)) +
   geom_bar(stat = "identity", width = 0.4, fill = "#00BFC4") +
-  geom_text(aes(y = (G3 - 0.004)), label = round(z$G3, 3), size = 6) +
-  ylab("Correlation with G3") +
-  labs(title = "Math")
-
-z <- Portuguese %>% 
-  mutate(alc = Portuguese$Dalc*5/7 + Portuguese$Walc*2/7) %>%
-  dplyr::select(alc, G3) %>%
-  correlate(method = "pearson") %>%
-  corrr::focus(G3) %>%
-  rbind(y %>% filter(term %in% c("Dalc", "Walc")))
-
-ggplot(data = z, aes(x = term, y = G3)) +
-  geom_bar(stat = "identity", width = 0.4, fill = "#00BFC4") +
-  geom_text(aes(y = (G3 - 0.012)), label = round(z$G3, 3), size = 6) +
-  ylab("Correlation with G3") +
-  labs(title = "Portuguese")
+  geom_text(aes(y = (G3 - 0.01)), label = round(Corr.alc$G3, 3), size = 6) +
+  ylab("Correlation with G3")
 ```
-It is ovbiously that the new variable "alc" has a better correlation coefficients with G3. Therefore, I am going to keep the new variable and remove the two old alcohol consumption variables.
-
-Other interesting finds includes: (1) Compared to math, which requires logical thinking, Portuguese, which emphasizes memory, was more likely to be affected by weekly alcohol consumption. (2) Children with higher educated parents tend to get better grades, possibly because educated parents place more emphasis on their children's education. (3) The two period grades are highly related to the final grade, which means they could gain overwhelming weights in the model learning. However, it will increase the risk of overfitting.
-
-### Categorical variables in Math
+It is obviously that the new variable "alc" has a better correlation coefficients with G3. Therefore, I am going to keep the new variable and remove the two old alcohol consumption variables.
 ```{r}
-Math %>% 
-  select(where(is.character)) %>% 
-  mutate(across(.cols = everything(), as.factor)) %>%
-  skim()
+Data <- Data %>% 
+  mutate(alc = Data$Dalc*5/7 + Data$Walc*2/7) %>%
+  dplyr::select(-Dalc, -Walc)
 ```
+Other interesting finds includes: (1) Weekly alcohol consumption have a negative relationship with final grade G3. which indicates drinking does affect academic performance to some extent. (2) Children with higher educated parents tend to get better grades, possibly because educated parents place more emphasis on their children's education. (3) The two period grades are highly related to the final grade, which means they could gain overwhelming weights in the model learning. However, it will increase the risk of overfitting. ()
 
-### Categorical variables in Portuguese
+### Bi-variate importance analysis between G3 and all categorical variables
+How to calculate the correlation between a continuous and categorical variable is very tricky. Here I use random forest to calulate the importance base on corrected impurity (gini index). 
 ```{r}
-Portuguese %>% 
-  select(where(is.character)) %>% 
-  mutate(across(.cols = everything(), as.factor)) %>%
-  skim()
-```
+rf.c <- ranger(G3 ~ ., data = Data %>% select(where(is.character), G3), num.trees = 1000, importance = "impurity_corrected")
+rf.c <- data.frame(term = names(rf.c$variable.importance), G3 = rf.c$variable.importance)
 
-### Bi-variate correlation analysis between G3 and all categorical variables
-How to calculate the correlation between a continuous and categorical variable is very tricky. Here I used one-hot encoding to separate multivariate discrete variables into several binary discrete variable at first. Then, using Mann-Kendall test to calculate the correlation coefficients between these binary variable with G3.
-```{r}
-m <- Math %>% 
-  select(where(is.character), G3) %>% 
-  mutate(school = ifelse(school == "GP", 1, 0)) %>%
-  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
-  mutate(address = ifelse(address == "U", 1, 0)) %>%
-  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
-  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
-  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
-  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
-  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
-  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
-  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
-  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
-  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
-  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
-  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
-  dplyr::select(-Mjob, -Fjob, -reason, -guardian) %>%
-  correlate(method = "kendall") %>% 
-  corrr::focus(G3)
-
-m %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
+rf.c %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
   ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(m$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.01, -0.01))), label = round(m$G3, 2), size = 2.3) +
+    geom_bar(stat = "identity", fill = "#F8766D") +
+    geom_text(aes(y = (G3 + 40)), label = round(rf.c$G3), size = 5) +
     ylab("Correlation with G3") +
     xlab("Categorical variables") +
-    labs(title = "Math") +
+    labs(title = "Corrected Impurity") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-n <- Portuguese %>% 
-  select(where(is.character), G3) %>% 
-  mutate(school = ifelse(school == "GP", 1, 0)) %>%
-  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
-  mutate(address = ifelse(address == "U", 1, 0)) %>%
-  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
-  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
-  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
-  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
-  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
-  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
-  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
-  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
-  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
-  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
-  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
-  dplyr::select(-Mjob, -Fjob, -reason, -guardian) %>%
-  correlate(method = "kendall") %>% 
-  corrr::focus(G3)
-
-n %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(n$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.015, -0.015))), label = round(n$G3, 2), size = 2.3) +
-    ylab("Correlation with G3") +
-    xlab("Categorical variables") +
-    labs(title = "Portuguese") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+The higher the importance value means the feature provides more help to the classification. However, a negative importance value means that feature makes the loss go up. This indicates that your model is not getting good use of this feature. Set a random seed ensure a repeatable result, but I also tried recalculate the importance values more than 10 times without setting a random seed, I noticed that the "higher" feature (want to take higher education) always have a very high importance value, which is reasonable. "school" feature (student's school) also benefits the classification. Through a simple Internet search, it can be found that Gabriel Pereira school does have famous Portuguese teaching history.
 
 ## Methods
 
-### Pre-processing: feature tranformation and selection
-In order to improves the accuracy and avoids overfitting, also enables the machine learning algorithm to train faster, reduces the complexity of a model and makes it easier to interpret. I will apply a simple feature selection step after transform category variables in to numeric variables. According to the result of bi-variate correlation analysis shown above, I would take the cutoff of absolute correlation coefficients as 0.1 in both datasets to filter out variables which weakly related to G3.
+### Feature Selection
+In order to improves the accuracy by removing irrelevant predictors or predictors with negative influence for response variable, and enables the machine learning algorithm to train faster, reduces the complexity of a model and makes it easier to interpret. A simple feature selection will be applied according to the result of correlation analysis and feature importance analysis shown above, I would take the cutoff of absolute correlation coefficients as 0.1 and corrected impurity importance as 10 to filter out variables which weakly related to G3.
 ```{r}
-Math <- Math %>% 
-  mutate(alc = Math$Dalc*5/7 + Math$Walc*2/7) %>%
-  mutate(school = ifelse(school == "GP", 1, 0)) %>%
-  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
-  mutate(address = ifelse(address == "U", 1, 0)) %>%
-  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
-  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
-  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
-  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
-  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
-  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
-  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
-  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
-  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
-  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
-  cbind(as.data.frame(model.matrix(~Mjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~Fjob-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~reason-1, Math))) %>%
-  cbind(as.data.frame(model.matrix(~guardian-1, Math))) %>%
-  dplyr::select(-Dalc, -Walc, -Mjob, -Fjob, -reason, -guardian)
+drop <- union(Corr$term[abs(Corr$G3) < 0.1], rf.c$term[rf.c$G3 <10])
+Data.keep <- dplyr::select(Data, -drop)
+```
+In this step, 10 variables were dropped.
 
-Portuguese <- Portuguese %>% 
-  mutate(alc = Portuguese$Dalc*5/7 + Portuguese$Walc*2/7) %>%
-  mutate(school = ifelse(school == "GP", 1, 0)) %>%
-  mutate(sex = ifelse(sex == "M", 1, 0)) %>%
-  mutate(address = ifelse(address == "U", 1, 0)) %>%
-  mutate(famsize = ifelse(famsize == "GT3", 1, 0)) %>%
-  mutate(Pstatus = ifelse(Pstatus == "T", 1, 0)) %>%
-  mutate(schoolsup = ifelse(schoolsup == "yes", 1, 0)) %>%
-  mutate(famsup = ifelse(famsup == "yes", 1, 0)) %>%
-  mutate(paid = ifelse(paid == "yes", 1, 0)) %>%
-  mutate(activities = ifelse(activities == "yes", 1, 0)) %>%
-  mutate(nursery = ifelse(nursery == "yes", 1, 0)) %>%
-  mutate(higher = ifelse(higher == "yes", 1, 0)) %>%
-  mutate(internet = ifelse(internet == "yes", 1, 0)) %>%
-  mutate(romantic = ifelse(romantic == "yes", 1, 0)) %>%
-  cbind(as.data.frame(model.matrix(~Mjob-1, Portuguese))) %>%
-  cbind(as.data.frame(model.matrix(~Fjob-1, Portuguese))) %>%
-  cbind(as.data.frame(model.matrix(~reason-1, Portuguese))) %>%
-  cbind(as.data.frame(model.matrix(~guardian-1, Portuguese))) %>%
-  dplyr::select(-Dalc, -Walc, -Mjob, -Fjob, -reason, -guardian)
-drop_variables <- c(intersect(x$term[(abs(x$G3) < 0.1)], y$term[(abs(y$G3) < 0.1)]),
-                    intersect(m$term[(abs(m$G3) < 0.1)], n$term[(abs(n$G3) < 0.1)]))
-
-Math <- dplyr::select(.data = Math, setdiff(colnames(Math), drop_variables))
-Portuguese <- dplyr::select(.data = Portuguese, setdiff(colnames(Portuguese), drop_variables))
+### Split Data into Training set and Testing set
+```{r}
+split <- initial_split(Data.keep, prop = 4/5)
+train <- training(split)
+test  <- testing(split)
 ```
 
-### Check the bi-variate correlation between G3 and all remaining variables
+### Candidate Models
+Here I am going to try out 5 different models. In this case, I approached the hyper-parameters in more manual way because I want to learn more about them. Most of the time, in the tuning process `tidymodels` gets you covered up but still you have to set hyper-parameters like `mtry` for Random Forests.
+
+#### Linear Regression
+lasso regression(mixture = 1), ridge regression(mixture = 0) and elastic network(0<mixture<1) are some of the simple techniques to reduce model complexity and prevent over-fitting which may result from simple linear regression.
 ```{r}
-xx <- Math %>% 
-  correlate(method = "pearson") %>% 
-  corrr::focus(G3)
-
-xx %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(xx$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(xx$G3, 2)) +
-    ylab("Correlation with G3") +
-    xlab("Numeric variables") +
-    labs(title = "Math") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-yy <- Portuguese %>% 
-  correlate(method = "pearson") %>% 
-  corrr::focus(G3)
-
-yy %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(yy$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(yy$G3, 2)) +
-    ylab("Correlation with G3") +
-    xlab("Numeric variables") +
-    labs(title = "Portuguese") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-## Candidate Models
-Here I am going to try out 5 different models. In this case, I approached the hyper-parameters in more manual way because I want to learn more about them. Most of the time, in the tuning process `tidymodels` gets you covered up but still you have to set hyper-parameters like `mtry` for Random Forests for Gradient Boosting Trees. 
-
-### Linear Regression
-!!Definition of linear regression, lasso regression(mixture = 1), ridge regression(mixture = 0) and elastic network(0<mixture<1).
-
-```{r}
-lr <- linear_reg(mode = "regression", engine = "glmnet", penalty = tune(), mixture = tune()) 
-
-lr_param <- parameters(lr) %>% 
-  update(penalty = penalty(seq(0.01, 0.1, by = 0.01)), mixture = mixture(c(0,1)))
-```
-
-### Support Vector Machine
-!!Definition of SVM
-
-```{r}
-svm <- svm_rbf(mode = "regression",engine = "kernlab", cost = tune(), rbf_sigma = tune(), margin = tune())
-
-svm_param <- parameters(svm) %>% 
-  update(cost = cost(c(-10, 5)), rbf_sigma = rbf_sigma(c(-5,0)), margin = svm_margin(c(0, 0.2)))
-```
-
-### Random Forest
-!!Definition of Random Forest
-
-```{r}
-rf <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>% 
-  set_engine("ranger") %>% 
+lr <- linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet") %>%
   set_mode("regression")
 
-rf_param <- parameters(rf) %>% 
-  update(mtry = mtry(c(10,20)),
-         trees = trees(c(1000, 2500)),
-         min_n = min_n(c(2, 20)))
+param.lr <- parameters(lr) %>% 
+  update(penalty = penalty(c(-3, -1)), mixture = mixture(c(0,1)))
 ```
 
-### Artificial Neural Network
-
+#### Support Vector Machine
+Support vector machine is a supervised learning methods used for classification, regression and outliers detection. Support vector machines is very effective in high dimensional spaces.
 ```{r}
+svm <- svm_rbf(cost = tune(), rbf_sigma = tune(), margin = 0.1) %>%
+  set_engine("kernlab") %>%
+  set_mode("regression")
 
+param.svm <- parameters(svm) %>% 
+  update(cost = cost(c(-5, 7)), rbf_sigma = rbf_sigma(c(-3,-1)))
 ```
 
+#### Random Forest
+```{r}
+rf <- rand_forest(mtry = tune(), trees = tune()) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
 
-## Model Fitting
+param.rf <- parameters(rf) %>% 
+  update(mtry = mtry(c(5,12)), trees = trees(c(500, 2500)))
+```
+
+#### K-nearest neighbors
+```{r}
+knn <- nearest_neighbor(neighbors = tune(), weight_func = tune(), dist_power = 2) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+param.knn <- parameters(knn) %>% 
+  update(neighbors = neighbors(c(1L,20L)), weight_func = weight_func(c("rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", "inv", "gaussian", "rank", "optimal")))
+```
+
+#### Artificial Neural Network
+```{r}
+nnet <- mlp(penalty = tune(), hidden_units = tune(), dropout = 0, epochs = 100) %>%
+  set_engine("nnet") %>%
+  set_mode("regression")
+
+param.nnet <- parameters(nnet) %>% 
+  update(penalty = penalty(c(-3, -1)), hidden_units = hidden_units(c(1L,10L)))
+```
+
+### Setting Pre-processing Recipe
+```{r}
+recipe <- Data.keep %>%
+  recipe(G3 ~ .) %>%
+  step_log(all_numeric(), trained = FALSE, base = exp(1), offset = 1) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+```
 
 ### Creating Workflowsets
-
-Now I bring every model and recipe(formula) together and melt them in a workflow set. 
-
+Now I bring every model and recipe(formula) together and melt them in a workflow set and add the hyper-parameter information to the workflow set.
 ```{r}
-exploratory_workflowset <- workflow_set(
-  
-  preproc = list("recipe_all" = recipe_all, "recipe_pars" = recipe_pars),
-  
-  models = list("neural_net" = nn, "xgboost" = xgb,"rand_for" = rf, "rad_svm" = rad_svm,
-                "cubist_rules" = cub_rules, "linear_reg" = lin_reg, "MARS" = mars_fit)
-)
-```
+wf.lr <- workflow() %>%
+  add_model(lr) %>%
+  add_recipe(recipe) 
 
-#### Adding Parameter Information
+wf.svm <- workflow() %>%
+  add_model(svm) %>%
+  add_recipe(recipe) 
 
-In this section I am adding the hyper-parameter information to the workflowset. You can add different parameters for different recipes. Again as I said this is the more manual way so excuse my copy-paste skills here.
+wf.rf <- workflow() %>%
+  add_model(rf) %>%
+  add_recipe(recipe) 
 
-```{r}
-exploratory_workflowset <- exploratory_workflowset %>% 
-  option_add(param_info = xgb_param, id = "recipe_all_xgboost") %>% 
-  option_add(param_info = nn_param, id = "recipe_all_neural_net") %>% 
-  option_add(param_info = rf_param, id = "recipe_all_rand_for") %>% 
-  option_add(param_info = rad_svm_param, id = "recipe_all_rad_svm") %>% 
-  option_add(param_info = cub_rules_param, id = "recipe_all_cubist_rules") %>% 
-  option_add(param_info = lin_reg_param, id = "recipe_all_linear_reg") %>% 
-  option_add(param_info = mars_fit_param, id = "recipe_all_MARS") %>% 
-  option_add(param_info = xgb_param, id = "recipe_pars_xgboost") %>% 
-  option_add(param_info = nn_param, id = "recipe_pars_neural_net") %>% 
-  option_add(param_info = rf_param, id = "recipe_pars_rand_for") %>% 
-  option_add(param_info = rad_svm_param, id = "recipe_pars_rad_svm") %>% 
-  option_add(param_info = cub_rules_param, id = "recipe_pars_cubist_rules") %>% 
-  option_add(param_info = lin_reg_param, id = "recipe_pars_linear_reg") %>% 
-  option_add(param_info = mars_fit_param, id = "recipe_pars_MARS")  
+wf.knn <- workflow() %>%
+  add_model(knn) %>%
+  add_recipe(recipe) 
+
+wf.nnet <- workflow() %>%
+  add_model(nnet) %>%
+  add_recipe(recipe) 
 ```
 
 ### Fitting with Cross Validation
-
-I am going to use 10-Fold Cross-Validation and repeat this 5 times. I am also setting the seed to make this notebook more reproducible. 
-
+I am going to use 10 Fold Cross-Validation and repeat it 3 times to find out the best hyper parameters and the model with best performance in our dataset. 
 ```{r}
-set.seed(1993)
-cv_folds <- vfold_cv(train, v = 5, repeats = 5)
-
-grid_control <- control_grid(
-  verbose = TRUE
-)
+cv_folds <- vfold_cv(Data.keep, v = 10, repeats = 3)
 ```
 
-#### Parallel Processing
-
-`doParallel` package makes parallelization very easy. In this case I am going to use 3 cores. In theory this should decrease the computing time by %66. However, I can say from my experiments that in reality it is more like %50-52(for this notebook of course.) .
-
+### Parallel Processing
+doParallel package makes parallelization very easy. In this case I am going to use 4 cores. In theory this should decrease the computing time by %75. However, I can say from my experiments that in reality it is more like %50-66 for this notebook.
 ```{r}
-cl <- makeCluster(3)
+cl <- makeCluster(4)
 registerDoParallel(cl)
-```  
+```
 
-Lastly, in this chunk, I bring everything together. The most important thing here is the `grid` argument. Above, I set the hyper-parameter spaces. In this case `workflow_map()` function will fit 60 different models within these hyper-parameter spaces. 
-
+### find best parameters for linear regression
 ```{r}
-exploratory_results <- exploratory_workflowset %>% 
-  workflow_map(
-    verbose = TRUE,
-    seed = 1993,
-    resamples = cv_folds,
-    control = grid_control,
-    grid = 60,
-    metrics = metric_set(rmse)
-  )
+grid.lr <- grid_regular(param.lr, levels = c(20,11), original = T)
+search.lr <- tune_grid(wf.lr, grid = grid.lr, resamples = cv_folds, param_info = param.lr)
+autoplot(search.lr, metric = "rmse") + labs(title = "Linear Regression")
 ```
 
-## Model Evaluation and Finalization
-
-This section will be quite brief. First, We will see and compare the best results then for each model I'll be plotting hyper-parameters and their marginal effects on RMSE. Lastly, I am going to re-fit the models to whole training set by using the best hyper-parameters and submit the results.
-
-```{r, fig.width=8.5}
-autoplot(exploratory_results,
-         select_best = TRUE)+
-  geom_text(aes(label = wflow_id), angle = 90, nudge_x = -0.4)+
-  scale_y_continuous(n.breaks = 10)+
-  labs(y = NULL)+
-  theme(legend.position = "none")
-```
-
-Here except for Random Forests and MARS, models are performing quite well. Parsimonious models are always marginally worse but it doesn't mean that their test score will be bad too. Since nearly all models are comparable, I will need to decide which ones to work with after I get the test results. However, MARS and RF are out :(. 
-
-The reason why I want to analyze the hyper-parameter results is that I want to narrow down the parameter space so next time I try to get better results by doing some feature engineering re-fitting will be less time consuming computationally. 
-
-Below, there is a very lazy function that will help me compare hyper-parameters. I am going to plot both recipes but they have similar results. I hope this won't clutter the notebook too much.
-
+### find best parameters for support vector machine
 ```{r}
-plot_compare <- function(id_all, id_pars) {
-
-p1 <- exploratory_results %>% 
-  pull_workflow_set_result(id = id_all) %>%
-  autoplot()+
-  ggtitle("Recipe All")
-
-p2 <- exploratory_results %>% 
-  pull_workflow_set_result(id = id_pars) %>%
-  autoplot()+
-  ggtitle("Recipe Parsimonious")
-
-return(p1 / p2) 
-}
-
-## pull_workflow_set_result() is deprecated but the new function
-## extract_workflow_set_result() doesn't work in Kaggle for this moment.
+grid.svm <- grid_regular(param.svm, levels = c(20,15), original = T)
+search.svm <- tune_grid(wf.svm, grid = grid.svm, resamples = cv_folds, param_info = param.svm)
+autoplot(search.svm, metric = "rmse") + labs(title = "Support Vector Machine")
 ```
 
-
-### XGBoost
-
-Here the only hyper-parameter that matters is the Learning Rate.
-
-```{r, fig.height=8, fig.width=8.5}
-plot_compare("recipe_all_xgboost",
-             "recipe_pars_xgboost")
-```
-
-You can also check the Top 10 models for both All and Parsimonious recipes respectively:
-
+### find best parameters for random forest
 ```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_xgboost") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_xgboost") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
+grid.rf <- grid_regular(param.rf, levels = c(8,21), original = T)
+search.rf <- tune_grid(wf.rf, grid = grid.rf, resamples = cv_folds, param_info = param.rf)
+autoplot(search.rf, metric = "rmse") + labs(title = "Ramdom Forest")
 ```
 
-#### Final Fit
-
-For the last model I am choosing the best of the results and I will manually enter the hyper-parameters for reproducibility sake.
-
+### find best parameters for K-nearest neighbors
 ```{r}
-set.seed(1993)
-best_model <- boost_tree(mtry = 9, trees = 2472, learn_rate = 0.05308297,
-                  tree_depth = 2, min_n = 2) %>% 
-  set_engine("xgboost") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_all) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("XGB_All_NULL.csv")
+grid.knn <- grid_regular(param.knn, levels = c(20,10), original = T)
+search.knn <- tune_grid(wf.knn, grid = grid.knn, resamples = cv_folds, param_info = param.knn)
+autoplot(search.knn, metric = "rmse") + labs(title = "K-nearest Neighbors")
 ```
 
+### find best parameters for artificial neural network
 ```{r}
-set.seed(1993)
-best_model <- boost_tree(mtry = 11, trees = 1375, learn_rate = 0.01700219,
-                  tree_depth = 5, min_n = 4) %>% 
-  set_engine("xgboost") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_pars) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("XGB_Pars_NULL.csv")
+grid.nnet <- grid_regular(param.nnet, levels = 20, original = T)
+search.nnet <- tune_grid(wf.nnet, grid = grid.nnet, resamples = cv_folds, param_info = param.nnet)
+autoplot(search.nnet, metric = "rmse") + labs(title = "Artificial Neural Network")
 ```
-
-### Neural Nets
-
-Single hidden unit seems to be working well. Regularization amount is the most important factor here.
-
-```{r, fig.height=7, fig.width=8}
-plot_compare("recipe_all_neural_net",
-             "recipe_pars_neural_net")
-```
-
-
+### Prediction performance in training set
 ```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_neural_net") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
+best_param.lr <- select_best(search.lr, metric = "rmse")
+best_param.svm <- select_best(search.svm, metric = "rmse")
+best_param.rf <- select_best(search.rf, metric = "rmse")
+best_param.knn <- select_best(search.knn, metric = "rmse")
+best_param.nnet <- select_best(search.nnet, metric = "rmse")
 
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_neural_net") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
+df <- data.frame(model = c("linear regression", "support vector machine", "random forest", "k-earest neighbors", "artificial neural netwook"), rsem = c(show_best(search.lr, metric = "rmse", n = 1)$mean, show_best(search.svm, metric = "rmse", n = 1)$mean, show_best(search.rf, metric = "rmse", n = 1)$mean, show_best(search.knn, metric = "rmse", n = 1)$mean, show_best(search.nnet, metric = "rmse", n = 1)$mean))
+
+ggplot(data = df, mapping = aes(x = model, y = rsem, color = model)) +
+  geom_point(stat = "identity", size = 5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+According to the figure, linear regression and support vector machine achieve the best performance in training set via 10 folds cross validation. Next, we will apply those trained models to the testing set for checking the robustness.
 
-#### Final Fit
-
+## Results
+After determining the best parameter, the entire training set will be fitted and then evaluated on the test set. Here, RMSE(square root error), MAE (mean absolute error), MSQ(correlation square) and R2_score will be used to evaluate the performance for each model.
 ```{r}
-set.seed(1993)
-best_model <- mlp(hidden_units = 1, penalty = 0.0008246147, epochs = 692) %>% 
-  set_engine("nnet") %>% 
-  set_mode("regression")
+wf.lr.final <- wf.lr %>% finalize_workflow(best_param.lr)
+wf.svm.final <- wf.svm %>% finalize_workflow(best_param.svm)
+wf.rf.final <- wf.rf %>% finalize_workflow(best_param.rf)
+wf.knn.final <- wf.knn %>% finalize_workflow(best_param.knn)
+wf.nnet.final <- wf.nnet %>% finalize_workflow(best_param.nnet)
 
-workflow() %>% 
-  add_recipe(recipe_all) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("NN_All_NULL.csv")
+fit.lr.final <- wf.lr.final %>% last_fit(split) 
+fit.svm.final <- wf.svm.final %>% last_fit(split) 
+fit.rf.final <- wf.rf.final %>% last_fit(split) 
+fit.knn.final <- wf.knn.final %>% last_fit(split) 
+fit.nnet.final <- wf.nnet.final %>% last_fit(split) 
+
+perf.lr <- fit.lr.final %>% 
+  collect_metrics() %>%
+  dplyr::select(.metric, .estimate) %>%
+  rename(metric = .metric, estimate = .estimate) %>%
+  rbind(c("mae", mae(response = fit.lr.final$.predictions[[1]]$G3, 
+                     prediction = fit.lr.final$.predictions[[1]]$.pred))) %>%
+  rbind(c("r2 score", r2(response = fit.lr.final$.predictions[[1]]$G3, 
+                         prediction = fit.lr.final$.predictions[[1]]$.pred)))
+
+perf.svm <- fit.svm.final %>% 
+  collect_metrics() %>%
+  dplyr::select(.metric, .estimate) %>%
+  rename(metric = .metric, estimate = .estimate) %>%
+  rbind(c("mae", mae(response = fit.svm.final$.predictions[[1]]$G3, 
+                     prediction = fit.svm.final$.predictions[[1]]$.pred))) %>%
+  rbind(c("r2 score", r2(response = fit.svm.final$.predictions[[1]]$G3, 
+                         prediction = fit.svm.final$.predictions[[1]]$.pred)))
+
+perf.rf <- fit.rf.final %>% 
+  collect_metrics() %>%
+  dplyr::select(.metric, .estimate) %>%
+  rename(metric = .metric, estimate = .estimate) %>%
+  rbind(c("mae", mae(response = fit.rf.final$.predictions[[1]]$G3, 
+                     prediction = fit.rf.final$.predictions[[1]]$.pred))) %>%
+  rbind(c("r2 score", r2(response = fit.rf.final$.predictions[[1]]$G3, 
+                         prediction = fit.rf.final$.predictions[[1]]$.pred)))
+
+perf.knn <- fit.knn.final %>% 
+  collect_metrics() %>%
+  dplyr::select(.metric, .estimate) %>%
+  rename(metric = .metric, estimate = .estimate) %>%
+  rbind(c("mae", mae(response = fit.knn.final$.predictions[[1]]$G3, 
+                     prediction = fit.knn.final$.predictions[[1]]$.pred))) %>%
+  rbind(c("r2 score", r2(response = fit.knn.final$.predictions[[1]]$G3, 
+                         prediction = fit.knn.final$.predictions[[1]]$.pred)))
+
+perf.nnet <- fit.nnet.final %>% 
+  collect_metrics() %>%
+  dplyr::select(.metric, .estimate) %>%
+  rename(metric = .metric, estimate = .estimate) %>%
+  rbind(c("mae", mae(response = fit.nnet.final$.predictions[[1]]$G3, 
+                     prediction = fit.nnet.final$.predictions[[1]]$.pred))) %>%
+  rbind(c("r2 score", r2(response = fit.nnet.final$.predictions[[1]]$G3, 
+                         prediction = fit.nnet.final$.predictions[[1]]$.pred)))
+  
+perf.all <- rbind(perf.lr %>% mutate(model = "linear regression"),
+                  perf.svm %>% mutate(model = "support vector machine"),
+                  perf.rf %>% mutate(model = "random forest"),
+                  perf.knn %>% mutate(model = "k-nearest neighbors"),
+                  perf.nnet %>% mutate(model = "artificial neural network")) %>%
+            mutate(estimate = as.numeric(estimate))
+
+ggplot(data = perf.all, mapping = aes(x = model, y = estimate, color = model)) +
+  geom_point(stat = "identity", size = 3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  facet_wrap(~metric, nrow = 2, scales = "free_y")
 ```
-
-```{r}
-set.seed(1993)
-best_model <- mlp(hidden_units = 1, penalty = 0.006460661, epochs = 470) %>% 
-  set_engine("nnet") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_pars) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("NN_Pars_NULL.csv")
-```
-
-### Random Forests
-
-Smaller Node Sizes and Bigger Randomly Selected Predictor amount are better.
-
-```{r, fig.height=8, fig.width=8}
-plot_compare("recipe_all_rand_for",
-             "recipe_pars_rand_for")
-```
-
-
-```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_rand_for") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_rand_for") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-```
-
-### Radial SVM
-
-The results seem to be insensitive to Insensitivity Margin ;).
-
-```{r, fig.height=7, fig.width=8}
-plot_compare("recipe_all_rad_svm",
-             "recipe_pars_rad_svm")
-```
-
-You can actually observe that hyper-paremeters are same for all recipes here.
-
-```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_rad_svm") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_rad_svm") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-```
-
-#### Final Fit
-
-```{r}
-set.seed(1993)
-best_model <- svm_rbf(cost = 7.5946669, rbf_sigma = 0.00144719017, margin = 0.010112632) %>% 
-  set_engine("kernlab") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_all) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("SVM_Rad_All_NULL.csv")
-```
-
-```{r}
-set.seed(1993)
-best_model <- svm_rbf(cost = 7.5946669, rbf_sigma = 0.00144719017, margin = 0.010112632) %>% 
-  set_engine("kernlab") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_pars) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("SVM_Rad_Pars_NULL.csv")
-```
-
-### Cubist Rules
-
-Nearest Neighbors is really affecting the results. It seems like higher the better.
-
-```{r, fig.height=7, fig.width=8}
-plot_compare("recipe_all_cubist_rules",
-             "recipe_pars_cubist_rules")
-```
-
-
-```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_cubist_rules") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_cubist_rules") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-```
-
-#### Final Fit
-
-```{r}
-set.seed(1993)
-best_model <- cubist_rules(committees = 91, neighbors = 9, max_rules = 365) %>% 
-  set_engine("Cubist") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_all) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("Cubist_All_NULL.csv")
-```
-
-```{r}
-set.seed(1993)
-best_model <- cubist_rules(committees = 67, neighbors = 10, max_rules = 442) %>% 
-  set_engine("Cubist") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_pars) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("Cubist_Pars_NULL.csv")
-```
-
-### Linear Regression with Regularization
-
-```{r, fig.height=7, fig.width=8}
-plot_compare("recipe_all_linear_reg",
-             "recipe_pars_linear_reg")
-```
-
-
-```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_linear_reg") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_linear_reg") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-```
-
-#### Final Fit
-
-```{r}
-set.seed(1993)
-best_model <- linear_reg(penalty = 0.00001222794, mixture = 0.005317853) %>% 
-  set_engine("glmnet") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_all) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("LinReg_All_NULL.csv")
-```
-
-```{r}
-set.seed(1993)
-best_model <- linear_reg(penalty = 0.00001222794, mixture = 0.005317853) %>% 
-  set_engine("glmnet") %>% 
-  set_mode("regression")
-
-workflow() %>% 
-  add_recipe(recipe_pars) %>% 
-  add_model(best_model) %>% 
-  fit(train) %>% 
-  predict(new_data = test) %>% 
-  bind_cols(Id = test$Id) %>% 
-  mutate(SalePrice = exp(.pred)) %>% 
-  select(-.pred) %>% 
-  write_csv("LinReg_Pars_NULL.csv")
-```
-
-### MARS
-
-```{r, fig.height=8, fig.width=8}
-plot_compare("recipe_all_MARS",
-             "recipe_pars_MARS")
-```
-
-
-```{r}
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_all_MARS") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-
-exploratory_results %>% 
-  pull_workflow_set_result(id = "recipe_pars_MARS") %>% 
-  collect_metrics() %>% 
-  arrange(mean) %>% 
-  slice_head(n = 10)
-```
-
-
-### Results
-
 
 ## Supplementary material
 
-### figure 1
-Bi-variate correlation analysis between G3 and all numeric variables after natural logarithmic transformation.
+### Supplementary figure 1: Bi-variate correlation analysis between G3 and all numeric variables after log transformation
 ```{r}
-x <- Math %>% 
+Corr.log1p <- Data %>% 
   select(where(is.numeric)) %>% 
   log1p() %>%
   correlate(method = "pearson") %>% 
   corrr::focus(G3)
 
-x %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
-  ggplot(aes(x = term, y = G3)) +
-    geom_bar(stat = "identity", fill = ifelse(x$G3 > 0, "#F8766D", "#00BFC4")) +
-    geom_text(aes(y = (G3 + ifelse(G3 > 0, 0.06, -0.06))), label = round(x$G3, 2)) +
-    ylab("Correlation with G3") +
-    xlab("Numeric variables") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(data = Corr.log1p, mapping = aes(x = term, y = G3)) +
+  geom_bar(data = Corr, stat = "identity", color = ifelse(Corr$G3 > 0, "#F8766D", "#00BFC4"), fill = "white") +
+  geom_bar(stat = "identity", fill = ifelse(Corr.log1p$G3 > 0, "#F8766D", "#00BFC4")) +
+  ylab("Correlation with G3") +
+  xlab("Numeric variables") +
+  labs(title = "Pearson Correlation Analysis after Log Transformation") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
-
-
-

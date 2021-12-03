@@ -6,14 +6,27 @@ This repository contains a R script used to solve the student alcohol consumptio
 ## Introduction
 Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them.
 
-The data were obtained in a survey of students math and Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
+The data were obtained in a survey of students Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
 
 ## Required Packages
-- ggplot2
-- RColorBrewer
+ - data.table
+ - dplyr
+ - tidyselect
+ - moments
+ - corrr
+ - ggplot2
+ - ggridges
+ - skimr
+ - forcats
+ - tidymodels
+ - glmnet
+ - kernlab
+ - ranger
+ - kknn
+ - nnet
+ - doParallel
 
 ## Files Explanation
-- student-mat.csv ：raw data in math course.
 - student-por.csv ：raw data in portuguese course.
 - data_description.txt ：features description file.
 
@@ -57,7 +70,6 @@ These grades are related with the course subject, Math or Portuguese:
 Additional note: there are several (382) students that belong to both datasets . 
 These students can be identified by searching for identical attributes
 that characterize each student, as shown in the annexed R file.
-
 
 ## Source Information
 
