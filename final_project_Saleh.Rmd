@@ -7,6 +7,8 @@ output:
     theme: cayman 
     highlight: default
     number_sections: TRUE
+editor_options: 
+  chunk_output_type: inline
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
@@ -111,7 +113,7 @@ coh1c <- coh1 %>%
   dplyr::filter(days_second_imm_to_infxn > 14) %>%
   dplyr::mutate(cohort = '1c')
 
-cohorts <- c(coh1a, coh1b, coh1c, coh2)
+#cohorts <- c(coh1a, coh1b, coh1c, coh2)
 
 #Bind together all cohorts into one dataframe
 all_cohorts <- dplyr::bind_rows(coh1a, coh1b, coh1c, coh2)
@@ -158,7 +160,7 @@ dems %>%
               digits = all_continuous() ~ 2,
               label = cohort ~ 'Cohort',
               missing_text = "(Missing)") %>%
-  add_p() %>%
+  add_p(list(all_continuous() ~ "kruskal.test", all_categorical() ~ "chisq.test")) %>%
   modify_header(label ~ "**Variable**") %>%
   modify_caption("**Table 1. Patient Characteristics**") %>%
   bold_labels()
@@ -181,30 +183,34 @@ ins <- dbGetQuery(con, ins_query) %>%
 #Join with all cohorts
 ins <- all_cohorts %>%
   select(c('ptid','cohort')) %>%
-  dplyr::inner_join(ins, by='ptid')
+  dplyr::left_join(ins, by='ptid') %>%
+  mutate(flag = 1) %>%
+  pivot_wider(names_from = ins_type, values_from = flag, values_fill = 0) %>%
+  rename(Unknown = 'NA')
 
-ins %>% 
-  select(cohort, ins_type) %>%
+ins %>%
+  select(-ptid) %>%
   tbl_summary(by = cohort, 
               statistic = list(all_continuous() ~ "{mean} ({sd})",
               all_categorical() ~ "{n} / {N} ({p}%)"),
               digits = all_continuous() ~ 2,
               label = cohort ~ 'Cohort',
               missing_text = "(Missing)") %>%
-  add_p() %>%
+  add_p(list(all_continuous() ~ "kruskal.test", all_categorical() ~ "chisq.test")) %>%
   modify_header(label ~ "**Variable**") %>%
   modify_caption("**Table 2. Patient Insurance**") %>%
   bold_labels()
+
 ```
 
-```{r, eval = TRUE, message = FALSE}
+```{r eval=TRUE, message=FALSE}
 bmi_query = "SELECT iq.ptid, iq.bmi_date, o.obs_result  
 FROM (select coh.ptid, min(o.obs_date) as bmi_date
 		from g823429.sns_proj2_cohall_0916 coh
 		JOIN opt_20210916.obs o
 		ON coh.ptid = o.ptid
 		WHERE 
-		o.obs_type = 'BMI' AND
+		o.obs_type = \'BMI\' AND
 		(o.obs_date - coh.covid_pos_date) >= -180 AND --looking at past 180 days
 		(o.obs_date - coh.covid_pos_date) <= 0
 	group by coh.ptid) as iq
@@ -216,35 +222,218 @@ bmi <- dbGetQuery(con, bmi_query) %>%
   dplyr::arrange(bmi_date) %>%
   dplyr::filter(row_number() == n()) #get most recent value
 
+cci_query = "SELECT coh.ptid, cci_score
+FROM g823429.sns_proj2_cohall_0916 coh
+left outer join g823429.sns_charlson_scores_0916 score on score.ptid=coh.ptid"
+
+comorbidity_scores <- dbGetQuery(con, cci_query) %>%
+  dplyr::distinct()
+
+#Total CCI scores
+comorbidity_scores <- all_cohorts %>%
+  select(ptid, cohort) %>%
+  dplyr::left_join(comorbidity_scores, by = 'ptid') %>%
+  dplyr::left_join(bmi, by = 'ptid') %>%
+  dplyr::mutate(cci_score = replace_na(cci_score, 0))
+  
+comorbidity_scores$cci_score <- replace_na(comorbidity_scores$cci_score, 0)
+
+#Particular comorbidities
 cci_query_2 = "SELECT coh.ptid, dis.comorbidities
 FROM g823429.sns_proj2_cohall_0916 coh
-LEFT OUTER JOIN g823429.sns_charlson_icd_codes dis
+LEFT OUTER JOIN g823429.sns_charlson_icd_codes_0916 dis
 ON coh.ptid = dis.ptid" 
 
 comorbidites <- dbGetQuery(con, cci_query_2) %>%
-  dplyr::distinct() %>% #remove duplicates
-  dplyr::left_join(bmi, by = 'ptid')
-  
+  dplyr::distinct() #remove duplicates
+
+#Convert from long to wide
 comorbidites <- all_cohorts %>%
   select(ptid, cohort) %>%
-  dplyr::left_join(comorbidites, by='ptid')
+  dplyr::left_join(comorbidites, by='ptid') %>%
+  mutate(flag = 1) %>%
+  pivot_wider(names_from = comorbidities, values_from = flag, values_fill = 0) %>%
+  rename('No Known Comorbidities' = 'NA')
 
-head(comorbidites)
+# comorbidites %>%
+#   select(cohort, comorbidities, obs_result) %>%
+#   mutate(obs_result = as.double(obs_result)) %>%
+#   tbl_summary(by = cohort,
+#               statistic = list(all_continuous() ~ "{mean} ({sd})",
+#               all_categorical() ~ "{n} / {N} ({p}%)"),
+#               digits = all_continuous() ~ 2,
+#               label = cohort ~ 'Cohort',
+#               missing_text = "(Missing)") %>%
+#   add_p(list(all_continuous() ~ "kruskal.test", all_categorical() ~ "chisq.test")) %>%
+#   modify_header(label ~ "**Variable**") %>%
+#   modify_caption("**Table 3. Patient Comorbidities**") %>%
+#   bold_labels()
 
 comorbidites %>%
-  select(cohort, comorbidities, obs_result) %>%
-  mutate(obs_result = as.double(obs_result)) %>%
+  select(-ptid) %>%
+  # select(cohort, comorbidities) %>%
   tbl_summary(by = cohort,
               statistic = list(all_continuous() ~ "{mean} ({sd})",
               all_categorical() ~ "{n} / {N} ({p}%)"),
               digits = all_continuous() ~ 2,
               label = cohort ~ 'Cohort',
               missing_text = "(Missing)") %>%
-  add_p() %>%
+  add_p(list(all_continuous() ~ "kruskal.test", all_categorical() ~ "chisq.test")) %>%
   modify_header(label ~ "**Variable**") %>%
   modify_caption("**Table 3. Patient Comorbidities**") %>%
   bold_labels()
 
+```
+
+```{r, eval = TRUE, message = FALSE}
+emer_query = "SELECT coh.ptid, coh.covid_pos_date, e.interaction_date, 
+e.interaction_date - coh.covid_pos_date AS timeelapsed
+FROM g823429.sns_proj2_cohall_0916 coh
+LEFT OUTER JOIN opt_20210916.enc e
+ON coh.ptid = e.ptid
+WHERE 
+	e.interaction_date >= coh.covid_pos_date AND
+	e.interaction_date <= coh.covid_pos_date + INTERVAL \'30 days\' AND
+	e.interaction_type = 'Emergency patient' AND
+    coh.covid_pos_date > \'2020-12-10\'"
+
+emer <- dbGetQuery(con, emer_query)
+
+#Join with all cohorts
+emer <- all_cohorts %>%
+  select(c(ptid,cohort,covid_pos_date)) %>%
+  dplyr::inner_join(emer, by='ptid') %>%
+  dplyr::mutate(emer_flag = 1) %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(ED_count = n(),
+                   cohort = last(cohort),
+                   emer_flag = first(emer_flag),
+                   time_to_ED = median(timeelapsed, na.rm = TRUE))
+
+hosp_query = "SELECT coh.ptid, coh.covid_pos_date, v.visit_start_date, v.visit_end_date, 
+v.visit_end_date - v.visit_start_date AS LOS, v.visit_start_date - coh.covid_pos_date AS timeelapsed
+FROM g823429.sns_proj2_cohall_0916 coh
+LEFT OUTER JOIN opt_20210916.vis v
+ON coh.ptid = v.ptid
+WHERE 
+	v.visit_start_date >= coh.covid_pos_date AND
+	v.visit_start_date <= coh.covid_pos_date + INTERVAL \'30 days\' AND
+	(v.visit_type = 'Inpatient') AND-- OR v.visit_type = 'Observation patient') AND
+    coh.covid_pos_date > \'2020-12-10\'"
+
+hosp <- dbGetQuery(con, hosp_query)
+
+#Join with all cohorts
+hosp <- all_cohorts %>%
+  select(c(ptid,cohort,covid_pos_date)) %>%
+  dplyr::inner_join(hosp, by='ptid') %>%
+  mutate(hosp_flag = 1) %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(hosp_count = n(),
+                   cohort = first(cohort),
+                   hosp_flag = last(hosp_flag),
+                   time_to_hosp = median(timeelapsed, na.rm = TRUE),
+                   los = median(los, na.rm = TRUE))
+
+icu_query = "SELECT coh.ptid, coh.covid_pos_date, c.carearea_date, 
+c.carearea_date - coh.covid_pos_date AS timeelapsed
+FROM g823429.sns_proj2_cohall_0916 coh
+LEFT OUTER JOIN opt_20210916.carearea c
+ON coh.ptid = c.ptid
+WHERE 
+	c.carearea_date >= coh.covid_pos_date AND
+	c.carearea_date <= coh.covid_pos_date + INTERVAL \'30 days\' AND
+	c.carearea = \'CRITICAL CARE UNIT (CCU) / INTENSIVE CARE UNIT (ICU)\' AND
+    coh.covid_pos_date > \'2020-12-10\'"
+
+icu <- dbGetQuery(con, icu_query)
+
+#Join with all cohorts
+icu <- all_cohorts %>%
+  select(c(ptid,cohort,covid_pos_date)) %>%
+  dplyr::inner_join(icu, by='ptid') %>%
+  mutate(icu_flag = 1) %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(icu_count = n(),
+                   cohort = last(cohort),
+                   icu_flag = first(icu_flag),
+                   time_to_icu = median(timeelapsed, na.rm = TRUE))
+
+death_query="SELECT 
+    CASE
+		WHEN (deathInfo.time_to_death > 15 AND deathInfo.time_to_death <= 30) THEN 'After'
+		WHEN (deathInfo.time_to_death >= -31 AND deathInfo.time_to_death <= 15) THEN 'Before' -- -31 b/c rounding with death date (may still be same month)
+		ELSE NULL
+	END AS est_time_elapsed, *
+	FROM (
+		SELECT coh.ptid AS ptid, coh.covid_pos_date,
+			TO_DATE(p.date_of_death, \'YYYYMM\') AS death_date, 
+			(TO_DATE(p.date_of_death, \'YYYYMM\') - coh.covid_pos_date ) AS time_To_death
+			--*
+		FROM g823429.sns_proj2_cohall_0916 coh
+		JOIN opt_20210916.pt p
+		ON coh.ptid = p.ptid
+		WHERE
+			p.date_of_death IS NOT NULL AND
+            coh.covid_pos_date > \'2020-12-10\'
+	) AS deathInfo
+--) AS normalizedDeathInfo
+--WHERE
+	--normalizedDeathInfo.est_time_elapsed = 'After'"
+
+death <- dbGetQuery(con, death_query)
+
+#Join with all cohorts
+death <- all_cohorts %>%
+  select(c(ptid,cohort,covid_pos_date)) %>%
+  dplyr::inner_join(death, by='ptid') %>%
+  dplyr::filter(!is.na(est_time_elapsed)) %>%
+  mutate(death_flag = 1)%>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(death_count = n(),
+                   cohort = last(cohort),
+                   death_flag = first(death_flag))
+
+outcomes <- all_cohorts %>%
+  select(c(ptid, covid_pos_date, cohort, days_first_imm_to_infxn, days_second_imm_to_infxn)) %>%
+  dplyr::left_join(death %>% select(c(ptid, death_flag)), by='ptid') %>%
+  dplyr::left_join(icu %>% select(c(ptid, time_to_icu, icu_flag)), by='ptid') %>%
+  dplyr::left_join(hosp %>% select(c(ptid, time_to_hosp, los, hosp_flag)), by='ptid') %>%
+  dplyr::left_join(emer %>% select(c(ptid, time_to_ED, emer_flag)), by='ptid') %>%
+  dplyr::mutate(death_flag = replace_na(death_flag, 0)) %>%
+  dplyr::mutate(icu_flag = replace_na(icu_flag, 0)) %>%
+  dplyr::mutate(hosp_flag = replace_na(hosp_flag, 0)) %>%
+  dplyr::mutate(emer_flag = replace_na(emer_flag, 0))
+  
+outcomes %>%
+  select(-c(ptid, covid_pos_date)) %>%
+  tbl_summary(by = cohort,
+              statistic = list(all_continuous() ~ "{mean} ({sd})",
+              all_categorical() ~ "{n} / {N} ({p}%)"),
+              digits = all_continuous() ~ 2,
+              label = cohort ~ 'Cohort',
+              missing = 'no') %>%
+  add_p(list(all_continuous() ~ "kruskal.test", all_categorical() ~ "chisq.test")) %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Table 4. Patient Outcomes**") %>%
+  bold_labels() 
+
+```
+
+```{r, eval = TRUE, message = FALSE}
+death_model <- death %>%
+  dplyr::select(c(ptid, death_flag)) %>%
+  dplyr::left_join(dems %>% select(c('ptid', 'age', 'gender', 'region', 'cohort')), by = 'ptid')
+
+death_model <- death_model %>% select(-ptid) %>%
+  mutate(gender = factor(gender, levels = c(1, 2, 3), labels = c("Male", "Female", "Unknown"))) %>%
+  mutate(region = factor(region, levels = c(1, 2, 3, 4, 5), 
+                         labels = c("Midwest", "South", "Northeast", "West", "Other/Unknown"))) %>%
+  mutate(cohort = factor(cohort, levels=c(1, 2, 3, 4), labels = c('1a', '1b', '1c', '2')))
+
+table(death_model$gender)
+  
+lf <- logistf(formula = death_flag ~ ., data = death_model)
 ```
 
 ```{r, eval = TRUE, message = FALSE}
