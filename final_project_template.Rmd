@@ -33,20 +33,20 @@ This study is at the intersection of public health, Bioinformatics and Biomedica
 ### Methods
 I will be utilizing the raw data for this study available in the GEO database, accession [GSE155213](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155213) 
 
-```{r,eval=TRUE, message=FALSE}
+```{r,eval=FALSE, message=FALSE}
 library(GEOquery)
-#install.packages('R.utils')
+install.packages('R.utils')
 library(R.utils)
 library(data.table)
 library(oligo)
 library(limma)
 library(viridis)
-#BiocManager::install('biomaRt')
+BiocManager::install('biomaRt')
 library(biomaRt)
-#BiocManager::install('edgeR')
+BiocManager::install('edgeR')
 library(edgeR)
-#BiocManager::install('DGElist')
-#library(DGElist)
+BiocManager::install('DGElist')
+library(DGElist)
 library(tidyr)
 library(dplyr)
 ```
@@ -91,9 +91,6 @@ pheno.data.final$group <- recode(pheno.data.final$group,
                                  `T` = "tobacco",
                                  M = "marijuana") 
 
-#creating group vector
-Groups <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
-Group2 <- c(rep("batch1", 30), rep("batch2", 11))
 
 #creating a count only table
 count.table <- feature.table
@@ -130,7 +127,7 @@ head(cpm(mydata.copy))
 apply(mydata.copy$counts, 2, sum)
 
 #Keeping genes atleast a count of 0.5 cpm for atleat 2samples and removing the rest from our dataset
-keep.genes <- rowSums(cpm(mydata.copy)>0.5) >= 4 #keep genes is a logical vector with TRUE and FALSE values
+keep.genes <- rowSums(cpm(mydata.copy)>0.5) >= 2 #keep genes is a logical vector with TRUE and FALSE values
 table(keep.genes)
 mydata.copy <- mydata.copy[keep.genes,]
 dim(mydata.copy)
@@ -158,6 +155,66 @@ legend("bottomleft", as.character(unique(mydata.batch$samples$group)), col=1:3, 
 ```
 
 
+```{r}
+#testing DE without log transformation
+
+mydata.x <- DGEList(count.table, group=factor(pheno.data.final$group))
+mydata.x
+dim(mydata)
+head(mydata$counts)
+head(mydata$samples)
+
+
+#calculatin counts per million uing cpm() funcion for each gene
+head(cpm(mydata.x))
+
+#calculating total gene count per sample
+apply(mydata.x$counts, 2, sum)
+
+#Keeping genes atleast a count of 0.5 cpm for atleat 2samples and removing the rest from our dataset
+keep.genes_x <- rowSums(cpm(mydata.x)>0.5) >= 2 #keep genes is a logical vector with TRUE and FALSE values
+table(keep.genes_x)
+mydata.x <- mydata.x[keep.genes_x,]
+dim(mydata.x)
+
+#design matrix to describe the statistical model
+design.x <- model.matrix(~0 + group + batch + age)
+colnames(design) <- gsub("group", "", colnames(design))
+design
+design.copy <- design
+
+contrast.matrix <- makeContrasts(mari_vs_cont = marijuana - control,
+                              tobacco_vs_cont = tobacco - control,
+                              mari_vs_tobacco = marijuana - tobacco,
+                              levels = colnames(design))
+contrast.matrix
+
+#gene-specific (referred to in edgeR as tagwise) dispersion estimates are used in the test for differential expression
+mydata.x <- estimateDisp(mydata.x, design.x)
+mydata.copy
+
+#fitting a GLM
+fitx <- glmFit(mydata.x, design.x)
+
+lrt_mcx <- glmLRT(fitx, contrast=makeContrasts(mari_vs_cont = marijuana - control, levels = colnames(design)))
+lrt_tcx <- glmLRT(fitx, contrast=makeContrasts(tobacco_vs_cont = tobacco - control, levels = colnames(design)))
+lrt_mtx <- glmLRT(fitx, contrast=makeContrasts(mari_vs_tobacco = marijuana - tobacco, levels = colnames(design)))
+
+topTags(lrt_mcx, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 0.05)
+topTags(lrt_tc, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+topTags(lrt_mt, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+
+mc_DEx <- decideTestsDGE(lrt_mcx, adjust.method="BH", p.value = 0.05)
+summary(mc_DE)
+
+tc_DE <- decideTestsDGE(lrt_tc, adjust.method="BH", p.value = 1)
+summary(tc_DE)
+
+mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = 1)
+summary(mt_DE)
+
+```
+
 ## DE Analysis using Generalized Linear Model (GLM)
 
 ```{r, eval=TRUE, message=FALSE}
@@ -166,15 +223,52 @@ group <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
 batch <- c(rep("batch1", 30), rep("batch2", 11))
 age <- as.numeric(c("22", "23", "24", rep("25",2), "29", rep("30",5), rep("31",2), "32", "33", rep("34",2), rep("35",2), rep("36",2), rep("37",2), rep("38",3), rep("39",3), rep("40",2), rep("41",3), "47", rep("50",3), "53", "54", "55"))
 
-#design matrix to beused for GLM
-design <- model.matrix(~group + batch + age)
+#design matrix to describe the statistical model
+design <- model.matrix(~0 + group + batch + age)
+colnames(design) <- gsub("group", "", colnames(design))
 design
 design.copy <- design
 
-y <- estimateDisp(y, design)
-fit <- glmFit(y, design)
-lrt <- glmLRT(fit, coef = 2)
+contrast.matrix <- makeContrasts(mari_vs_cont = marijuana - control,
+                              tobacco_vs_cont = tobacco - control,
+                              mari_vs_tobacco = marijuana - tobacco,
+                              levels = colnames(design))
+contrast.matrix
 
+#gene-specific (referred to in edgeR as tagwise) dispersion estimates are used in the test for differential expression
+mydata.copy <- estimateDisp(mydata.copy, design.copy)
+mydata.copy
+
+#fitting a GLM
+fit <- glmFit(mydata.copy, design.copy)
+
+lrt_mc <- glmLRT(fit, contrast=makeContrasts(mari_vs_cont = marijuana - control, levels = colnames(design)))
+lrt_tc <- glmLRT(fit, contrast=makeContrasts(tobacco_vs_cont = tobacco - control, levels = colnames(design)))
+lrt_mt <- glmLRT(fit, contrast=makeContrasts(mari_vs_tobacco = marijuana - tobacco, levels = colnames(design)))
+
+topTags(lrt_mc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+topTags(lrt_tc, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+topTags(lrt_mt, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+
+mc_DE <- decideTestsDGE(lrt_mc, adjust.method="BH", p.value = 1)
+summary(mc_DE)
+
+tc_DE <- decideTestsDGE(lrt_tc, adjust.method="BH", p.value = 1)
+summary(tc_DE)
+
+mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = 1)
+summary(mt_DE)
+
+#testing
+et <- exactTest(mydata.copy)
+results_edgeR <- topTags(et, n = nrow(count.table), sort.by = "none")
+head(results_edgeR$table)
+
+sum(results_edgeR$table$FDR < .1)
+plotSmear(et, de.tags = rownames(results_edgeR)[results_edgeR$table$FDR < .1])
+abline(h = c(-2, 2), col = "blue")
+
+```
 ```
 
 ## Assigning Gene Annotation
