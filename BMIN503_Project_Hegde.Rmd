@@ -29,7 +29,7 @@ The trends in animal use could be influenced by technologies that enhanced the e
 
 ## Loading required packages
 
-```{r, echo = TRUE, error = FALSE, warning = FALSE, message = FALSE, include = FALSE}
+```{r, echo = TRUE, error = FALSE, warning = FALSE, message = FALSE}
 options(scipen = 999)
 knitr::opts_chunk$set(echo = TRUE)
 library("tidyverse")
@@ -47,9 +47,13 @@ library("leaflet")
 USDA publishes an annual report of the number of animals used by state, species and pain category. The report for every year is published in January two years later. Hence the latest data I could obtain was from 2019. The reports were published starting 2008, hence I have data for a 12 year period.
 
 The data is in the form of several PDFs. I cleaned the data manually into .txt format. The nomenclature is year_col_X where X is the pain category. The pain categories are:
+
  - Column B: Animals held by a facility but not used in any research that year
+ 
  - Column C: Animals used in research; no pain involved; no pain drugs administered
+ 
  - Column D: Animals used in research; pain involved; pain drugs administered
+ 
  - Column E: Animals used in research; pain involved; no pain drugs administered.
  
 The following code chunk loads the data as a dataframe, stacked by year and column. The loaded data has 53 rows per year per column. This includes the 50 states, District of Columbia, Puerto Rico, and "REPORT TOTAL" which is the sum of all columns (species). Note that the species column is not an exhaustive list of all animals used in biomedical research but only those covered by the Animal Welfare Act. The AWA does not cover rats, mice, birds and reptiles, which happen to be over 95% of all animals used. Columns B, C, D and E are assigned values 0, 1, 2 and 3 to reflect pain levels in a more intuitive way.
@@ -352,15 +356,42 @@ theme(
 total.plot
 
 #datafr[datafr['State'] == "REPORT TOTAL" & (datafr['Year'] == 2015 | datafr['Year'] == 2016), ]
-
-data.total1 <- mutate(data.total1, percentage.change = (Total/lag(Total) -1)*100) 
-data.total2 <- mutate(data.total1, percentage.change = 100*(Total - first(Total))/Total) #This gives the same as first plot with different y axis
-#This tells us that the overall change in 12 years is a 24% reduction.
-
-ggplot(data = data.total1, aes(x = Year, y = percentage.change)) + geom_line(na.rm = TRUE) + scale_x_continuous(breaks = c(2008:2019))
 ```
 
 Now we observe a more steady decline in the total number of animals over the years.
+
+Next, let us look at a heat map of the percentage change by state over the 12 years.
+
+```{r, error = FALSE, warning = FALSE, message = FALSE}
+data.state.percentage <- data.by.state.year[data.by.state.year['Year'] == 2008 | data.by.state.year['Year'] == 2019, ] %>%
+group_by(State) %>%
+summarize(percent = 100*(Total - first(Total))/first(Total)) %>%
+filter(percent != 0)
+data.state.percentage[data.state.percentage$State == "KS", "percent"] <- NA
+
+to_map1 <- inner_join(usa, data.state.percentage, by = "State")
+
+#Gradient for -ve and +ve
+#KS taken as NA because cannot conclude as outlier but very high value
+
+pal_fun <- colorNumeric("BuPu", NULL)
+pu_message <- paste0(to_map1$State,  
+                     "<br>Percentage change in total animals used from 2008 to 2019: ",       
+                     round(to_map1$percent, digits = 0))
+
+leaflet(to_map1) %>%
+  addPolygons(stroke = FALSE,                       
+              fillColor = ~pal_fun(percent),
+              fillOpacity = 0.8, smoothFactor = 0.5, 
+              popup = pu_message) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addLegend("bottomright",                           
+            pal=pal_fun,                             
+            values=~percent,                 
+            title = 'Percentage change in total animals used from 2008 to 2019 by state',           
+            opacity = 1) %>%                         
+  addScaleBar()
+```
 
 Next, I want to visualize the patterns in each of the states.
 
@@ -490,7 +521,7 @@ theme(
 
 
 ```{r, error = FALSE, warning = FALSE, message = FALSE}
-library("ggplot2")
+
 #Std dev of species for top states
 data.NJ <- filter(datafr, State == "NJ") %>%
   filter(State != "REPORT TOTAL") %>%
