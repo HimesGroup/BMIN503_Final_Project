@@ -28,23 +28,33 @@ The accumulation of Amyloid plaques (Aβ) and tau neurofibrillary tangles (NFT) 
 #Establish T-N Linear Relationships
 library(dplyr)
 library(tidyverse)
-library(toolboxR)
+#library(toolboxR)
 setwd("/Users/Xueying Lyu/Desktop/merge")
 ```
 
 ```{r}
 #The Tau (T) and neurodegeneration (N) relationship was modeled by robust linear regression between regional tau SUVR and cortical thickness, respectively. The bi-square weighting function was used to mitigate the effect of outliers. A natural log transformation was applied on tau SUVR as the independent variable to mitigate the effects of potentially skewed SUVR distribution. The regression residuals were discretized into a two-element binary vector based on whether they were more than 1.5 standard deviations away from the regression line. These binarized vectors obtained from 104 bilateral regions of interest were entered into ward’s D2 hierarchy clustering16 to generate data-driven grouping of subjects
-attach(Try)
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r}
+library("readxl")
+# xls files
+Try <- read_excel("/Users/Xueying Lyu/Desktop/merge/Try.xlsx")
+#attach(Try)
 roi<-Try
 str(roi)
 thickness<-c()
+tau<-c()
+
 for (i in 1:312){
   if (i%%3==0)
   {thickness<-c(thickness, roi[i])}
 }  
 thickness<-data.frame(thickness)
-write.table(thickness, file = "thickness", row.names = F, sep =" ")
-tau<-c()
+
 start<-1
 step<-3
 n<-seq(start, 312, by=step)
@@ -56,11 +66,7 @@ tau<-data.frame(tau)
 
 
 library('MASS')
-m<-rlm(unlist(thickness[104])~unlist(tau[104]))
-resid(m)
-resid(rlm(Left_TTG_transverse_temporal_gyrus_thickness ~ log(Left_TTG_transverse_temporal_gyrus_tau)))
-print(mod<-rlm(unlist(thickness[104])~(log10(unlist(tau[104])))))
-print(resid(mod))
+
 l<-matrix(0, nrow=343, ncol=104)
 for (i in 1:104){
   print(i)
@@ -115,7 +121,15 @@ c_cutree<-cutree(C, k=6)
 plot(C, hang=-1)
 rect.hclust(C , k = 6, border = 2:6)
 c_mutate<- mutate(binaa,cluster=c_cutree)
-writexl::write_xlsx(c_mutate, 'mutate4.xlsx')
+```
+
+
+
+
+```{r}
+########################
+#Figure out the optimal number of clusters
+
 
 library('pvclust')
 library('NbClust')
@@ -130,30 +144,333 @@ plot(1:12,
      main=paste('Thordike'))
 
 
-library('NbClust')
-nbclust_out <- NbClust(data = binaa, distance = "euclidean",min.nc = 2, max.nc = 9, method = 'ward.D') 
-
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-
-BiocManager::install("ELBOW")
-
-library('GMD')
-elbow(C)
+#library('NbClust')
+#nbclust_out <- NbClust(data = binaa, distance = "euclidean",min.nc = 2, max.nc = 9, method = 'ward.D') 
 
 
 
-# mojen
-x.clfl<-C$height
-x.clm<-mean(x.clfl)
-x.cls<-sqrt(var(x.clfl))
-print((x.clfl-x.clm)/x.cls)
-print(x.clfl[251])
-x.clmojena<-cutree(C, h=x.clfl[251])
-c_m<- mutate(binaa,cluster=x.clmojena)
 ```
 
+```{r}
+
+library(ggplot2)
+library(tidyverse)
+library(plotrix) # for std error function
+library(dplyr) # for group_by and summarise_each function
+library(ggplot2) # for creating ggplot
+library(ggpubr)
+
+tau_thickness_region <- read_excel("/Users/Xueying Lyu/Desktop/merge/tau_thickness_region.xlsx")
+
+dataa<-tau_thickness_region
+dataa$cluster[dataa$cluster == 1] <- 30
+dataa$cluster[dataa$cluster == 2] <- 10
+dataa$cluster[dataa$cluster == 3] <- 20
+dataa$cluster[dataa$cluster == 30] <- 3
+dataa$cluster[dataa$cluster == 20] <- 2
+dataa$cluster[dataa$cluster == 10] <- 1
+
+# Group data by when and site
+grouped_df2<-group_by(dataa,region,cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df2<-summarise_each(grouped_df2,funs(mean=mean,std_error=std.error))
+
+# Define the top and bottom of the errorbars
+limits <- aes(ymax = mean + 2*std_error, ymin=mean-2*std_error)
+
+#Begin your ggplot
+#Here we are plotting site vs mean and filling by another factor variable when
+g<-summarised_df2 %>%
+  ggplot(aes(x=region,y=Thickness_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g<-g+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g<-g+geom_errorbar(aes(ymax = Thickness_mean + 2*Thickness_std_error, ymin=Thickness_mean-2*Thickness_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g<-g+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                          panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g<-g+ylab('Thickness')
+#print graph
+g<-g+theme_classic()+scale_fill_manual(values=c( 'orange', 'red','grey35', 'green', 'blue', 'purple'))
+g<-g+ylim(0,6)+ theme(legend.position = "none")
+g<-g+ggtitle("A+/- regional thickness")
+
+###########################Tau _apos
+#############################
+###################################################################################################################################################
+#############################
+# Group data by when and site
+grouped_df3<-dataa %>% filter (dataa$ampos_now == "TRUE") %>% group_by(region,cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df3<-summarise_each(grouped_df3,funs(mean=mean,std_error=std.error))
+g_tau_pos<-summarised_df3 %>%
+  ggplot(aes(x=region,y=Tau_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_tau_pos<-g_tau_pos+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g_tau_pos<-g_tau_pos+geom_errorbar(aes(ymax = Tau_mean + 2*Tau_std_error, ymin=Tau_mean-2*Tau_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_tau_pos<-g_tau_pos+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_tau_pos<-g_tau_pos+ylab('Tau SUVR')
+#print graph
+g_tau_pos<-g_tau_pos+theme_classic()+scale_fill_manual(values=c( 'orange', 'red', 'grey35','green', 'blue', 'purple'))
+g_tau_pos<-g_tau_pos+ylim(0,2.0)+ theme(legend.position = "none")
+g_tau_pos<-g_tau_pos+ggtitle("A+ regional tau")
+
+###########################Tau_all
+#############################
+################################
+#############################
+g_tau<-summarised_df2 %>%
+  ggplot(aes(x=region,y=Tau_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_tau<-g_tau+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g_tau<-g_tau+geom_errorbar(aes(ymax = Tau_mean + 2*Tau_std_error, ymin=Tau_mean-2*Tau_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_tau<-g_tau+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                                panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_tau<-g_tau+ylab('Tau SUVR')
+#print graph
+g_tau<-g_tau+theme_classic()+scale_fill_manual(values=c('orange', 'red','grey35',  'green', 'blue', 'purple'))
+g_tau<-g_tau+ylim(0,2.0)+ theme(legend.position = "none")
+g_tau<-g_tau+ggtitle("A+/- regional tau")
+
+##########################################
+######################################################################
+###########################################################
+####################################Thickness_pos
+
+grouped_df3<-dataa %>% filter (dataa$ampos_now == "TRUE") %>% group_by(region,cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df3<-summarise_each(grouped_df3,funs(mean=mean,std_error=std.error))
+g_thick_pos<-summarised_df3 %>%
+  ggplot(aes(x=region,y=Thickness_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_thick_pos<-g_thick_pos+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g_thick_pos<-g_thick_pos+geom_errorbar(aes(ymax = Thickness_mean + 2*Thickness_std_error, ymin=Thickness_mean-2*Thickness_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_thick_pos<-g_thick_pos+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                                        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_thick_pos<-g_thick_pos+ylab('Thickness')
+#print graph
+g_thick_pos<-g_thick_pos+theme_classic()+scale_fill_manual(values=c( 'orange', 'red', 'grey35','green', 'blue', 'purple'))
+g_thick_pos<-g_thick_pos+ylim(0,6)+ theme(legend.position = "none")
+g_thick_pos<-g_thick_pos+ggtitle("A+ regional thickness")
+
+##########################################
+######################################################################
+###########################################################
+####################################Thickness_neg
+
+grouped_df4<-dataa %>% filter (dataa$ampos_now == "FALSE") %>% group_by(region,cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df4<-summarise_each(grouped_df4,funs(mean=mean,std_error=std.error))
+g_thick_neg<-summarised_df4 %>%
+  ggplot(aes(x=region,y=Thickness_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_thick_neg<-g_thick_neg+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g_thick_neg<-g_thick_neg+geom_errorbar(aes(ymax = Thickness_mean + 2*Thickness_std_error, ymin=Thickness_mean-2*Thickness_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_thick_neg<-g_thick_neg+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                                            panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_thick_neg<-g_thick_neg+ylab('Thickness')
+#print graph
+g_thick_neg<-g_thick_neg+theme_classic()+scale_fill_manual(values=c( 'orange', 'red','grey35', 'green', 'blue', 'purple'))
+g_thick_neg<-g_thick_neg+ylim(0,6)+ theme(legend.position = "none")
+g_thick_neg<-g_thick_neg+ggtitle("A- regional thickness")
+
+###########################Tau _apos
+########################################################################
+###########################################################################
+#####################################################################
+# Group data by when and site
 
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+
+g_tau_neg<-summarised_df4 %>%
+  ggplot(aes(x=region,y=Tau_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_tau_neg<-g_tau_neg+geom_bar(stat = "identity",position = position_dodge(), color='black', size=0.2)
+
+#creation of error bar
+g_tau_neg<-g_tau_neg+geom_errorbar(aes(ymax = Tau_mean + 2*Tau_std_error, ymin=Tau_mean-2*Tau_std_error),width=0.5,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_tau_neg<-g_tau_neg+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                                        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_tau_neg<-g_tau_neg+ylab('Tau SUVR')
+#print graph
+g_tau_neg<-g_tau_neg+theme_classic()+scale_fill_manual(values=c( 'orange', 'red', 'grey35','green', 'blue', 'purple'))
+g_tau_neg<-g_tau_neg+ylim(0,2.0)+ theme(legend.position = "none")
+g_tau_neg<-g_tau_neg+ggtitle("A- regional tau")
+
+
+library(ggpubr)
+ggarrange(g_tau,g_tau_pos,g_tau_neg, g, g_thick_pos, g_thick_neg + rremove("x.text"), 
+          labels = c("A", "B", "C", "D", "E", "F"),
+          ncol = 3, nrow = 2)
+```
+
+```{r}
+#########################
+#Analysis on association of vascular risk factors
+
+library(ggplot2)
+library(ggthemes)
+library(extrafont)
+library(plyr)
+library(scales)
+
+risk_factors <- read_excel("/Users/Xueying Lyu/Desktop/merge/risk_factors.xlsx")
+
+risk_factor_pos<-risk_factors %>% filter(risk_factors$ampos_now=='TRUE' & risk_factors$cluster %in% c('1', '3', '5'))
+
+
+risk_factor_neg<-risk_factors %>% filter(risk_factors$ampos_now=='FALSE' & risk_factors$cluster %in% c('1', '3', '5'))
+
+
+risk_factor_all<-risk_factors %>% filter(risk_factors$cluster %in% c('1', '3', '5'))
+
+GP_all<-ggplot(risk_factor_all, aes(x=factor(cluster), y=(num_risk), fill=factor(cluster)))
+GP_all<-GP_all+geom_boxplot(outlier.shape=NA, color='black', width=0.5)+scale_y_continuous(breaks=pretty_breaks())
+#Ang<-Ang+geom_jitter(alpha=1, width=.06, size=0.1, color='black')
+GP_all<-GP_all+theme_classic()+scale_fill_manual(values=c('grey','red', 'blue'))
+GP_all<-GP_all+xlab('group')
+GP_all<-GP_all+theme(axis.text = element_text(size=6), axis.title=element_text(size=7, face='bold'))+ggtitle('A+/- Number of vascular risk factors')
+
+
+
+
+
+###Vascular risk factor A-pos
+
+GP_pos<-ggplot(risk_factor_pos, aes(x=factor(cluster), y=(num_risk), fill=factor(cluster)))
+GP_pos<-GP_pos+geom_boxplot(outlier.shape=NA, color='black', width=0.5)+ylim(0,10)+scale_y_continuous(breaks=pretty_breaks())
+#Ang<-Ang+geom_jitter(alpha=1, width=.06, size=0.1, color='black')
+GP_pos<-GP_pos+theme_classic()+scale_fill_manual(values=c('grey','red', 'blue'))
+GP_pos<-GP_pos+xlab('group')
+GP_pos<-GP_pos+theme(axis.text = element_text(size=6), axis.title=element_text(size=7, face='bold'))+ggtitle('A+ Number of vasuclar risk factors')
+
+
+
+
+###Vascular risk factor A-neg
+
+GP_neg<-ggplot(risk_factor_neg, aes(x=factor(cluster), y=(num_risk), fill=factor(cluster)))
+GP_neg<-GP_neg+geom_boxplot(outlier.shape=NA, color='black', width=0.5)+scale_y_continuous(breaks=pretty_breaks())
+#Ang<-Ang+geom_jitter(alpha=1, width=.06, size=0.1, color='black')
+GP_neg<-GP_neg+theme_classic()+scale_fill_manual(values=c('grey','red', 'blue'))
+GP_neg<-GP_neg+xlab('group')
+GP_neg<-GP_neg+theme(axis.text = element_text(size=6), axis.title=element_text(size=7, face='bold'))+ggtitle('A- number of vascular risk factors')
+
+GP_all
+GP_pos
+GP_neg
+
+kruskal.test(num_risk ~ factor(cluster), data = risk_factor_all)
+pairwise.wilcox.test(risk_factor_all$num_risk, factor(risk_factor_all$cluster), p.adjust.method = 'BH')
+
+kruskal.test(num_risk ~ factor(cluster), data = risk_factor_pos)
+pairwise.wilcox.test(risk_factor_pos$num_risk, factor(risk_factor_pos$cluster), p.adjust.method = 'BH')
+
+kruskal.test(num_risk ~ factor(cluster), data = risk_factor_neg)
+pairwise.wilcox.test(risk_factor_neg$num_risk, factor(risk_factor_neg$cluster), p.adjust.method = 'BH')
+
+```
+
+```{r}
+FLAIR <- read_excel("/Users/Xueying Lyu/Desktop/merge/FLAIR.xlsx")
+
+FLAIR<-na.omit(FLAIR)
+FLAIR$cluster<-as.factor(FLAIR$cluster)
+grouped_df2<-group_by(FLAIR, cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df2<-summarise_each(grouped_df2,funs(mean=mean,std_error=std.error))
+
+# Define the top and bottom of the errorbars
+limits <- aes(ymax = mean + 2*std_error, ymin=mean-2*std_error)
+
+#Begin your ggplot
+#Here we are plotting site vs mean and filling by another factor variable when
+g<-summarised_df2 %>%
+  ggplot(aes(x=factor(cluster),y=LnPGSTD_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g<-g+geom_bar(stat = "identity",position = position_dodge(), color='black',  width=0.6)
+
+g<-g+geom_errorbar(aes(ymax = LnPGSTD_mean + 2*LnPGSTD_std_error, ymin=LnPGSTD_mean-2*LnPGSTD_std_error),width=0.3,size=0.3, position = position_dodge(width = 0.9), color='black')
+g<-g+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g<-g+ylab('Ln WMH')
+#print graph
+g<-g+theme_classic()+scale_fill_manual(values=c( 'grey35', 'orange','red', 'green', 'blue', 'purple'))
+g<-g+ylim(0,10)+ggtitle('A+/- White matter hyperintensities')
+
+##############################################
+#########################################################
+##############################A+
+
+# Group data by when and site
+grouped_df3<-FLAIR %>% filter (FLAIR$ampos_now == "TRUE" & FLAIR$cluster %in% c("1", "3", "5")) %>% group_by(cluster)
+
+#summarise grouped data and calculate mean and standard error using function mean and std.error
+summarised_df3<-summarise_each(grouped_df3,funs(mean=mean,std_error=std.error))
+
+# Define the top and bottom of the errorbars
+limits <- aes(ymax = mean + 2*std_error, ymin=mean-2*std_error)
+
+#Begin your ggplot
+#Here we are plotting site vs mean and filling by another factor variable when
+g_pos<-summarised_df3 %>%
+  ggplot(aes(x=factor(cluster),y=LnPGSTD_mean, color=as.factor(cluster), fill=factor(cluster)))
+
+#Creating bar to show the factor variable position_dodge 
+#ensures side by side creation of factor bars
+g_pos<-g_pos+geom_bar(stat = "identity",position = position_dodge(), color='black',  width=0.3)
+
+g_pos<-g_pos+geom_errorbar(aes(ymax = LnPGSTD_mean + 2*LnPGSTD_std_error, ymin=LnPGSTD_mean-2*LnPGSTD_std_error),width=0.2,size=0.3, position = position_dodge(width = 0.9), color='black')
+g_pos<-g_pos+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+g_pos<-g_pos+ylab('Ln WMH')
+#print graph
+g_pos<-g_pos+theme_classic()+scale_fill_manual(values=c( 'grey35', 'red', 'blue'))
+g_pos<-g_pos+ylim(0,11)+ggtitle('A+ white matter hyperintensities')
+
+g
+g_pos
+
+```
+
+```{r}
+aov(LnWMH ~ as.factor(cluster) +PTAGE, data=FLAIR)
+
+summary(lm(LnWMH ~ as.factor(cluster) +PTAGE, data=FLAIR))
+
+```
+```{r}
+########
+#Conclusion
+#By clustering based on T-N dissociations, we obtained 6 clusters. Those clusters do not differ in regional tau burden, meaning they should be at similar AD seventies. However, we do observed they differed in regional thickness covaried by age and regional tau burden. For example, the cluster 2 has lower thickness particular in limbic regions and cluster 3 has lower thickness in diffused regions; the resilient groups, on the other hand, have greater thickness. Therefore, it may be latent factors (e.g. co-pathologies or protective factors) that contribute to their variability in thickness desite similar tau burdens. Since vascular pathology is a common co-patholgy in Alzheimer's, we then analyzed the associations of vascular features of clusters. We found that the cluster 2 (diffused vulnerable cluster) was associated with significantly more vascular features. Therefore, it supports the hypothesis that the vulnerable clusters are associated with co-pathologies. 
+```
+
