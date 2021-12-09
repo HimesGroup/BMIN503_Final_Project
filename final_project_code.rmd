@@ -23,7 +23,7 @@ GitHub repository link: https://github.com/sarahrc121/BMIN503_Final_Project
 
 
 ### Introduction 
-The problem I am focusing on is how the quality and perception of belonging in one’s neighborhood can be reflected in the occurrence of a mental disorder diagnosis and whether mental health treatment is sought out. There have been many publications showing increased odds of certain mental disorders in children living in neighborhoods with poor conditions (both physically and socially), but not much research has focused on this relationship in adults (Butler et al., 2012; Dahal et al., 2018; Kemp et al., 2016; Plybon & Kliewer, 2001; Reuben et al., 2020). A similar analysis was conducted in Philadelphia, investigating the relationship between neighborhood characteristics and serious mental illness diagnosis in adults (Byrne et al., 2013). However, my analysis will be using the entire Philadelphia population as a whole, whereas the Bynre et al. analysis only included adults already being treated for serious mental illness. My project will also offer another layer to analysis with breakdowns of relationships by geographic regions.
+The problem I am focusing on is how the quality and perception of belonging in one’s neighborhood can be reflected in the occurrence of a mental disorder diagnosis and whether mental health treatment is sought out. There have been many publications showing increased odds of certain mental disorders in children living in neighborhoods with poor conditions (both physically and socially), but not much research has focused on this relationship in adults (Butler et al., 2012; Dahal et al., 2018; Kemp et al., 2016; Plybon & Kliewer, 2001; Reuben et al., 2020). A similar analysis was conducted in Philadelphia, investigating the relationship between neighborhood characteristics and serious mental illness diagnosis in adults (Byrne et al., 2013). However, my analysis will be using the entire Philadelphia population as a whole, whereas the Bynre et al. analysis only included adults already being treated for serious mental illness.
 
 The dataset to be used is the CHDB Southeastern Pennsylvania Household Health Survey from 2018. The 2018 survey was conducted during August 2018-January 2019, sampling 7,501 households in Southeastern Pennsylvania (Philadelphia County, Bucks County, Chester County, Delaware County, and Montgomery County). I will be focusing on only adult respondents. All of the variables used in this analysis are categorical. The mental health outcome variables are binary (yes/no), while social determinant and demographic variables have varying categorical values.
 
@@ -51,25 +51,27 @@ library(randomForest)
 # DATA READ-IN AND CLEAN
 ``` {r}
 
-# READ IN DATA, CURRENTLY IN STATA DATA FORMAT (N=7501)
+# READ IN RAW DATA, CURRENTLY IN STATA DATA FORMAT (N=7501)
 chdb_raw <- read_dta('H:\\MBMI\\Data Science\\Final Project\\HHS18AR.dta')
 
+# VIEW SAMPLE OF RAW DATASET
 head(chdb_raw)
 
-# CHANGE 'NA'S TO ZEROES
+# CHANGE 'NA'S TO ZEROES FOR EASIER DATA CLEANUP
 chdb_raw[is.na(chdb_raw)] <- 0
 
-# CHANGE CATEGORICAL VARIABLES TO CHARACTER
+# CHANGE CATEGORICAL VARIABLES TO CHARACTER FOR EASIER DATA CLEANUP
 chdb_raw[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA', 'SEX01', 'RESPAGE_4CAT', 'RSPGRAD2', 'respempl', 'RESPRACE_4CAT', 'NPOV100', 'SEXIDENT2')] <- lapply(chdb_raw[,c('MENTAL3A','tretmnta', 'NEIGHBOR_FA', 'IMPROVE_FA', 'BELONG_FA','TRUST_FA','HAVEPARK2_FA','SOCCAP_2CAT_FA','SOCCAP_3CAT_FA', 'SEX01', 'RESPAGE_4CAT', 'RSPGRAD2', 'respempl', 'RESPRACE_4CAT', 'NPOV100', 'SEXIDENT2')], as.character)
 
-# SELECT ONLY RESPONSES FROM FORM A RESPONDENTS (FORM A INCLUDED SOCIAL DETERMINANT QUESTIONS) (N=3020)
+# SELECT ONLY FORM A RESPONSES (ONLY FORM A INCLUDED SOCIAL DETERMINANT QUESTIONS) (N=3707)
 chdb <- chdb_raw %>%
               filter(form==1)
 
 # DAT WILL BE THE DATASET I WILL WORK WITH THAT HAS VARIABLES OF INTEREST
 dat <- data.frame()
 
-# RE-LABEL LEVELS OF ORIGINAL CATEGORICAL VARIABLES SO EASIER TO MAKE SENSE OF
+# RE-LABEL LEVELS OF ORIGINAL CATEGORICAL VARIABLES SO THE VALUES ARE MORE INTUITIVE
+# MENTAL HEALTH OUTCOMES ARE KEPT AS 0=NO AND 1=YES TO ALLOW FOR LOGISITIC REGRESSION MODELING LATER ON
 for (i in 1:nrow(chdb)) {
   if(chdb[i, 'MENTAL3A']=="1") {
     dat[i, 'mh_dx'] <- 1
@@ -321,22 +323,25 @@ for (i in 1:nrow(chdb)) {
 # ADD ZIP CODE TO WORKING DATASET
 dat$zip <- chdb$zipcode
 
-# CHANGE OUTCOMES (DIAGNOSIS AND TREATMENT) TO FACTORS
+# CHANGE OUTCOMES (DIAGNOSIS AND TREATMENT) TO FACTORS (FOR EASIER BUILD IN PREDICTIVE MODELS)
 dat$mh_dx <- as.factor(dat$mh_dx)
 dat$mh_trt <- as.factor(dat$mh_trt)
 
 # SUBSET DATASET SO THAT THERE ARE NO UNKNOWNS (N=3020)
+# MAKES FOR EASIER AND MORE ACCURATE PREDICTIVE MODELS
 dat1 <- dat %>%
         filter(dat$neigh_help!="Unknown" & dat$neigh_toget!="Unknown" & dat$belong!="Unknown" & dat$trust!="Unknown"
                & dat$park!="Unknown" & dat$soc_2cat!="Unknown" & dat$soc_3cat!="Unknown" & dat$edu!="Unknown"
                & dat$emp!="Unknown" & dat$race!="Unknown" & dat$sex_or!="Unknown")
 
-# SEPARATE DATASET FOR THOSE THAT HAVE BEEN DIAGNOSED WITH A MENTAL HEALTH DISORDER (N=553)
+# SEPARATE DATASET FOR THOSE THAT HAVE BEEN DIAGNOSED WITH A MENTAL HEALTH DISORDER (N=553) 
+# THIS IS BECAUSE ONLY THOSE THAT ANSWERED "YES" TO HAVING A MENTAL HEALTH DIAGNOSIS WERE ASKED IF THEY ARE PURSUING MENTAL HEALTH TREATMENT
 dat1_mh <- dat1 %>%
            filter(mh_dx==1)
 
-
 ```
+
+### Results
 
 # EXAMINE VARIABLES OF INTEREST (MENTAL HEALTH, SOCIAL, AND DEMOGRAPHIC) WITH BASIC FREQUENCIES USING PYLR
 ``` {r}
@@ -346,12 +351,14 @@ dat1_freq <- apply((dat1[c('mh_dx','mh_trt','neigh_help','neigh_toget','belong',
 ```
 
 # EXAMINING RELATIONSHIPS BETWEEN VARIABLES OF INTEREST USING CHI SQUARE ANALYSES
+# RELATIONSHIPS WITH SIGNIFICANT ASSOCIATIONS (P<0.05 ARE LABELED WITH ** IN COMMENTS)
 ``` {r}
 
 table(dat1$soc_2cat, dat1$mh_dx)
 chisq.test(dat1$soc_2cat, dat1$mh_dx)
 # Social capital scale (2 levels) x mental health dx; p<0.00001**
 
+# SOCIAL CAPITAL SCALE (2 LEVELS) X MENTAL HEALTH DIAGNOSIS BAR CHART
 ggplot(data=dat1, aes(x=mh_dx, fill=soc_2cat)) +
   geom_bar()
 
@@ -359,6 +366,7 @@ table(dat1$soc_3cat, dat1$mh_dx)
 chisq.test(dat1$soc_3cat, dat1$mh_dx)
 # Social capital scale (3 levels) x mental health dx; p<0.00001**
 
+# SOCIAL CAPITAL SCALE (3 LEVELS) X MENTAL HEALTH DIAGNOSIS BAR CHART
 ggplot(data=dat1, aes(x=mh_dx, fill=soc_3cat)) +
   geom_bar()
 
@@ -381,7 +389,6 @@ chisq.test(dat1$trust, dat1$mh_dx)
 table(dat1$park, dat1$mh_dx)
 chisq.test(dat1$park, dat1$mh_dx)
 # Park comfortable visiting x mental health dx; p=0.007134**
-
 
 table(dat1_mh$soc_2cat, dat1_mh$mh_trt)
 chisq.test(dat1_mh$soc_2cat, dat1_mh$mh_trt)
@@ -411,6 +418,7 @@ table(dat1_mh$park, dat1_mh$mh_trt)
 chisq.test(dat1_mh$park, dat1_mh$mh_trt)
 # Park comfortable visiting x mental health treatment; p=0.8824
 
+
 # USE FISHER'S EXACT TEST FOR RELATIONSHIPS TO ZIP CODE DUE TO SMALL FREQUENCIES
 
 fisher.test(dat1$zip, dat1$mh_dx, simulate.p.value=TRUE)
@@ -431,7 +439,7 @@ fisher.test(dat1_mh$zip, dat1_mh$mh_trt, simulate.p.value=TRUE)
 # GEOGRAPHICAL DATA EXPLORATION - RESPONDENTS, MENTAL HEALTH DIAGNOSIS, AND SOCIAL CAPITAL SCALE RATES BY ZIP CODE
 ``` {r}
 
-# GET NON-MISSING COORDINATES FOR PHILADELPHIA COUNTY ZIP CODES IN DATASET
+# GET NON-MISSING COORDINATES FOR PHILADELPHIA COUNTY ZIP CODES FROM GEOCODES, THEN APPEND BACK TO DAT1 DATASET
 dat1_phl <- dat1 %>%
             filter(county==5)
 
@@ -445,7 +453,7 @@ dat1_phl <- merge(dat1_phl, dat1_geocodes, by='zip')
 phl.map <- readRDS(gzcon(url("https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/philadelphia_tracts_2010.rds")))
 phl.geo <- st_geometry(phl.map)
 
-# CREATE SF OBJECT FROM ORIGINAL DATASET TO BE ABLE TO PLOT, WHERE COORDINATES ARE NOT MISSING
+# CREATE SF OBJECT FROM ORIGINAL DATASET (DAT1) TO BE ABLE TO PLOT, WHERE COORDINATES ARE NOT MISSING
 dat1.nona.geo <- dat1_phl %>%
                  filter(!is.na(lat) & !is.na(lng))
 
@@ -456,7 +464,8 @@ dat1.geo <- st_as_sf(dat1.nona.geo,
                     crs=phl.shape)
 
 
-# MAP SHOWING LOCATION OF RESPONDENTS' RESIDENCES, BASED ON ZIP CODE (BIGGER DOT ON MAP=MORE PEOPLE)
+# MAP SHOWING LOCATION OF RESPONDENTS' RESIDENCES, BASED ON ZIP CODE
+# LARGER DOT ON MAP MEANS MORE RESPONDENTS
 dat1.geo.zip <- dat1.geo %>%
                group_by(zip) %>%
                summarize(n_zip=n())
@@ -467,7 +476,8 @@ ggplot() +
   labs(title='Number of Respondents by Zip Code')
 
 
-# MAP OF MENTAL HEALTH DIAGNOSIS RATES BY ZIP CODE (BIGGER DOT ON MAP=GREATER RATES OF MENTAL HEALTH DIAGNOSIS)
+# MAP OF MENTAL HEALTH DIAGNOSIS RATES BY ZIP CODE
+# LARGER DOT ON MAP MEANS GREATER RATES OF MENTAL HEALTH DIAGNOSIS
 dat1.geo.mh <- dat1.geo %>%
                group_by(zip) %>%
                summarize(n_zip=n(), n_mh=sum(as.numeric(mh_dx)-1))
@@ -480,10 +490,10 @@ ggplot() +
   labs(title='Rates of Mental Health Diagnosis by Zip Code')
 
 
-# MAP OF SOCIAL CAPITAL SCALE BY ZIP CODE (BIGGER DOT=GREATER RATE OF GIVEN SOCIAL CAPITAL SCALE LEVEL)
+# MAP OF SOCIAL CAPITAL SCALE BY ZIP CODE
 dat1.geo.soc <- dat1.geo %>%
                 group_by(zip, soc_3cat) %>%
-                summarize(n_soc=n()) %>%
+                summarize(n_soc=n())
 
 dat1.geo.soc2 <- dat1.geo.soc %>%
                 group_by(zip) %>%
@@ -495,6 +505,7 @@ dat1.geo.soc$soc_rate <- (dat1.geo.soc$n_soc/dat1.geo.soc$n_zip)*100
 
 
 # CREATE DATASETS FOR EACH LEVEL OF SOCIAL CAPITAL (LOW, MEDIUM, AND HIGH)
+# LARGER DOT MEANS GREATER RATE OF GIVEN SOCIAL CAPITAL SCALE LEVEL
 dat1.geo.soc.low <- dat1.geo.soc[which(dat1.geo.soc$soc_3cat=='Low'),]
 dat1.geo.soc.med <- dat1.geo.soc[which(dat1.geo.soc$soc_3cat=='Medium'),]
 dat1.geo.soc.high <- dat1.geo.soc[which(dat1.geo.soc$soc_3cat=='High'),]
@@ -525,6 +536,7 @@ ggplot() +
 ``` {r}
 
 # NEIGHBORS WILLING TO HELP
+
 chisq.test(dat1$neigh_help, dat1$neigh_toget)
 # p<0.0001; highly correlated
 chisq.test(dat1$neigh_help, dat1$belong)
@@ -536,6 +548,7 @@ chisq.test(dat1$neigh_help, dat1$park)
 
 
 # NEIGHBORS EVER WORKED TOGETHER
+
 chisq.test(dat1$neigh_toget, dat1$belong)
 # p<0.0001; highly correlated
 chisq.test(dat1$neigh_toget, dat1$trust)
@@ -545,6 +558,7 @@ chisq.test(dat1$neigh_toget, dat1$park)
 
 
 # FEELING OF BELONGING IN NEIGHBORHOOD
+
 chisq.test(dat1$belong, dat1$trust)
 # p<0.0001; highly correlated
 chisq.test(dat1$belong, dat1$park)
@@ -552,18 +566,17 @@ chisq.test(dat1$belong, dat1$park)
 
 
 # PEOPLE IN NEIGHBORHOOD CAN BE TRUSTED
+
 chisq.test(dat1$trust, dat1$park)
 # p<0.0001; highly correlated
 
 
 ```
 
-> Since all of the social determinant variables are highly correlated with each other, they will not be included in the final logistic regression models. The main independent variable will be the social scale with 3 categories (low, medium, and high) that is calculated based on all social determinant responses.
+> Given that all of the social determinant variables are highly correlated with each other, they will not be included in the final predictive models. The main independent variable will be the social scale with 3 categories (low, medium, and high) that is calculated based on all social variable responses.
 
 # CREATE LOGISTIC REGRESSION AND RANDOM FOREST MODELS OF OUTCOME OF MENTAL HEALTH DIAGNOSIS VERSUS SOCIAL DETERMINANT VARIABLES, CONTROLLING FOR CERTAIN DEMOGRAPHIC VARIABLES (DETERMINED BY PREVIOUS LITERATURE)
 ``` {r}
-
-
 # CREATE LOGISTIC REGRESSION MODEL WITH DEMOGRAPHIC PREDICTORS
 mh.glm <- glm(mh_dx ~ soc_3cat+sex+age+edu+emp+race+poverty+sex_or, data=dat1, family=binomial(logit))
 
@@ -585,7 +598,7 @@ rf.pred.mh <- mh.rf.pred[,2]
 glm.pred.mh <- predict(mh.glm, dat1, type="response")
 head(glm.pred.mh)
 
-# CROSS-VALIDATION
+# CROSS-VALIDATION FOR BOTH LOGISTIC REGRESSION AND RANDOM FOREST MODELS
 N = nrow(dat1)
 K = 10
 set.seed(1234)
@@ -611,7 +624,6 @@ for (i in 1:K) {
 }
 
 
-
 # ROC CURVE FOR LOGISTIC REGRESSION, TRAINING AND CROSS-VALIDATION
 
 roc(dat1$mh_dx, glm.pred.mh, ci=TRUE)
@@ -619,12 +631,6 @@ roc(dat1$mh_dx, glm.pred.mh, ci=TRUE)
 
 roc(obs.outputs, pred.outputs.glm, ci=TRUE)
 # AUC=0.7145 ~ acceptable for logistic regression cross-validation model
-
-
-# PLOT ROC CURVE
-plot.roc(dat1$mh_dx, glm.pred.mh, col="black", ci=TRUE)
-plot.roc(obs.outputs, pred.outputs.glm, col="red", add=TRUE)
-legend("bottomright", legend=c("Training", "Cross-Validation"), col=c("black", "red"), lwd=2)
 
 
 # ROC CURVE FOR RANDOM FOREST, TRAINING AND CROSS-VALIDATION
@@ -635,16 +641,37 @@ roc(dat1$mh_dx, rf.pred.mh, ci=TRUE)
 roc(obs.outputs, pred.outputs.rf, ci=TRUE)
 # AUC=0.5008 ~ not good for random forest cross-validation model
 
-plot.roc(dat1$mh_dx, rf.pred.mh, col="black", ci=TRUE)
-plot.roc(obs.outputs, pred.outputs.rf, ci=TRUE, col="red", add=TRUE)
-legend("bottomright", legend=c("Training", "Cross-Validation"), col=c("black", "red"), lwd=1)
+
+# PLOT ROC CURVES COMPARING TRAINING AND CROSS-VALIDATION FOR BOTH LOGISTIC REGRESSION AND RANDOM FOREST MODELS
+plot.roc(dat1$mh_dx, glm.pred.mh, col="black", ci=TRUE)
+plot.roc(obs.outputs, pred.outputs.glm, col="red", add=TRUE)
+plot.roc(dat1$mh_dx, rf.pred.mh, col="blue", add=TRUE)
+plot.roc(obs.outputs, pred.outputs.rf, ci=TRUE, col="green", add=TRUE)
+legend("bottomright", legend=c("LR Training", "LR Cross-Validation", "RF Training", "RF Cross-Validation"), col=c("black", "red", "blue", "green"), lwd=2)
 
 
 ```
 
-> The logistic regression model shows better performance for predicting mental health diagnosis based on the social capital scale, adjusting for several demographic variables.
+> Significant factors in the logistic regression model when predicting mental health diagnosis: 
+> Greater risk: low social capital score, higher attained education, working part-time, being unemployed, being unable to work/disabled, being below the poverty line
+> Lower risk: being male, age over 50, being gay/lesbian, being heterosexual
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+> The out-of-bag estimate of error rate for random forest model is 18.28%, and the error is quite high for mental health diagosis=1 (89.5%). The most significant factor contributing to the model was employment status, followed by educational level, and then by age.
 
-> 
+> The logistic regression model shows acceptable performance for predicting mental health diagnosis based on the social capital scale, adjusting for several demographic variables, with an AUC of 0.7145. 
+
+> The random forest model shows poor performance for the same prediction after cross-validation, with an AUC of 0.5008. This could be explained by the imbalance in the mental health diagnosis outcome (only 18.3% have a diagnosis).
+
+
+### Conclusions
+
+> Mental health diagnosis was significantly associated with all social factors captured in the CHDB survey, particularly between low and high social capital scale (e.g. those with low social capital scale scores were predicted to be ~1.5x more likely to have a mental health diagnosis). This relationship stands even when controlling for various demographic variables such as sex, age, and race (amongst many others).
+
+> Mental health treatment was not significantly associated with any social determinant variables.
+
+> Geographic location of residence based on zip code did not have an effect on mental health diagnosis or treatment, but a difference was seen for high social capital areas (e.g. certain neighborhoods had much higher rates of high social scale responses than other neighborhoods).
+
+> A logistic regression model showed the best performance in predicting mental health diagnosis based on social capital scale score, controlling for demographic variables.
+
+> The main takeaway from this project is that the level of social comfort and coherence felt in one's neighborhood is a significant predictor of ever receiving a mental health diagnosis, even when controlling for several demographic variables. There were not any notable geographical differences in mental health diagnosis rates between residential zip codes, so there would be no urgent need to target any specific neighborhoods for mental health interventions.
+
