@@ -22,4 +22,4 @@ The accompanying files for this analysis are:
 4. **cdc_cases_bucks.csv, cdc_cases_burlington.csv, etc.** - Each county has an individual case file downloaded from the CDC website.
 5. **final_project_Cressman.html** - the knitted html file output by final_project_Cressman.Rmd.
 6. **wgs_dominant_variant.csv** - the SARS-CoV-2 WGS results, which indicate the pre-delta and post-delta periods in the counties of interest.
-7. **case_plot.gif and vacc_plot.gif** - these are the animated plots showing vaccine incidence and case incidence.
+7. **case_plot.gif and vacc_plot.gif** - these are the animated plots showing vaccine incidence and case incidence. They are also included in the html file.
