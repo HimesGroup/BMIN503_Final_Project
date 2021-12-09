@@ -7,7 +7,7 @@ This project is a gene expression analysis of a public dataset available at Gene
 
 The initial data analysis were performed with the help of an open source tool, RAVED, created at the Himes Laboratory (University of Pennsylvania). This helped in quality control analysis of the overall raw data, resulting in the generation of raw and modified phenotype files which were then utilized for differential expression analysis. The differential expression analysis was carried out for six different combinations (ind vs cont - 4h/10h/24h and out vs cont - 4h/10h/24h) which resulted in the generation of gene expression values and pathway analysis data in CSV format. The rmd files of QC and six DE can be found in this repo under the folder "RAVED - QC and DE" and the output files corresponding to these in .TXT and .CSV formats are available in the folder "RequiredFilesforMainCode". 
 
-The final results and analysis for the whole dataset is performed for the final project and the file "FinalAnalysis_GSE34607" contains details of this code. Pleasure ensure to have all the files present in the "RequiredFilesforMainCode" folder in your current working directory before running the rmd on your machine. 
+The final results and analysis for the various exposure conditions was performed and the file "FinalAnalysis_GSE34607.Rmd" (FinalAnalysis_GSE34607.html is the corresponding HTML file) contains details of this code. Please ensure to have all the files present in the "RequiredFilesforMainCode" folder in your current working directory before running the rmd on your machine. 
 
 
 
