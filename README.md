@@ -20,5 +20,6 @@ The accompanying files for this analysis are:
 2. **all_counties_population.csv** - Contains 2019 population estimates for above counties.
 3. **cdc_vacc_pa_nj_de.csv** - Contains county-level vaccination data from the CDC website. Already restricted to states of interest (PA, NJ, DE) due to GitHub size limits.
 4. **cdc_cases_bucks.csv, cdc_cases_burlington.csv, etc.** - Each county has an individual case file downloaded from the CDC website.
-
-**All other files are smaller chunks of code which make up final_project_Cressman.Rmd and can be ignored.**
+5. **final_project_Cressman.html** - the knitted html file output by final_project_Cressman.Rmd.
+6. **wgs_dominant_variant.csv** - the SARS-CoV-2 WGS results, which indicate the pre-delta and post-delta periods in the counties of interest.
+7. **case_plot.gif and vacc_plot.gif** - these are the animated plots showing vaccine incidence and case incidence. They are also included in the html file.
