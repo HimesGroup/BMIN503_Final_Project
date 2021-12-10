@@ -1,0 +1,425 @@
+---
+title: "BMIN503/EPID600 Final Project"
+author: "Willem van der Mei"
+output: 
+  html_document:
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE, message=FALSE}
+options(width = 400)
+library(dplyr)
+library(readr)
+finalData <- read_csv("./finalData.csv")
+```  
+***
+
+
+### Overview
+
+The main goal of this project is to find area-level predictors of fatal cocaine overdoses. I additionally aim to explore different modeling choices and their implications on the findings. I am using data on fatal cocaine overdoses from the CDC and covariates from the Census and the Vera Institute of Justice.
+
+Final Repository Link: https://github.com/wvdmei/BMIN503_Final_Project
+
+### Introduction 
+
+Overdoses are an increasing cause of mortality in the United States. However, the majority of the research has focused on opioid overdoses. Stimulant overdoses, and specifically cocaine for the purposes of this project, have not received as much attention, despite their increases over time, and therefore there is less literature on its causes. This project hopes to fill in that gap, just a bit, so that future projects can build upon it and build strong conceptual and predictive models of stimulant overdoses. Hopefully with these models, interventions to reduce fatal overdoses can be developed to combat this growing problem.
+
+This project draws from a couple areas of epidemiology, such as social epidemiology and psychiatric epidemiology. However, over the course of meetings with faculty, it became apparent that concepts from the fields of spatial data analysis and machine learning were also needed for this project. Firstly, due to the geographic clustering of the counties, it may be necessary to account for potential non-independence. Secondly, the project will also draw from machine learning in order to try to aid in variable selection for models of fatal cocaine overdoses.
+
+For my project, I spoke/attempted to speak three people:
+
+> Dr. Sean Hennesy, Professor of Epidemiology and of Systems Pharmacology and Translational Therapeutics, Division of Epidemiology
+
+> Dr. Warren Bilker, Professor of Biostatistics in Biostatistics and Epidemiology at the Hospital of the University of Pennsylvania, DBEI
+
+> Dr. Doug Wiebe, Professor of Epidemiology, DBEI
+
+Dr. Hennesy directed me to a potential data source and referred me to other faculty. Dr. Bilker provided suggestions on things to consider in the analyses. Unfortunately, I did not hear back from Dr. Wiebe. 
+
+### Methods
+
+#### Source of Data
+
+The data used for this project has been procured from two sources. The first is PolicyMap, which aggregates geographic data from various sources. For this project, fatal cocaine overdose data was obtained from the Centers for Disease Control through PolicyMap. Data for covariates, except total jail admissions, was obtained from the U.S. Census Bureau through PolicyMap. Data on total jail admissions was obtained from the Vera Institute of Justice. For data from the Census Bureau, 5-year estimates from 2010-2014 and 2015-2019 were used, since those were the most commonly available for the covariates. For data on outcomes and jail admissions, annual estimates were combined into 5-year estimates, or if less than 5 years of data were available were imputed based on the average of the years of data available. Commented code for data processing can also be found in the DataProcessing.R script in the repository. All data were collected on the county-level.
+
+#### Data Cleaning Code
+
+Below is the code for importing and cleaning datasets to create a final analytical data set.
+
+```{r eval = FALSE}
+# Load Necessary Packages
+
+library(readr)
+library(dplyr)
+
+# Download data from Vera Institute on Jail Admissions
+jailDat <- read_csv("https://raw.githubusercontent.com/vera-institute/incarceration-trends/master/incarceration_trends.csv")
+
+# Create different data sets by year and impute 5 year estimate of the number of jail admissions
+jailDat2010thru2014 <- jailDat %>% filter(year >= 2010 & year <= 2014) %>% select(county_name, state, total_jail_adm) %>% rename(county = county_name, totalJailAdmit = total_jail_adm) %>% group_by(county, state) %>% summarize(totalJailAdmit = sum(totalJailAdmit, na.rm = TRUE)) %>% mutate(year = "2010-2014", county = gsub(pattern = " County", replacement = "", x = county, ignore.case = TRUE))
+jailDat2015thru2019 <- jailDat %>% filter(year >= 2015 & year <= 2019) %>% select(county_name, state, total_jail_adm) %>% rename(county = county_name, totalJailAdmit = total_jail_adm) %>% group_by(county, state) %>% summarize(totalJailAdmit = sum(totalJailAdmit, na.rm = TRUE)) %>% mutate(year = "2015-2019", county = gsub(pattern = " County", replacement = "", x = county, ignore.case = TRUE), totalJailAdmit = totalJailAdmit/4*5)
+
+# Combine the jail datasets
+jailDatCleaned <- bind_rows(jailDat2010thru2014, jailDat2015thru2019)
+
+# Create list of files in data folder
+fileList <- list.files("./Data/")
+
+# Create vectors containing the data for the corresponding 5 year period
+years2010thru2014 <- fileList[grepl(pattern = "2010", x = fileList, ignore.case = TRUE) & grepl(pattern = "2014", x = fileList, ignore.case = TRUE)]
+years2015thru2019 <- fileList[grepl(pattern = "2015", x = fileList, ignore.case = TRUE) & grepl(pattern = "2019", x = fileList, ignore.case = TRUE)]
+
+
+# Create a list of data frames
+dfList2010thru2014 <- list()
+for(i in 1:15){
+  dfList2010thru2014[[i]] <- read_csv(paste0("./Data/", years2010thru2014[i])) %>% mutate(year = "2010-2014")
+}
+
+# Take each data frame in the list and do an inner join and rename the variables to get a clean data frame.
+df2010thru2014 <- select(dfList2010thru2014[[1]], -`Formatted FIPS`)
+for(i in 2:length(dfList2010thru2014)){
+  df2010thru2014 <- inner_join(df2010thru2014, select(dfList2010thru2014[[i]], -`Formatted FIPS`, -`FIPS Code`), by = c("County", "State", "year"))
+}
+colnames(df2010thru2014) <- c("county", "state", "fips", "meanHouseholdSize", "year", "prevDisabled", "gini", "prevHispanic", "medianAge", "prevMedicaid", "prevMinBachelors", "prevBlack", "prevWhite", "perCapIncome", "prevMen", "nPop", "prevPoverty", "medianRentCostBurden", "prevNoCar")
+
+# Repeat above process for 2015-2019
+dfList2015thru2019 <- list()
+for(i in 1:15){
+  dfList2015thru2019[[i]] <- read_csv(paste0("./Data/", years2015thru2019[i])) %>% mutate(year = "2015-2019")
+}
+
+df2015thru2019 <- select(dfList2015thru2019[[1]], -`Formatted FIPS`)
+for(i in 2:length(dfList2015thru2019)){
+  df2015thru2019 <- inner_join(df2015thru2019, select(dfList2015thru2019[[i]], -`Formatted FIPS`, -`FIPS Code`), by = c("County", "State", "year"))
+}
+colnames(df2015thru2019) <- c("county", "state", "fips", "prevPoverty", "year", "prevDisabled", "gini", "prevHispanic", "meanHouseholdSize", "medianAge", "prevMedicaid", "prevMinBachelors", "prevBlack", "prevWhite", "perCapIncome", "prevMen", "nPop", "medianRentCostBurden", "prevNoCar")
+
+# Combine into big data frame of all the covariates from the Census Bureau
+censusCovariates <- bind_rows(df2010thru2014, df2015thru2019)
+
+# Create data frame of covariates by combining Census information with jail admission information
+covariateDf <- inner_join(censusCovariates, jailDatCleaned, by = c("county", "state", "year"))
+
+
+# Process data from CDC on cocaine overdose deaths
+
+# Create list of cocaine overdose datasets
+cocaineList <- fileList[grepl(x = fileList, pattern = "cocaine", ignore.case = TRUE)]
+
+# Create a list with a data frame of each year of deaths from 2010-2014 similar to process above for census data
+cocaineYears2010thru2014 <- cocaineList[1:5]
+
+cocaineDfList2010thru2014 <- list()
+for(i in 1:length(cocaineYears2010thru2014)){
+  cocaineDfList2010thru2014[[i]] <- read_csv(paste0("./Data/", cocaineYears2010thru2014[i])) 
+  colnames(cocaineDfList2010thru2014[[i]])[5] <- "cocaineDeath"
+}
+
+cocaineDf2010thru2014 <- select(cocaineDfList2010thru2014[[1]], -`Formatted FIPS`)
+for(i in 2:length(cocaineDfList2010thru2014)){
+  cocaineDf2010thru2014 <- bind_rows(cocaineDf2010thru2014, select(cocaineDfList2010thru2014[[i]], -`Formatted FIPS`, -`FIPS Code`))
+}
+colnames(cocaineDf2010thru2014) <- c("county", "state", "fips", "cocaineDeath")
+cocaineDf2010thru2014$cocaineDeath <- as.numeric(cocaineDf2010thru2014$cocaineDeath)
+
+# Impute estimate for total number of cocaine deaths over 5 year period
+cocaineDf2010thru2014 <- cocaineDf2010thru2014 %>% filter(!is.na(cocaineDeath)) %>% group_by(county, state) %>% summarise(cocaineDeath = mean(cocaineDeath)*5) %>% mutate(year = "2010-2014")
+
+# Repeat above for 2015-2019
+cocaineYears2015thru2019 <- cocaineList[6:10]
+
+cocaineDfList2015thru2019 <- list()
+for(i in 1:length(cocaineYears2015thru2019)){
+  cocaineDfList2015thru2019[[i]] <- read_csv(paste0("./Data/", cocaineYears2015thru2019[i])) 
+  colnames(cocaineDfList2015thru2019[[i]])[5] <- "cocaineDeath"
+}
+
+cocaineDf2015thru2019 <- select(cocaineDfList2015thru2019[[1]], -`Formatted FIPS`, -`FIPS Code`)
+for(i in 2:length(cocaineDfList2015thru2019)){
+  cocaineDf2015thru2019 <- bind_rows(cocaineDf2015thru2019, select(cocaineDfList2015thru2019[[i]], -`Formatted FIPS`, -`FIPS Code`))
+}
+colnames(cocaineDf2015thru2019) <- c("county", "state", "cocaineDeath")
+cocaineDf2015thru2019$cocaineDeath <- as.numeric(cocaineDf2015thru2019$cocaineDeath)
+
+cocaineDf2015thru2019 <- cocaineDf2015thru2019 %>% filter(!is.na(cocaineDeath)) %>% group_by(county, state) %>% summarise(cocaineDeath = mean(cocaineDeath)*5) %>% mutate(year = "2015-2019")
+
+cocaineDf <- bind_rows(cocaineDf2010thru2014, cocaineDf2015thru2019)
+
+# Create final data set by merging outcomes with covariates. Also, transform the population variable to a numeric and create a jail admission rate 
+finalData <- inner_join(cocaineDf, covariateDf, by = c("county", "state", "year"))
+
+finalData$nPop <- as.numeric(finalData$nPop)
+
+finalData <- mutate(finalData, jailAdmit100 = totalJailAdmit/nPop*100)
+
+finalData[,6:22] <- apply(X = finalData[,6:22], MARGIN = 2, FUN = as.numeric)
+
+# Save Final Data
+write_csv(finalData, "./finalData.csv")
+```
+
+#### Covariates
+
+Covariates were selected based on a previous literature review of predictors of stimulant and opioid overdoses. Covariates selected included county level information on the following: mean household size, mean age, race and ethnicity, sex, rent burden, disability, income inequality (measured by Gini index), Medicaid coverage, education (proportion of population with at least a bachelors), poverty, per capita income, proportion of households without a motor vehicle, and jail admissions per 100 people. More information with citations can be found in the Conceptual Model document. Key points from the document are below.
+
+> Cocaine overdoses have also increased from 2000 to 2019, and they seem to be primarily affecting people who are older, Black, or with lower education. 
+
+> A significant proportion of stimulant overdose deaths also involve opioids. Therefore, factors predictive of opioid overdose, such as male sex, may be useful in modeling fatal cocaine overdose. 
+
+> A spatial analysis found that area deprivation was a significant predictor of overdose. The area deprivation index was used, which is a measure of deprivation at the census tract level. This measure was based on the following:
+
+>>  Proportion of the population aged 25 years or older with less than 9 years of education 
+
+>>	Proportion of the population aged 25 years or older with at least a high school diploma
+
+>>	Proportion of employed persons aged 16 years or older in white-collar occupations 
+
+>>	Median family income
+
+>>	Income disparity
+
+>>	Median home value
+
+>>	Median gross rent
+
+>>	Median monthly mortgage
+
+>>	Proportion of housing units which are owner-occupied
+
+>>	Proportion of civilian labor force population aged 16 years or older that is unemployed
+
+>>	Proportion of families below the poverty level
+
+>>	Proportion of the population below 150% of the poverty threshold
+
+>>	Proportion of households that are single-parent households with children aged less than 18 years
+
+>>	Proportion of households without a motor vehicle
+
+>>	Proportion of households without a telephone
+
+>>	Proportion of occupied housing units without complete plumbing
+
+>>	Proportion of households with more than 1 person per room.
+
+These measures were included as covariates if they were available in PolicyMap.
+
+#### Outcome
+
+The number of fatal cocaine overdoses in a county was calculated by the CDC based on the number of death certificates, which listed drug poisoning as the primary cause of death and cocaine use as an additional cause of death.
+
+#### Statistical Analysis
+
+For continuous variables, descriptive statistics include mean, standard deviation, median, minimum, and maximum. For categorical variables, number and percentage will be reported. These data will be reported in Table 1. To find predictors for the number of fatal cocaine overdoses in a US county, several models that can be used for clustered and longitudinal designs will be built and compared. They were the following: 
+
+> Cluster-robust standard error models
+
+> Generalized estimating equation models 
+
+> Generalized linear mixed models with a random intercept. 
+
+All models were Poisson models with log linking functions. In the case of over-dispersion, which can deflate standard errors, quasipoisson models were used to correct for the over-dispersion, except for GEE, which has some flexibility regarding misspecification of the variance function. These models were chosen for several reason. First, they allow for longitudinal analysis. Second, they can be used to model clustered data, which is useful in this scenario, where counties are clustered in states. Lastly, in the case of mixed models, they allow for random effects, which may be useful in understanding variance of the intercept based on states. The 5-year population estimate was used as an offset term for the regression models in order to obtain rate ratios. 
+
+To help in variable selection, elastic net regression, with an alpha parameter set to 0.5, was used. This regression technique shrinks predictors that contribute little to the predictive model to zero, while allowing for correlated variables. Therefore, it is a useful technique in model building and may highlight typically neglected variables. 
+
+All statistical tests were performed at the 5% level of significance. All confidence intervals were 95% confidence intervals.
+
+All analyses were conducted in R with the following packages used:
+
+> "dplyr" for data manipulation.
+
+> "gee" for building generalized estimating equation models.
+
+> "glmnet" for elastic net regression.
+
+> "kableExtra" for table formatting.
+
+> "lme4" for building mixed models.
+
+> "readr" for data import.
+
+> "survey" for building models with cluster-robust standard errors.
+
+> "table1" for descriptive statistics.
+
+### Results
+
+#### Table 1. Descriptive Statistics
+
+```{r}
+# Load Table1
+library(table1)
+
+# Create Other Race Variable
+finalData$otherRace <- 100 - finalData$prevBlack - finalData$prevWhite - finalData$prevHispanic
+
+# Round fatal cocaine overdose data for poisson models
+finalData$cocaineDeath <- round(finalData$cocaineDeath,0)
+
+# Create labels so that the rows in the table look nice
+label(finalData$cocaineDeath) <- "Fatal Cocaine Overdoses"
+label(finalData$year) <- "5-Year Period"
+label(finalData$meanHouseholdSize) <- "Mean Household Size"
+label(finalData$prevDisabled) <- "Proportion of Population with a Disability"
+label(finalData$gini) <- "Gini Coefficient"
+label(finalData$medianAge) <- "Median Age"
+label(finalData$prevMedicaid) <- "Proportion of Population on Medicaid"
+label(finalData$prevMinBachelors) <- "Proportion of Population with at least a Bachelors"
+label(finalData$prevBlack) <- "Proportion of Population that is Non-Hispanic Black Only"
+label(finalData$prevWhite) <- "Proportion of Population that is Non-Hispanic White Only"
+label(finalData$prevHispanic) <- "Proportion of Population that is Hispanic of All Races"
+label(finalData$otherRace) <- "Proportion of Population that is in an Other Race Group"
+label(finalData$perCapIncome) <- "Per Capita Income"
+label(finalData$prevMen) <- "Proportion of the Population that is Male"
+label(finalData$prevPoverty) <- "Proportion of Population in Poverty"
+label(finalData$medianRentCostBurden) <- "Median Rent Burden"
+label(finalData$prevNoCar) <- "Proportion of Population with No Car"
+label(finalData$jailAdmit100) <- "Jail Admissions per 100 People"
+label(finalData$nPop) <- "Population Size"
+
+# Create table and pass it to kable, which makes it pretty
+table1::table1(~ cocaineDeath + year  + meanHouseholdSize + prevDisabled + gini  + medianAge + prevMedicaid + prevMinBachelors + prevBlack + prevWhite + prevHispanic + otherRace + perCapIncome + prevMen + prevPoverty + medianRentCostBurden + prevNoCar + jailAdmit100, data = finalData) %>% kableExtra::kable()
+```
+
+#### Predictive Model
+
+Below is the code and output for the elastic net model, which will be used for variable selection.
+
+```{r}
+library(glmnet)
+
+# Create dataset for elastic net regression
+elasticNetData <- select(finalData, year ,  meanHouseholdSize , prevDisabled , prevHispanic , medianAge , prevMedicaid , prevMinBachelors , prevBlack , prevWhite , perCapIncome , prevMen , prevPoverty , prevNoCar , jailAdmit100)
+
+
+# Set seed and run regression model
+set.seed(800129677)
+elasticModel <- glmnet::cv.glmnet(x = data.matrix(elasticNetData), y = data.matrix(finalData$cocaineDeath), offset = as.matrix(log(finalData$nPop)), family = "poisson", alpha = 0.5)
+
+# Output the coefficients
+coef(elasticModel, s = elasticModel$lambda.min)
+```
+
+Coefficients that remained after shrinkage were: 5-year period, mean household size, prevalence of disability, proportion of population that is Black, proportion of the population that is White, median age, proportion of population on Medicaid, proportion of population with at least a bachelors degree, proportion of population living in poverty, proportion of population living without a motor vehicle, jail admissions per 100 people. The proportion of the population that is Hispanic was included since other race and ethnicity variables were included.
+
+#### Risk Factor Model
+
+Now, based on the variables selected through elastic net regression, the same set of variables will be used in the generalized linear mixed models, generalized estimating equations models, and clustered-robust standard errors in order to find statistically significant predictors.
+
+##### Generalized Linear Mixed Models
+
+The code below runs the GLMM and adjusts the estimates for overdispersion.
+
+```{r}
+# Load package
+library(lme4)
+
+# Create standardized data to help with convergence
+finalDataRescaled <- finalData
+finalDataRescaled[,c(6:16,18:22)] <- scale(finalDataRescaled[,c(6:16,18:22)])
+
+# Run the Poisson model
+poissonModelRandom <- lme4::glmer(formula = cocaineDeath ~ year +  meanHouseholdSize + prevDisabled + prevHispanic + prevBlack + prevWhite + medianAge + prevMedicaid + prevMinBachelors + prevPoverty + prevNoCar + jailAdmit100 + offset(log(nPop)) + (1 | state), family = poisson(link = "log"), data = finalDataRescaled)
+
+# Create the estimates and perform statistical tests
+poissonModelRandomSummary <- summary(poissonModelRandom)
+dp = sum(residuals(poissonModelRandom,type ="pearson")^2)/490
+`Z-Score` <- coef(poissonModelRandomSummary)[, 1] / (coef(poissonModelRandomSummary)[, 2]*sqrt(dp))
+pvals <- pnorm(q = abs(`Z-Score`), lower.tail = FALSE)*2
+
+# Create a data frame for output
+modelSummary <- data.frame(Estimate = round(coef(poissonModelRandomSummary)[, 1],2), RateRatio = round(exp(coef(poissonModelRandomSummary)[, 1]),2), StdError = round(coef(poissonModelRandomSummary)[, 2]*sqrt(dp),2), Z = round(`Z-Score`, 2), p = round(pvals, 3)) %>% mutate(CI = paste0("(",round(exp(Estimate - 1.96*StdError),2),", ", round(exp(Estimate + 1.96*StdError),2),")")) %>% select(Estimate, RateRatio, CI, StdError, Z, p)
+
+# Create Row Names
+rownames(modelSummary) <- c("Intercept", "Year 2015-2019 (Ref = 2010-2014)", "Mean Household Size", "Prevalence Disabled", "Proportion Hispanic", "Proportion Black", "Proportion White", "Median Age", "Proportion on Medicaid", "Proportion with at least a Bachelors", "Proportion Individuals in Poverty", "Proportion of Households without a Car", "Jail Admissions per 100 People")
+
+# Output the data frame
+modelSummary %>% kableExtra::kable()
+```
+
+In the Random Effects model, year, mean household size, proportion of the population in poverty, and jail admissions per 100 people were statistically significant. Rate ratios, 95% confidence intervals, and p-values are reported above. Please note that the data were rescaled (except for year), which means that rate ratios should be interpreted as the relative increase in the rate of fatal cocaine overdose for a one standard deviation increase of the variable.  
+
+##### GEE Model
+
+The code below runs a GEE model and outputs the rate ratios using the robust standard errors. 
+
+```{r}
+# Load package
+library(gee)
+
+# Run model
+geeElasticNetModel <- gee(cocaineDeath ~ year +  meanHouseholdSize + prevDisabled + prevHispanic + prevBlack + prevWhite + medianAge + prevMedicaid + prevMinBachelors + prevPoverty + prevNoCar + jailAdmit100 + offset(log(nPop)), family = poisson(link = "log"), data = arrange(finalData, state), id = as.factor(state), corstr = "unstructured")
+
+# Create summary object
+geeElasticNetModelSummary <- summary(geeElasticNetModel)
+
+# Calculate test-statistic and p-values
+zScoreGee <- coef(geeElasticNetModelSummary)[, 1] / coef(geeElasticNetModelSummary)[, 4]
+pvalsGee <- pnorm(q = abs(zScoreGee), lower.tail = FALSE)*2
+
+# Create a data frame for output
+modelSummaryGee <- data.frame(Estimate = round(coef(geeElasticNetModelSummary)[, 1],2), RateRatio = round(exp(coef(geeElasticNetModelSummary)[, 1]),2), StdError = round(coef(geeElasticNetModelSummary)[, 2]*sqrt(dp),2), Z = round(zScoreGee, 2), p = round(pvals, 3)) %>% mutate(CI = paste0("(",round(exp(Estimate - 1.96*StdError),2),", ", round(exp(Estimate + 1.96*StdError),2),")")) %>% select(Estimate, RateRatio, CI, StdError, Z, p)
+
+# Create Row Names
+rownames(modelSummaryGee) <- c("Intercept", "Year 2015-2019 (Ref = 2010-2014)", "Mean Household Size", "Prevalence Disabled", "Proportion Hispanic", "Proportion Black", "Proportion White", "Median Age", "Proportion on Medicaid", "Proportion with at least a Bachelors", "Proportion Individuals in Poverty", "Proportion of Households without a Car", "Jail Admissions per 100 People")
+
+# Output the data frame
+modelSummaryGee %>% kableExtra::kable()
+```
+
+In the GEE model, year, mean household size, proportion of the population that is Hispanic, proportion of the population that is Black, proportion of the population that is White, proportion of the population enrolled in Medicaid, proportion of the household with no motor vehicle, jail admissions per 100 people were statistically significant. Rate ratios, 95% confidence intervals, and p-values are reported above.
+
+##### Clustered Standard Errors
+
+The code below uses the survey package to run quasi-poisson models with cluster-robust standard errors.
+
+```{r}
+# Load the package
+library(survey)
+
+# Create the survey design object
+surveyDesign <- svydesign(ids = ~ state , data = finalData)
+
+# Run the survey model
+surveyModel <- svyglm(formula = cocaineDeath ~ year + meanHouseholdSize + prevDisabled + prevHispanic + prevBlack + prevWhite + medianAge + prevMedicaid + prevMinBachelors + prevPoverty + prevNoCar + jailAdmit100 + offset(log(nPop)), family = quasipoisson(link = log), design = surveyDesign)
+
+# Create a summary object
+surveyModelSummary <- summary(surveyModel) 
+
+# Create a data frame for output
+surveyModelTable <- as.data.frame(surveyModelSummary$coefficients) %>% mutate(Estimate = round(Estimate,2), RateRatio = round(exp(Estimate),2), StdError = round(`Std. Error`, 2), Z = round(Estimate/`Std. Error`, 2), p = round(pnorm(abs(Estimate/`Std. Error`), lower.tail = FALSE), 3)) %>% mutate(CI = paste0("(",round(exp(Estimate - 1.96*`Std. Error`),2),", ", round(exp(Estimate + 1.96*`Std. Error`),2),")")) %>% select(Estimate, RateRatio, CI, StdError, Z, p)
+
+# Create row names
+rownames(surveyModelTable) <- c("Intercept", "Year 2015-2019 (Ref = 2010-2014)", "Mean Household Size", "Prevalence Disabled", "Proportion Hispanic", "Proportion Black", "Proportion White", "Median Age", "Proportion on Medicaid", "Proportion with at least a Bachelors", "Proportion Individuals in Poverty", "Proportion of Households without a Car", "Jail Admissions per 100 People")
+
+# Output the table
+surveyModelTable %>% kableExtra::kable()
+```
+
+In the cluster robust standard error model, year, proportion of the population that is Hispanic, proportion of the population that is Black, proportion of the population that is White, and jail admissions per 100 people. Rate ratios, 95% confidence intervals, and p-values are reported above.
+
+#### Model Comparison
+
+The table below contains rate ratios and p-values for each model, side-by-side.
+
+```{r}
+mixedModelEstimates <- paste0(as.character(round(modelSummary$RateRatio, 2)), " (", as.character(round(modelSummary$p, 3)), ")", ifelse(modelSummary$pvals < 0.05, "*", ""))
+
+geeModelEstimates <- paste0(as.character(round(modelSummaryGee$RateRatio, 2)), " (", as.character(round(modelSummaryGee$p, 3)), ")", ifelse(modelSummaryGee$p < 0.05, "*", ""))
+
+surveyModelEstimates <- paste0(as.character(round(surveyModelTable$RateRatio, 2)), " (", as.character(round(surveyModelTable$p, 3)), ")", ifelse(surveyModelTable$p < 0.05, "*", ""))
+
+comparisonDf <- data.frame(Variable = c("Year 2015-2019 (Ref = 2010-2014)", "Mean Household Size", "Proportion Disabled", "Proportion Hispanic", "Proportion Non-Hispanic Black", "Proportion Non-Hispanic White", "Median Age", "Proportion on Medicaid", "Proportion with at Least a Bachelors Degree", "Proportion of Individuals in Poverty", "Proportion of Households without a Motor Vehicle", "Jail Admissions per 100 People"),GLMM = mixedModelEstimates[-1], GEE = geeModelEstimates[-1], CRSE = surveyModelEstimates[-1])
+
+comparisonDf %>% kableExtra::kable()
+```
+
+There is inconsistency between the models when it comes to which parameters are statistically significant. Additionally, one consistently statistically significant parameter, jail admissions per 100 people, had a protective effect in the GEE and cluster robust standard error model, but the opposite was true for the GLMM model.
+
+#### Conclusions
+
+This project had a few strengths. One was the exploration of several different modeling strategies. Secondly, the data came from reliable sources. There were several weaknesses as well. Namely the limited sample-size, lack of annual data, and missing data issues could have led to biased estimates.
+
+In conclusion, the model comparison  demonstrates that findings may be highly dependent on which modeling approach is chosen. Modelling approaches should be chosen before analysis based on the assumptions and power of that type of model. This is in order to prevent p-hacking or trying many modelling approaches until finding one with the desired results. Lastly, there is some very preliminary evidence that area-level racial demographics, poverty, incarceration, mean household size, and Medicaid enrollment may be risk factors for fatal cocaine overdose.
