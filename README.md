@@ -28,7 +28,9 @@ The data were obtained in a survey of students Portuguese language courses in se
 
 ## Files Explanation
 - student-por.csv ：raw data in portuguese course.
-- data_description.txt ：features description file.
+- final_project.Rmd：The Rmarkdown file for this project.
+- final_project.html: The finalized html report. 
+- final_project.pptx: The slides used for presentation.
 
 ## Important Variables Explanation
 - school : student's school (binary: 'GP' - Gabriel Pereira or 'MS' - Mousinho da Silveira)
