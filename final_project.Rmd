@@ -10,6 +10,7 @@ output:
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
 ```  
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
@@ -62,29 +63,37 @@ set.seed(1997)
 
 ## Abstract
 
-## Introduction 
-Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them.
+Despite laws banning teenagers from drinking alcohol until they are adults, teenage binge drinking is still a common problem. This study was designed to see if drinking alcohol among teenagers had any adverse effects on them. As it turns out, drinking do have a negative relationship between student's grades. Furthermore, 5 different regression models(linear regression, support vector machine, random forest, k-nearest neighbors and artificial neural network) were tested for determining which one can best predict final grades by learning our data. results showed that artificial neural network had the best performance.
 
-The data were obtained in a survey of Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result.
+## Introduction 
+
+The initial project was provided by a Kaggle competition, and the raw data were obtained in a survey of Portuguese language courses in secondary school. It contains a lot of interesting social, gender and study information about students, especially their alcohol consumption. I would like to use it for finding out the most important factor that related to the students final grade. To see if teen binge drinking has a negative impact on their learning performance. And create a prediction model to predict the student's final score. This problem is related to education, statistic and computer science. Solving it needs a clear and thorough understanding about semantics, regression model as well as solid programming skills. I will apply multiple regression models that we learned in this course and rigorous data pre-processing, multifaceted validation to get a persuasive result. 
+
+By comparing with projects displayed in the Kaggle, I noticed that most of participants only applied one method/model to predict student's final grades, which is very hasty and unwise. Because we are not able to know which model fit these data best before evaluation. Different model have their own strength and weakness. For instance, lasso regression (a type of linear regression) assigns a weight of 0 to the variable if it is considered to be weakly correlated with the response variable. But if the data is not linear separable, linear regression will not return a good result. However, support vector machine can address non-linear separable problems by applying kernel methods. K-nearest neighbors is naive and easy to understand, artificial neural network is rough but effective. Therefore, I am going to try 5 different models, and see which one achieve the best prediction performance. In addition, data pre-processing, character variables conversion and feature selection are also the most important parts in our project.
 
 ### Read in data from my github repo
+
 ```{r}
 Data <- fread("https://raw.githubusercontent.com/clairezhu0421/BMIN503_Final_Project/master/raw_data/student-por.csv", sep = ",", header = T)
 ```
 
 ### A brief look at the dataset
+
 This will be a little bit messy but it is always good practice to summaries the whole dataset and check every variable. The purpose of this step is to check if the dataset contains missing values, variables with a single value, and duplicated observations.
+
 ```{r}
 Data %>%
   #convert character variables to factor variables, it makes the skimming result more clear and intelligible.
   mutate(across(.cols = names(which(sapply(Data, mode) == "character")), as.factor)) %>%
   my_skim()
 ```
+
 As can be seen from the table above, 13 of the 17 character variables are binary variables, which will be converted to 0-1 in the pre-processing step, and the rest 4 multivariate variables will be split by using one-hot encoding. In numeric variables, however, not all variables are normally distributed, with some are skewed to the left and others to the right. In addition, the variances of these numeric variables are varied. Therefore, the predictors needs appropriate normalization and centralization, because some models(support vector machines, K-nearest neighbors, and notably neural networks) require predictors that have been centered and scaled. 
 
 In general, we take the natural logarithmic transformation for all numeric variables in the first place. This is because of: (1) to avoid numerical underflow or overflow, (2) To improve model learning efficiency by exploiting log concave/convex/linear property, (3) some variables may be linear to the response variable in the log scale space. After log transformation, all numeric variables will tend to be normally distributed. Then, I am going to simply convert these variables to be standard normal distributed(mean = 0 and sd = 1) by subtracting the mean and dividing by the standard deviation for each variable to achieve centralization and rescaling. The advantages of centralization include: (1) to lessen the correlation between a multiplicative term (interaction or polynomial term) and its component variables. (2) to make interpretation of parameter estimates easier. (3) to assign the penalty term to each variables in a more fair way.
 
 ### Bi-variate correlation analysis between G3 and all numeric variables
+
 ```{r}
 Corr <- Data %>% 
   select(where(is.numeric)) %>% 
@@ -100,9 +109,11 @@ ggplot(data = Corr, mapping = aes(x = term, y = G3)) +
   labs(title = "Pearson Correlation Analysis") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
 An interesting find is after log transformation, the pearson correlation coefficient become worse(see supplementary figure 1). It indicates that the predictors and response variable G3 are not linear related in log space. Hence, the linear regression model may not have a good performance.
 
 Furthermore, I also noticed that two key variables in this study, Dalc and Walc, have weak and similar correlation coefficients with G3. Considering they are alike in meaning, I will try to merge these two variables into a new one as weekly alcohol consumption and see if this new variable has a better correlation performance with G3. If so, it will also improve the model learning efficiency.
+
 ```{r}
 Corr.alc <- Data %>% 
   mutate(alc = Data$Dalc*5/7 + Data$Walc*2/7) %>%
@@ -116,16 +127,21 @@ ggplot(data = Corr.alc, aes(x = term, y = G3)) +
   geom_text(aes(y = (G3 - 0.01)), label = round(Corr.alc$G3, 3), size = 6) +
   ylab("Correlation with G3")
 ```
+
 It is obviously that the new variable "alc" has a better correlation coefficients with G3. Therefore, I am going to keep the new variable and remove the two old alcohol consumption variables.
+
 ```{r}
 Data <- Data %>% 
   mutate(alc = Data$Dalc*5/7 + Data$Walc*2/7) %>%
   dplyr::select(-Dalc, -Walc)
 ```
-Other interesting finds includes: (1) Weekly alcohol consumption have a negative relationship with final grade G3. which indicates drinking does affect academic performance to some extent. (2) Children with higher educated parents tend to get better grades, possibly because educated parents place more emphasis on their children's education. (3) The two period grades are highly related to the final grade, which means they could gain overwhelming weights in the model learning. However, it will increase the risk of overfitting. ()
+
+Other interesting finds includes: (1) Weekly alcohol consumption have a negative relationship with final grade G3. which indicates drinking does affect academic performance to some extent. (2) Children with higher educated parents tend to get better grades, possibly because educated parents place more emphasis on their children's education. (3) The two period grades are highly related to the final grade, which means they could gain overwhelming weights in the model learning. However, it will increase the risk of overfitting.
 
 ### Bi-variate importance analysis between G3 and all categorical variables
+
 How to calculate the correlation between a continuous and categorical variable is very tricky. Here I use random forest to calulate the importance base on corrected impurity (gini index). 
+
 ```{r}
 rf.c <- ranger(G3 ~ ., data = Data %>% select(where(is.character), G3), num.trees = 1000, importance = "impurity_corrected")
 rf.c <- data.frame(term = names(rf.c$variable.importance), G3 = rf.c$variable.importance)
@@ -140,19 +156,24 @@ rf.c %>% mutate(term = factor(term, levels = term[order(G3)])) %>%
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 ```
+
 The higher the importance value means the feature provides more help to the classification. However, a negative importance value means that feature makes the loss go up. This indicates that your model is not getting good use of this feature. Set a random seed ensure a repeatable result, but I also tried recalculate the importance values more than 10 times without setting a random seed, I noticed that the "higher" feature (want to take higher education) always have a very high importance value, which is reasonable. "school" feature (student's school) also benefits the classification. Through a simple Internet search, it can be found that Gabriel Pereira school does have famous Portuguese teaching history.
 
 ## Methods
 
 ### Feature Selection
+
 In order to improves the accuracy by removing irrelevant predictors or predictors with negative influence for response variable, and enables the machine learning algorithm to train faster, reduces the complexity of a model and makes it easier to interpret. A simple feature selection will be applied according to the result of correlation analysis and feature importance analysis shown above, I would take the cutoff of absolute correlation coefficients as 0.1 and corrected impurity importance as 10 to filter out variables which weakly related to G3.
+
 ```{r}
 drop <- union(Corr$term[abs(Corr$G3) < 0.1], rf.c$term[rf.c$G3 <10])
 Data.keep <- dplyr::select(Data, -drop)
 ```
+
 In this step, 10 variables were dropped.
 
 ### Split Data into Training set and Testing set
+
 ```{r}
 split <- initial_split(Data.keep, prop = 4/5)
 train <- training(split)
@@ -160,10 +181,13 @@ test  <- testing(split)
 ```
 
 ### Candidate Models
+
 Here I am going to try out 5 different models. In this case, I approached the hyper-parameters in more manual way because I want to learn more about them. Most of the time, in the tuning process `tidymodels` gets you covered up but still you have to set hyper-parameters like `mtry` for Random Forests.
 
 #### Linear Regression
+
 lasso regression(mixture = 1), ridge regression(mixture = 0) and elastic network(0<mixture<1) are some of the simple techniques to reduce model complexity and prevent over-fitting which may result from simple linear regression.
+
 ```{r}
 lr <- linear_reg(penalty = tune(), mixture = tune()) %>%
   set_engine("glmnet") %>%
@@ -174,7 +198,9 @@ param.lr <- parameters(lr) %>%
 ```
 
 #### Support Vector Machine
+
 Support vector machine is a supervised learning methods used for classification, regression and outliers detection. Support vector machines is very effective in high dimensional spaces.
+
 ```{r}
 svm <- svm_rbf(cost = tune(), rbf_sigma = tune(), margin = 0.1) %>%
   set_engine("kernlab") %>%
@@ -185,6 +211,7 @@ param.svm <- parameters(svm) %>%
 ```
 
 #### Random Forest
+
 ```{r}
 rf <- rand_forest(mtry = tune(), trees = tune()) %>%
   set_engine("ranger") %>%
@@ -195,6 +222,7 @@ param.rf <- parameters(rf) %>%
 ```
 
 #### K-nearest neighbors
+
 ```{r}
 knn <- nearest_neighbor(neighbors = tune(), weight_func = tune(), dist_power = 2) %>%
   set_engine("kknn") %>%
@@ -205,6 +233,7 @@ param.knn <- parameters(knn) %>%
 ```
 
 #### Artificial Neural Network
+
 ```{r}
 nnet <- mlp(penalty = tune(), hidden_units = tune(), dropout = 0, epochs = 100) %>%
   set_engine("nnet") %>%
@@ -215,6 +244,7 @@ param.nnet <- parameters(nnet) %>%
 ```
 
 ### Setting Pre-processing Recipe
+
 ```{r}
 recipe <- Data.keep %>%
   recipe(G3 ~ .) %>%
@@ -224,7 +254,9 @@ recipe <- Data.keep %>%
 ```
 
 ### Creating Workflowsets
+
 Now I bring every model and recipe(formula) together and melt them in a workflow set and add the hyper-parameter information to the workflow set.
+
 ```{r}
 wf.lr <- workflow() %>%
   add_model(lr) %>%
@@ -248,19 +280,24 @@ wf.nnet <- workflow() %>%
 ```
 
 ### Fitting with Cross Validation
+
 I am going to use 10 Fold Cross-Validation and repeat it 3 times to find out the best hyper parameters and the model with best performance in our dataset. 
+
 ```{r}
 cv_folds <- vfold_cv(Data.keep, v = 10, repeats = 3)
 ```
 
 ### Parallel Processing
+
 doParallel package makes parallelization very easy. In this case I am going to use 4 cores. In theory this should decrease the computing time by %75. However, I can say from my experiments that in reality it is more like %50-66 for this notebook.
+
 ```{r}
 cl <- makeCluster(4)
 registerDoParallel(cl)
 ```
 
 ### find best parameters for linear regression
+
 ```{r}
 grid.lr <- grid_regular(param.lr, levels = c(20,11), original = T)
 search.lr <- tune_grid(wf.lr, grid = grid.lr, resamples = cv_folds, param_info = param.lr)
@@ -268,6 +305,7 @@ autoplot(search.lr, metric = "rmse") + labs(title = "Linear Regression")
 ```
 
 ### find best parameters for support vector machine
+
 ```{r}
 grid.svm <- grid_regular(param.svm, levels = c(20,15), original = T)
 search.svm <- tune_grid(wf.svm, grid = grid.svm, resamples = cv_folds, param_info = param.svm)
@@ -275,6 +313,7 @@ autoplot(search.svm, metric = "rmse") + labs(title = "Support Vector Machine")
 ```
 
 ### find best parameters for random forest
+
 ```{r}
 grid.rf <- grid_regular(param.rf, levels = c(8,21), original = T)
 search.rf <- tune_grid(wf.rf, grid = grid.rf, resamples = cv_folds, param_info = param.rf)
@@ -282,6 +321,7 @@ autoplot(search.rf, metric = "rmse") + labs(title = "Ramdom Forest")
 ```
 
 ### find best parameters for K-nearest neighbors
+
 ```{r}
 grid.knn <- grid_regular(param.knn, levels = c(20,10), original = T)
 search.knn <- tune_grid(wf.knn, grid = grid.knn, resamples = cv_folds, param_info = param.knn)
@@ -289,12 +329,15 @@ autoplot(search.knn, metric = "rmse") + labs(title = "K-nearest Neighbors")
 ```
 
 ### find best parameters for artificial neural network
+
 ```{r}
 grid.nnet <- grid_regular(param.nnet, levels = 20, original = T)
 search.nnet <- tune_grid(wf.nnet, grid = grid.nnet, resamples = cv_folds, param_info = param.nnet)
 autoplot(search.nnet, metric = "rmse") + labs(title = "Artificial Neural Network")
 ```
+
 ### Prediction performance in training set
+
 ```{r}
 best_param.lr <- select_best(search.lr, metric = "rmse")
 best_param.svm <- select_best(search.svm, metric = "rmse")
@@ -308,10 +351,13 @@ ggplot(data = df, mapping = aes(x = model, y = rsem, color = model)) +
   geom_point(stat = "identity", size = 5) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
 According to the figure, linear regression and support vector machine achieve the best performance in training set via 10 folds cross validation. Next, we will apply those trained models to the testing set for checking the robustness.
 
 ## Results
+
 After determining the best parameter, the entire training set will be fitted and then evaluated on the test set. Here, RMSE(square root error), MAE (mean absolute error), MSQ(correlation square) and R2_score will be used to evaluate the performance for each model.
+
 ```{r}
 wf.lr.final <- wf.lr %>% finalize_workflow(best_param.lr)
 wf.svm.final <- wf.svm %>% finalize_workflow(best_param.svm)
@@ -383,9 +429,12 @@ ggplot(data = perf.all, mapping = aes(x = model, y = estimate, color = model)) +
   facet_wrap(~metric, nrow = 2, scales = "free_y")
 ```
 
+As a Comprehensive evaluation，artificial neural network is the best model to address this prediction problem by achieving a good prediction accuracy and a decent robustness among these 5 models.
+
 ## Supplementary material
 
 ### Supplementary figure 1: Bi-variate correlation analysis between G3 and all numeric variables after log transformation
+
 ```{r}
 Corr.log1p <- Data %>% 
   select(where(is.numeric)) %>% 
