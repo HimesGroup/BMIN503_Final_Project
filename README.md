@@ -4,4 +4,3 @@ This project is to study COVID19 trend in US in the past one year. Used the pack
 
 final_project_Duan.Rmd contains all the codes and the the analysis.
 final_project_Duan.html is the final html page of this project.
-
