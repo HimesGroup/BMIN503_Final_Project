@@ -13,3 +13,4 @@ This project will involve a few fields of knowledge to understand the problems, 
 
 Files:
 -Main R code file: "final_project_code.rmd"
+-HTML code file: "final_project_code.html"
