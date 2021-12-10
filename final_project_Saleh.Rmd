@@ -18,7 +18,7 @@ options(width = 400)
 # Overview
 <!--Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.-->
 
-Breakthrough COVID-19 infections in fully vaccinated individuals have been reported. The objective of this project is to assess clinical outcomes including 30-day emergency department (ED) visits, hospitalizations, intensive care unit (ICU) stays, and death in fully vaccinated (BNT162b2 or mRNA-1273) patients with subsequent breakthrough SARS-CoV-2 infection and compare them to unvaccinated individuals with SARS-CoV-2 infection.
+Breakthrough COVID-19 infections in fully vaccinated individuals have been reported. The objective of this project is to assess clinical outcomes including 30-day emergency department (ED) visits, hospitalizations, intensive care unit (ICU) stays, and death in fully vaccinated (BNT162b2 or mRNA-1273) patients with subsequent breakthrough SARS-CoV-2 infection and compare them to unvaccinated individuals with SARS-CoV-2 infection. I will be using the Optum de-identified COVID-19 Electronic Health Record (EHR) dataset which captures data for approximately 7 million patients across 700 hospitals and 7,000 clinics that have been tested for (positive or negative) or diagnosed with COVID-19.
 
 Please find my Github Repository for the final project [here](https://github.com/ssaleh2/BMIN503_Final_Project).
 
@@ -67,6 +67,8 @@ library(DBI)
 library(mltools)
 library(gridExtra)
 library(jtools) #for nice table model output
+library(incidence)
+
 ```
 
 First, I'll establish a connection to the PostgreSQL database.
@@ -86,7 +88,7 @@ I'll start by getting an overview of demographics within the database stratified
 pt = dbGetQuery(con, "SELECT pt.ptid, pt.gender, pt.birth_yr, pt.race, pt.ethnicity, pt.region, pt.deceased_indicator, pt.date_of_death, vacc.first_dose_date FROM opt_20210916.pt LEFT JOIN g823429.sns_cov_vacc_by_pt_0916 vacc ON vacc.ptid = pt.ptid")
 
 pt %>%
-  dplyr::mutate(vacc_flag =  ifelse(is.na(first_dose_date), 0, 1)) %>%
+  dplyr::mutate(vacc_flag =  ifelse(is.na(first_dose_date), 'Not Vaccinated', 'Vaccinated')) %>%
   dplyr::mutate(age = ifelse(birth_yr == '1932 and Earlier', 89, 2021 - as.integer(birth_yr))) %>%
   dplyr::mutate(age = ifelse(deceased_indicator == "0", age, as.integer(substr(date_of_death, 1, 4)) - as.integer(birth_yr))) %>%
   dplyr::select(c(age, gender, race, ethnicity, region, vacc_flag)) %>%
@@ -100,7 +102,7 @@ pt %>%
   modify_header(label ~ "**Variable**") %>%
   modify_caption("**Database Patient Characteristics by Vaccination Status**") %>%
   modify_footnote(
-    update = all_stat_cols() ~ "Vaccinated groups represents "
+    update = all_stat_cols() ~ "Vaccinated group represents all those that have received at least a dose of any COVID-19 vaccination"
   ) %>%
   bold_labels()
 
@@ -116,7 +118,7 @@ coh2 <- dbGetQuery(con, sql)
 
 coh2 <- coh2 %>% 
   dplyr::filter(is.na(coh2$first_imm_date) | (coh2$first_imm_date > coh2$covid_pos_date + days(90))) %>%
-  dplyr::mutate(cohort = '2')
+  dplyr::mutate(cohort = 'Unvaccinated')
 
 #Group 1 are those that have received both vaccinations and were infected after 14 days from second dose (considered fully vaccinated)
 sql = 'SELECT * FROM g823429.sns_proj2_coh1_0916;'
@@ -124,19 +126,35 @@ coh1 <- dbGetQuery(con, sql)
 
 coh1 <- coh1 %>%
   dplyr::filter(days_second_imm_to_infxn > 14) %>%
-  dplyr::mutate(cohort = '1c')
+  dplyr::mutate(cohort = 'Fully Vaccinated')
 
 #Bind together groups into one dataframe
 all_cohorts <- dplyr::bind_rows(coh1, coh2)
+all_cohorts$cohort = factor(all_cohorts$cohort)
 
 #Get quick counts of groups
 table(all_cohorts$cohort)
 
+#Visualize the number of infections over time by day
+covid_by_week <- incidence::incidence(all_cohorts$covid_pos_date, interval = 7, groups = c(all_cohorts$cohort))
+first_vacc_by_week <- incidence::incidence(all_cohorts$first_imm_date, interval = 7)
+
+str(all_cohorts$cohort)
+
+plot(covid_by_week, border = 'grey') +
+  labs(title="Incident COVID-19 per Week by Vaccination Group",x="Week", y = "Weekly incidence")+
+ theme_classic()
+
+plot(first_vacc_by_week, color = 'light blue') +
+  labs(title="First Dose of Vaccination per Week",x="Week", y = "Weekly incidence")+
+  theme_classic()
 ```
 # Results
 <!--Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.-->
 
-## Summary Statistics
+## Variable Summary Statistics
+
+I'll start by getting demographics, explore the data visually, and then create the table summary of the demographics stratified by vaccination status.
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -149,16 +167,60 @@ where coh.covid_pos_date > \'2020-12-10\'"
 
 dems <- dbGetQuery(con, dem_query)
 
-#Join with all groups and get age
+#Join with all groups and get age and month of infection
 dems <- all_cohorts %>%
   select(c(ptid,cohort,covid_pos_date)) %>%
   dplyr::inner_join(dems, by='ptid') %>%
   dplyr::mutate(age = ifelse(birth_yr == '1932 and Earlier', 89, 2021 - as.integer(birth_yr))) %>%
   dplyr::mutate(month_infxn = lubridate::month(covid_pos_date,label = TRUE))
 
+#Violin plot for age
+dems %>%
+  ggplot(aes(x=cohort, y=age)) + 
+  geom_violin(trim=FALSE, fill="light blue") +
+  labs(title="Age by Vaccination Group",x="Vaccination Group", y = "Age")+
+  geom_boxplot(width=0.1) + 
+  theme_classic()
+
+# #Bar graphs for categorical variables
+# dems %>%
+# ggplot(aes(x=gender, group = cohort)) +
+#   geom_bar(aes(y = ..prop.., fill = factor(..x..)), stat="count") + 
+#   labs(y = "Percent", fill = 'Gender') + 
+#   geom_text(aes( label = scales::percent(..prop..),
+#                    y= ..prop.. ), stat= "count", vjust = -.5) +
+#   facet_grid(~cohort) +
+#   scale_y_continuous(labels = scales::percent) +
+#   theme_classic()
+
+#Bar graphs for categorical variables
+dems %>%
+ggplot(aes(x=cohort, fill = gender)) +
+  geom_bar(position='dodge') + 
+  labs(title="Gender by Vaccination Group",x="Vaccination Group", y = "Gender") + 
+  theme_classic()
+
+dems %>%
+ggplot(aes(x=cohort, fill = region)) +
+  geom_bar(position='dodge') + 
+  labs(title="Region by Vaccination Group",x="Vaccination Group", y = "Region") + 
+  theme_classic()
+
+dems %>%
+ggplot(aes(x=cohort, fill = race)) +
+  geom_bar(position='dodge') + 
+  labs(title="Race by Vaccination Group",x="Vaccination Group", y = "Race") + 
+  theme_classic()
+
+dems %>%
+ggplot(aes(x=cohort, fill = ethnicity)) +
+  geom_bar(position='dodge') + 
+  labs(title="Ethnicity by Vaccination Group",x="Vaccination Group", y = "Ethnicity") + 
+  theme_classic()
+
+#Create table for gender, race, ethnicity, and region, and month of infection and stratify by vaccination status
 dems %>% 
   select(cohort, age, gender, race, ethnicity, region, month_infxn) %>%
-  dplyr::filter(cohort == '1c' | cohort == '2') %>%
   tbl_summary(by = cohort, 
               statistic = list(all_continuous() ~ "{mean} ({sd})",
               all_categorical() ~ "{n} / {N} ({p}%)"),
@@ -169,6 +231,7 @@ dems %>%
   modify_caption("**Table 1. Patient Characteristics**") %>%
   bold_labels()
 ```
+I'll do the same approach for the insurance status.
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -189,7 +252,17 @@ ins <- dbGetQuery(con, ins_query) %>%
 #Join with all groups
 ins <- all_cohorts %>%
   select(c('ptid','cohort')) %>%
-  dplyr::left_join(ins, by='ptid') %>%
+  dplyr::left_join(ins, by='ptid') 
+
+#Bar graph for insurances
+ins %>%
+ggplot(aes(x=cohort, fill = ins_type)) +
+  geom_bar(position='dodge') + 
+  labs(title="Insurance Type by Vaccination Group",x="Vaccination Group", y = "Insurance") + 
+  theme_classic()
+
+#Pivot wider to keep one row per patient
+ins <- ins %>%
   mutate(flag = 1) %>% #adds flag of 1 to each row
   pivot_wider(names_from = ins_type, values_from = flag, values_fill = 0) %>% #pivots to wide view with column for each insurance type (note that patient can have multiple valid insurance types at same time)
   rename(Unknown = 'NA')
@@ -207,8 +280,9 @@ ins %>%
   bold_labels()
 
 ```
+Next, I'll get and explore the comorbidity data.
 
-```{r eval=TRUE, message=FALSE}
+```{r eval=TRUE, message=FALSE, fig.height=5}
 
 # Query for getting charlson comorbidity index scores 
 cci_query = "SELECT coh.ptid, cci_score
@@ -227,6 +301,14 @@ comorbidity_scores <- all_cohorts %>%
 comorbidity_scores$cci_score <- replace_na(comorbidity_scores$cci_score, 0)
 comorbidity_scores$cci_score <- as.integer(comorbidity_scores$cci_score)
 
+#Violin plot for those that have at least one comorbidity
+comorbidity_scores %>%
+  dplyr::filter(cci_score >0) %>%
+  ggplot(aes(x=cohort, y=cci_score)) + 
+  geom_violin(trim=FALSE, fill="light blue") +
+  labs(title="Charlson Comorbidity Index (CCI) by Vaccination Group",x="Vaccination Group", y = "CCI")+
+  geom_boxplot(width=0.1) + 
+  theme_classic()
 
 # Query for getting particular comorbidities
 cci_query_2 = "SELECT coh.ptid, dis.comorbidities
@@ -237,13 +319,26 @@ ON coh.ptid = dis.ptid"
 comorbidites <- dbGetQuery(con, cci_query_2) %>%
   dplyr::distinct() #remove duplicates
 
-#Convert from long to wide
+#Convert from long to wide format to maintain granularity of patient
 comorbidites <- all_cohorts %>%
   select(ptid, cohort) %>%
   dplyr::left_join(comorbidites, by='ptid') %>%
-  mutate(flag = 1) %>%
+  mutate(flag = 1)
+
+comorbidites %>%
+ggplot(aes(x = cohort, fill = comorbidities)) +
+  geom_bar(position='dodge') + 
+  coord_flip() + 
+  labs(title="Comorbidites Type by Vaccination Group",x="Vaccination Group", y = "Comorbidities") + 
+  theme_classic() +
+  theme(legend.position = "bottom", legend.text=element_text(size=6)) +
+  guides(fill=guide_legend(nrow=6,byrow=TRUE))
+  
+
+comorbidites <- comorbidites %>%
   pivot_wider(names_from = comorbidities, values_from = flag, values_fill = 0) %>%
   rename('No Known Comorbidities' = 'NA')
+
 
 comorbidites %>%
   select(-ptid) %>%
@@ -259,6 +354,7 @@ comorbidites %>%
   bold_labels()
 
 ```
+Lastly, I'll get the outcomes, explore the data visually, and then create the table summary of the outcomes stratified by vaccination status. Note that all outcomes include corresponding dates except death which is only recorded by month. 
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -287,8 +383,6 @@ emer <- all_cohorts %>%
                    emer_flag = first(emer_flag),
                    time_to_ED = median(timeelapsed, na.rm = TRUE))
 
-table(emer$cohort)
-
 # Query for getting hospitalization outcomes
 hosp_query = "SELECT coh.ptid, coh.covid_pos_date, v.visit_start_date, v.visit_end_date, 
 v.visit_end_date - v.visit_start_date AS LOS, v.visit_start_date - coh.covid_pos_date AS timeelapsed
@@ -301,31 +395,37 @@ WHERE
 	(v.visit_type = 'Inpatient') AND-- OR v.visit_type = 'Observation patient') AND
     coh.covid_pos_date > \'2020-12-10\'"
 
-hosp_query = "SELECT coh.ptid, coh.covid_pos_date, e.interaction_date, 
-e.interaction_date - coh.covid_pos_date AS timeelapsed
-FROM g823429.sns_proj2_cohall_0916 coh
-LEFT OUTER JOIN opt_20210916.enc e
-ON coh.ptid = e.ptid
-WHERE 
-	e.interaction_date >= coh.covid_pos_date AND
-	e.interaction_date <= coh.covid_pos_date + INTERVAL \'30 days\' AND
-	e.interaction_type = 'Inpatient' AND
-    coh.covid_pos_date > '2020-12-10'"
-
 hosp <- dbGetQuery(con, hosp_query)
 
 #Join with all cohorts
 hosp <- all_cohorts %>%
   select(c(ptid,cohort,covid_pos_date)) %>%
   dplyr::inner_join(hosp, by='ptid') %>%
-  mutate(hosp_flag = 1) %>%
+  mutate(hosp_flag = 1)
+
+#Get incident hospitalizations per week
+hosp_by_week <- incidence::incidence(hosp$visit_start_date, interval = 7, groups = c(hosp$cohort))
+
+#Visualize hospitalizations over time stratified by Vaccination Status
+plot(hosp_by_week, border = 'grey') +
+  labs(title="Incident COVID-19 Hospitalizations per Week by Vaccination Group",x="Week", y = "Weekly Incidence")+
+ theme_classic()
+
+#Violin + box plot for length of stay
+hosp %>%
+  ggplot(aes(x=cohort, y=los)) + 
+  geom_violin(trim=FALSE, fill="beige") +
+  labs(title="Length of Stay (LOS) by Vaccination Group",x="Vaccination Group", y = "LOS (days)")+
+  geom_boxplot(width=0.1) + 
+  theme_classic()
+
+hosp <- hosp %>%
   dplyr::group_by(ptid) %>%
   dplyr::summarise(hosp_count = n(),
                    cohort = first(cohort),
                    hosp_flag = first(hosp_flag),
-                   time_to_hosp = median(timeelapsed, na.rm = TRUE))
-# ,
-#                    los = median(los, na.rm = TRUE))
+                   time_to_hosp = median(timeelapsed, na.rm = TRUE),
+                    los = median(los, na.rm = TRUE))
 
 # Query for getting ICU outcomes
 icu_query = "SELECT coh.ptid, coh.covid_pos_date, c.carearea_date, 
@@ -346,15 +446,15 @@ icu <- all_cohorts %>%
   dplyr::inner_join(icu, by='ptid') %>%
   mutate(icu_flag = 1)
 
-table(icu$cohort)
+#Get incident ICU stays per week
+icu_by_week <- incidence::incidence(icu$carearea_date, interval = 7, groups = c(icu$cohort))
 
-icu
+#Visualize ICU stays over time stratified by Vaccination Status
+plot(icu_by_week, border = 'grey') +
+  labs(title="Incident COVID-19 ICU Stays per Week by Vaccination Group",x="Week", y = "Weekly Incidence")+
+ theme_classic()
 
-#Join with all cohorts
-icu <- all_cohorts %>%
-  select(c(ptid,cohort,covid_pos_date)) %>%
-  dplyr::inner_join(icu, by='ptid') %>%
-  mutate(icu_flag = 1) %>%
+icu <- icu %>%
   dplyr::group_by(ptid) %>%
   dplyr::summarise(icu_count = n(),
                    cohort = first(cohort),
@@ -388,11 +488,15 @@ death <- all_cohorts %>%
   select(c(ptid,cohort,covid_pos_date)) %>%
   dplyr::inner_join(death, by='ptid') %>%
   dplyr::filter(!is.na(est_time_elapsed)) %>%
-  mutate(death_flag = 1)%>%
-  dplyr::group_by(ptid) %>%
-  dplyr::summarise(death_count = n(),
-                   cohort = first(cohort),
-                   death_flag = first(death_flag))
+  mutate(death_flag = 1)
+
+#Get deaths per week
+deaths_by_week <- incidence::incidence(death$death_date, interval = "1 month", groups = c(death$cohort))
+
+#Visualize deaths over time stratified by Vaccination Status. Grouped by month since exact day of death is not available. Only the month.
+plot(deaths_by_week, border = 'grey') +
+  labs(title="COVID-19 Deaths per Month by Vaccination Group",x="Month", y = "Monthly Count")+
+ theme_classic()
 
 #Bring together as one outcome dataframe
 outcomes <- all_cohorts %>%
@@ -419,8 +523,7 @@ outcomes %>%
   bold_labels() 
 
 ```
-
-Next, I'll create the final dataframe for modeling.
+I'll then create the final dataframe for modeling including consolidating certain categories, dropping some rows, converting categorical variables to factors and finally proceeding with one hot encoding.
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -487,21 +590,23 @@ model_df <- one_hot(as.data.table(final_df))
 
 ```
 
-```{r, eval = TRUE, message = FALSE}
+I saved the model dataframe for easier future access, but it is commented out for the final version. Lastly, I drop reference columns for the regression analysis. This could have been done with the regression itself as well. 
 
+```{r, eval = TRUE, message = FALSE}
 #Save model DF for quick access later
-saveRDS(model_df, file ="model_df.Rda")
-#Read model DF 
-model_df <- readRDS(file = "model_df.Rda")
+# saveRDS(model_df, file ="model_df.Rda")
+# #Read model DF 
+# model_df <- readRDS(file = "model_df.Rda")
 
 #Drop reference columns
 model_df_final <- model_df %>% select(c(death_flag, icu_flag, hosp_flag, emer_flag, cohort_1a, cohort_1b, cohort_1c, age, gender_Female, cci_score, time_period_Spring, time_period_Summer, region_Northeast, region_Other, region_South, region_West, race_ethnicity_African_American, race_ethnicity_Asian, race_ethnicity_Hispanic, race_ethnicity_Other, Medicare_Medicaid, Ins_Other))
 
 ```
 
+As a visual check for colinearilty, I add a heat map for the corelation matrix among the different outcomes and predictors. Overall, most variables are not colinear. Those that have some degree of positively correlated relationships are expected like age with the Charlson Comorbidity Index or Medicare/Medicaid status. As expected, the primary and secondary outcomes also have correlated relationships.
 
 ```{r, eval = TRUE, message = FALSE, fig.width=8,fig.height=8}
-cormat <- cor(model_df_final)
+cormat <- cor(model_df)
 get_upper_tri <- function(cormat){
     cormat[lower.tri(cormat)]<- NA
     return(cormat)
@@ -510,8 +615,8 @@ get_upper_tri <- function(cormat){
 upper_tri <- get_upper_tri(cormat)
 
 melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
 # Heatmap
-library(ggplot2)
 ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
  geom_tile(color = "white")+
  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
@@ -534,6 +639,8 @@ ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
     hjust = 1))+
  coord_fixed()
 ```
+
+
 
 ```{r, eval = TRUE, message = FALSE}
 start_time <- Sys.time()
