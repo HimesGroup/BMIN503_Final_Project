@@ -1,5 +1,5 @@
 ---
-title: " Review on a brief analysis of Alveolar Macrophage gene expression on cannabis exposure"
+title: " Differential Gene Expression analysis using data from a on Alveolar Macrophage gene expression on cannabis exposure"
 author: "Nilanjana Samanta"
 output: 
   html_document:
@@ -13,7 +13,11 @@ output:
 ---
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
-```  
+``` 
+
+```{r global options, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.pos = "center", fig.height = 8, fig.width = 9)
+``` 
 ***
 
 # Overview
@@ -23,44 +27,61 @@ Marijuana use has recently been politicized a lot due to several US states legal
 
 # Introduction 
 
-S. Sharma and C. Liu et al, is the first one to to genome wide could potentially identify genes and pathways which would give additional insight into mechanisms that influence cannabis-associated respiratory diseases and if it differs greatly from those exposed to cigarette smoke or no smoke.
+S. Sharma and C. Liu et al, is the first one to to genome wide gene expression analysis from the lungs of marijuana smokers to test their hypothesis. Hence it is a unqique dataset on marijuana exposure publicly available!
 
-
+My goal is not to reproduce their results, which is difficult because not only is it an unpublished work but we don't have acess to their statistical analysis methods to compare results with. Besides I will be utilizing the processed data provided by them  hence hard to conclude a result and if my results are reliable. But my goal is to use a snapshot of their comrehensive dataset, to perform Difrerential gene expresion analysis to see if indeed there are differentially expressed genes in the samples with marijuana exposure, learn the challenges of using publicly available data and maybe compare two diffrent methods of doing DE analysis.
 
 ## Study design 
-In this study, there are three main exposure groups of interest a) Marijuana smokers (n = 15) b) Tobacco smokers (n = 16) and c) Controls or non-smokers (n = 10)
+1. In this study, there are three main exposure groups of interest **a) Marijuana smokers (n = 15) b) Tobacco smokers (n = 16) and c) Controls or non-smokers (n = 10)**. 
+2. All subjects were matched on the basis of their gender. 
+3. Smoking history of subjects was acquired from their medical records and presence of cannabis was assessed using toxicology screening. 
+3. To recruit non-smokers, participants had to report no active use of either substance for no more than a year in total.
+4. The reads were mapped to **Homo sapiens GRCh37 (Ensembl v79)**
+5. The sequecing for this study was performed in two separate batches i.e. the RNA library creation and sequencing were performed in two batches: Batch 1 (TruSeq Stranded mRNA Library Prep Kit and **Illumina HiSeq4000**) and Batch 2 (**Illumina TruSeq Stranded Total RNA kit, HiSeq2500**) using manufacturer directions. This is provided as a variable in the sample metadata
 
-### Methods
-I will be utilizing the raw data for this study available in the GEO database, accession [GSE155213](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155213) 
 
-```{r,eval=FALSE, message=FALSE}
+
+# Methods
+I am be utilizing the raw count data for this study available in the GEO database, accession [GSE155213](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155213). Unlike the microarray data we saw in class, this is RNA-seq data available in the form of a feature count matrix with reads of each gene tag for each biological sample which in our case are the subjects in each exposure grops. Here columsn are the samples and rows are the gene ids with there counts. 
+
+I downloaded the data locally and read it into Rstudio instead of using GEOquery function to access it.
+
+## Library and package installation
+
+I will be using the **EdgeR** package for this analysis, as it is the tool suggested and used by the authors of the above study, whic requires a raw count matrix as well phenotypic group as input. I am using **dplyr** for data cleaning and manipulation to prepare the dataset for DE analysis, **data.table** to read and write (save) tables. 
+ 
+```{r,eval=TRUE, message=FALSE}
 library(GEOquery)
-install.packages('R.utils')
+#install.packages('R.utils')
 library(R.utils)
 library(data.table)
 library(oligo)
 library(limma)
 library(viridis)
-BiocManager::install('biomaRt')
+#BiocManager::install('biomaRt')
 library(biomaRt)
-BiocManager::install('edgeR')
+#BiocManager::install('edgeR')
 library(edgeR)
 library(tidyr)
 library(dplyr)
 ```
 
 ## Set working directory
+
+In order to read the downloaded dataset from our working directory of interest and to save all files generated there, we need to set R's working directory. We can check our current working directory with the command **`getwd()`** and change it using **`setwd("path/to/file")`**
+
 ```{r}
-getwd()
-setwd("")
+getwd() #satisfied with my working directory, hence not using setwd() to change it
+
 ```
 
 ## Loading and Reading the dataset from the GEO database into R
-> The dataset was downloaded into local directory and read into Rstudio for analysis
+
+ The count table was downloaded into local directory and read into Rstudio using the **read.table()** function to unzip it for analysis
 
 ```{r,eval=TRUE, message=FALSE}
 
-feature.table <- read.table( gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213_count_table.txt.gz"), header=TRUE, sep="\t")
+feature.table <- read.table(gzfile("GSE155213\\GSE155213_count_table.txt.gz"), header=TRUE, sep="\t")
 
 #creating a safe copy of feature.table
 copy.main <- feature.table
@@ -69,13 +90,45 @@ head(feature.table)
 tail(feature.table)
 colnames(feature.table)
 
-#Acquiring phenotypic gset
-pheno.table1 <- read.table( gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213_raw_pheno.txt"), header=TRUE, sep="\t")
+```
 
-pheno.table2 <- read.table( gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213_raw_pheno2.txt"), header=TRUE, sep="\t")
+> Immediately after importing the file I saw that the gene counts were flots and not integers as a raw gene count should be. This was an indication that the counts provided on the GEO omnibus could have already been normalized, which is not ideal. The authors had mentioned in their method section that the count table was built as an input to edgeR object
 
-#Merging the two phenotype datasets by rows
+## Acquiring phenotypic matrix from eset
+
+Here I will be adding some important phenotypic information for each sample that I will be adjusting for in my model later. They are-
+1. The three  exposure groups i.e Marijuana, tobacco, control 
+2. Age
+3. Sex, M or F
+3. Technical batch (tech.batch), batch 1 & batch 2
+
+**NOTE:** I obtained the sample metadata (phenotype data) from eset using **`getGEO()`** function of GEOquery package. However due to some administrative permission related issue on my current system, I had to run the program on a different computer to obtain the files, saved them and then imported them  into Rstudio. Hence the specific codes to acquire and save the files have been commented out from haulting the Knitting step.   
+```{r,eval=TRUE, message=FALSE}
+#Acquiring phenotypic matrix in 2 parts
+
+#part 1
+#gse <- getGEO("GSE155213", destdir="data", GSEMatrix = TRUE)[[1]]
+#raw.pheno <- pData(phenoData(gse))
+
+#saving the eset file #1 locally
+#write.table(raw.pheno, "GSE155213_raw_pheno.txt", row.names = F, col.names = T, sep="\t", quote=F)
+
+#Part 2
+#gse2 <- getGEO("GSE155213", destdir="data", GSEMatrix = TRUE)[[2]]
+#raw.pheno2 <- pData(phenoData(gse2))
+
+#saving the eset file #2 locally
+#write.table(raw.pheno2, "GSE155213_raw_pheno2.txt", row.names = F, col.names = T, sep="\t", quote=F)
+
+
+#reading both phenotypic files into rstudio
+pheno.table1 <- read.table( gzfile("GSE155213\\GSE155213_raw_pheno.txt"), header=TRUE, sep="\t")
+
+pheno.table2 <- read.table( gzfile("GSE155213\\GSE155213_raw_pheno2.txt"), header=TRUE, sep="\t")
+
+#Merging the two phenotype datasets by rows, doing a vertical join
 pheno.data <- rbind(pheno.table1, pheno.table2)
+head(pheno.data)
 
 #cleaning and subsetting pheno data
 pheno.data.final <- pheno.data %>%
@@ -90,14 +143,32 @@ pheno.data.final$group <- recode(pheno.data.final$group,
                                  M = "marijuana") 
 
 
-#creating a count only table
+head(pheno.data.final)
+```
+
+## Data exploration and Filtration
+
+Now we start preparing the data for the the test of differential expression. We create three vectors a) `group`, that labels each of the columns as belonging to group "marijuana", "tobacco" or "control" b) 'batch', labels the columns belonging to "batch 1" or "batch 2" c) age, labels thecolumns belonging to various age groups, its a continuous integer. We then use this vector and the gene counts to create a DGEList object that edgeR uses for storing the data from a differential expression experiment. 
+
+The important quality check steps that I performed were to first create a count only table,by replacing row index with unique gene-ids and removing non-count columns. Then to remove the underexpressed or lowly expressed genes from the dataset I chose a cutoff based on median log~2-transformed counts per gene per million mapped reads (cpm). edgeR provides the function, `cpm`, to compute the counts per million. However, since it produced some negative values, not ideal for DE analysis, I added a pseudo-number to the log-2 transformed values. I decided to stick with this filtration based on the boxplots that showed how scalable my transformed counts were. Next we are only keeping a gene if it has a cpm of 0.5 or greater for at least two samples. Ideally one should know the library size of the samples to set such thresholds but sinceI did not have that information, I chose a random cutoff to only keep genes with reasonable expression. 
+
+I also Visualized sample relationships with multidimensional scaling (MDS).
+
+```{r,eval=TRUE, message=FALSE}
+
+#creating a count only table for DE analysis
 count.table <- feature.table
 rownames(count.table) <- feature.table$Features
 count.table$Features <- NULL
 
+#creating group vectors for pasing into design matrix 
+group <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
+batch <- c(rep("batch1", 30), rep("batch2", 11))
+age <- as.numeric(c("22", "23", "24", rep("25",2), "29", rep("30",5), rep("31",2), "32", "33", rep("34",2), rep("35",2), rep("36",2), rep("37",2), rep("38",3), rep("39",3), rep("40",2), rep("41",3), "47", rep("50",3), "53", "54", "55"))
+
 #log transformation
 cpm_log <- cpm(count.table, log = TRUE)
-cpm_log
+head(cpm_log)
 
 #boxplot showing transformed count data
 boxplot(count.table, las = 2, main = "Before Log2 transformation")
@@ -105,57 +176,11 @@ boxplot(cpm_log, las = 2, main = "After log2 transformation")
 
 #adding pseudo numbr to avoid negative values
 count_log2 <- log2(count.table + 1)
-count_log2
-```
+head(count_log2)
 
-
-## Gene Annotation
-
-```{r,eval=TRUE, message=FALSE}
-
-#Acquiring gene symbols for Ensmble Ids
-mart <- useMart(biomart="ENSEMBL_MART_ENSEMBL", host="https://grch37.ensembl.org", path="/biomart/martservice", dataset="hsapiens_gene_ensembl")
-
-genes <- biomaRt::getBM(attribute=c('ensembl_gene_id', 'hgnc_symbol'), values=feature.table$Features, mart=mart)
-
-#removing any duplicate gene ids
-genes.matrix <- genes[-which(duplicated(genes$ensembl_gene_id)),]
-
-summary(genes.matrix)
-length(unique(genes.matrix$hgnc_symbol))
-length(unique(genes.matrix$ensembl_gene_id))
-
-#Replacing blank cells with NAs
-genes.matrix[genes.matrix == ""] <- NA
-
-# select genes of interest only
-rownames(genes.matrix)<-genes.matrix$ensembl_gene_id
-features.annot <- genes.matrix[as.character(copy.main$Features),]
-
-# join the two tables
-rownames(copy.main) <- copy.main$Features
-merged.feature.table <- cbind(features.annot,copy.main)
-
-head(merged.feature.table)
-
-#Removing features column
-merged.feature <- subset(merged.feature.table, select = -c(Features))
-
-#checking NA rows for symbol in merged.feature table before deleting them
-sum(is.na(merged.feature))
-row.has.na <- apply(merged.feature, 1, function(x){any(is.na(x))})
-sum(row.has.na)
-
-#deleting gene-ids with no corresponding symbols
-merged.feature <- merged.feature[complete.cases(merged.feature),]
-
-```
-
-```{r}
+#Creating DGElist object with "Groups"
 mydata <- DGEList(count_log2, group=factor(pheno.data.final$group))
-#Creating DGElist with "Groups"
-mydata <- DGEList(count_log2, group=factor(pheno.data.final$group))
-mydata
+
 dim(mydata)
 head(mydata$counts)
 head(mydata$samples)
@@ -196,13 +221,16 @@ legend("bottomleft", as.character(unique(mydata.batch$samples$group)), col=1:3, 
 
 ```
 
-## DE Analysis using Generalized Linear Model (GLM)
+
+> based on the two plots, there is no clear separation of samples based on the exposure alone but some separatio based on the technical batch. This could be because there are not many differentially expressed genes between these exposure groups. 
+
+#Results
+
+## Differential Expression (DE) Analysis using Generalized Linear Model (GLM) 
+
+I chose a Generalized Linear model (GLM) framework, because this is more than a two group comparison and has covariates like age that I am adjusting for. First step is to prepare the design matrix and then decide the contrast groups I will be comparing for gene expression levels.  
 
 ```{r, eval=TRUE, message=FALSE}
-#creating group vectors for pasing into design matrix 
-group <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
-batch <- c(rep("batch1", 30), rep("batch2", 11))
-age <- as.numeric(c("22", "23", "24", rep("25",2), "29", rep("30",5), rep("31",2), "32", "33", rep("34",2), rep("35",2), rep("36",2), rep("37",2), rep("38",3), rep("39",3), rep("40",2), rep("41",3), "47", rep("50",3), "53", "54", "55"))
 
 #design matrix to describe the statistical model
 design <- model.matrix(~0 + group + batch + age)
@@ -223,18 +251,20 @@ mydata.copy
 #fitting a GLM
 fit <- glmFit(mydata.copy, design.copy)
 
+#fit the contrasts
 lrt_mc <- glmLRT(fit, contrast=makeContrasts(mari_vs_cont = marijuana - control, levels = colnames(design)))
 lrt_tc <- glmLRT(fit, contrast=makeContrasts(tobacco_vs_cont = tobacco - control, levels = colnames(design)))
 lrt_mt <- glmLRT(fit, contrast=makeContrasts(mari_vs_tobacco = marijuana - tobacco, levels = colnames(design)))
 
-
+#use toptags() to rank top genes based on expression levels
 marijuana <- topTags(lrt_mc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
 tobacco <- topTags(lrt_tc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
 mari_vs_tobacco <- topTags(lrt_mt, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
 
-write.table(tobacco, file="top-mc.txt")
-write.table(tobacco, file="top-tc.txt")
+#write.table(tobacco, file="top-mc.txt")
+#write.table(tobacco, file="top-tc.txt")
 
+#identify DE genes, upregulated, non-expressed and downregulated in each group
 mc_DE <- decideTestsDGE(lrt_mc, adjust.method="BH", p.value = 1)
 summary(mc_DE)
 
@@ -244,12 +274,13 @@ summary(tc_DE)
 mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = 1)
 summary(mt_DE)
 
-#boxplot of one top gene
+#boxplot of one random top expressed gene in the "mari_vs_control" group
 boxplot(as.numeric(count.table["ENSG00000138061", ]) ~ group)
 
 
 #plotting the entire DGElist
 plotMDS(mydata)
+
 
 #testing
 et <- exactTest(mydata.copy)
@@ -264,124 +295,64 @@ abline(h = c(-2, 2), col = "blue")
 
 
 
-#testing DE without log transformation
-```{r}
+## Gene Annotation
 
+```{r,eval=TRUE, message=FALSE}
 
-mydata.x <- DGEList(count.table, group=factor(pheno.data.final$group))
-mydata.x
-dim(mydata)
-head(mydata$counts)
-head(mydata$samples)
+# interrogate the BioMart database to get gene symbol and description for these genes 
+mart <- useMart(biomart="ENSEMBL_MART_ENSEMBL", host="https://grch37.ensembl.org", path="/biomart/martservice", dataset="hsapiens_gene_ensembl")
 
+genes <- biomaRt::getBM(attribute=c('ensembl_gene_id', 'hgnc_symbol'), values=feature.table$Features, mart=mart)
 
-#calculatin counts per million uing cpm() funcion for each gene
-head(cpm(mydata.x))
+#removing any duplicate gene ids
+genes.matrix <- genes[-which(duplicated(genes$ensembl_gene_id)),]
 
-#calculating total gene count per sample
-apply(mydata.x$counts, 2, sum)
+summary(genes.matrix)
+length(unique(genes.matrix$hgnc_symbol))
+length(unique(genes.matrix$ensembl_gene_id))
 
-#Keeping genes atleast a count of 0.5 cpm for atleat 2samples and removing the rest from our dataset
-keep.genes_x <- rowSums(cpm(mydata.x)>0.5) >= 2 #keep genes is a logical vector with TRUE and FALSE values
-table(keep.genes_x)
-mydata.x <- mydata.x[keep.genes_x,]
-dim(mydata.x)
+#Replacing blank cells with NAs
+genes.matrix[genes.matrix == ""] <- NA
 
-#design matrix to describe the statistical model
-design.x <- model.matrix(~0 + group + batch + age)
-colnames(design) <- gsub("group", "", colnames(design))
-design
-design.copy <- design
+# select genes of interest only
+rownames(genes.matrix)<-genes.matrix$ensembl_gene_id
+features.annot <- genes.matrix[as.character(copy.main$Features),]
 
-contrast.matrix <- makeContrasts(mari_vs_cont = marijuana - control,
-                              tobacco_vs_cont = tobacco - control,
-                              mari_vs_tobacco = marijuana - tobacco,
-                              levels = colnames(design))
-contrast.matrix
+# join the two tables
+rownames(copy.main) <- copy.main$Features
+merged.feature.table <- cbind(features.annot,copy.main)
 
-#gene-specific (referred to in edgeR as tagwise) dispersion estimates are used in the test for differential expression
-mydata.x <- estimateDisp(mydata.x, design.x)
-mydata.copy
+head(merged.feature.table)
 
-#fitting a GLM
-fitx <- glmFit(mydata.x, design.x)
+#Removing features column
+merged.feature <- subset(merged.feature.table, select = -c(Features))
 
-lrt_mcx <- glmLRT(fitx, contrast=makeContrasts(mari_vs_cont = marijuana - control, levels = colnames(design)))
-lrt_tcx <- glmLRT(fitx, contrast=makeContrasts(tobacco_vs_cont = tobacco - control, levels = colnames(design)))
-lrt_mtx <- glmLRT(fitx, contrast=makeContrasts(mari_vs_tobacco = marijuana - tobacco, levels = colnames(design)))
+#checking NA rows for symbol in merged.feature table before deleting them
+row.has.na <- apply(merged.feature, 1, function(x){any(is.na(x))})
+sum(row.has.na)
 
-topTags(lrt_mcx, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 0.05)
-topTags(lrt_tc, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
-topTags(lrt_mt, n=10, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+#deleting gene-ids with no corresponding symbols
+merged.feature <- merged.feature[complete.cases(merged.feature),]
 
-mc_DEx <- decideTestsDGE(lrt_mcx, adjust.method="BH", p.value = 0.05)
-summary(mc_DE)
-
-tc_DE <- decideTestsDGE(lrt_tc, adjust.method="BH", p.value = 1)
-summary(tc_DE)
-
-mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = 1)
-summary(mt_DE)
 ```
 
 
+#Conclusion
+There are indeed differentially expressed genes that are clearly upregulated and down regulated in each exposure group but with some overlaps. I tried to validate my result by trying to check for one of the "smoking positive" henes "CYP1B!" or "CYP1A1" in either the Marijuana_vs_control or tobacco_vs_control groups because they are known to be upregulated on cigarette exposure. I did find CYP1B1 (see boxplot above) but not CYP1A1, maybe because it was not well covered by sequencing reads. I was also able to find several genes mentioned by the authors to be differenially expressed in the marijuana and tobaco groups. A good next step would be to use the gene annotated dataset to perform a GSEA or Gene enrichment analysis to see what pathways are up or down-regulated in these exposure groups. 
 
-```{r, eval=TRUE, message=FALSE}
-
-library(GEOquery)
-
-family.table <- read.table(gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213_family.soft.gz"), header=TRUE, sep="\t")
-
-gse <- getGEO("GSE155213", destdir=".", GSEMatrix = TRUE)[[1]]
-
-gse <-getGEO(filename='GSE155213/GSE155213-GPL16791_series_matrix.txt.gz',GSEMatrix=TRUE)
-raw.pheno <- pData(phenoData(gse))
-
-gse <- getGEO("GSE155213", AnnotGPL = TRUE)
-
-BiocManager::install('hgu95av2.db')
-BiocManager::install('affycoretools')
-library(hgu95av2.db)
-
-eset <- annotateEset(gse, hgu95av2.db)
-```
-
-### Results- to be finalized
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
-
-```{r, eval=TRUE}
-#ROUGH WORK
-#referenced articles
-1. Forum on CPM cutoff: https://support.bioconductor.org/p/101838/
-2. Tutorial on DE analysis by edgeR:  https://web.stanford.edu/class/bios221/labs/rnaseq/lab_4_rnaseq.html  
-3. https://bioconductor.org/packages/devel/bioc/manuals/edgeR/man/edgeR.pdf
-
-#copy of main table
-copy.feature.table <- feature.table
-
-#Reading in unzipped count-table to ensure counts are correct
-count.table <- read.table(file.choose(), sep ="\t", header = TRUE, stringsAsFactor = FALSE)
-
-#Reading in Series-matrix supplementary files for phenotypic info
-series.matrix_1 <- read.table(gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213-GPL16791_series_matrix.txt.gz"), header=TRUE, fill=TRUE, sep="\t")
-
-series.matrix_2 <- read.table(gzfile("C:\\Users\\nsamanta\\Desktop\\HPAP Files\\GitHub\\BMIN503_Final_Project\\GSE155213\\GSE155213-GPL20301_series_matrix.txt.gz"), header=TRUE, fill=TRUE, sep="\t")
+However, one of the greatest limitation was the publicly available dataset that was pre-normalized, which is not ideal for DE analysis and can bias the results. There is no way to know if the log2 transformation inut some bias in my dataset. Ideally for research purposes, in such cases getting the raw data from the SRA database and starting from the fastqs and mapping them to a genome is a better idea than the count table. But its beyond the scope of this class. 
 
 
-# trying to remove genes with cpm <1, not working
-copy.feature.table$Features <- as.numeric(copy.feature.table$Features)
+#References
+1. Bioconductor EdgeR manual: https://bioconductor.org/packages/devel/bioc/manuals/edgeR/man/edgeR.pdf
+2. Tutorial on DE analysis with edgeR:https://web.stanford.edu/class/bios221/labs/rnaseq/lab_4_rnaseq.html  
+3. Forum on CPM cutoff: https://support.bioconductor.org/p/101838/
+4. Case studies and user guide on edgeR: https://bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf
 
-gene.expr1 <- rowSums(cpm(merged.feature.table)>1) >= 41
 
-table(gene.expr1)
 
-sapply(feature.table, class)
+```{r info}
 
-mycounts <- main.table[gene.expr1,]
-mygenes <- rownames(mycounts)
+sessionInfo()
 
-summary(copy3)
-class(copy3$Features)
-
-head(main.table)
 ```
