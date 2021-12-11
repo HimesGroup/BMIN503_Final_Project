@@ -28,15 +28,21 @@ Clinicians use mechanical ventilator to help patients who have trouble breathing
 
 
 ### Methods
-Data:
-The data are time-series records that catches the pressure censor readings during each breath (the output to be predicted).The input features (data used to predict) are two control inputs and two lung-specific features. The two cnotrol inputs are (1) inspiratoory valve (0-100), indicating the percentage of valve that let air in, and (2) the expiratoory valve (0 or 1), indicating whether the exploratooory valve is open. The lung-specific attribute features are R-indicating how restricted the airway is, and C-indicating how compiant the lung is.  
+#### Machine Learning
 
-Modeling strategies:
-LSTM
-LSTM+CNN
-LSTM+Manual feature engineering
-LSTM+CNN+Manual feature engineering
+The whole dataset was randomly split as training+development (70%) and testing (30%). The training and development datasets were used to develop traditional machine learning (regression-based) and deep learning models and tune hyperparameters for the developed models. The testing dataset was hold out for evaluating and reporting the model performance. 
+
+#### Evaluation 
+
+The study reported the following 5 evaluation metrics:
+MSE: mean squared error
+MAE: mean absolute error
+RMSE: root mean squared error
+MAPE: mean absolute percentage error
+R2: coefficient of determination
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
-
+- Single-style deep Learning models with outperformed traditional statistic-based approach in this time-series prediction task
+- Horizontal-style deep learning model do not perform well
+- Single-style GRU model gives the best test results for all metrics, it can catch the multi-variate time-series signals during breath and make accurate predictions of airway pressure
+- AI-algorithm has the potential to be adopted in developing automatic ventilator which can reduce human workload
