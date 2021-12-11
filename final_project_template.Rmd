@@ -1,6 +1,6 @@
 ---
-title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+title: "BMIN503/EPID600 Final Project"
+author: "Yunlin Zhang"
 output: 
   html_document:
     theme: paper 
@@ -17,73 +17,194 @@ This is a template.
 ```
 
 ### Overview
-The goal of this project is to use a randomized phase III trial study CALGB 50303 , "Rituximab and Combination Chemotherapy in Treating Patients With Diffuse Large B-Cell Non-Hodgkin's Lymphoma",  to compare the efficacy of rituximab when given together with the two conventional chemotherapy regimens in treating stage II to IV DLBCL patients. 
+The goal of this project is to use randomized clinical trial data to study patients’ gene profile variations and their treatment outcomes of CAR T therapy. Data analyzed in this project are retrieved from a phase II Novartis clinical trial.
 
 ### Introduction 
-Diffuse large B-cell lymphomas (DLBCLs), accounting for 30% to 40% of adult non-Hodgkin lymphomas (NHLs), are the most common histologic subtype of lymphoid neoplasms in the United States. Conventional chemotherapy regimens for DLBCL include CHOP (cyclophosphamide, doxorubicine, vincristine, prednisone) and EPOCH (etoposide, prednisone, vincristine, cyclophosphamide, doxorubicin), but the complete response rates are not satisfactory. To further improve the efficacy of these combination chemotherapies, rituximab has been introduced additionally in frontline therapies, since its monoclonal antibody properties allows it to prevent cancer cell proliferation in many different ways. The goal of this project is to compare the two modified treatments, EPOCH-R and R-CHOP, in terms of efficacy and toxicity. 
+T cells recognize tumors by finding antigens represented on their surface and triggering other immune responses, including macrophage recruitment and neutral killing (NK) cell activation, to destroy tumors. However, cancer cells adapt the mechanism of major histocompatibility complex (MHC) mutation which allows them to change the surface antigen expression, so that the immune system can no longer recognize their existence. In order to overcome this immunosuppressive effect, genetic modification of T cells to re-target them towards tumors has been studied for years. Inserting chimeric antigen receptors (CAR) on T cells is a method that combines the antigen binding site of monoclonal antibodies with the activation mechanism of T cells, so that the mediated cancer cell killing is no longer restricted by the major histocompatibility complex, while retaining the anti-tumor properties required by T cells (Ramos et al. 2015).
 
-To address this problem, an interdisciplinary approach might be required. Understanding the actual pharmaceutical mechanism of rituximab, as well as the pathophysiology of DLBCL, will help to predict outcomes of these two chemotherapies, while having knowledge in demographics might allow delicate comparisons of the two treatments within certain patient subgroups. Statistics, in addition, will guide the entire analysis. 
+The most investigated CAR T cells targeting CD19 antigen have experienced much clinical success in treating B cell malignancies. The complete remission rate of CAR T therapy against B cell acute lymphoblastic leukemia (B-ALL) remarkably achieves up to 90% (Wang et al, 2017). However, the post-CAR relapse probably due to downregulation of CD19 antigen or treatment persistence is still a powerful challenge for long-term disease control (Xu et al, 2019). Therefore, the goal of this project is to find potential genes that might be able to further improve the CAR T response rate and to help in overcoming the disease relapse.  
+
+A multidisciplinary approach will be helpful when approaching this project. Clinical outcomes and histopathologic analysis of tumor specimens will be accessed based on knowledge of clinicians, while bulk RNA sequencing will be processed in a bioinformatic way, using the DESeq2 package. 
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
-
+Both datasets used in this project are obtained from the same NOVARTIS clinical trial. One dataset includes 58 patients’ bulk RNA sequencing counting numbers, sampled before receiving CAR T therapy. The other dataset has information about lines of therapy, induction responses, overall survival, vital status and specific disease type of patients, recorded after CAR T therapy. 
 ```{r, eval = TRUE}
-NHL <- read_excel("ODR1819_101_Cancer_Registration_Epidemiology_of_Non_Hodgkin.xlsx", sheet = "Data Table") #import data
-``` 
+## read Files
+## the count data are presented as a table which reports, for each sample
+## the number of sequence fragments that have been assigned to each gene.
+counts <- as.matrix(read.csv('/Users/sylvia/Desktop/BMIN503_Final_Project/MGAM2_novartis_normalized_counts_v2.csv'), row.names = 1)
+rownames(counts) = counts[,1]
+counts  = counts[,2:31]
+cts = as.double(counts)
+counts <- data.frame(counts)
+head(counts)
+## convert to numeric data matrix
+counts = data.matrix(counts)
 
-```{r, eval = TRUE}
-NHL.clean <- NHL %>%
-  rename(ID = PSEUDO_TUMOURID, age = AGE_3GROUPS, sex = SEX, ethnicity = ETHNICITY_GROUPED, year = DIAGYEAR_GROUPED, qunit = QUNIT_12_to_16 ) %>% #rename data
-  dplyr::select(ID, age, sex, ethnicity, year, STAGE_BEST, GRADE) #select data to display
-NHL.clean
+coldata <- read.csv('/Users/sylvia/Desktop/BMIN503_Final_Project/metadata.matched.clean.v2.csv', row.names = 1)
+coldata <- coldata[,c("response","disease","os","status")]
+coldata$response <- factor(coldata$response)
+coldata$os <- factor(coldata$os)
+coldata$status <- factor(coldata$status)
+coldata$disease <- factor(coldata$disease)
+head(coldata)
+
+## check that rownames match column names --> return true
+rownames(coldata) <- sub("fb", "", rownames(coldata))
+all(rownames(coldata) %in% colnames(counts))
 ```
 
+Count data from high-throughput sequencing assay is majorly analyzed using the DESeq2 package. To study gene differential expression characteristics based on a negative binomial distributed model (Love and Huber et al, 2015), a DESeq2 dataset will be generated and pre-filtered to remove rows in which there are less than 10 reads total. This will help to reduce the memory size of the dds dta object and increase speed of later transformation and testing functions.
 ```{r, eval = TRUE}
-# summary of patient backgrounds
-# compare the sex distribution for each age category
-library(ggplot2)
-# Proportions of each "sex" category within each age category:
-ggplot(data = NHL.clean, aes(x = age, fill = sex)) +
-    geom_bar(position = "fill")
-```
-```{r, eval = TRUE}
-# filter data with desired STAGE_BEST
-NHL.stage <- NHL.clean  %>%
-  filter(STAGE_BEST %in% c(1,2,3,4,5,6)) %>%
-  select(ID, year, STAGE_BEST)
-NHL.stage
+library("DESeq2")
+library("EnhancedVolcano")
 
-# unifying labels in GRADE
-for (i in 1:nrow(NHL.clean))
-  if (!is.na(NHL.clean[i,]$GRADE))
-    if (NHL.clean[i,]$GRADE == "1"){
-      NHL.clean[i,]$GRADE = "G1"
-    }else if (NHL.clean[i,]$GRADE == "3"){
-       NHL.clean[i,]$GRADE = "G3"
-    }else if (NHL.clean[i,]$GRADE == "4"){
-       NHL.clean[i,]$GRADE = "G4"
-    }else next
+## construct a DeSEQ2 dataset
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = coldata,
+                              design = ~ response)
+dds
 
-# filter data with desired GRADE
-NHL.grade <- NHL.clean  %>%
-  filter(GRADE %in% c("G1","G2","G3","G4","G5", "G6","G7","GX")) %>%
-  select(ID, GRADE)
+## pre-filtering
+## note: more strict filtering to increase power is automatically applied via independent filtering on the mean of normalized counts within the results function.
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
 
-# create a new dataframe containing STAGE_BEST and GRADE
-NHL.join <- inner_join(NHL.stage, NHL.grade, by = "ID")
-NHL.join
-```
+## choose reference
+dds$response <- relevel(dds$response, ref = "PR_PD_SD")
 
-```{r, eval = TRUE}
-# bar plot the relationship between STAGE_BEST and GRADE
-ggplot(data = NHL.join, aes(x = factor(STAGE_BEST), fill = GRADE)) +
-    geom_bar(position = "fill")
+## DEG analysis
+dds <- DESeq(dds)
+res <- results(dds)
+res
+
+resultsNames(dds)
+resLFC <- lfcShrink(dds, coef="response_CR_vs_PR_PD_SD", type="apeglm")
+resLFC
+
+## sort by p val 
+resOrdered <- res[order(res$pvalue),]
+
+## num adjusted p value < 0.1?
+sum(res$padj < 0.1, na.rm=TRUE)
 ```
 
+Data inspection and normalization will be performed using the plotMA function. The average of the normalized counts of all samples in the DESeqDataSet can be attributed to the change in multiples of log2 of the given variable in this function. A shrunken version of log2 fold change is also generated via removing  noise associated with log2 fold changes from low count genes without requiring arbitrary filtering thresholds. 
 ```{r, eval = TRUE}
-# bar plot the relationship between STAGE_BEST and year
-ggplot(data = NHL.join, aes(x = factor(year), fill = STAGE_BEST)) +
-    geom_bar(position = "fill")
+## MA plot
+plotMA(res)
+
+## noise removal
+plotMA(resLFC)
+
+idx <- identify(res$baseMean, res$log2FoldChange)
+rownames(res)[idx]
 ```
+
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+The first goal of this project is to compare the gene differential expression between the two groups of patients who have a complete response (CR) to NOVARTIS CAR T therapy and those who do not (PR_PD_SD), and then find gene candidates that are significantly enriched in only one group of patient. Therefore, a volcano plot within the ggplot package is applied. Surprisingly, the two groups of gene expression profiles are highly overlapping with each other. Only three significantly enriched genes and one down-regulated gene are found in tumors of patients who have complete response to CAR T therapy compared to those who do not. The three enriched genes are MAGM2, PCDH7, and DES. The downregulated gene is LHK3.
+```{r, eval = TRUE}
+## examine the counts of reads for a single gene across the groups
+d <- plotCounts(dds, gene=which.min(res$padj), intgroup="response", 
+                returnData=TRUE)
+library("ggplot2")
+ggplot(d, aes(x=response, y=count)) + 
+  geom_point(position=position_jitter(w=0.1,h=0)) + 
+  scale_y_log10(breaks=c(25,100,400))
+
+## enhanced volcano plot
+EnhancedVolcano(res,
+                lab = rownames(res),
+                x = 'log2FoldChange',
+                y = 'padj',
+                pCutoff = 0.001,
+                FCcutoff = 1)
+res$log2FoldChange = res$log2FoldChange * -1
+```
+
+Next, within the scope of gene candidates, gene MGAM2 is continued to later analysis, because according to a previous genome analysis using Cancer Genome Atlas data, MGAM2 encoded proteins and other proteins which also contain the EHV regions are enriched in immune functions and the formation of major histocompatibility complexes (MHC). More importantly, its significantly increased expression is positively correlated to a better patient survival from breast cancer (Xu et al, 2019). Individual log2 fold change of MGAM2 gene count is compared to the average log2 fold change value among all patient samples and categorized to either low or high expression level. This information is stored as a new column in the coldata dataframe. 
+```{r, eval = TRUE}
+library(dplyr)
+
+## join data
+mgam2 <- as.double(counts["MGAM2",])
+coldata$mgam2 <- mgam2
+
+coldata$mgam2_exp <- NA
+
+## convert mgam2 counts to log base expression
+for (i in (1:nrow(coldata))){
+  coldata$mgam2_log <- log2(coldata$mgam2)
+  mean_mgam2_log <- mean(coldata$mgam2_log)
+  
+## classify expression level
+  if(coldata[i,]$mgam2_log > mean_mgam2_log){
+    coldata[i,]$mgam2_exp <- "high"
+  }else {
+    coldata[i,]$mgam2_exp <- "low"
+}
+  } 
+   
+coldata  %>%
+  group_by(mgam2_exp) %>%
+  count(sort = TRUE)
+head(coldata)
+```
+
+Although it is already known that the MGAM2 gene is significantly enriched in complete response patient samples, the expression level of the two samples are compared again using a box plot in the ggplot package. To better determine the statistics test, Shapiro-Wilk normality test is performed first to evaluate if the distribution of two comparative data meet the normal distribution pattern. The P value of 0.07 indicates that the MGAM2 expression in the complete response group is normally distributed, but its counterpart in the non complete response group equals to 0.01 suggesting a non normal distribution. The statistical test, therefore, in this situation is decided to be the Mann-Withney-Wilcoxon test, and the corresponding P value is 0.018.
+```{r, eval = TRUE}
+## MGAM2 expression vs. treatment response
+library(ggrepel)
+library(ggplot2)
+library(ggrepel)
+ggplot(data = coldata, aes(x = factor(response), y = mgam2_log)) +
+  geom_boxplot(color = "black", fill = "darkred")
+
+## Shapiro-Wilk normality test
+with(coldata, shapiro.test(mgam2_log[response == "CR"])) # p = 0.07
+with(coldata, shapiro.test(mgam2_log[response == "PR_PD_SD"])) # p = 0.01
+
+## Mann-Withney-Wilcoxon test
+res <- wilcox.test(mgam2_log ~ response, data = coldata,
+                   exact = FALSE)
+res
+res$p.value # 0.018
+```
+
+Since diffuse large B cell lymphoma (DLBCL) is the most commonly diagnosed B cell lymphoma in the US, I want to further investigate if the MGAM2 expression pattern is retained in this type of disease. The box plot is repeated after filtering the disease type. The Shapiro-Wilk normality test is also repeated. The suggested nonparametric Mann-Withney-Wilcoxon test generates a P value of 0.025. Although this is still a scientifically significant P value, the increment might infer that MGAM2 enrichment is not specific to this single DLBCL disease type. 
+```{r, eval = TRUE}
+## filter disease type
+dis_coldata <- filter(coldata, disease == "Diffuse large B cell lymphoma")
+ggplot(data = dis_coldata, aes(x = factor(response), y = mgam2_log)) +
+  geom_boxplot(color = "black", fill = "darkblue")
+
+## Shapiro-Wilk normality test
+with(dis_coldata, shapiro.test(mgam2_log[response == "CR"])) # p = 0.14
+with(dis_coldata, shapiro.test(mgam2_log[response == "PR_PD_SD"]))# p = 0.006
+
+## Mann-Withney-Wilcoxon test
+res <- wilcox.test(mgam2_log ~ response, data = dis_coldata,
+                   exact = FALSE)
+res
+res$p.value # 0.025
+```
+
+Lastly, I want to evaluate if the enriched MGAM2 gene has an impact on overall survival probability. The drawn Kaplan Meier survival curve, however, shows two intertwined trend lines with impressive error possibilities, and the corresponding P value is greater than the 0.5. Hence, the different levels of MGAM2 gene expression have no direct effects on the overall survival of these two groups of patients, at least within the scope of this dataset. 
+```{r, eval = TRUE}
+## Kaplan Meier curve
+library(survival)
+library(ranger)
+library(ggfortify)
+
+km <- with(coldata, Surv(as.numeric(os, status)))
+km_fit <- survfit(Surv(as.numeric(os, status)) ~ mgam2_exp, data=coldata)
+autoplot(km_fit)
+
+## statistical test
+fit <- coxph(Surv(as.numeric(os, status))~mgam2_exp, data=coldata)
+summary(fit)
+survdiff(Surv(as.numeric(os, status))~mgam2_exp, data=coldata)
+```
+
+### Conclusion
+Although in this study, the gene of interest MGAM2 is not specially tightly related to DLBCL nor positively related to the overall survival possibility, the rationale of finding genes which are potentially responsible for enhanced persistence and response via gene differential expression is still feasible. Gene profiles are highly diverse from person to person, majorly depending on their genetic inheritance, environment conditions and living styles. Thus, a large sample size is always appropriate when studying human genome sequences. In addition, development of CAR T therapy is explosively happening from various aspects. Among them, RNA sequencing investigation sheds new light on target identification and reduction of off-target effects
