@@ -15,10 +15,9 @@ much of my code will use the option `results='hide'` in the R code chunks, and t
 
 ### Overview
 This project explores the geographical phenomena and processes of SARS-CoV-2(Covid-19) among patients of the University of Pennsylvania
-Health System(UPHS), which serves the Greater Philadelphia Metropolitan Area. We dive into a spatiotemporal analysis of Covid-19
+Health System(UPHS), which serves the Greater Philadelphia Metropolitan Area. We dive into a geospatial analysis of Covid-19
 and explore how the pandemic has affected certain populations of the area, specifically looking at demographic, socioeconomic, clinical
-and environmental correlations with outpatient outcomes like testing(both positive and negative) and inpatient outcomes like 
-hospitalization/intubation/mortality.
+and environmental correlations with outpatient outcomes like testing(especially positive tests).
 
 #### Contributors to the project include:
   * Blanca Himes, PhD
@@ -40,27 +39,390 @@ The hope is that this analysis can further be used in the future for determining
 
 ### Data
 This is a restrospective study examining UPHS EHR patients with at least one primary diagnosis ICD-10 code of flu-like symptoms or pneumonia,
-or patients who had one procedure code for Covid-19 or influenza testing from January 2020 to January 2021. The cohort consists of 97,710 patients, but due to missing data points the cohort was reduced to 72,908 patients.
-The study also incorporates publicly available data such as US Census Bureau data, community health data from the Public Health Management Corporation 
-and environmental data from the US Environmental Protection Agency.
+or patients who had one procedure code for Covid-19 or influenza testing from January 2020 to January 2021. The cohort consists of 378,601 patients, but due to missing data points the cohort was reduced to 172,284 patients.
+The study also incorporates publicly available data such as US Census Bureau data, community health data from the Public Health Management Corporation, and geocode data from geocod.io 
 
 ### Methods
-The primary method of analysis will be divided into three parts:
+The primary method of analysis will be divided into two parts:
 
-1. Conduct a chi-squared test to assess difference is sociodemographic characteristics of patietns who tested positive in the early vs latter stages of the pandemic.
-2. Visually study the clusters of Covid-19 cases and their distributional shift over the 1-year span.
-3. Perform logistic regression to determine the demographic, socioeconomic and environmental factors that are associated with adverse health outcomes of Covid-19.
+2. Visually study the clusters of Covid-19 cases according to different demographic and socioeconomic variables.
+3. Perform logistic regression to determine the demographic, socioeconomic and clinical factors that are associated with adverse health outcomes of Covid-19.
+
+**Please note that due to a lot of the data being protected health information under HIPAA, some code chunks results will be hidden. Any code chunk where results were hidden will start with the comment "Results are hidden due to PHI." followed by a reason why it was hidden**
+
+```{r results="hide"}
+library(tidyverse)
+library(tidyr)
+library(MapGAM)
+library(splancs)
+library(raster)
+library(RColorBrewer)
+library(dplyr)
+library(sp)
+library(rgdal)
+library(sf)
+library(tidycensus)
+library(ggplot)
+library(ggsn)
+library(mapview)
+library(leaflet)
+library(GISTools)
+library(tmap)
+library(naniar)
+library(rgeos)
+library(spatstat)
+library(yaml)
+library(visdat)
+source("helper_funcs.R")
+```
+```{r}
+# Using YAML for neatness, also to hide potentially revealing filenames
+files <- read_yaml("./filenames.yml")
+#basic patient data as well as clinical variables
+patient_data <- readRDS(files$patient_data_rds)
+#output of geocod.io (i.e. longitude, latitude coordinates)
+geocodes <- read.csv(files$geocodes_csv, stringsAsFactors = F)
+#covid test results according to patient
+lab_results <- readRDS(files$lab_results_rds)
+#input to geocod.io - used mainly for data cleaning
+geocodio_input <- readRDS(files$geocodio_input_rds)
+#Polygons for Southeastern Pennsylvania
+sepa <- readRDS(files$sepa_polygons_rds)
+#Coordinates for boundaries for Counties in Southeastern Pennsylvania
+sepac <- readRDS(files$sepa_counties_coords_rds)
+# Block level census data for Philadelphia from Open Data Philly
+phl_blocks <- st_read(files$phl_blockgroups_dir, stringsAsFactors=F)
+# Area Depravation Index data by block level in Southeastern PA
+adi <- read.csv(files$adi_blockgroups_txt)
+# Population/Demographic/Socioeconomic data and Polygons for Philadelphia
+pop <- st_read(files$phl_demographic_dir)
+```
+
+To start our analysis we want to create a single dataframe that captures all the pertinent information in `patID`, `lab_results` and `geocodes` and `patient_data`.
 
 ```{r}
-library(dplyr)
-labs_filename <- "./labresults_lab4.8.21_7.11.2021.rds"
-copd_filename <- "./copd_encounters_2021_01_21.csv"
-icd_filename <- "./"
-#data <- readRDS(filename)
-data <- read.csv(copd_filename)
-glimpse(data)
+class(geocodes)
+colnames(geocodes)
+class(geocodio_input)
+colnames(geocodio_input)
+options(scipen=1000000)
+
+summary(as.character(geocodes$PAT_ID_DEID) #429435
+summary(as.character(geocodio_input$PAT_ID_DEID)) #429435
+#do these match?
+all(geocodes$PAT_ID_DEID==geocodio_input$PAT_ID_DEID)
+
+#get a count for how many match
+id_matches <- data.frame(a = geocodes$PAT_ID_DEID,
+                         b = geocodio_input$PAT_ID_DEID) %>%
+              transform(diff = ifelse(a==b, 0, 1))
+sum(id_matches$diff) #429435
+```
+
+Seems like something happened in the process of getting geocodes and all patient identifiers were corrupted. We will use the original patient identifiers from the input and drop from the output assuming it's one-to-one and order was preserved.
+```{r}
+# bind the two into one
+geo <- bind_cols(PAT_ID_DEID = geocodio_input$PAT_ID_DEID, geocodes[,-(1:2)])
+
+colnames(patient_data)
+#merge patient geocodes with patient data table
+pat <- left_join(patient_data,
+                  geo[,c("PAT_ID_DEID", "Longitude", "Latitude", "Accuracy.Score")])
+```
+```{r}
+dim(pat) # 382606, 31
+```
+Next we take a look at our lab results and try to map them to our patient data
+
+```{r}
+colnames(lab_results)
+summary(lab_results$FINAL_RESULT)
+ggplot(data=lab_results, aes(x=FINAL_RESULT)) + geom_bar()
+
+# We eliminate "Indeterminate", "Pending" and "NA's" for the sake of simplicity.
+pat_lab <- lab_results %>%
+  dplyr::filter(FINAL_RESULT %in% c("Positive", "Negative")) %>%
+  group_by(PAT_ID_DEID) %>%
+  mutate(positive = as.factor(as.numeric(ifelse(FINAL_RESULT == "Positive", 1, NA))),#as.factor(as.numeric(sum(FINAL_RESULT == "Positive") > 0)),
+         covidtest = as.factor(as.numeric(ifelse(FINAL_RESULT == "Positive", 1, 0))),
+         preop = as.factor(as.numeric(ifelse(preop==1,1,0))),
+         hospscreen = as.factor(as.numeric(ifelse(hospscreen==1,1,0))),
+         omscreen = as.factor(as.numeric(ifelse(omscreen==1,1,0))),
+         month_date = format(as.Date(ORDER_DATE, "%Y-%m"))
+         )
+
+# Merge patient data with lab results on PAT_ID_DEID
+pat_and_labs <- left_join(pat, pat_lab)
+```
+
+Next, we look at our geographic data, more specifically the vector data of our geographic regions of interest, Souteastern Pennsylvania and Philadelphia.
+
+```{r}
+plot(sepa)
+
+#get county lines into the SEPA plot
+plot(sepac)
+class(sepac) #not an sp object, just a df
+head(sepac)
+```
+
+```{r}
+# we have to convert the df into a spdf 
+#from df to sf
+county_sf <- st_as_sf(sepac, coords=c("long", "lat"), crs=4326)
+plot(county_sf)
+
+# Looks like they have a few counties that are not considered SEPA, as according to our first plot, so we filter
+filtered_counties <- dplyr::filter(county_sf, county %in% c("Bucks", "Montgomery", "Delaware", "Chester", "Philadelphia"))
+
+# From the plot above, we can see they are just a collection of points, not polygons so we need to make appropriate conversion
+county_polys <- aggregate(x = filtered_counties$geometry,
+                          by= list(filtered_counties$group),
+                          FUN=create_polygon) %>% st_sf() #create_polygon from helper_funcs.R
+plot(county_polys)
+```
+
+```{r}
+tmap_mode("view")
+tmap_options(check.and.fix = TRUE)
+tm_shape(sepa) + tm_polygons()+
+tm_shape(county_polys_sf) + tm_polygons()
+```
+```{r}
+plot(phl_blocks)
+#we just need the geometry for now
+plot(st_geometry(phl_blocks))
+```
+```{r}
+head(adi)
+table(adi$adi_natrank)
+#since the fips column is the same as the GEOID column in our block level philadelphia geodata, let's just merge them
+#GQ, PH and GQ-PH are indications that they are missing due to falling into some type of suppression criteria.
+adi_cleaned <- adi %>%
+       replace_with_na(replace = list(adi_natrank = c("GQ", "PH", "GQ-PH"),
+                                      adi_staternk = c("GQ", "PH", "GQ-PH"))) %>%
+       mutate(adi_natrank = as.numeric(adi_natrank),
+              adi_staternk = as.numeric(adi_staternk),
+              fips = as.character(fips)) %>%
+       rename(GEOID10 = fips)
+phl <- left_join(phl_blocks, adi_cleaned)
 ```
 
 
+We start by looking at where our patients are located across Southeastern PA
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+
+#Let's first get rid of missing x, y coords since they can't be plotted.
+n_miss(pat_and_labs$Longitude)
+pat_and_labs <- drop_na(pat_and_labs, Longitude)
+```
+```{r}
+plot(sepa, main=NA)
+plot(county_polys_sf, add=TRUE)
+plot(st_as_sf(pat_and_labs, coords=c("Longitude","Latitude")), add=TRUE)
+```
+
+```{r}
+vis_miss(pat_and_labs, warn_large_data=F)
+```
+This tells us we really need to drop a few variables, namely `ApprovedService`, `ORDER_DATE`, `diseasecat`, `persistdzcat`, and `INFORMED_CAT`
+```{r}
+colnames(pat_and_labs)
+n_miss(pat_and_labs$ApprovedService)
+n_miss(pat_and_labs$diseasecat)
+n_miss(pat_and_labs$persistdzcat)
+n_miss(pat_and_labs$INFORMED_CAT)
+```
+Since there are patients whose locations are outside of the areas on interest so we need to filter out non-SEPA resident-patients.
+```{r}
+pat_points <- data.frame(x=pat_and_labs$Longitude, y=pat_and_labs$Latitude)
+sepa_boundaries <- data.frame(sepa@polygons[[1]]@Polygons[[1]]@coords)
+
+pats_in_sepa <- which(inout(pat_points, sepa_boundaries))
+sepa_pats <- pat_and_labs[pats_in_sepa,]
+
+dim(sepa_pats) #337517
+```
+
+For organization we can create a new data frame with our patient relevant data while also dropping columns we don't need.
+```{r}
+
+pat_data <- data.frame(covid = sepa_pats$covidtest,
+                       Xcoord = sepa_pats$Longitude,
+                       Ycoord = sepa_pats$Latitude,
+                       case = sepa_pats$covidtest,
+                       marital_status = sepa_pats$marital_status,
+                       race_eth = sepa_pats$race_ethnicity,
+                       sex = sepa_pats$sex,
+                       age = sepa_pats$agecat,
+                       yf = sepa_pats$years_followed,
+                       ast = sepa_pats$ast,
+                       copd = sepa_pats$copd,
+                       ocs = sepa_pats$OCS,
+                       saba = sepa_pats$SABA,
+                       sama = sepa_pats$SAMA,
+                       laba = sepa_pats$LABA,
+                       lama = sepa_pats$LAMA,
+                       ics = sepa_pats$ICS,
+                       preop = sepa_pats$preop,
+                       hs = sepa_pats$hospscreen,
+                       omscreen = sepa_pats$omscreen,
+                       month_date=sepa_pats$month_date)
+
+```
+
+# With our data cleaned up, let's start by testing the idea of covid disproportinately affecting people of color based on covid positive tests.
+```{r}
+na.omitted <- dplyr::filter(pat_data, !is.na(covid))
+ggplot(data=na.omitted, aes(x=race_eth, fill=covid, na.rm=TRUE)) +
+geom_bar(position="dodge")
+theme_minimal()
+
+```
+
+It's clearly visible for Non-Hispanic black that there is a higher positive rate compared to Non-hispanic white despite having less testing numbers overall.
+We can start plotting our patients on the map and see where the ones that test positive compare against demographic factors like race, and socioeconomic factors like median income and area depravation.
+```{r}
+#for the sake of speeding up our plots we're going to reduce our patient number with those that have complete cases
+sum(complete.cases(pat_data))
+pat_data_complete <- pat_data[complete.cases(pat_data),]
+pat_geo <- st_as_sf(x=pat_data_complete,
+                    coords=c("Xcoord","Ycoord"))
+dim(pat_geo)
+```
+Racial breakdown of patients in SEPA
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+
+tm_shape(sepa) +
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+  tm_fill(col="#e7f6f7") +
+tm_shape(pat_geo) + tm_symbols(col="race_eth", size=0.02, border.alpha=0, alpha=0.5)
+```
+Positive tests among patients in SEPA
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+tm_shape(sepa) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+  tm_fill(col="#e7f6f7") +
+tm_shape(pat_geo) +
+  tm_symbols(col="case", palette=c("grey90", "blue"), size=0.04, border.alpha=0, alpha=0.6) +
+tm_layout("Covid-19 Positive(1) and Negative(0) tests",
+            legend.position=c("right", "bottom"),
+            )
+```
+The same plot except for Philadelphia.
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+  tm_fill(col="#e7f6f7") +
+tm_shape(pat_geo) +
+  tm_symbols(col="case", palette=c("grey90", "blue"), size=0.04, border.alpha=0, alpha=0.6) +
+tm_layout("Covid-19 Positive(1) and Negative(0) tests",
+            legend.position=c("right", "bottom"),
+            )
+```
+Instead of looking at dots don't seem too informative, and not getting a sense of density of overlapping dots, we can perform density estimation and encode that into hexagonal grids that get darker in color based on higher counts within grid points.
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+points_hex <- hexbin_map(as(pat_geo, "Spatial"), bins=120)
+tm_shape(sepa) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex) +
+  tm_fill(col='z', alpha=0.8) +
+tm_layout("Covid-19 Positive tests",
+            legend.position=c("right", "bottom"),
+            )
+```
+If we look at Philadelphia, it's clearly visible that the higher densities of covid positivity are in West and South Philadelphia.
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+points_hex <- hexbin_map(as(pat_geo, "Spatial"), bins=120)
+tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex) +
+  tm_fill(col='z', alpha=0.8) +
+tm_layout("Covid-19 Positive tests",
+            legend.position=c("right", "bottom"),
+            )
+```
+We can characterize those areas of Philadelphia with some publicly available data.
+```{r}
+#Area Depravation Index
+tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 0.8, lty = "solid", alpha = NA) +
+  tm_fill(col = "adi_natrank", style="jenks")
+```
+Median Household Income
+```{r}
+colnames(pop)
+tm_shape(pop) + tm_polygons(col="medHHinc", palette="RdYlGn")
+```
+
+```{r results="hide"}
+# Results are hidden due to PHI. Reason: geolocation of patients shown.
+pat_geo.white <- dplyr::filter(pat_geo, race_eth=="Non-Hispanic white")
+pat_geo.black <- dplyr::filter(pat_geo, race_eth=="Non-Hispanic black")
+pat_geo.hisp <- dplyr::filter(pat_geo, race_eth=="Hispanic")
+pat_geo.other <- dplyr::filter(pat_geo, race_eth=="Other/unknown"|race_eth=="Asian/Pacific Islander")
+points_hex.white <- hexbin_map(as(pat_geo.white, "Spatial"), bins=90)
+points_hex.black <- hexbin_map(as(pat_geo.black, "Spatial"), bins=90)
+points_hex.hisp <- hexbin_map(as(pat_geo.hisp, "Spatial"), bins=90)
+points_hex.other <- hexbin_map(as(pat_geo.other, "Spatial"), bins=90)
+
+a <- tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex.white) +
+  tm_fill(col='z', alpha=0.8, palette="OrRd") +
+tm_layout("Non-Hispanic White")
+b <- tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex.black) +
+  tm_fill(col='z', alpha=0.8, palette="Greens") +
+tm_layout("Non-Hispanic Black")
+c <- tm_shape(phl) + 
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex.hisp) +
+  tm_fill(col='z', alpha=0.8, palette="Blues") +
+tm_layout("Hispanic")
+d <- tm_shape(phl) +
+  tm_borders(col = "#97d7f0", lwd = 2, lty = "solid", alpha = NA) +
+tm_shape(points_hex.other) +
+  tm_fill(col='z', alpha=0.8, palette="Purples") +
+tm_layout("Other")
+
+m <- tmap_arrange(a, b, c, d)
+m
+```
+
+
+I think we have enough surface evidence to say that there does seem to be some kind of correlation between race and socioeconomic factors and higher covid positive test rates. To put this theory to test, let's first try a Generalized Additive Model (GAM) with a Two-Dimensional Smooth to see if X,Y coordinates is sufficient to be a predictor of covid positive outcome.
+```{r}
+#trims the grid of X and Y coordinates to the boundaries of our SEPA map
+gamgrid <- predgrid(data=pat_data_complete, map=sepa)
+```
+```{r}
+#By default the 1st variable will be outcome, the 2nd and 3rd variable are the geolocation coordinates, as in pat_data_complete
+fit1 <- modgam(data=pat_data_complete, rgrid=gamgrid, m="crude", sp=0.5)
+plot(fit1, sepa, exp=TRUE)
+```
+
+Now let's try to fit a logistic regression with the rest of the variables we have, excluding the coordinates.
+```{r}
+#drop coordinates
+pat_data.glm <- subset(pat_data_complete, select = -c(Xcoord, Ycoord))
+pat.glm <- glm(covid ~ .,
+               data = pat_data.glm,
+               family="binomial")
+summary(pat.glm)
+```
+
 ### Results
-TODO
+
+The study shows to a certain extent that there is a correlation between geospatial, demographic and socioeconomic features and Covid-19 positive tests. In the regression analysis, race, age and screening were shown to be significant variables. The 
+
+### Looking Ahead
+
+This study was very limited, looking only at covid positive testing as a health outcome, but could further be expanded to hospitalization and mortality rates to further show the effects of covid on disadvantaged sections of the population. Additionally, not much of the temporal aspect of the data was utilized and that could provide a much richer and deeper analysis of the determinants of Covid-19.
