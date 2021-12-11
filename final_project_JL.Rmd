@@ -1,0 +1,892 @@
+---
+title: "BMIN503/EPID600 Project COVID-19 and its impact in Biotechnology and Medical Device Industry "
+author: "JIAYU LI"
+output: 
+  html_document:
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+#install.packages("caret")
+library(dplyr)
+library(ggplot2)
+library(randomForest)
+library(caret)
+```  
+
+### Overview
+This project will examine the effect of COVID-19 cases and resulting mortality rate with the performance of four different leading medical device during this Global Pandemic. The performance of each individual company will be measured based on their stock price due to limited access to confidential sales data.  The companies selected are Medtronic, Boston Scientific, Stryker, and Zimmer Biomet. The stock price data for these four companies are obtained from Yahoo Finance and the COVID_19 cases in US are based on the data published by the Johns Hopkins University.  Linear regression and random forest have been used in the project. The models are trained and tested based on the stock prices and Covid – 19 cases in 2020 and the prediction of the four companies’ performance are made using COVID_19 cases and mortality rate in 2021. Comparisons of the predicted stock prices of the four companies with the actual stock prices have been conducted. Based on the analysis, it is clear that except for the Zimmer Biomet stock with the 2020 mortality rate shows limited significance, the COVID-19 cases and mortality rate are significant to the stock prices of all four companies in 2020 and all models have low RMSE. However, the prediction of 2021 is not as accurate as the reality and may indicate that people and business are more adept or more confident towards the pandemic since the vaccination rate is ramping up so their performance or stock price are more reluctant to change along with the cases and death mortality change in 2021.
+
+Dataset Used:
+1.Stock Price: Yahoo Fiance (2020 - 2021)
+2.COVID-19 cases Data: NYTimes and JHU dataset by states and counties(Kaggle) (2020 - 2021)
+
+
+### Introduction 
+The world has changed a lot since the first COVID-19 cases has been reported in 2020. With the more and more cases had been reported, hospital beds quickly become a precious resource as more and more patients require hospitalization. Beds and ICU room quickly ran out in 2020 and governments had placed strict rules and regulations trying to slow movement of people to prevent the transmission of the virus. During this period, there’s a lot of rumors saying that companies in healthy sectors will record more sales and more revenue compared to pre-pandemic as other industries were experienced the toughest time they might have.  However, this is incorrect for the medical device companies.
+
+Unlike the pharmaceutical companies with possible vaccination product lines. Most of the product medical device companies have require in-patient treatment, such as cardiovascular intervention or knee replacement surgery. Patients need to physically present to the hospital to receive the procedure and hospital needs to have some spare beds or ICU rooms holding for possible medical emergency during the surgery. Also, global logistics disruption also affects the sales and manufacture of the medical device market hardly. Therefore, research of their performance with the cases and mortality rate change will be helpful for the medical device company  to dynamically predict their sales and generate plan to prepare for the future. The four companies selected are among the top five in the industries and the one excluded from this study is Johnson & Johnson, which has a large pharmaceutical business sector, which means their vaccination products has the potential to significantly affect their performance, blocking the performance of their medical device sectors. Therefore, it has been excluded from the study. Linear regression models and random forest have been used in this study and direct comparison with the predict price and actual price in 2021 has been performed also.
+
+### Methods
+Data Loading: The COVID_19 Data and the stock price of the four companies in 2020 and 2021 are uploaded separatly
+
+```{r}
+US.covidcase=read.csv("Country.csv", header = TRUE)
+temp_Data = US.covidcase
+MDT = read.csv("MDT.csv",header = TRUE)
+SYK = read.csv("SYK.csv",header = TRUE)
+BSX = read.csv("BSX.csv",header = TRUE)
+ZBH = read.csv("ZBH.csv",header = TRUE)
+MRNA = read.csv("MRNA.csv",header = TRUE)
+MDT_2021 = read.csv("MDT2021.csv",header = TRUE)
+SYK_2021 = read.csv("SYK2021.csv",header = TRUE)
+BSX_2021 = read.csv("BSX2021.csv",header = TRUE)
+ZBH_2021 = read.csv("ZBH2021.csv",header = TRUE)
+```
+
+Data Cleaning: the data has been cleaned based on the data and prepared for regression later. The start data of the stock and the COVID_19 data file have a gap, so I matched it based on the date that have valid stock price data. Also, the COVID data has been divided in 2020 and 2021, which is used for training and validation of the model while the 2021 data will be used for prediciton.
+
+```{r} 
+library(dplyr)
+US_2021 = temp_Data[temp_Data$date >"2020-12-31",] %>%
+  arrange(date) %>%
+  group_by(date)
+US_2021$increase.case = 0
+US_2021$increase.death = 0
+
+# calcualte the daily increase
+for(i in 1:nrow(US_2021)){US_2021$increase.case[i] = US_2021$cases[i+1] - US_2021$cases[i]}
+for(i in 1:nrow(US_2021)){US_2021$increase.death[i] = US_2021$deaths[i+1] - US_2021$deaths[i]}
+# Data Cleaning
+US_2021 = rename(US_2021,Case = increase.case,Death = increase.death, Date = date)
+US_2021_Case = select(US_2021,Date,Case)
+US_2021_Death = select(US_2021,Date,Death)
+
+#calculate the daily increase
+US.covidcase$cases=US.covidcase$cases/1000
+US.covidcase = US.covidcase[US.covidcase$date<"2021-01-01",] %>%
+  arrange(date) %>%
+  group_by(date) 
+US.covidcase$increase.case=0
+US.covidcase$increase.death=0
+US.covidcase$average.case=0
+US.covidcase$average.death=0
+#calculate the 7 days average
+for (i in 1:nrow(US.covidcase)) {US.covidcase$increase.case[i]=US.covidcase$cases[i+1]-US.covidcase$cases[i]}
+for (i in 1:nrow(US.covidcase)) {US.covidcase$increase.death[i]=US.covidcase$deaths[i+1]-US.covidcase$deaths[i]}
+
+for (i in 1:nrow(US.covidcase)) {US.covidcase$average.case[i]=mean(US.covidcase$increase.case[i:i+6])}
+for (i in 341:346) {US.covidcase$average.case[i]=mean(US.covidcase$increase.case[341:345])}
+for (i in 1:nrow(US.covidcase)) {US.covidcase$average.death[i]=mean(US.covidcase$increase.death[i:i+6])}
+for (i in 341:346) {US.covidcase$average.death[i]=mean(US.covidcase$increase.death[341:345])}
+#select valid covid data in 2020
+US.covidcase
+US.covidcase = US.covidcase[US.covidcase$date<"2020-12-31",]
+```
+The Stock data for 2020 and 2021 have been uploaded here and formalized to the same standard in order to future training, testing, and prediction.
+
+```{r}
+#2020 and 2021 Stock price loaded and formalized into same format
+#Only the close price of the stock will be selected in this analysis.
+
+#Medtronic
+MDT$Date=as.Date(MDT$Date, format = "%m/%d/%y")
+MDT_2021$Date = as.character.Date(MDT_2021$Date)
+MDT_2021$Date=as.Date(MDT_2021$Date)
+MDT_2021 = select(MDT_2021,Date, Close)
+
+#Stryker
+SYK$Date=as.Date(SYK$Date, format = "%m/%d/%y")
+SYK_2021$Date = as.character.Date(SYK_2021$Date)
+SYK_2021$Date=as.Date(SYK_2021$Date)
+SYK_2021 = select(SYK_2021,Date, Close)
+
+#Boston Scientific
+BSX$Date=as.character.Date(BSX$Date)
+BSX$Date=as.Date(BSX$Date)
+BSX_2021$Date = as.character.Date(BSX_2021$Date)
+BSX_2021$Date=as.Date(BSX_2021$Date)
+BSX_2021 = select(BSX_2021,Date, Close)
+
+#Zimmer Biomet
+ZBH$Date=as.character.Date(ZBH$Date)
+ZBH$Date=as.Date(ZBH$Date)
+ZBH_2021$Date = as.character.Date(ZBH_2021$Date)
+ZBH_2021$Date=as.Date(ZBH_2021$Date)
+ZBH_2021 = select(ZBH_2021,Date, Close)
+
+#Moderna
+## the stock price of Moderna has also been uploaded to compare with stock price change for medical device company
+MRNA$Date=as.character.Date(MRNA$Date)
+MRNA$Date=as.Date(MRNA$Date)
+```
+The date of the stock market are matched with the date in the covid case and death increase dataset and are merged togther for future regression purpose.
+
+```{r}
+##select the case and death increase data for 2020
+case_2020 = select(US.covidcase,date,increase.case)
+case_2020$increase.case = case_2020$increase.case*1000
+case_2020 = rename(case_2020, Date = date,Case = increase.case)
+death_2020 = select(US.covidcase,date,increase.death)
+death_2020 = rename(death_2020,Date = date,Death = increase.death)
+
+#Medtronic 2020 stock price dateset with covid case and death data
+MDT_new = MDT[MDT$Date > "2020-01-20",]
+MDT_new$Date = as.character(MDT_new$Date)
+MDT_2020 = merge(case_2020,MDT_new, by ="Date")
+MDT_2020 = merge(death_2020,MDT_2020, by = "Date")
+MDT_2020 = select(MDT_2020,Date,Close,Case,Death)
+
+#Stryker 2020 stock price dataset with covid case and death data
+SYK_new = SYK[SYK$Date > "2020-01-20",]
+SYK_new$Date = as.character(SYK_new$Date)
+SYK_2020 = merge(case_2020,SYK_new, by ="Date")
+SYK_2020 = merge(death_2020,SYK_2020, by = "Date")
+SYK_2020 = select(SYK_2020,Date, Close,Case,Death)
+
+#Boston Scientific 2020 stock price with covid case and death data
+BSX_new = BSX[BSX$Date > "2020-01-20",]
+BSX_new$Date = as.character(BSX_new$Date)
+BSX_2020 = merge(case_2020,BSX_new, by ="Date")
+BSX_2020 = merge(death_2020,BSX_2020, by = "Date")
+BSX_2020 = select(BSX_2020,Date,Close,Case,Death)
+
+#Zimmer Biomet 2020 stock price with covid case and death data
+ZBH_new = ZBH[ZBH$Date > "2020-1-20", ]
+ZBH_new$Date = as.character(ZBH_new$Date)
+ZBH_2020 = merge(case_2020,ZBH_new, by ="Date")
+ZBH_2020 = merge(death_2020,ZBH_2020, by = "Date")
+ZBH_2020 = select(ZBH_2020,Date, Close,Case,Death)
+
+#Moderna 2020 stock price with covid case and death data
+MRNA_new = MRNA[MRNA$Date > "2020-1-20",]
+MRNA_new$Date = as.character(MRNA_new$Date)
+MRNA_2020 = merge(case_2020,MRNA_new, by ="Date")
+MRNA_2020 = merge(death_2020,MRNA_2020, by = "Date")
+MRNA_2020 = select(MRNA_2020,Date, Close,Case,Death)
+
+
+```
+
+###Data Visualization
+The data will be visualized in this section to get a general view of the data and the corresponding trend in 2020 and 2021 and make general assumption based on the results to the the distribution
+
+```{r}
+#general distribution of the covid daily increase and 7 days average increase in 2020
+ggplot(aes(US.covidcase$date,US.covidcase$increase.case,group=1),data=US.covidcase)+
+  geom_bar(stat="identity",fill="cadetblue3")+
+  scale_x_discrete(name="Date [Days]",breaks=c("2020-01-21","2020-03-21","2020-05-21","2020-07-21","2020-09-21","2020-11-21"))+
+  geom_line(data=US.covidcase,aes(x=date,y=average.case),col="dodgerblue3",size=0.8)+ggtitle("US COVID-19 Cases 7Days Average Change in 2020") + ylab("7 Days Average Increase [Thousands]")+ xlab("Time [Days]")+ theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the plot, we can clear see three peaks occured in March 2020, July 2020 and Novemeber 2020. The first two peaks has the daily increase not different too much between each other while the 3rd peak is significantly higher than the earlier two, which corresponding with the timeline of the outbreak of more contagious variant worldwide while the lockdown has been gradudatlly removed in this period.
+
+```{r}
+#general distribution of the Covid daily death increase and 7 days average increase in 2020
+ggplot(aes(US.covidcase$date,US.covidcase$increase.death,group=1),data=US.covidcase)+
+  geom_bar(stat="identity",fill="cadetblue3")+
+  scale_x_discrete(name="Date [Days]",breaks=c("2020-01-21","2020-03-21","2020-05-21","2020-07-21","2020-09-21","2020-11-21"))+
+  geom_line(data=US.covidcase,aes(x=date,y=average.death),col="dodgerblue3",size=0.8)+ggtitle("US COVID-19 Death 7Days Average Change in 2020") + ylab("7 Days Average Increase [Thousands]")+ xlab("Time [Days]")+ theme(plot.title = element_text(hjust = 0.5))
+```
+Unlinke the case increase, two peaks can be see clearly occured in April and in Novemeber, which make sense as the first wave is directly followed the first outbreak and the declared of pandemic by the WHO while the second peak coressponding with the contagious variable tramission worldwide.
+
+```{r}
+ggplot(aes(Date,Close,group=1),data=MDT)+
+   geom_line()+ggtitle("Medtronic Stock Price in 2020") + theme(plot.title = element_text(hjust = 0.5)) + ylab("Close Price [$]")
+```
+
+The stock price change of the Medtronic shows a large dip at the beginning of the pandemic when people are panic and have huge negative perspective for the market and the company, indicate a low expectation on the companies performance.A second dip also corresponding with the second small peak occurred in July and then after that, as the lock down have been gradually removed, the market started to increase, may have the potential to indicate that the investors are more confident about their performance and sale, and more patients are back to the hospital to get the procedure.
+```{r}   
+ggplot(aes(Date,Close,group=1),data= SYK)+
+   geom_line()+ggtitle("Skytrax Stock Price in 2020") + theme(plot.title = element_text(hjust = 0.5)) + ylab("Close Price [$]")
+```
+Similar trend can also been seen in Skytrax
+```{r}
+ggplot(aes(Date,Close,group=1),data=BSX)+
+   geom_line()+ggtitle("Boston Scientific Stock Price in 2020") + theme(plot.title = element_text(hjust = 0.5)) + ylab("Close Price [$]")
+```
+Unlike the other two, Boston scientific stock didn't experienced contant increase in Q4 2020 and it starts to dip. This may indicate a posibility that most of the product or the procedure using Boston Scientific products may require inpatient care while the hosptial bed shortage became worse due to the 3rd outbreak. It may also indicate some decision or movement that Boston Scientific made in Q4 may not be appreciated by the investors and the market. 
+```{r}
+ggplot(aes(Date,Close,group=1),data=ZBH)+
+   geom_line()+ggtitle("Zimmer Biomet Stock Price in 2020") + theme(plot.title = element_text(hjust = 0.5)) + ylab("Close Price [$]")
+```
+
+Zimmer Biomet has similar trend with Medtronic and Stryker
+```{r}
+ggplot(aes(Date,Close,group=1),data=MRNA)+ geom_line() +ggtitle("Moderna Stock Price in 2020") + theme(plot.title = element_text(hjust = 0.5)) + ylab("Close Price [$]")
+```
+
+```{r}
+mrna_test_case = lm(MRNA_2020$Close ~ MRNA_2020$Case)
+summary(mrna_test_case)
+mrna_test_death = lm(MRNA_2020$Close ~ MRNA_2020$Death)
+summary(mrna_test_death)
+```
+
+Above shows the stock price of Moderna and experienced constant and steady increase and it is confident to say that it's stock price are mainly depends on its COVID-19 product line. A linear regression model of the stock price change of moderna with the daily cases and death change are shown above, which both have low p-value (2.2 e-16), which means the daily case and death change are significant to the Moderna's stock price and more case and death rate can be direct link to the increase of its stock price. This will also explain why I didn't select Johnson$Johnson (has pharmaceutical product line) in this study.
+
+Regression:Linear and random frost are performed here to determine the relationship between the covid 19 cases, covid 19 death rate increase, and the stock price for the four companies listed above. seed 103111 has been used here to randomized and divided the sample with 7:3 ratio in training and testing.
+
+Linear Model
+```{r}
+set.seed(103111)
+split = sample(1:240,0.7*240)
+MDT_test_c = lm(MDT_2020$Close ~ MDT_2020$Case)
+summary(MDT_test_c)
+confint(MDT_test_c)
+
+MDT_case = select(MDT_2020,Close,Case)
+MDT_train_case= MDT_case[split,]
+MDT_test_case= MDT_case[-split,]
+
+MDT_model_A = lm(Close ~ Case,MDT_train_case)
+
+ggplot(data=MDT_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,200000))+ ggtitle("MDT Case Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_MDT_A1 = predict(MDT_model_A)
+rmse_MDT_A1 = sqrt(mean((pred_MDT_A1 - MDT_train_case$Close)^2))
+rmse_MDT_A1
+
+pred_MDT_A2 = predict(MDT_model_A,newdata = MDT_test_case)
+
+ggplot(data=MDT_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=MDT_test_case,aes(x=Case,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,200000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: MDT Case Linear")
+
+rmse_MDT_A2 = sqrt(mean((pred_MDT_A2 - MDT_test_case$Close)^2))
+rmse_MDT_A2
+```
+
+For medtronic, a linear fit has been conducted first to examine the coorelation and ends up having the case change significant to the stock price change with pvalue = 6.93e-10. Then, a linear model has been trained and tested. The RMSE value got from the training is 8.886416 and the RMSE value for the testing dataset is 8.885786, which matched perfectly with each other, indicating the correctness of the linear model for medtronic based on 2020 case increase
+```{r}
+MDT_test_d = lm(MDT_2020$Close ~ MDT_2020$Death)
+summary(MDT_test_d)
+confint(MDT_test_d)
+
+MDT_death = select(MDT_2020,Close,Death)
+MDT_train_death= MDT_death[split,]
+MDT_test_death= MDT_death[-split,]
+
+MDT_model_B = lm(Close ~ Death,MDT_train_death)
+
+ggplot(data=MDT_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,4000))+ ggtitle("MDT Death Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_MDT_B1 = predict(MDT_model_B)
+rmse_MDT_B1 = sqrt(mean((pred_MDT_B1 - MDT_train_death$Close)^2))
+rmse_MDT_B1
+
+pred_MDT_B2 = predict(MDT_model_B,newdata = MDT_test_death)
+
+ggplot(data=MDT_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=MDT_test_death,aes(x=Death,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,4000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: MDT Death Linear")
+
+rmse_MDT_B2 = sqrt(mean((pred_MDT_B2 - MDT_test_death$Close)^2))
+rmse_MDT_B2
+```
+From the table and the result, it can be seen that even though with higher p_valuem, the death change in 2020 is still significant to the stock price change of medtronic, less significant than the case change. Also, the RMSE for this model is also low and close together, indictating the correctness of the model.
+
+```{r}
+SYK_test_c = lm(SYK_2020$Close ~ SYK_2020$Case)
+summary(SYK_test_c)
+confint(SYK_test_c)
+
+SYK_case = select(SYK_2020,Close,Case)
+SYK_train_case= SYK_case[split,]
+SYK_test_case= SYK_case[-split,]
+
+SYK_model_A = lm(Close ~ Case,SYK_train_case)
+
+ggplot(data=SYK_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,200000))+ ggtitle("SYK Case Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_SYK_A1 = predict(SYK_model_A)
+rmse_SYK_A1 = sqrt(mean((pred_SYK_A1 - SYK_train_case$Close)^2))
+rmse_SYK_A1
+
+pred_SYK_A2 = predict(SYK_model_A,newdata = SYK_test_case)
+
+ggplot(data=SYK_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=SYK_test_case,aes(x=Case,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,200000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: SYK Case Linear")
+
+rmse_SYK_A2 = sqrt(mean((pred_SYK_A2 - SYK_test_case$Close)^2))
+rmse_SYK_A2
+```
+
+For Stryker, a linear fit has been conducted first to examine the coorelation and ends up having the case change significant to the stock price change with pvalue =2.2e-16. Then, a linear model has been trained and tested. The RMSE value got from the training is 18.5 and the RMSE value for the testing dataset is 17.30, which are larger than Medtronic but can still consdiered as valid and the case increase is more significnat to stryker than medtronic.
+```{r}
+SYK_test_d = lm(SYK_2020$Close ~ SYK_2020$Death)
+summary(SYK_test_d)
+confint(SYK_test_d)
+
+SYK_death = select(SYK_2020,Close,Death)
+SYK_train_death= SYK_death[split,]
+SYK_test_death= SYK_death[-split,]
+
+SYK_model_B = lm(Close ~ Death,SYK_train_death)
+
+ggplot(data=SYK_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,4000))+ ggtitle("SYK Death Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_SYK_B1 = predict(SYK_model_B)
+rmse_SYK_B1 = sqrt(mean((pred_SYK_B1 - SYK_train_death$Close)^2))
+rmse_SYK_B1
+
+pred_SYK_B2 = predict(SYK_model_B,newdata = SYK_test_death)
+
+ggplot(data=SYK_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=SYK_test_death,aes(x=Death,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,4000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: SYK Death Linear")
+
+rmse_SYK_B2 = sqrt(mean((pred_SYK_B2 - SYK_test_death$Close)^2))
+rmse_SYK_B2
+
+```
+
+Based on the result, it shows that death change is considered as significant to stryker but the model is less accurate compared to the previous three with higher RMSE value at approximately 22.
+```{r}
+BSX_test_c = lm(BSX_2020$Close ~ BSX_2020$Case)
+summary(BSX_test_c)
+confint(BSX_test_c)
+
+BSX_case = select(BSX_2020,Close,Case)
+BSX_train_case= BSX_case[split,]
+BSX_test_case= BSX_case[-split,]
+
+BSX_model_A = lm(Close ~ Case,BSX_train_case)
+
+ggplot(data=BSX_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,200000))+ ggtitle("BSX Case Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_BSX_A1 = predict(BSX_model_A)
+rmse_BSX_A1 = sqrt(mean((pred_BSX_A1 - BSX_train_case$Close)^2))
+rmse_BSX_A1
+
+pred_BSX_A2 = predict(BSX_model_A,newdata = BSX_test_case)
+
+ggplot(data=BSX_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=BSX_test_case,aes(x=Case,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,200000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: BSX Case Linear")
+
+rmse_BSX_A2 = sqrt(mean((pred_BSX_A2 - BSX_test_case$Close)^2))
+rmse_BSX_A2
+
+```
+
+The linear model for Boston Scientific has the RMSE of 3.397912, which is currently the lowest compared to the other 4 models and the case change is considered as important to Boston Scientific 
+```{r}
+BSX_test_d = lm(BSX_2020$Close ~ BSX_2020$Death)
+summary(BSX_test_d)
+confint(BSX_test_d)
+
+BSX_death = select(BSX_2020,Close,Death)
+BSX_train_death= BSX_death[split,]
+BSX_test_death= BSX_death[-split,]
+
+BSX_model_B = lm(Close ~ Death,BSX_train_death)
+
+ggplot(data=BSX_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,4000))+ ggtitle("BSX Death Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_BSX_B1 = predict(BSX_model_B)
+rmse_BSX_B1 = sqrt(mean((pred_BSX_B1 - BSX_train_death$Close)^2))
+rmse_BSX_B1
+
+pred_BSX_B2 = predict(BSX_model_B,newdata = BSX_test_death)
+
+ggplot(data=BSX_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=BSX_test_death,aes(x=Death,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,4000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: BSX Death Linear")
+
+rmse_BSX_B2 = sqrt(mean((pred_BSX_B2 - BSX_test_death$Close)^2))
+rmse_BSX_B2
+```
+Same situation also occured for the death change with low RMSE value, it indicate that the linear model for Boston Scientific is currently the most accurate model to predict the stock price now.
+
+
+```{r}
+ZBH_test_case = lm(ZBH_2020$Close ~ ZBH_2020$Case)
+summary(ZBH_test_case)
+confint(ZBH_test_case)
+
+ZBH_case = select(ZBH_2020,Close,Case)
+ZBH_train_case= ZBH_case[split,]
+ZBH_test_case= ZBH_case[-split,]
+
+ZBH_model_A = lm(Close ~ Case,ZBH_train_case)
+
+ggplot(data=ZBH_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,200000))+ ggtitle("ZBH Case Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_ZBH_A1 = predict(ZBH_model_A)
+rmse_ZBH_A1 = sqrt(mean((pred_ZBH_A1 - ZBH_train_case$Close)^2))
+rmse_ZBH_A1
+
+pred_ZBH_A2 = predict(ZBH_model_A,newdata = ZBH_test_case)
+
+ggplot(data=ZBH_train_case,aes(x=Case,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=ZBH_test_case,aes(x=Case,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,200000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: ZBH Case Linear")
+
+rmse_ZBH_A2 = sqrt(mean((pred_ZBH_A2 - ZBH_test_case$Close)^2))
+rmse_ZBH_A2
+
+```
+
+From the summary, it shows that daily case increase is signifcant to zimmer's stock price with relatively high RMSE value (15.95 and 15.89) compared to the other three companies but it is still acceptable in this case.
+
+```{r}
+# Not significant P value larger than 0.05
+ZBH_test_d = lm(ZBH_2020$Close ~ ZBH_2020$Death)
+summary(ZBH_test_d)
+confint(ZBH_test_d)
+
+
+ZBH_death = select(ZBH_2020,Close,Death)
+ZBH_train_death= ZBH_death[split,]
+ZBH_test_death= ZBH_death[-split,]
+
+ZBH_model_B = lm(Close ~ Death,ZBH_train_death)
+
+ggplot(data=ZBH_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  coord_cartesian(xlim=c(0,4000))+ ggtitle("ZBH Death Linear")+ 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+pred_ZBH_B1 = predict(ZBH_model_B)
+rmse_ZBH_B1 = sqrt(mean((pred_ZBH_B1 - ZBH_train_death$Close)^2))
+rmse_ZBH_B1
+
+pred_ZBH_B2 = predict(ZBH_model_B,newdata = ZBH_test_death)
+
+ggplot(data= ZBH_train_death,aes(x=Death,y=Close))+
+  geom_point(color='darkgreen',size=0.9)+
+  geom_smooth(method="lm",size=1.2,color="steelblue3",se=FALSE)+
+  geom_point(data=ZBH_test_death,aes(x=Death,y=Close),color='brown2',size=0.9)+
+  coord_cartesian(xlim=c(0,4000))+ theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Estimated Model: ZBH Death Linear")
+
+rmse_ZBH_B2 = sqrt(mean((pred_ZBH_B2 - ZBH_test_death$Close)^2))
+rmse_ZBH_B2
+```
+
+it is interesting to see that based on the linear fit, the p_value equals 0.8465, indicating that the daily death increase are not significant to the stock price change for Zimmer Bionmet and the RMSE value for the model is relatively high. However, I decided to still include this model as the RMSE value still falls in the accepted range.
+
+Rrandom Forest are also performed here to build the model and will be used to compare with the results from the Linear Regression. Seed 1031 has been used this time and the training and test datasets has been developed in a ratio of 1:3. Ordinary random forest has been used and selected in this case.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = MDT_case$Close, p = 0.75, list = F,groups = 10)
+MDT_RF_Ctrain = MDT_case[split,]
+MDT_RF_Ctest = MDT_case[-split,]
+
+MDT_cforest = randomForest(Close~.,data = MDT_RF_Ctrain,ntree = 1000)
+
+pred_rf_cMDT =predict(MDT_cforest)
+rmse_rf_cMDT =sqrt(mean((pred_rf_cMDT - MDT_RF_Ctrain$Close)^2))
+rmse_rf_cMDT
+
+pred_forest_MDT_case = predict(MDT_cforest, newdata = MDT_RF_Ctest)
+rmse_forest_MDT_case = sqrt(mean((pred_forest_MDT_case - MDT_RF_Ctest$Close)^2))
+rmse_forest_MDT_case
+```
+
+For Medtronic and the daily case increas, the RMSE value is smaller compared to the linear regression, indicating that the random forest model is more accurate in this case.
+Similar Situation also occured for medtronic and the daily death increase in 2020 with smaller RMSE value compared to the linear model, indicating more accurate model.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = MDT_death$Close, p = 0.75, list = F,groups = 10)
+MDT_RF_dtrain = MDT_death[split,]
+MDT_RF_dtest = MDT_death[-split,]
+
+MDT_dforest = randomForest(Close~.,data = MDT_RF_dtrain,ntree = 1000)
+
+pred_rf_dMDT =predict(MDT_dforest)
+rmse_rf_dMDT =sqrt(mean((pred_rf_dMDT - MDT_RF_dtrain$Close)^2))
+rmse_rf_dMDT
+
+pred_forest_MDT_death = predict(MDT_dforest, newdata = MDT_RF_dtest)
+rmse_forest_MDT_death = sqrt(mean((pred_forest_MDT_death - MDT_RF_dtest$Close)^2))
+rmse_forest_MDT_death
+```
+
+Similar situation also occured for Stryker with the daily case increase with the training and testing RMSE and 13.9 and 13.5, indicating more accurate model compared to the linear regression model.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = SYK_case$Close, p = 0.75, list = F,groups = 10)
+SYK_RF_Ctrain = SYK_case[split,]
+SYK_RF_Ctest = SYK_case[-split,]
+
+SYK_cforest = randomForest(Close~.,data = SYK_RF_Ctrain,ntree = 1000)
+
+pred_rf_cSYK =predict(SYK_cforest)
+rmse_rf_cSYK =sqrt(mean((pred_rf_cSYK - SYK_RF_Ctrain$Close)^2))
+rmse_rf_cSYK
+
+pred_forest_SYK_case = predict(SYK_cforest, newdata = SYK_RF_Ctest)
+rmse_forest_SYK_case = sqrt(mean((pred_forest_SYK_case - SYK_RF_Ctest$Close)^2))
+rmse_forest_SYK_case
+```
+
+RMSE value for the Stryker and the death change in Random Forest are slightly lower, means better model.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = SYK_death$Close, p = 0.75, list = F,groups = 10)
+SYK_RF_dtrain = SYK_death[split,]
+SYK_RF_dtest = SYK_death[-split,]
+
+SYK_dforest = randomForest(Close~.,data = SYK_RF_dtrain,ntree = 1000)
+
+pred_rf_dSYK =predict(SYK_dforest)
+rmse_rf_dSYK =sqrt(mean((pred_rf_dSYK - SYK_RF_dtrain$Close)^2))
+rmse_rf_dSYK
+
+pred_forest_SYK_death = predict(SYK_dforest, newdata = SYK_RF_dtest)
+rmse_forest_SYK_death = sqrt(mean((pred_forest_SYK_death - SYK_RF_dtest$Close)^2))
+rmse_forest_SYK_death
+
+```
+
+The RMSE value using Random Forest for Boston Scientific are significantly smaller than the linear model, potential leading to a better result.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = BSX_case$Close, p = 0.75, list = F,groups = 10)
+BSX_RF_Ctrain = BSX_case[split,]
+BSX_RF_Ctest = BSX_case[-split,]
+
+BSX_cforest = randomForest(Close~.,data = BSX_RF_Ctrain,ntree = 1000)
+
+pred_rf_cBSX =predict(BSX_cforest)
+rmse_rf_cBSX =sqrt(mean((pred_rf_cBSX - BSX_RF_Ctrain$Close)^2))
+rmse_rf_cBSX
+
+pred_forest_BSX_case = predict(BSX_cforest, newdata = BSX_RF_Ctest)
+rmse_forest_BSX_case = sqrt(mean((pred_forest_BSX_case - BSX_RF_Ctest$Close)^2))
+rmse_forest_BSX_case
+```
+
+Similar situation occured her for the Boston Scientific with significant lower RMSE value, indicating for better model than the linear regression.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = BSX_death$Close, p = 0.75, list = F,groups = 10)
+BSX_RF_dtrain = BSX_death[split,]
+BSX_RF_dtest = BSX_death[-split,]
+
+BSX_dforest = randomForest(Close~.,data = BSX_RF_dtrain,ntree = 1000)
+
+pred_rf_dBSX =predict(BSX_dforest)
+rmse_rf_dBSX =sqrt(mean((pred_rf_dBSX - BSX_RF_dtrain$Close)^2))
+rmse_rf_dBSX
+
+pred_forest_BSX_death = predict(BSX_dforest, newdata = BSX_RF_dtest)
+rmse_forest_BSX_death = sqrt(mean((pred_forest_BSX_death - BSX_RF_dtest$Close)^2))
+rmse_forest_BSX_death
+```
+
+Zimmer has the similar result as the other companies with the case change, smaller RMSE value compared to linear model.
+```{r}
+set.seed(1031)
+
+RF_split = createDataPartition(y = ZBH_case$Close, p = 0.75, list = F,groups = 10)
+ZBH_RF_Ctrain = ZBH_case[split,]
+ZBH_RF_Ctest = ZBH_case[-split,]
+
+ZBH_cforest = randomForest(Close~.,data = ZBH_RF_Ctrain,ntree = 1000)
+
+pred_rf_cZBH =predict(ZBH_cforest)
+rmse_rf_cZBH =sqrt(mean((pred_rf_cZBH - ZBH_RF_Ctrain$Close)^2))
+rmse_rf_cZBH
+
+pred_forest_ZBH_case = predict(ZBH_cforest, newdata = ZBH_RF_Ctest)
+rmse_forest_ZBH_case = sqrt(mean((pred_forest_ZBH_case - ZBH_RF_Ctest$Close)^2))
+rmse_forest_ZBH_case
+```
+
+Excpetion occured here for the stock price with the daily death rate change, the RMSE value for the testing is significantly higer (97.35), which means that the model is not as good as the linear model and may not be able to provide accurate prediciton in this case. However, in order to ensure the consistency, this model will still be used to predict 2021 stock price for Zimmer Biomet.
+```{r}
+set.seed(1031)
+RF_split = createDataPartition(y = ZBH_death$Close, p = 0.75, list = F,groups = 10)
+ZBH_RF_dtrain = ZBH_death[split,]
+ZBH_RF_dtest = ZBH_death[-split,]
+
+ZBH_dforest = randomForest(Close~.,data = ZBH_RF_dtrain,ntree = 1000)
+
+pred_rf_dZBH =predict(ZBH_dforest)
+rmse_rf_dZBH =sqrt(mean((pred_rf_dZBH - ZBH_RF_dtrain$Close)^2))
+rmse_rf_dZBH
+
+pred_forest_ZBH_death = predict(BSX_dforest, newdata = BSX_RF_dtest)
+rmse_forest_ZBH_death = sqrt(mean((pred_forest_ZBH_death - ZBH_RF_dtest$Close)^2))
+rmse_forest_ZBH_death 
+```
+
+
+#Prediction
+Actual 2021 stock price to Dec 2, 2021 has been uploaded here and merged with the COVID19 2021 case and death increase.
+
+```{r}
+MDT_2021$Date = as.character(MDT_2021$Date)
+MDT_2021_case = merge(US_2021_Case,MDT_2021, by = "Date")
+MDT_2021_death = merge(US_2021_Death,MDT_2021, by = "Date")
+
+SYK_2021$Date = as.character(SYK_2021$Date)
+SYK_2021_case = merge(US_2021_Case,SYK_2021, by = "Date")
+SYK_2021_death = merge(US_2021_Death,SYK_2021, by = "Date")
+
+BSX_2021$Date = as.character(BSX_2021$Date)
+BSX_2021_case = merge(US_2021_Case,BSX_2021, by = "Date")
+BSX_2021_death = merge(US_2021_Death,BSX_2021, by = "Date")
+
+ZBH_2021$Date = as.character(ZBH_2021$Date)
+ZBH_2021_case = merge(US_2021_Case,ZBH_2021, by = "Date")
+ZBH_2021_death = merge(US_2021_Death,ZBH_2021, by = "Date")
+
+```
+
+
+2021 Covid-19 Case and Death in US
+```{r}
+US_2021_Case = na.omit(US_2021_Case)
+US_2021_Case$Date = as.Date(US_2021_Case$Date)
+ggplot()+geom_line(aes(Date,Case/1000,group = 1),data = US_2021_Case)+
+  coord_cartesian(ylim=c(0,350)) + ylab("Daily Increase [Thousands]") + ggtitle("2021 US COVID-19 Daily Case Increase")+ theme(plot.title = element_text(hjust = 0.5))
+
+US_2021_Death = na.omit(US_2021_Death)
+US_2021_Death$Date = as.Date(US_2021_Death$Date)
+ggplot()+geom_line(aes(Date,Death,group = 1),data = US_2021_Death)+
+  coord_cartesian(ylim=c(0,5000)) + ylab("Daily Increase") + ggtitle("2021 US COVID-19 Daily Death Increase")+ theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+The daily case change and the daily death change has similar distribution and two peaks can be clearly spotted in January and October. Increasing in vaccination rate in Q1 and Q2 has significantly decrease the daily case and death increase by more than 50%. However, due to the outbreak of the delta variant earlier this semster, it casuse a second peak in between Q3 and Q4 this year.
+
+###MDT
+```{r}
+#Linear
+MDT_2021_case_pred = predict(MDT_model_A, newdata = MDT_2021_case)
+MDT_2021_case$LPredict = 0
+for(i in 1:nrow(MDT_2021_case)){
+  MDT_2021_case$LPredict[i] = MDT_2021_case_pred[i]
+}
+
+MDT_2021_death_pred = predict(MDT_model_B, newdata = MDT_2021_death)
+MDT_2021_death$LPredict = 0
+for(i in 1:nrow(MDT_2021_death)){
+  MDT_2021_death$LPredict[i] = MDT_2021_death_pred[i]
+}
+#RF
+MDT_2021_case_rf = predict(MDT_cforest, newdata = MDT_2021_case)
+MDT_2021_case$RfPredict = 0
+for(i in 1:nrow(MDT_2021_case)){
+  MDT_2021_case$RfPredict[i] = MDT_2021_case_rf[i]
+}
+
+MDT_2021_death_rf = predict(MDT_dforest, newdata = MDT_2021_death)
+MDT_2021_death$RfPredict = 0
+for(i in 1:nrow(MDT_2021_death)){
+  MDT_2021_death$RfPredict[i] = MDT_2021_death_rf[i]
+}
+MDT_2021_case$Date = as.Date(MDT_2021_case$Date)
+MDT_2021_case = na.omit(MDT_2021_case)
+MDT_2021_death$Date = as.Date(MDT_2021_death$Date)
+MDT_2021_death = na.omit(MDT_2021_death)
+colors <- c("Actual Price" = "red", "Linear Model" = "green", "Random Forest" = "blue")
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=MDT_2021_case )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=MDT_2021_case)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=MDT_2021_case)+ggtitle("Medtronic Actual and Predict Stock Price in 2021 Based on Case Increase") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=MDT_2021_death )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=MDT_2021_death)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=MDT_2021_death)+
+  ggtitle("Medtronic Actual and Predict Stock Price in 2021 Based on Death Increase") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+
+```
+
+From the above plots, it is interesting to see that the predicted stock price for medtronic using Random Forest almost corresponding with the distribution of the cases and death change in 2021, which indicate a relatively low RMSE value. The prediction using the linear model for the cases and death change are relatively stable under the price range of $100 to $110. However, the actual stock price is changing in a direction that is directly opposite with the case and death rate change, in this case also oppsite to the prediction using Random Forest.
+
+###SYK
+```{r}
+#Linear
+SYK_2021_case_pred = predict(SYK_model_A, newdata = SYK_2021_case)
+SYK_2021_case$LPredict = 0
+for(i in 1:nrow(SYK_2021_case)){
+  SYK_2021_case$LPredict[i] = SYK_2021_case_pred[i]
+}
+
+SYK_2021_death_pred = predict(SYK_model_B, newdata = SYK_2021_death)
+SYK_2021_death$LPredict = 0
+for(i in 1:nrow(SYK_2021_death)){
+  SYK_2021_death$LPredict[i] = SYK_2021_death_pred[i]
+}
+#RF
+SYK_2021_case_rf = predict(SYK_cforest, newdata = SYK_2021_case)
+SYK_2021_case$RfPredict = 0
+for(i in 1:nrow(MDT_2021_case)){
+  SYK_2021_case$RfPredict[i] = SYK_2021_case_rf[i]
+}
+
+SYK_2021_death_rf = predict(SYK_dforest, newdata = SYK_2021_death)
+SYK_2021_death$RfPredict = 0
+for(i in 1:nrow(SYK_2021_death)){
+  SYK_2021_death$RfPredict[i] = SYK_2021_death_rf[i]
+}
+
+SYK_2021_case$Date = as.Date(SYK_2021_case$Date)
+SYK_2021_case = na.omit(SYK_2021_case)
+SYK_2021_death$Date = as.Date(SYK_2021_death$Date)
+SYK_2021_death = na.omit(SYK_2021_death)
+colors <- c("Actual Price" = "red", "Linear Model" = "green", "Random Forest" = "blue")
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=SYK_2021_case )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=SYK_2021_case)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=SYK_2021_case)+ggtitle("Stryker Actual and Predict Stock Price in 2021 Based on Case Increase") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=SYK_2021_death )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=SYK_2021_death)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=SYK_2021_death)+
+  ggtitle("Stryker Actual and Predict Stock Price in 2021 Based on Death Increase") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+```
+
+Similar results can also be noticed in Stryker as the more accurate random forest model genereated results that follows the change of the cases and death rate with similar distribution while the stock price experienced gradual increase through all four quarters this year and it turns out the prediction of the linear model is more accurate compared to the Random Forest.
+
+###BSX
+```{r}
+#Linear
+BSX_2021_case_pred = predict(BSX_model_A, newdata = BSX_2021_case)
+BSX_2021_case$LPredict = 0
+for(i in 1:nrow(BSX_2021_case)){
+  BSX_2021_case$LPredict[i] = BSX_2021_case_pred[i]
+}
+
+BSX_2021_death_pred = predict(BSX_model_B, newdata = BSX_2021_death)
+BSX_2021_death$LPredict = 0
+for(i in 1:nrow(BSX_2021_death)){
+  BSX_2021_death$LPredict[i] = BSX_2021_death_pred[i]
+}
+#RF
+BSX_2021_case_rf = predict(BSX_cforest, newdata = BSX_2021_case)
+BSX_2021_case$RfPredict = 0
+for(i in 1:nrow(BSX_2021_case)){
+  BSX_2021_case$RfPredict[i] = BSX_2021_case_rf[i]
+}
+
+BSX_2021_death_rf = predict(BSX_dforest, newdata = BSX_2021_death)
+BSX_2021_death$RfPredict = 0
+for(i in 1:nrow(BSX_2021_death)){
+  BSX_2021_death$RfPredict[i] = BSX_2021_death_rf[i]
+}
+
+BSX_2021_case$Date = as.Date(BSX_2021_case$Date)
+BSX_2021_case = na.omit(BSX_2021_case)
+BSX_2021_death$Date = as.Date(BSX_2021_death$Date)
+BSX_2021_death = na.omit(BSX_2021_death)
+colors <- c("Actual Price" = "red", "Linear Model" = "green", "Random Forest" = "blue")
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=BSX_2021_case )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=BSX_2021_case)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=BSX_2021_case)+ggtitle("Boston Scientific Stock Price 2021") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=BSX_2021_death )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=BSX_2021_death)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=BSX_2021_death)+
+  ggtitle("Boston Scientific Stock Price 2021") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+```
+
+For the Boston scientific, it clear shows that its stock price are more senstive to the case and death rate increase as it start to dip while the case and death rate increase in Q3 and Q4. However, for Q3 and Q4, both model has similar prediction that its stock price tends to maintain at it position, which is around $37 and this may due to the fact that in 2020 Q3 and Q4, the market tends to more relucant to change follow the increase in cases and death each day. It turns out that still the linear model is more accurate compared to the random forest model.
+
+###ZBH
+```{r}
+#Linear
+ZBH_2021_case_pred = predict(ZBH_model_A, newdata = ZBH_2021_case)
+ZBH_2021_case$LPredict = 0
+for(i in 1:nrow(ZBH_2021_case)){
+  ZBH_2021_case$LPredict[i] = ZBH_2021_case_pred[i]
+}
+
+ZBH_2021_death_pred = predict(ZBH_model_B, newdata = ZBH_2021_death)
+ZBH_2021_death$LPredict = 0
+for(i in 1:nrow(ZBH_2021_death)){
+  ZBH_2021_death$LPredict[i] = ZBH_2021_death_pred[i]
+}
+#RF
+ZBH_2021_case_rf = predict(ZBH_cforest, newdata = ZBH_2021_case)
+ZBH_2021_case$RfPredict = 0
+for(i in 1:nrow(ZBH_2021_case)){
+  ZBH_2021_case$RfPredict[i] = ZBH_2021_case_rf[i]
+}
+
+ZBH_2021_death_rf = predict(ZBH_dforest, newdata = ZBH_2021_death)
+ZBH_2021_death$RfPredict = 0
+for(i in 1:nrow(ZBH_2021_death)){
+  ZBH_2021_death$RfPredict[i] = ZBH_2021_death_rf[i]
+}
+
+
+ZBH_2021_case$Date = as.Date(ZBH_2021_case$Date)
+ZBH_2021_case = na.omit(ZBH_2021_case)
+ZBH_2021_death$Date = as.Date(ZBH_2021_death$Date)
+ZBH_2021_death = na.omit(ZBH_2021_death)
+colors <- c("Actual Price" = "red", "Linear Model" = "green", "Random Forest" = "blue")
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=ZBH_2021_case )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=ZBH_2021_case)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=ZBH_2021_case)+ggtitle("Zimmer Biomet Stock Price 2021") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+ggplot()+
+   geom_line(aes(Date,Close,group=1, color ="Actual Price"),data=ZBH_2021_death )+geom_line(aes(Date,LPredict,group=1, color = "Linear Model"),data=ZBH_2021_death)+geom_line(aes(Date,RfPredict,group=1, color =  "Random Forest"),data=ZBH_2021_death)+
+  ggtitle("Zimmer Biomet Stock Price 2021") + theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Date", y = "Close Price [$]",color = "Legend") + scale_color_manual(values = colors)
+
+```
+
+For Zimmer Biomet, the most accurate prediciton occurs at the Q3 and Q4 using the covid 19 cases and both prediction matches the distribution and movement of the stock market at this period. For the death case increase, the predict value is not accurate as the linear model just maintains at approximately $135 while the random forest given results that matches the change of the daily death change.
+
+
+### Results
+From these analysis and prediction, it is confident to saying that in 2020, the performance of the medical device company, such as sales, product development, or number of corresponding procedure conducted, are significantly affected by the daily cases and death rate change. It might be due to the fact that the public and the companies are still not ready for or adept to the new workflow under the influence during the Pandemic. Hospital may closed more beds and ICU for inpatient care which potentially limits the number of procedure can be conducted, limited the sales of the medical device companies. Labor shortage in hospital, PPE shortage, and city lock down may also contribute to the lost in sales for the medical device companies in 2020. Starting in the Q3 of 2020, with the decrease in cases, more positive news regarding the COVID 19 vaccine, and gradually adept to the new norm, the panic of worrying the performance for Medical device companies seems alleviate and it is more restive to the increase in covid case. This trend can be spotted in the stock price graph 2020 for all four companies during Q3 and Q4. Therefore, it might help to explain why the stock price didn't get down at Q4 2020 and Q1 2021 as the covid cases and death rate were surging.
+
+Except for the Zimmer Biomet Stock price with daily death increase, the stocks for all four companies shows strong significance with the changing the daily or death cases based on the data in 2020. The linear regression model and the random forest all demonstrated low RMSE value, which indicated that the correctness of the models with the linear model demonstrated less accuracy compared to the random forest model. However, predictions using both linear and random forest model did not give back accurate results than expected and deviated significantly from the actual stock prices of the four companies. I think this is because the significance of the daily cases and death change are gradually decreasing as more and more people and companies have used to the new norm and investors are more confident about the future market. Also, increasing in countrywide and global vaccination rate may also decrease the significance of the daily cases and death rate change and people may become less sensitive to the daily cases and death rate change and I think this may help to explain why the prediction results were incorrect while the models demonstrated low RMSE.
+
+Lastly, based on the analysis and results, I think it is confident to say that cases and death rate change will not significantly affect the performance of the medical device companies unless a more contagious variant completely escapes from current COVID-19 cases. Since most of the people are used to this new norm and the world has already lived almost two years under the pandemic, the performance of the medical device market will get back to norm soon and see growth in the new future. 
+
+Limitation and uture: This study only consider the daily cases and death rate as the independent variable. Vaccination, Medicine development, or other social factors are not take into consideration. In the future, more factors, such as the vaccination rate, can be added to train the model and a more accurate model can be created for the medical device companies or interested investors used to predict their future stock price for companies in the medical device sectors during the pandemic or similar events which may happened in the future, helping to perform necessary risk management.
+
+### Reference
+[1]“Fast facts on U.S. hospitals, 2021: AHA,” American Hospital Association. [Online]. Available: https://www.aha.org/statistics/fast-facts-us-hospitals. [Accessed: 11-Dec-2021]. 
+[2]“Yahoo Finance - Stock Market Live, quotes, Business &amp; Finance News,” Yahoo! Finance. [Online]. Available: https://finance.yahoo.com/. [Accessed: 11-Dec-2021]. 
+[3]“Fast facts on U.S. hospitals, 2021: AHA,” American Hospital Association. [Online]. Available: https://www.aha.org/statistics/fast-facts-us-hospitals. [Accessed: 11-Dec-2021]. 
+[4]“Johns Hopkins Covid-19 Testing dashboard,” Coronavirus Information. [Online]. Available: https://covidinfo.jhu.edu/diagnostic-testing/testing-dashboard/. [Accessed: 11-Dec-2021]. 
