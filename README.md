@@ -5,6 +5,7 @@ This repository contains file stack used to document, run and analyze my final p
 
 ```
 .
+├── RProj file                     # Rstudio workspace and environment for this project
 ├── final_project_template.Rmd     # R markdown file with original code chunks
 ├── final_project_template.html    # Knitted HTML document of the Rmd file 
 ├── Data                           # Data files acquired from GEO omnibus used in this analysis
