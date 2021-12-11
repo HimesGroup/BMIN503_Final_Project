@@ -6,30 +6,277 @@ output:
     theme: paper 
     highlight: tango
 ---
+
 ```{r set-options, echo=FALSE, cache=FALSE}
 options(width = 400)
-```  
+```
 
-### Overview
+## Overview
 
 Hematopoietic stem cells (HSCs) are generally thought of as resistant to freeze-thaw cycles, however we found that post-thaw viability of stem cells varies widely. The goal of this project is to use machine learning techniques to predict post-thaw HSC viability.
 
+## Introduction
 
-### Introduction 
+Hematopoietic stem cell transplant is life-saving therapy for various malignant and non-malignant diseases. In autologous stem cell transplants, cells are collected from a patient prior to high-dose chemotherapy and reinfused at a later date. Therefore, stem cell products for autologous transplantation need to be cryopreserved and thawed before infusion.
 
-Hematopoietic stem cell transplant is life-saving therapy for various malignant and non-malignant diseases. In autologous stem cell transplants, cells are collected from a patient prior to high-dose chemotherapy and reinfused at a later date. Therefore, stem cell products for autologous transplantation need to be cryopreserved and thawed before infusion. 
+In the CHOP Cell and Gene Therapy Lab (CGTL), we found that the viability of stem cells after a freeze-thaw cycle varies widely. The question that the final project will address is whether a low post-thaw viability can be predicted from clinical and lab parameters that are available prior to cryopreservation. This could change management for patients at the time their stem cells are collected.
 
-In the CHOP Cell and Gene Therapy Lab (CGTL), we found that the viability of stem cells after a freeze-thaw cycle varies widely. The question that the final project will address is whether a low post-thaw viability can be predicted from clinical and lab parameters that are available prior to cryopreservation. This could change management for patients at the time their stem cells are collected. 
+I will use data from CHOP patients who have had autologous stem cell products collected in the CGTL since 2016. I will also use clinical parameters abstracted from patient charts. Thus, the project spans the disciplines of Pathology and Lab Medicine as well as Oncology.
 
-I will use data from CHOP patients who have had autologous stem cell products collected in the CGTL since 2016. I will also use clinical parameters abstracted from patient charts. Thus, the project spans the disciplines of Pathology and Lab Medicine as well as Oncology. 
+## Methods and Results
 
-### Methods
+The dataset was curated by myself and other members of the CGTL. Data are available from all 235 consecutive individual autologous stem cell products collected at CHOP.
 
+There are 24 predictors. The outcome variable `poor_recovery` indicates whether or not the post-thaw viability was found to be \<70% of the viability in the fresh product.
 
+```{r, message = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(themis)
+library(visdat)
+library(DT)
 
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+cd34 <- read_csv("data/cd34.csv") %>%
+  mutate(poor_recovery = as_factor(poor_recovery)) %>%
+  mutate(across(where(is.character), as.factor))
 
+datatable(cd34)
+```
 
-### Results
+Note there are a small number of missing values in the dataset. We can use imputation to deal with this.
 
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r}
+visdat::vis_dat(cd34)
+```
+
+Check for class imbalance.
+
+```{r}
+summary(cd34$poor_recovery)
+```
+
+About 17% of collections had poor recovery, so there is some slight class imbalance.
+
+We will closely follow the recommended [tidymodels](https://www.tidymodels.org/) workflow, which consists of the following steps:
+
+1.  Split the data
+2.  Preprocess the data for use in the models using {recipes}
+3.  Create various models and evaluate them using 10-fold cross-validation
+4.  Select a best model and evaluate it on the test data
+
+### Data Splitting
+
+Split the data into training and test data sets using the default 80/20 train/test split. Since the data is somewhat imbalanced, use stratified random sampling for the initial split.
+
+```{r}
+set.seed(100)
+cd34_split <- initial_split(cd34)
+cd34_train <- training(cd34_split)
+cd34_test  <- testing(cd34_split)
+
+cd34_folds <- vfold_cv(cd34_train, v = 10)
+```
+
+Specify models. We will try random forest (`rf_model`), K nearest neighbor (`knn_model`), and XGBoost (`xgb_model`).
+
+```{r}
+rf_model <- 
+  rand_forest() %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+knn_model <-
+  nearest_neighbor() %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+  
+xgb_model <-
+  boost_tree() %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+```
+
+### Feature Engineering
+
+Specify the "recipe" for predictor/outcome definitions, data processing, and feature engineering:
+
+1.  We will use K-nearest neighbor imputation to deal with missing values.
+2.  Since XGBoost cannot handle factor variables, we will convert all character/factors to dummy variables.
+
+Note: I tried upsampling to counteract the class imbalance, however this did not improve the predictive accuracy.
+
+```{r}
+cd34_recipe <- 
+  recipe(poor_recovery ~ ., data = cd34_train) %>%
+  step_impute_knn(all_predictors()) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  prep()
+```
+
+### Create Models
+
+Create a random forest model with default parameters, and use 10-fold cross-validation to find the mean ROC AUC:
+
+```{r}
+rf_workflow <- 
+  workflow() %>%
+  add_recipe(cd34_recipe) %>%
+  add_model(rf_model)
+
+set.seed(100)
+rf_workflow %>%
+  fit_resamples(cd34_folds) %>%
+  collect_metrics()
+```
+The mean ROC AUC of the RF model was 0.71.
+
+Try KNN model with default parameters:
+
+```{r}
+knn_workflow <- 
+  rf_workflow %>%
+  update_model(knn_model)
+
+set.seed(100)
+knn_workflow %>%
+  fit_resamples(cd34_folds) %>%
+  collect_metrics()
+```
+The mean ROC AUC of the KNN model was 0.61.
+
+Try XGBoost model with default parameters:
+
+```{r}
+xgb_workflow <-
+  rf_workflow %>%
+  update_model(xgb_model)
+
+set.seed(100)
+xgb_workflow %>%
+  fit_resamples(cd34_folds) %>%
+  collect_metrics()
+```
+
+The mean ROC AUC of the XGBoost model was 0.67.
+
+Since the random model had the best ROC AUC, tune RF model.
+
+```{r}
+rf_tune_model <-
+  rand_forest(mtry = tune(),   # RFs have 3 tuning parameters
+              trees = tune(),  # We will look at all 3 at the same time
+              min_n = tune()) %>%
+  set_engine(
+    "ranger", 
+    importance = "impurity"    # We will need this for finding out
+                               # about variable importance
+  ) %>%
+  set_mode("classification")
+
+rf_tune_workflow <-
+  rf_workflow %>%
+  update_model(rf_tune_model)
+  
+set.seed(100)
+rf_tune_results <- 
+  rf_tune_workflow %>%
+  tune_grid(cd34_folds)   # this is going to take a minute
+
+rf_tune_results %>%
+  autoplot(metric = "roc_auc")
+```
+No clear pattern emerges here, except there appears to be a penalty for very low numbers of `mtry` (# Randomly Selected Predictors).
+
+```{r}
+rf_tune_results %>%
+  show_best(metric = "roc_auc")
+```
+The best random forest model had 9 randomly selected predictors (out of 24, `mtry`), 1537 `trees`, and a minimal node size (`min_n`) of 30. This model achieved a mean cross-validated ROC AUC of 0.72.
+
+### Finalize the model
+
+Finalize the model using the tuned Random Forest model described above.
+
+```{r}
+# Select final model and evaluate
+best_model <-
+  rf_tune_results %>% 
+  select_best(metric = "roc_auc")
+
+final_workflow <- 
+  rf_tune_workflow %>%
+  update_model(rf_tune_model) %>%
+  finalize_workflow(best_model)
+
+test_results <-
+  final_workflow %>% 
+  last_fit(split = cd34_split)
+
+test_results %>% 
+  collect_metrics()
+```
+On the test dataset, the ROC AUC was 0.66.
+
+Take a look at the predictions:
+
+```{r}
+cd34_predictions <- test_results %>%
+  collect_predictions()
+
+cd34_predictions
+```
+
+Evaluate ROC curve:
+
+```{r}
+roc_values <-
+  cd34_predictions %>%
+  roc_curve(truth = poor_recovery, estimate = .pred_FALSE)
+
+autoplot(roc_values)
+```
+
+Show a confusion matrix with the default probabiliy threshold of 0.5:
+
+```{r}
+cd34_predictions %>%
+  conf_mat(truth = poor_recovery, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+
+This confusion matrix reveals that an unacceptably large number of instances where the model predicted a falsely reassuring result, i.e. that the stem cell viability will be normal when it in fact turned out to be low. 
+
+Create a confusion matrix with a more sensitive cutoff:
+
+```{r}
+threshold <- 0.05
+
+cd34_predictions %>%
+  mutate(.pred_class = (.pred_TRUE > threshold) %>% as.factor) %>%
+  conf_mat(truth = poor_recovery, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+
+This confusion matrix minimizes falsely reassuring results but now has an overwhelming number of false positives, limiting the usefulness of the model as a clinical decision support tool.
+
+Check variable importance:
+
+```{r}
+library(vip)
+
+test_fit <- final_workflow %>% 
+  fit(cd34_test) %>%
+  pluck("fit", "fit")
+
+vip(test_fit)
+```
+
+The `hpc_cd45_brightness` is the main predictor of the model. This variable represents the expression of the CD45 marker on hematopoietic stem cells. This was found by our lab previously and was described in a poster presentation.
+
+## Conclusions
+
+Various models were created to predict post thaw viability of autologous HSCs. The best model was a tuned random forest with mean ROC AUC of 0.72 in 10-fold cross-validated training data. On the test data, this model reached an ROC AUC of 0.66. 
+
+The model's predictive accuracy is currently not sufficient to be clinically useful. This is likely a combination of the low predictive value of the predictors as well as the small size of the dataset. 
+
+Future work will focus on adding predictive features such as the patient's clinical status, medications, and others, as well as augmenting the data set with additional cases.
