@@ -50,11 +50,11 @@ BiocManager::install("sesame")
 
 install.packages("dplyr")
 
-
 ```                                                                                                                                           
 
 ```{r,eval=TRUE}
 install.packages("ggpubr")
+install.packages("lmer")
 ```
 
 ```{r}
@@ -62,33 +62,226 @@ library(sesame)
 library(ggplot2)
 library(dplyr)
 library(ggpubr)
+library(FactoMineR)
+library(factoextra)
 #install packages needed. sesame will load and pre-process methylation files, ggplot for visualization
 ```
 
+```{r, eval=FALSE}
+install.packages("lme4",
+   repos=c("http://lme4.r-forge.r-project.org/repos",
+      getOption("repos")[["CRAN"]]))
+
+```
+
+```{r,eval=FALSE}
+library(lme4)
+
+```
+
 ```{r}
-                                                                                                                                            
-### Import data
+#CRITICAL: After a new installation, one needs to cache the associated annotation data using the following command. This needs to be done only once per SeSAMe installation.
+#sesameDataCacheAll()
+#This function caches the needed SeSAMe annotation for all the supported platforms. For our analysis we will use the platform HM450
+sesameDataCache("HM450")
+```
+
+```{r}
+tools::R_user_dir("ExperimentHub", which="cache")
+
+```
+```{r, eval=FALSE}
+HM450.hg38.manifest <- sesameDataGet('HM450.hg38.manifest')
+head(HM450.hg38.manifest)
+```
+
+```{r,eval=FALSE}
+mft <- sesameDataGetAnno("HM450.hg38.manifest.tsv.gz")
+
+
+
+```
+
+
+
+
+
+```{r, eval=FALSE}
+                                                                                            ## Import data
 idat.dir <- "/home/sullka/idat"   #pmacs own directory
-#betas <- openSesame(idat.dir, quality.mask = FALSE)  #cannot run on own system due to computational space
+#Here idat.dir is the directory containing all the IDAT files. 
+betas <- openSesame(idat.dir, quality.mask = FALSE)  #cannot run on own system due to computational space
+
+```
+
+Open Sesame is a pipeline available from the Sesame Package for loading beta values, see https://www.bioconductor.org/packages/release/bioc/vignettes/sesame/inst/doc/sesame.html#The_openSesame_Pipeline for more info
+
+Open Sesame contains many in-built pre-processing steps. More can be found from this paper https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6237738/. It includes the pooBAH algorithm, which removes artefactual readings. It also ioncludes background subtraction with noob and non linear dye bias correction.
+
+After obtaining the beta values we can carry out some quality control using the QC package within Sesame. This is again run on Pmacs due to the size of the file,
+
+```{r, eval=FALSE}
+idat_dir<-"/home/sullka/idat"
+ssets<-lapply(searchIDATprefixes(idat_dir),readIDATpair)
+sesameQC(ssets[[1]])
+#Quality Control
+
+=======================
+=      Intensities    =
+=======================
+No. probes                      485577 
+mean (M/U) (in-band InfI):      4985.92 
+mean (M+U) (in-band InfI):      9971.84 
+
+-- Infinium II --
+No. probes:                    350076 (72.095%)
+Mean Intensity:                 4645.133 
+
+-- Infinium I (Red) -- 
+No. probes:                     89203 (18.371%)
+No. Probes Consistent Channel:  88957 
+No. Porbes Swapped Channel:     67 
+No. Probes Low Intensity:       179 
+Mean Intensity (in-band):       6767.643 
+Mean Intensity (out-of-band):   687.4307 
+
+-- Infinium I (Grn) -- 
+No. probes:                     46298 (9.535%)
+No. Probes Consistent Channel:  45662 
+No. Probes Swapped Channel:     551 
+No. Probes Low Intensity:       85 
+Mean Intensity (in-band):       4129.861 
+Mean Intensity (out-of-band):   430.347 
+
+=======================
+=      Beta Values    =
+=======================
+No. probes:                     485577 
+No. probes with NA:             67684 (13.939%)
+Mean Betas:                     0.4860155 
+Median Betas:                   0.5611176 
+
+-- cg probes --
+No. Probes:                     482421 
+No. Probes with NA:             67063 (13.901%)
+Mean Betas:                     0.4885846 
+Median Betas:                   0.5704924 
+% Unmethylated (Beta < 0.3):    42.167%
+% Methylated (Beta > 0.7):      44.517%
+
+-- ch probes --
+No. Probes:                     3091 
+No. Probes with NA:             621 (20.091%)
+Mean Betas:                     0.05389193 
+Median Betas:                   0.04912089 
+% Unmethylated (Beta < 0.3):    100.000%
+% Methylated (Beta > 0.7):      0.000%
+
+-- rs probes --
+No. Probes:                     65 
+No. Probes with NA:             0 (0.000%)
+Mean Betas:                     0.4901543 
+Median Betas:                   0.4403832 
+% Unmethylated (Beta < 0.3):    32.308%
+% Methylated (Beta > 0.7):      35.385%
+
+=======================
+=      Inferences     =
+=======================
+Sex:                            FEMALE 
+Ethnicity:                      WHITE 
+Age:                            43.94463 
+Bisulfite Conversion (GCT):     1.199467 
+
 
 ```
 
 ```{r, eval=FALSE}
    #perform inverse normalization of beta values 
 
-#for (i in 1:485577 {
-  #betas2[i,]<-qnorm((rank(betas,na.last="keep")-0.5)/sum(!is.na(betas)))  #again ran in pmacs 
-#}
+for (i in 1:485577 {
+betas2[i,]<-qnorm((rank(betas,na.last="keep")-0.5)/sum(!is.na(betas)))  #again ran in pmacs 
+}
 #reference https://www.biostars.org/p/80597/
 
 #save object to a RDS file
 
-#saveRDS(betas2, file = "inversenormalizedbetamatrix.rds" 
+saveRDS(betas2, file = "inversenormalizedbetamatrix.rds" 
 
+
+```
+
+```{r, eval=FALSE}
+#read in manifest file
+hm450 <- sesameDataGet("HM450.hg38.manifest")
+#view manifest file
+head(hm450)
+str(hm450)
+#convert GR ranges object into dataframe
+hm450df<-as.data.frame(hm450)
+str(hm450df)
+#filter out sex_chromosomes as I will not be including these
+hm450df_filtered = filter(hm450df, seqnames!= "chrX" & seqnames!="chrY")
+# write hm450df_filtered to file
+saveRDS(hm450df_filtered, file = "hm450df_filtered.rds")
+
+
+```
+
+I now have matrix of inverse normalized beta values produced by Sesame. In this matrix the rows are the CpG sites from the array and the columns are the names of the samples. In the manifest file ("hm450") the row names are also the CpG sites. We want to see which rows are overlapping from our inverse beta values rds file, with the manifest file, as this will allow us to annotate the CpG sites 
+```{r, eval=FALSE}
+inverse_beta_matrix = readRDS("inversenormalizedbetamatrix.rds")
+# large file so need to load on PMACS
+head(inverse_beta_matrix)
+colnames(inverse_beta_matrix)
+rownames(inverse_beta_matrix)
+# First load manifest file and then convert row names into a vector
+hm450df_filtered = readRDS("hm450df_filtered.rds")
+cpg_sites_manifest<-as.vector(row.names(hm450df_filtered))
+print(cpg_sites_manifest)
+
+# with the variable inverse_beta_matrix_filtered, we now have the overlapping CpG sites
+inverse_beta_matrix_filtered<-subset(inverse_beta_matrix, rownames(inverse_beta_matrix) %in% cpg_sites_manifest)
+dim(inverse_beta_matrix_filtered)
+# a total of 473914 CpGs are included for the final analysis
+# Now save inverse beta matrix filtered to a rds file
+saveRDS(inverse_beta_matrix_filtered, file = "inverse_beta_matrix_filtered.rds")
 
 ```
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+```{r,eval=FALSE}
+# Make Principal Component Analysis(PCA) plot
+# I will use the following libraries : FactoMineR and factoextra
+# To perform a PCA plot I first need to transform matrix (inverse_beta_matrix_filtered)
+
+
+dat = readRDS("inverse_beta_matrix_filtered.rds")
+dat = t(dat)
+ 
+ncol(dat)
+dat[,ncol(dat)]
+
+dat.pca <- PCA(dat[,-ncol(dat)], graph = FALSE)
+
+plot(dat.pca,choix="ind")
+
+fviz_pca_ind(dat.pca,
+
+             geom.ind = "point", # show points only (nbut not "text")
+
+             palette = c("#ff0000", "#0000ff", '#CC00FF', '#FF0099', '#0000FF', '#008B8B'),
+
+             addEllipses = TRUE, # Concentration ellipses # circle
+
+)
+
+ggsave('7.PCA_all_samples.png')
+
+
+```
+
 
 ```{r,eval=TRUE}
 
@@ -134,11 +327,99 @@ plot_age_egfr
 #For this I will use the ggpubr package.
 # hba1c, age and egfr are normally distributed so I will use pearson. 
 
-cor.test(pheno_data$hba1c, pheno_data$egfr, metod="pearson")
-cor.test(pheno_data$age, pheno_data$egfr, metod="pearson")
+cor.test(pheno_data$hba1c, pheno_data$egfr, method="pearson")
+cor.test(pheno_data$age, pheno_data$egfr, method="pearson")
          
-       
+      
+```
+
+```{r, eval=TRUE}
+# linear regression analysis preparation of clinical analysis file, labelled pheno_data
+# read in csv file. Sample_ID is the ID of the different subject samples
+pheno_data<-read.csv("/Users/katiesullivan/Documents/blood327_katie.csv")
+head(pheno_data)
+Sample_ID<- pheno_data[, c("Sample_ID")] 
+Sample_ID
+```
+
+
+
+```{r, eval=TRUE}
+# linear regression analysis preparation of the beta matrix file
+getwd()
+inverse_beta_matrix_filtered<-readRDS("~/Documents/R_Final_Project_Methylation/BMIN503_Final_Project/inverse_beta_matrix_filtered.rds")
+SampleNameBeta<-as.vector(colnames(inverse_beta_matrix_filtered))
+print(SampleNameBeta)
+rownames(inverse_beta_matrix_filtered)
+# Convert rds file into a data frame 
+df_methylation=as.data.frame(inverse_beta_matrix_filtered)
+#write.csv(df_methylation,"~/Documents/R_Final_Project_Methylation/BMIN503_Final_Project/inverse_beta_matrix_filtered.csv", row.names = FALSE)
+
+```
+
+```{r, eval=TRUE}
+# Transpose metylation matrix data frame so columns are rows
+df_methylation_new<-as.data.frame(t(df_methylation))
+
+```
+
+```{r, eval=TRUE}
+# Filter out to include the samples you have clinical info for 
+df_methylation_clinical_info<-df_methylation_new[Sample_ID,]
+# save this to file
+saveRDS(df_methylation_clinical_info, file ="df_methylation_clinical_info.rds")
 
 
 ```
 
+```{r,eval=TRUE}
+# reload df_methylation_clinical_info
+df_methylation_clinical_info<-readRDS("df_methylation_clinical_info.rds")
+
+```
+
+```{r, eval=TRUE}
+
+# transpose df methylation clinical info so that row names are probe names
+df_methylation_clinical_info_transpose = t(df_methylation_clinical_info)
+ProbeName <- row.names(df_methylation_clinical_info_transpose)
+```
+
+```{r, eval=TRUE}
+#convert df-methylation_clinical_info_transpose into a matrix
+beta <- as.matrix(df_methylation_clinical_info_transpose)
+```
+
+```{r, eval=TRUE}
+# load text file which contains info on genotypes. This data was prepared by a previous lab member
+### genotype PCs
+geno <- read.table("genet_pcs.txt", header=T, row.names=1, sep=",")
+row.names(geno) <- paste("x", row.names(geno), sep="")
+
+```
+
+```{r, eval=TRUE}
+### phenotypes with slope data added to orginal file
+        pd <- read.csv("clinical_phenotype3.csv", header=TRUE, row.names=1)
+SampleName <- row.names(pd)
+     pd$id <- paste("x", pd$id, sep="")
+  pd$batch <- factor(pd$batch)
+    pd$sex <- factor(pd$sex)
+      geno <- geno[pd$id,]
+   PheName <- names(pd)
+### 316 of 318 have genotype data
+
+```
+
+```{r, eval=FALSE}
+n=length(ProbeName)
+res <- matrix(,n,3)
+for (i in c(1:n)){
+     fit1 <- lmer(beta[i,]~pd$batch+pd$CD8T+pd$CD4T+pd$NK+pd$Bcell+pd$Mono+pd$Gran+pd$converse)
+       fit2 <- lm(pd$slope~residuals(fit1)+pd$age+pd$sex+geno$pc1+geno$pc2+geno$pc3+geno$pc4+geno$pc5+geno$pc6+geno$pc7+geno$pc8+geno$pc9+geno$pc10, weights=(1/pd$var))
+    res[i,1] <- summary(fit2)$coefficients[2,1]
+    res[i,2] <- summary(fit2)$coefficients[2,4]
+}
+```
+
+I keep getting an error saying vari

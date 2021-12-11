@@ -36,4 +36,17 @@ Results:
 
 I have begun to analyze the phenotype data file (PhenoData) which includes data on covariates I will use in my regression model. I summarized each covariate.
 
-I saw a negative correlation with age and kidney function which is expected. However I ddi not see a clear relationship between hba1c (a marker of glucose severity) and egr which is a little unexpected. But I plan to look at how the hba1c changes over time. 
+I saw a negative correlation with age and kidney function which is expected. However I ddi not see a clear relationship between hba1c (a marker of glucose severity) and egr which is a little unexpected. 
+
+For the analysis of the methylation files I performed various data cleaning steps.
+The Sesame Package provides many inbuilt preprocessing steps such as the pooBAH algorithm, which removes artefactual readings, and background subtraction with noob and non linear dye bias correction.
+
+My output matrix from Sesame then inverse transformed. I then mapped the CpG sites from my matrix with the corresponding manifest file HM450. I removed any CpG sites which did not match. I also removed sex chromosomes and any NA values
+
+I then removed any samples that did not have corresponding clinical information and performed linear regression. I corrected for multiple comparisons using FDR.
+
+Conclusions
+1. Using linear regression with the value of the egfr slope, I found 522 probes were significant after FDR correction.
+2. The top probe identified was cg02688549
+
+
