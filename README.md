@@ -10,7 +10,7 @@ This repository contains templates for your final written report and GitHub repo
 1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
 
 
-There is a R Markdown file in .md format, a R Markdown file in .html format and one folder called "Figures" that included a high resolution version of all figures produced by the R files. Datasets can be requested if you send an email to junchao.shen@pennmedicine.upenn.edu because I can't share sensitive human subject data on Github.
+There is a R Markdown file in .md format, a R Markdown file in .html format and one folder called "Figures" that included a high resolution version of all figures produced by the R files. Datasets can be requested if you send an email to junchao.shen@pennmedicine.upenn.edu because I can't share sensitive human subject data on Github. Thanks!
 
 BMIN 503
 
