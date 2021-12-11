@@ -40,10 +40,20 @@ B) Longitudinal Analysis (Cognitive Function)
 
 Linear-mixed effects model was used to evaluate the effect of the top protein biomarkers identified in (A) on change in MoCA score over time, after age and sex were adjusted for.
 
-Model: MoCA ~ time x top proteins + age + sex
+Model: MoCA ~ time x top proteins + age + sex + disease duration
 
 C) Longitudinal Analysis (Motor Function)
 
 Linear-mixed efefcts model was used to evaluate the effect of the top protein biomarekrs indentified in (A) on change in UPDRS-III score over time, after age and sex were adjusted for 
 
-Model: UPDRS ~ time x top proteins + age + sex
+Model: UPDRS ~ time x top proteins + age + sex + disease duration
+
+# Discussion
+
+Differential Expression Analysis ended up identifying a total of 47 proteins that are differentially expressed between PD and normal. With only 8 proteins, the model already start to overfitting as you can see that the model with 8 proteins + age showed an AUC score of 0.78 on training cohort but only less than 0.6 on training cohort. However, it is also possible that there existed a significant batch effect when proteins were measured in samples in two different batches. Clustering analysis clearly showed the presence of co-linearlities between proteins, therefore it might be helpful to use some kind of feature selection algorithms to further reduce the dimensions before training the model. It is very interesting that KEGG pathway enrichment analysis showed that chemokine signaling seemed to be most significantly enriched. However, downstream manupilative experiments are needed to understand the biological meaning of that pathway. It is also very interesting that a lot of proteins showed up in the DE analysis were involved in the inflammatory reaction, like C-reactive protein. This might suggested that PD patients have a higher systemic inflammation level compared to normal control, which is consistent with the wide observation that microglia activation level in higher in the CNS of PD patients than normal control. 
+
+Furthermore, generalized linear mixed effect model with random intercept was used to study the effect of top 20 proteins on the long-term clinical outcomes (both on cognitive fucntion and on motor function). Out of the top 20 proteins, FCN1 and BSP seemed to be potential prognostic biomarkers that predict cognitve function. Patients who are in top tertile of BSP measurements developed cognitive function decline much more rapidly compared to patients in the lower two tertiles. Patients who are in the first tertile (the lowest tertile of FCN1 measuremnts) seem to have a faster cognitive function decline than those who are in the first two tertiles. Out of top 20 proteins, IFGBP.2 level seems to be correlated with the incidents of developing dementia according to the Cox Proportional Hazard model. Specifically, patients in the fourth quratile of IGFBP.2 measurements are 7 times more likely to develop dementia compared to those in the lowest quartile. 
+
+In addition, longitudinal motor function analysis suggested that NCAM.120 might be a potential biomaker for motor function over time. Patients who have lower NCAM 120 seemed to have a slower motor function progression (not very clear difference though). Also, since it looks like patients with different baseline NCAM 120 measurements have different baseline MoCA score as well, it might be useful for us to include baseline MoCA as a covariant in the LME model as well in the future.
+
+The limit of this study is that this is an entirely analytic project, therefore, no causal relationship can be inferred. A quick screen at the top 20 proteins didn't identify any significant pQTL effect, which made the Mendelian Randomization (MR) analysis planned in the beginning impossible to conduct. Also, since Somalogic is a new proteomic platform, it remains unknown how reliable the protein measurements are. Therefore, it might be interesting to use ELISA essay to validate some of the proteomic measurements to see how valid they are.  
