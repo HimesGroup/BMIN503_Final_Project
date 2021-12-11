@@ -1,0 +1,363 @@
+---
+title: "Vaccination Analysis of Philadelphia Covid-19 Pandemic Data"
+author: "Fan Mi"
+date: "12/10/2021"
+output: 
+  html_document:
+    theme: lumen 
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```    
+***
+
+# introduction
+
+Since 2020, Covid-19 pandemic has infected around 200,000 people in Philadelphia county, and caused more than 4000 deaths. During the time, vaccines of different companies have been created and distributed, which have people see hope of the end of the virus spreading. However, though some people have taken vaccines, others have not and be skeptical about the effectiveness of the current vaccines.
+
+My goal is to find out if vaccine works as good as people expected. 
+- Does vaccination slow down the spreading of virus
+- Does vaccination decrease the rate of hospitalization
+
+# methods
+
+## language and packages
+Language: R language
+Packages: 
+- tidyverse: data clean and processing
+- epiEstim: calculate estimated instantaneous reproduction number
+- ggplot2: plot charts
+
+```
+# install packages
+
+install.packages("tidyverse") #data clean and processing
+install.packages("EpiEstim") #calculate estimated instantaneous reproduction number
+install.packages("ggplot2") #plot charts
+```
+
+## dataset
+
+This [repository](https://github.com/ambientpointcorp/covid19-philadelphia) comes from the Open Data Program of Philadelphia which includes de-identified, datasets of aggregate counts of different groups of age, sex, race, zip code, etc.
+
+The following datasets have been collected since 6/4/2020:
+
+- COVID Cases by Age
+- COVID Cases by Date
+- COVID Cases by Sex
+- COVID Cases by Zipcode
+- COVID Deaths by Age
+- COVID Deaths by Date
+- COVID Deaths by Sex
+
+The following datasets have been collected since 8/14/2020:
+- COVID Cases by Race
+- COVID Deaths by Race
+- COVID Hospitalizations by Age
+- COVID Hospitalizations by Date
+- COVID Hospitalizations by Race
+- COVID Hospitalizations by Sex
+- COVID Hospitalizations by Zipcode
+
+The following datasets have been collected since 3/21/2021:
+- COVID Vaccinations Total
+- COVID Vaccinations by Age
+- COVID Vaccinations by Race
+- COVID Vaccinations by Sex
+- COVID Vaccinations by Zipcode
+
+## data cleaning and data processing
+
+Cleaning of the original data sets is needed. Problems includes:
+
+- data out of valid range: 
+    - for example, age = 120. Since this is within range 75+ and only appears in several files, we can conclude this is invalid.
+    
+- row names or column names are case insensitive: 
+    - for example, the race NATIVE AMERICAN can be either NATIVE AMERICAN or Native American in different files.
+    
+- rows and columns are in different order: 
+    - for example, "Yes" and "NO_UNKNOWN" columns of hospitalization data can be in different order in different files.
+    
+- different column names: 
+    - for example, the "count" column in early time of vaccination data became "partially_vaccinated" and "fully_vaccinated" in latest files.
+    - for example, the "result_date" in early time became "collection_date" later in the several _by_date files.
+
+- column name is NA: 
+    - for example, the race can be "NA" which causes some data processing error.
+    
+- missing data
+- duplicate data: updated but no change
+
+
+## analysis
+
+Clean raw data and join data file of each day together, then calculate results and draw trends.
+
+First of all, I used the lubridate and EpiEstim package to draw the Epidemic curve and Estimated instantaneous reproduction number.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(EpiEstim)
+
+# Daily case count by test result date
+incidence_data <- list.files(path = "data/cases_by_date", full.names = TRUE) %>% 
+  last %>% 
+  read_csv(col_types = cols(collection_date = col_character(),
+                            etl_timestamp = col_skip(),
+                            negative = col_integer(),
+                            positive = col_integer())) %>% 
+  filter(!is.na(positive) & (date(collection_date) >= date("2020-03-16"))) %>%
+  mutate(dates = date(collection_date)) %>%
+  arrange(dates) %>%
+  mutate(positivity_rate = positive / (positive + negative)) %>%
+  select(dates, positive, negative, positivity_rate) %>%
+  filter(dates <= last(dates) - 3) # remove last 3 days considering lag in test results
+
+# Plot incidence and effective reproductive number over time
+# Serial interval mean and std estimates from: https://www.dhs.gov/publication/st-master-question-list-covid-19
+res_parametric_si <- estimate_R(incidence_data %>% 
+                                  select(dates, I = positive),
+                                method="parametric_si",
+                                config = make_config(list(mean_si = 5.29, std_si = 5.32)))
+```
+
+```{r res_parametric_si, echo=FALSE}
+plot(res_parametric_si, legend = FALSE)
+```
+From the epidemic curve and estimated instantaneous reproduction number, it looks like there’s no obvious change before and after the vaccination having been distributed. It might because not enough people has accepted taking vaccination. 
+
+Then I compare the daily cases and hospitaliztion rate for different age group.
+```{r}
+# aggregate cases trend of different age group
+
+rm(list = ls())
+
+library(ggplot2)
+
+dates <- seq(as.Date("2020-06-04"), as.Date("2021-11-30"), by=1)
+
+age <- data.frame()
+# colnames(age) <- c("date","0_19","20_34","35_54","55_74","74+")
+
+for (date in as.list(dates)){
+  
+  file.name = paste("data/cases_by_age/" , "covid_cases_by_age_" , date , ".csv", sep = "");
+  df <- read.csv(file = file.name)
+  age[nrow(age)+1, "date"] = as.character(date);
+  
+  for(i in 1:nrow(df)) {
+    row <- df[i,]
+    age[nrow(age), row$age] <- row$count;
+  }
+  
+}
+age$date <- as.Date(as.character(age$date))
+
+rownames(age) <- age$date
+head (age[,1:6], n = 5L)
+```
+
+```{r}
+colors <- c("<20" = "green1", "20-34" = "red", "35-54" = "deepskyblue1", "55-74"="sienna4", "75+"="purple")
+
+age_plot <- ggplot(age, aes(x = date)) +  
+  geom_smooth(aes(y = `<20`, color = "<20"), span = 0.1, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `20-34`, color = "20-34"), span = 0.1, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `35-54`, color = "35-54"), span = 0.1, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `55-74`, color = "55-74"), span = 0.1, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `75+`, color = "75+"), span = 0.1, method = 'loess', formula ='y ~ x') +
+  labs (x = 'Time',
+        y = 'Aggregated count',
+        color = "Legend") +
+  scale_color_manual(values = colors)
+```
+
+```{r}
+age_plot
+```
+```{r}
+# calculate hospitalization rate for each age group
+
+rm(list = ls())
+
+library(tidyverse)
+library(ggplot2)
+
+dates <- seq(as.Date("2020-08-14"), as.Date("2021-11-30"), by=1)
+
+age <- data.frame(matrix(ncol = 11, nrow = 0))
+colnames(age) <- c("date","0_19_yes","20_34_yes","35_54_yes","55_74_yes","74+_yes",
+                   "0_19_no","20_34_no","35_54_no","55_74_no","74+_no")
+
+for (date in as.list(dates)){
+  
+  file.name = paste("data/hospitalizations_by_age/" , "covid_hospitalizations_by_age_" , date , ".csv", sep = "");
+  df <- read.csv(file = file.name)
+  age[nrow(age)+1, "date"] = as.character(date);
+  age[nrow(age), 2] <- df[df$age=="<20","Yes"]
+  age[nrow(age), 3] <- df[df$age=="20-34","Yes"]
+  age[nrow(age), 4] <- df[df$age=="35-54","Yes"]
+  age[nrow(age), 5] <- df[df$age=="55-74","Yes"]
+  age[nrow(age), 6] <- df[df$age=="75+","Yes"]
+  
+  age[nrow(age), 7] <- df[df$age=="<20","NO_UNKNOWN"];
+  age[nrow(age), 8] <- df[df$age=="20-34","NO_UNKNOWN"];
+  age[nrow(age), 9] <- df[df$age=="35-54","NO_UNKNOWN"];
+  age[nrow(age), 10] <- df[df$age=="55-74","NO_UNKNOWN"];
+  age[nrow(age), 11] <- df[df$age=="75+","NO_UNKNOWN"];
+  
+  
+}
+
+age$date <- as.Date(as.character(age$date))
+rownames(age) <- age$date
+
+age <- age %>% 
+  mutate(rate1 = age$"0_19_yes" / (age$"0_19_yes" + age$"0_19_no")) %>% 
+  mutate(rate2 = age$"20_34_yes" / (age$"20_34_yes" + age$"20_34_no")) %>% 
+  mutate(rate3 = age$"35_54_yes" / (age$"35_54_yes" + age$"35_54_no")) %>% 
+  mutate(rate4 = age$"55_74_yes" / (age$"55_74_yes" + age$"55_74_no")) %>% 
+  mutate(rate5 = age$"74+_yes" / (age$"74+_yes" + age$"74+_no"))
+
+head (age , n = 5L)
+```
+
+```{r}
+colors <- c("<20" = "green1", "20-34" = "red", "35-54" = "deepskyblue1", "55-74"="sienna4", "75+"="purple")
+
+age_rate_plot <- ggplot(age, aes(x = date)) +  
+  geom_smooth(aes(y = `rate1`, color = "<20"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `rate2`, color = "20-34"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x' ) +
+  geom_smooth(aes(y = `rate3`, color = "35-54"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `rate4`, color = "55-74"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `rate5`, color = "75+"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  labs (x = 'Time',
+        y = 'Hospitalization Rate',
+        color = "Legend") +
+  scale_color_manual(values = colors)
+```
+```{r}
+age_rate_plot
+```
+
+From the previous two charts, we can see the speed of disease spreading was not dramatically decreased by the vaccination. However, hospitalization rate obviously decreased for most age groups after the vaccines have been created.
+
+Then I do the same thing for different race groups.
+
+
+```{r}
+rm(list = ls())
+
+library(ggplot2)
+
+dates <- seq(as.Date("2020-08-14"), as.Date("2021-11-30"), by=1)
+
+race <- data.frame()
+
+for (date in as.list(dates)){
+  
+  file.name = paste("data/cases_by_race/" , "covid_cases_by_race_" , date , ".csv", sep = "");
+  df <- read.csv(file = file.name)
+  race[nrow(race)+1, "date"] = as.character(date);
+  
+  for(i in 1:nrow(df)) {
+    row <- df[i,]
+    if (!is.na(row$racial_identity))
+      race[nrow(race), tolower(row$racial_identity)] <- row$count;
+  }
+}
+
+race$date <- as.Date(as.character(race$date))
+rownames(race) <- race$date
+head (race, n=5)
+```
+```{r}
+colors <- c("White" = "brown4", "Hispanic" = "coral", "Asian" = "red", "African American"="blue")
+
+race_plot <- ggplot(race, aes(x = date)) +  
+  geom_smooth(aes(y = `white`, color = "White"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `hispanic`, color = "Hispanic"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `asian`, color = "Asian"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `african american`, color = "African American"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  labs (x = 'date',
+        y = 'aggregated count',
+        color = "Legend") +
+  scale_color_manual(values = colors)
+```
+```{r}
+race_plot
+```
+```{r}
+rm(list = ls())
+
+library(ggplot2)
+
+dates <- seq(as.Date("2020-08-14"), as.Date("2021-11-30"), by=1)
+
+race.hos <- data.frame()
+race.nohos <- data.frame()
+
+rate <- data.frame();
+
+for (date in as.list(dates)){
+  
+  file.name = paste("data/hospitalizations_by_race/" , "covid_hospitalizations_by_race_" , date , ".csv", sep = "");
+  df <- read.csv(file = file.name)
+  race.hos[nrow(race.hos)+1, "date"] = as.character(date);
+  race.nohos[nrow(race.nohos)+1, "date"] = as.character(date);
+  rate[nrow(rate)+1, "date"] = as.character(date);
+  
+  for(i in 1:nrow(df)) {
+    row <- df[i,]
+    if (!is.na(row$racial_identity)){
+      race.hos[nrow(race.hos), tolower(row$racial_identity)] <- row$Yes;
+      race.nohos[nrow(race.nohos), tolower(row$racial_identity)] <- row$NO_UNKNOWN;
+      rate[nrow(rate), tolower(row$racial_identity)] <- row$Yes/(row$Yes + row$NO_UNKNOWN);
+    }
+  }
+}
+
+rownames(race.hos) <- race.hos$date
+rownames(race.nohos) <- race.nohos$date
+
+race.hos$date <- as.Date(as.character(race.hos$date))
+race.nohos$date <- as.Date(as.character(race.nohos$date))
+rate$date <- as.Date(as.character(rate$date))
+
+head (rate, n = 5L)
+```
+
+```{r}
+colors <- c("White" = "brown4", "Hispanic" = "coral", "Asian" = "red", "African American"="blue")
+
+race_rate_plot <- ggplot(rate, aes(x = date)) +  
+  geom_smooth(aes(y = `white`, color = "White"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `hispanic`, color = "Hispanic"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `asian`, color = "Asian"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  geom_smooth(aes(y = `african american`, color = "African American"), span = 0.1, se = FALSE, method = 'loess', formula ='y ~ x') +
+  labs (x = 'date',
+        y = 'rate',
+        color = "Legend") +
+  scale_color_manual(values = colors)
+```
+```{r}
+race_rate_plot
+```
+From the previous two charts, we can see the speed of disease spreading was not dramatically decreased by the vaccination. However, hospitalization rate obviously decreased for most race groups after the vaccines have been created.
+
+
+# Conclusion
+From the result I did in this experiment, there is an interesting finding that the vaccination has less effective than people expected about prohibiting the virus spreading, but it looks like the hospitalization rate dropped a lot which means the vaccination do increased human being’s immune function to the virus and makes it less severe.
+
+# Future Plan
+To make the result more convencing, there are other analysis to be done:
+- statistical analysis
+- compare vaccination with other factors which cause similar results. E.g. lock down, masking face, social distance and season change.
+- collect data for how many people use what method to prevent covid. How much does the vaccination contribute in them
+
+# References
+1. Data from Philadelphia Open Data Program: https://github.com/ambientpointcorp/covid19-philadelphia
+2. R in Action, Third Edition by Robert I. Kabacoff
