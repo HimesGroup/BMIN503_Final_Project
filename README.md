@@ -1,3 +1,27 @@
+## Files layout
+- final_project_LingyunShi.html: final project report in HTML format
+- environment.yml: list required package for this project
+- Bidirectional_LSTM_Multivariate_Model.h5: model file
+- Bidirectional_LSTM_Multivariate_Model.data-00000-of-00001: model file
+- Bidirectional_LSTM_Multivariate_Model.index: model file
+- bilstm.data-00000-of-00001: model file
+- bilstm.index: model file
+- GRU.data-00000-of-00001: model file
+- GRU.index: model file
+- CNN.index: model file
+- CNN.data-00000-of-00001: model file
+- bilstm-single.data-00000-of-00001: model file
+- bilstm-single.index: model file
+- GRU-single.data-00000-of-00001: model file
+- GRU-single.index: model file
+- checkpoint: model file
+- CNN-single.index: model file
+- CNN-single.data-00000-of-00001: model file
+- GRU-singletest_result.csv: test prediction of single-style GRU model
+- bilstm-singletest_result.csv: test prediction of single-style Bi-LSTM model
+- CNN-singletest_result.csv: test prediction of single-style CNN model
+
+
 # BMIN503/EPID600 Final Project
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
