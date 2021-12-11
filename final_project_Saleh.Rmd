@@ -53,7 +53,7 @@ I'll load in all the necessary libraries first.
 library(tidyverse)
 library(dplyr)
 library(ggplot2)
-
+library(forestplot)
 library(logistf)
 library(caTools)
 library(stringr)
@@ -149,6 +149,7 @@ plot(first_vacc_by_week, color = 'light blue') +
   labs(title="First Dose of Vaccination per Week",x="Week", y = "Weekly incidence")+
   theme_classic()
 ```
+
 # Results
 <!--Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.-->
 
@@ -281,7 +282,7 @@ ins %>%
   bold_labels()
 
 ```
-Next, I explored the comorbidity data. The vaccinated group had a higher percentage of all comorbidites with the largest percentage difference in conditions that are thought to cause an immunosupressed state.
+Next, I explored the comorbidity data. The vaccinated group had a higher percentage of all comorbidities with the largest percentage difference in conditions that are thought to cause an immunosupressed state.
 
 ```{r eval=TRUE, message=FALSE, fig.height=5}
 
@@ -317,31 +318,31 @@ FROM g823429.sns_proj2_cohall_0916 coh
 LEFT OUTER JOIN g823429.sns_charlson_icd_codes_0916 dis
 ON coh.ptid = dis.ptid" 
 
-comorbidites <- dbGetQuery(con, cci_query_2) %>%
+comorbidities <- dbGetQuery(con, cci_query_2) %>%
   dplyr::distinct() #remove duplicates
 
 #Convert from long to wide format to maintain granularity of patient
-comorbidites <- all_cohorts %>%
+comorbidities <- all_cohorts %>%
   select(ptid, cohort) %>%
-  dplyr::left_join(comorbidites, by='ptid') %>%
+  dplyr::left_join(comorbidities, by='ptid') %>%
   mutate(flag = 1)
 
-comorbidites %>%
+comorbidities %>%
 ggplot(aes(x = cohort, fill = comorbidities)) +
   geom_bar(position='dodge') + 
   coord_flip() + 
-  labs(title="Comorbidites Type by Vaccination Group",x="Vaccination Group", y = "Comorbidities") + 
+  labs(title="Comorbidities Type by Vaccination Group",x="Vaccination Group", y = "Comorbidities") + 
   theme_classic() +
   theme(legend.position = "bottom", legend.text=element_text(size=6)) +
   guides(fill=guide_legend(nrow=6,byrow=TRUE))
   
 
-comorbidites <- comorbidites %>%
+comorbidities <- comorbidities %>%
   pivot_wider(names_from = comorbidities, values_from = flag, values_fill = 0) %>%
   rename('No Known Comorbidities' = 'NA')
 
 
-comorbidites %>%
+comorbidities %>%
   select(-ptid) %>%
   # select(cohort, comorbidities) %>%
   tbl_summary(by = cohort,
@@ -355,7 +356,10 @@ comorbidites %>%
   bold_labels()
 
 ```
-Lastly, I queried for the outcomes, explored the data visually, and then created the table summary of the outcomes stratified by vaccination status. Note that all outcomes include corresponding dates except death which is only recorded by month. I also explored the incidence of outcomes over time by week or month as appropriate. The vaccinated group had lower proportion of all outcomes compared to the unvaccinated group.
+
+## Outcome Summary Statistics
+
+Lastly, I queried for the outcomes, explored the data visually, and then created the table summary of the outcomes stratified by vaccination status. Note that all outcomes include corresponding dates except death which is only recorded by month. I also explored the incidence of outcomes over time by week or month as appropriate. The vaccinated group had lower proportion of all outcomes compared to the unvaccinated group. Hospitalization length of stay was similar between the two groups.
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -524,7 +528,10 @@ outcomes %>%
   bold_labels() 
 
 ```
-I'll then create the final dataframe for modeling including consolidating certain categories, dropping some rows, converting categorical variables to factors and finally proceeding with one hot encoding.
+
+## Constructing Final Dataframe
+
+I then created the final dataframe for modeling including consolidating certain categories, dropping some rows, converting categorical variables to factors and finally proceeding with one hot encoding.
 
 ```{r, eval = TRUE, message = FALSE}
 
@@ -560,16 +567,6 @@ final_df <- dems %>%
   mutate(region = factor(region)) %>%
   mutate(race_ethnicity = factor(race_ethnicity)) %>%
   mutate(cohort = factor(cohort))
-  
-#Rename some columns for clarity and ease of access of columns moving forward for modeling
-model_df <- model_df %>%
-  rename(region_Other = 'region_Other/Unknown') %>%
-  rename(Ins_Other = 'Other') %>%
-  rename(race_ethnicity_African_American = 'race_ethnicity_African American')
-
-#Add month of infection
-# model_df <- model_df %>%
-#   inner_join(dems %>% select(c(ptid, month_infxn)), by='ptid')
 
 #Consolidate months into 3 time periods to reduce number of variables/predictors 
 consolidate_months_to_periods <- function(row){
@@ -580,18 +577,23 @@ consolidate_months_to_periods <- function(row){
     else{
         return('Summer')}}
 
-model_df$time_period <- apply(model_df, 1, consolidate_months_to_periods)
+final_df$time_period <- apply(final_df, 1, consolidate_months_to_periods)
 
 #Change to factor
-model_df$time_period <-factor(model_df$time_period)
+final_df$time_period <-factor(final_df$time_period)
 
 #One hot encoding for categorical variables
 model_df <- one_hot(as.data.table(final_df))
 
-
+#Rename some columns for clarity and ease of access of columns moving forward for modeling
+model_df <- model_df %>%
+  rename(region_Other = 'region_Other/Unknown') %>%
+  rename(Ins_Other = 'Other') %>%
+  rename(race_ethnicity_African_American = 'race_ethnicity_African American') %>%
+  rename(cohort_Fully_Vaccinated = 'cohort_Fully Vaccinated')
 ```
 
-I saved the model dataframe for easier future access, but it is commented out for the final version. Lastly, I drop reference columns for the regression analysis. This could have been done with the regression itself as well. 
+I saved the model dataframe for easier future access, but it is commented out for the final version. Lastly, I dropped reference columns for the regression analysis. This could have been done within the regression itself as well. 
 
 ```{r, eval = TRUE, message = FALSE}
 #Save model DF for quick access later
@@ -599,15 +601,18 @@ I saved the model dataframe for easier future access, but it is commented out fo
 # #Read model DF 
 # model_df <- readRDS(file = "model_df.Rda")
 
+model_df
+
 #Drop reference columns
-model_df_final <- model_df %>% select(c(death_flag, icu_flag, hosp_flag, emer_flag, cohort_1a, cohort_1b, cohort_1c, age, gender_Female, cci_score, time_period_Spring, time_period_Summer, region_Northeast, region_Other, region_South, region_West, race_ethnicity_African_American, race_ethnicity_Asian, race_ethnicity_Hispanic, race_ethnicity_Other, Medicare_Medicaid, Ins_Other))
+model_df_final <- model_df %>% select(c(death_flag, icu_flag, hosp_flag, emer_flag, cohort_Fully_Vaccinated, age, gender_Female, cci_score, time_period_Spring, time_period_Summer, region_Northeast, region_Other, region_South, region_West, race_ethnicity_African_American, race_ethnicity_Asian, race_ethnicity_Hispanic, race_ethnicity_Other, Medicare_Medicaid, Ins_Other))
 
 ```
 
-As a visual check for colinearilty, I add a heat map for the corelation matrix among the different outcomes and predictors. Overall, most variables are not colinear. Those that have some degree of positively correlated relationships are expected like age with the Charlson Comorbidity Index or Medicare/Medicaid status. As expected, the primary and secondary outcomes also have correlated relationships.
+As a visual check for colinearity, I add a heat map for the correlation matrix among the different outcomes and predictors. Overall, most variables are not colinear. Those that have some degree of positively correlated relationships are expected like age with the Charlson Comorbidity Index or Medicare/Medicaid status. As expected, the primary and secondary outcomes also have correlated relationships.
 
 ```{r, eval = TRUE, message = FALSE, fig.width=8,fig.height=8}
-cormat <- cor(model_df)
+
+cormat <- cor(model_df_final)
 get_upper_tri <- function(cormat){
     cormat[lower.tri(cormat)]<- NA
     return(cormat)
@@ -641,19 +646,43 @@ ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
  coord_fixed()
 ```
 
+## Building Logistic Regression Models
 
+I fitted unadjusted and multivariable logistic regression models for the primary outcome and each secondary outcome, adjusting for age, sex, race/ethnicity group, insurance status, geographic region, CCI, and time period of infection. The time period of infection serves as a proxy for variant as the Delta variant became the predominant strain starting June/July nationwide. I applied Firth’s Penalized Likelihood to mitigate bias of the model given the low prevalence of certain outcome events in our dataset. I also then fitted unadjusted and multivariable logistic regression models for the subgroup of patients with a comorbidity of malignancy and diabetes with complications as both of these subgroups are associated with lower immunity. The α level of significance was set a priori at 0.05, and all hypothesis testing was 2-sided. I presented model results as odds ratios with 95% confidence interval and visualized them using forest plots.
 
 ```{r, eval = TRUE, message = FALSE}
-start_time <- Sys.time()
+
+# Unadjusted Odds ratios for the primary outcome and 3 secondary outcomes
+
+lf_death_uv <- logistf(formula = death_flag ~ cohort_Fully_Vaccinated, data=model_df_final)
+death_or_uv <- exp(cbind(Odds=coef(lf_death_uv), confint(lf_death_uv)))
+print(death_or_uv)
+
+lf_icu_uv <- logistf(formula = icu_flag ~ cohort_Fully_Vaccinated, data=model_df_final)
+icu_or_uv <- exp(cbind(Odds=coef(lf_icu_uv), confint(lf_icu_uv)))
+print(icu_or_uv)
+
+lf_hosp_uv <- logistf(formula = hosp_flag ~ cohort_Fully_Vaccinated, data=model_df_final)
+hosp_or_uv <- exp(cbind(Odds=coef(lf_hosp_uv), confint(lf_hosp_uv)))
+print(hosp_or_uv)
+
+lf_emer_uv <- logistf(formula = emer_flag ~ cohort_Fully_Vaccinated, data=model_df_final)
+emer_or_uv <- exp(cbind(Odds=coef(lf_emer_uv), confint(lf_emer_uv)))
+print(emer_or_uv)
+
+```
+Here is the adjusted multivariable logistic regression for the primary outcome of death and then each of the three secondary outcomes of emergency visit, hospitalization, and ICU stay. 
+
+```{r, eval = TRUE, message = FALSE}
+start_time <- Sys.time() # Measuring time to complete each model
+
 # Run logistic model for death
-lf_death <- logistf(formula = death_flag ~ cohort_1a + cohort_1b + cohort_1c + age + gender_Female + cci_score + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)#, plconf = c(2,3,4))
+lf_death <- logistf(formula = death_flag ~ cohort_Fully_Vaccinated + age + gender_Female + cci_score + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df_final)
 end_time <- Sys.time()
 end_time - start_time
 
-summary(lf_death)
-
+#Get odds ratio
 death_or <- exp(cbind(Odds=coef(lf_death), confint(lf_death)))
-
 death_or
 
 ```
@@ -662,32 +691,23 @@ death_or
 start_time <- Sys.time()
 
 # Run logistic model for ICU
-lf_icu <- logistf(formula = icu_flag ~ age + gender_Female + cci_score + cohort_1a + cohort_1b + cohort_1c + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)
+lf_icu <- logistf(formula = icu_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df_final)
 end_time <- Sys.time()
 end_time - start_time
 
-summary(lf_icu)
-
 icu_or <- exp(cbind(Odds=coef(lf_icu), confint(lf_icu)))
-
 icu_or
-
-summ(lf_icu,confint = TRUE, digits = 3, vifs = TRUE) 
-
 ```
 
 ```{r, eval = TRUE, message = FALSE}
 start_time <- Sys.time()
 
 # Run logistic model for hospitalizations
-lf_hosp <- logistf(formula = hosp_flag ~ age + gender_Female + cci_score + cohort_1a + cohort_1b + cohort_1c + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)
+lf_hosp <- logistf(formula = hosp_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)
 end_time <- Sys.time()
 end_time - start_time
 
-summary(lf_hosp)
-
 hosp_or <- exp(cbind(Odds=coef(lf_hosp), confint(lf_hosp)))
-
 hosp_or
 ```
 
@@ -695,88 +715,164 @@ hosp_or
 start_time <- Sys.time()
 
 # Run logistic model for ED visits
-lf_ed <- logistf(formula = emer_flag ~ age + gender_Female + cci_score + cohort_1a + cohort_1b + cohort_1c + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)
+lf_ed <- logistf(formula = emer_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=model_df)
 end_time <- Sys.time()
 end_time - start_time
 
-summary(lf_ed)
-
 ed_or <- exp(cbind(Odds=coef(lf_ed), confint(lf_ed)))
-
 ed_or
+
+```
+I then combined all the odds ratios for fully vaccinated into one table and plotted as a forest plot. For the primary outcome, the adjusted odds ratio is 0.31 (0.26, 0.37) indicating that being fully vaccinated is associated with one-third the odds of death compared to being unvaccinated. The adjusted odds ratio is similar for the 3 secondary outcomes conferring a strong association with decrease of all severe COVID-19 outcomes. 
+
+```{r, eval = TRUE, message = FALSE}
+
+get_forest_plot <- function(ed_or, hosp_or, icu_or, death_or, main_title){
+  ed_or <- as.data.frame(ed_or)
+  hosp_or <- as.data.frame(hosp_or)
+  icu_or <- as.data.frame(icu_or)
+  death_or <- as.data.frame(death_or)
+  
+  ed_vacc <- ed_or["cohort_Fully_Vaccinated", ]
+  ed_vacc$Labels <- "Emergency Visit"
+  
+  hosp_vacc <- hosp_or["cohort_Fully_Vaccinated", ]
+  hosp_vacc$Labels <- "Hospitalization"
+  
+  icu_vacc <- icu_or["cohort_Fully_Vaccinated", ]
+  icu_vacc$Labels <- "ICU Stay"
+  
+  death_vacc <- death_or["cohort_Fully_Vaccinated", ]
+  death_vacc$Labels <- "Death"
+  
+  vacc_or <- bind_rows(list(ed_vacc, hosp_vacc, icu_vacc, death_vacc))
+  
+  vacc_or$Index <- c(seq(1,nrow(vacc_or)))
+  
+  vacc_or <- vacc_or %>%
+    dplyr::rename(LL = 'Lower 95%', UL = 'Upper 95%') 
+  
+  vacc_or <- vacc_or %>%
+    dplyr::mutate(CI = paste('(', round(vacc_or$LL, digit = 2), ', ', round(vacc_or$UL, digit=2), ')', sep=''))
+  
+  plot1 <- ggplot(vacc_or, aes(y = Index, x = Odds)) + 
+    geom_point(shape = 18, size = 5) +  
+    geom_errorbarh(aes(xmin = LL, xmax = UL), height = 0.25) +
+    geom_vline(xintercept = 1, color = "gray", linetype = "dashed", cex = 1, alpha = 0.5) +
+    scale_y_continuous(name = "", breaks=1:4, labels = vacc_or$Labels, trans = "reverse") +
+    xlab(paste0("Odds Ratio (95% CI)", main_title)) + 
+    ylab(" ") + 
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          axis.line = element_line(colour = "black"),
+          axis.text.y = element_text(size = 12, colour = "black"),
+          axis.text.x.bottom = element_text(size = 12, colour = "black"),
+          axis.title.x = element_text(size = 12, colour = "black"))
+  
+  table_base <- ggplot(vacc_or, aes(y=Labels)) +
+    ylab(NULL) + xlab("  ") + 
+    theme(plot.title = element_text(hjust = 0.5, size=12), 
+          axis.text.x = element_text(color="white", hjust = -3, size = 25), ## This is used to help with alignment
+          axis.line = element_blank(),
+          axis.text.y = element_blank(), 
+          axis.ticks = element_blank(),
+          axis.title.y = element_blank(), 
+          legend.position = "none",
+          panel.background = element_blank(), 
+          panel.border = element_blank(), 
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(), 
+          plot.background = element_blank())
+  
+  ## OR point estimate table
+  tab1 <- table_base + 
+    labs(title = "space") +
+    geom_text(aes(y = rev(Index), x = 1, label = sprintf("%0.2f", round(Odds, digits = 2))), size = 4) + ## decimal places
+    ggtitle("OR")
+  
+  ## 95% CI table
+  tab2 <- table_base +
+    geom_text(aes(y = rev(Index), x = 1, label = CI), size = 4) + 
+    ggtitle("95% CI")
+  
+  lay <-  matrix(c(1,1,1,1,1,1,1,1,1,1,2,3,3), nrow = 1)
+  grid.arrange(plot1, tab1, tab2, layout_matrix = lay)
+}
+
+get_forest_plot(ed_or, hosp_or, icu_or, death_or, "\nFully Vaccinated - Overall")
+```
+
+## Subgroup Analyses for Certain Comorbidities
+
+I then created 3 different subgroups for malignancy (combined with metastatic solid tumor), diabetes with complication, and severe liver disease, all of which cause an immunocompromised state. I created a function to rerun the logistic regression for each outcome and again plotted the forest plots for each. Full vaccination is still associated with protection against all outcomes for malignancy, diabetes with complication, and severe liver disease, but less so than the full cohort.
+
+```{r, eval = TRUE, message = FALSE}
+
+run_dx_subgroup <- function(diagnosis_df, diagnosis_name){
+  
+  start_time <- Sys.time()
+  # Run logistic model for death
+  lf_death <- logistf(formula = death_flag ~ cohort_Fully_Vaccinated + age + gender_Female + cci_score + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=diagnosis_df)
+  
+  death_or <- exp(cbind(Odds=coef(lf_death), confint(lf_death)))
+  
+  # Run logistic model for ICU
+  lf_icu <- logistf(formula = icu_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=diagnosis_df)
+  
+  icu_or <- exp(cbind(Odds=coef(lf_icu), confint(lf_icu)))
+  
+  # Run logistic model for hospitalizations
+  lf_hosp <- logistf(formula = hosp_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=diagnosis_df)
+  
+  hosp_or <- exp(cbind(Odds=coef(lf_hosp), confint(lf_hosp)))
+  
+  # Run logistic model for ED visits
+  lf_ed <- logistf(formula = emer_flag ~ age + gender_Female + cci_score + cohort_Fully_Vaccinated + time_period_Spring + time_period_Summer + region_Northeast + region_Other + region_South + region_West + race_ethnicity_African_American + race_ethnicity_Asian + race_ethnicity_Hispanic + race_ethnicity_Other + Medicare_Medicaid + Ins_Other, data=diagnosis_df)
+  
+  ed_or <- exp(cbind(Odds=coef(lf_ed), confint(lf_ed)))  
+  
+  end_time <- Sys.time()
+  end_time - start_time
+
+  get_forest_plot(ed_or, hosp_or, icu_or, death_or, paste0("\nFully Vaccinated -", diagnosis_name))
+  
+}
 
 ```
 
 ```{r, eval = TRUE, message = FALSE}
+malig <- model_df %>% 
+  inner_join(comorbidities %>% filter(MALIGNANCY == 1 | METASTATIC_SOLID_TUMOR == 1), by = "ptid")
 
-install.packages('forestplot')
-library(forestplot)
+run_dx_subgroup(malig, "Malignancy")
+```
 
+```{r, eval = TRUE, message = FALSE}
+dm <- model_df %>% 
+  inner_join(comorbidities %>% filter(DIABETES_MELLITUS_CHRONIC_COMPLICATED == 1), by = "ptid")
 
-hosp_or <- as.data.frame(hosp_or)
+run_dx_subgroup(dm, "Diabetes with Complication")
+```
 
-hosp_or$Index <- c(seq(1,nrow(hosp_or)))
-hosp_or$Labels <- rownames(hosp_or)
-hosp_or <- hosp_or %>%
-  dplyr::rename(LL = 'Lower 95%', UL = 'Upper 95%')
+```{r, eval = TRUE, message = FALSE}
 
-hosp_or$CI <- paste('(', round(hosp_or$LL, digit = 2), ', ', round(hosp_or$UL, digit=2), ')', sep='')
+liver <- model_df %>% 
+  inner_join(comorbidities %>% filter(SEVERE_LIVER_DISEASE == 1), by = "ptid")
 
-hosp_OR_limited <- subset(hosp_or, rownames(hosp_or) %in% c('cohort_1a', 'cohort_1b', 'cohort_1c'))
+run_dx_subgroup(liver, "Severe Liver Disease")
 
-hosp_OR_limited$Index <- c(seq(1, nrow(hosp_OR_limited)))
-
-plot1 <- ggplot(hosp_OR_limited, aes(y = Index, x = Odds)) + 
-  geom_point(shape = 18, size = 5) +  
-  geom_errorbarh(aes(xmin = LL, xmax = UL), height = 0.25) +
-  geom_vline(xintercept = 1, color = "gray", linetype = "dashed", cex = 1, alpha = 0.5) +
-  scale_y_continuous(name = "", breaks=1:3, labels = hosp_OR_limited$Labels, trans = "reverse") +
-  xlab("Odds Ratio (95% CI)") + 
-  ylab(" ") + 
-  theme_bw() +
-  theme(panel.border = element_blank(),
-        panel.background = element_blank(),
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(), 
-        axis.line = element_line(colour = "black"),
-        axis.text.y = element_text(size = 12, colour = "black"),
-        axis.text.x.bottom = element_text(size = 12, colour = "black"),
-        axis.title.x = element_text(size = 12, colour = "black"))
-
-table_base <- ggplot(hosp_OR_limited, aes(y=Labels)) +
-  ylab(NULL) + xlab("  ") + 
-  theme(plot.title = element_text(hjust = 0.5, size=12), 
-        axis.text.x = element_text(color="white", hjust = -3, size = 25), ## This is used to help with alignment
-        axis.line = element_blank(),
-        axis.text.y = element_blank(), 
-        axis.ticks = element_blank(),
-        axis.title.y = element_blank(), 
-        legend.position = "none",
-        panel.background = element_blank(), 
-        panel.border = element_blank(), 
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(), 
-        plot.background = element_blank())
-
-## OR point estimate table
-tab1 <- table_base + 
-  labs(title = "space") +
-  geom_text(aes(y = rev(Index), x = 1, label = sprintf("%0.2f", round(Odds, digits = 2))), size = 4) + ## decimal places
-  ggtitle("OR")
-
-## 95% CI table
-tab2 <- table_base +
-  geom_text(aes(y = rev(Index), x = 1, label = CI), size = 4) + 
-  ggtitle("95% CI")
-
-lay <-  matrix(c(1,1,1,1,1,1,1,1,1,1,2,3,3), nrow = 1)
-grid.arrange(plot1, tab1, tab2, layout_matrix = lay)
 ```
 
 # Conclusions
 
-Limitations: study is looking at outcomes among vaccinated and unvaccinated individuals who tested positive for COVID-19, which may be very different from outcomes among all vaccinated and unvaccinated individuals infected with COVID-19.
+This study explored how immunization with an mRNA vaccine provides protection in patients who subsequently contract COVID-19 and benefits from evaluating real-world outcomes in breakthrough infections within a large national US database. Being fully vaccinated vaccinated with an mRNA COVID-19 vaccine was consistently associated with significantly lower rates of ED visit, hospitalizations, ICU stay, and death. The association was less for comorbidities that cause an immunosuppressed state, but were still statistical significant (other than severe liver disease with ICU stay). Monitoring and establishing clinical outcomes after vaccination with real-world large-scale data can provide further evidence of vaccine effectiveness across diverse US populations, inform public health and clinical practice, and provide further evidence of vaccine effectiveness to the public.The data clearly support a strong recommendation for eligible people to become vaccinated against SARS-CoV-2 as soon as possible.
 
+There are some important limitations, however. First, the observational study of adult patients precludes determination of causality and may fail to account for some confounding variables. Second, it can not be determined if a negative outcome was primarily due to COVID-19 given that data are administrative and does not provide details on symptoms at presentation, infectiousness, or other clinical and virology parameters. But, given that both groups were evaluated under the same conditions, it is reasonable to assume that the contrast in outcomes is likely associated with COVID-19 vaccination. Third, misclassification of exposures, diagnoses, and outcomes were possible due to the availability of data in our dataset. The study is looking at outcomes among vaccinated and unvaccinated individuals who tested positive for COVID-19 and are available within the database, which may be different from outcomes among all vaccinated and unvaccinated individuals infected with COVID-19. Similarly, the recording of vaccinations through other methods or in other locations is missed.Lastly, there was an overrepresentation of women and white patients in the database which may lead to overgeneralization of this population over other underrepresented communities. 
+
+Overall, inoculation with the BNT162b2 or mRNA-1273 COVID-19 vaccines was associated with reduced odds for ED visits, hospitalizations, ICU utilization, and deaths in patients with new SARS-CoV-2 infection compared to the unvaccinated.
 
 # References
 1.  Dong E, Du H, Gardner L. An interactive web-based dashboard to track COVID-19 in real time. The Lancet Infectious Diseases. 2020;20(5):533-534. doi:10.1016/S1473-3099(20)30120-1
