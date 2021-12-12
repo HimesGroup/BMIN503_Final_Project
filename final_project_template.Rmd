@@ -29,7 +29,7 @@ Marijuana use has recently been politicized a lot due to several US states legal
 
 S. Sharma and C. Liu et al, is the first one to to genome wide gene expression analysis from the lungs of marijuana smokers to test their hypothesis. Hence it is a unqique dataset on marijuana exposure publicly available!
 
-My goal is not to reproduce their results, which is difficult because not only is it an unpublished work but we don't have acess to their statistical analysis methods to compare results with. Besides I will be utilizing the processed data provided by them  hence hard to conclude a result and if my results are reliable. But my goal is to use a snapshot of their comrehensive dataset, to perform Difrerential gene expresion analysis to see if indeed there are differentially expressed genes in the samples with marijuana exposure, learn the challenges of using publicly available data and maybe compare two diffrent methods of doing DE analysis.
+My goal is not to reproduce their results, which is difficult because not only is it an unpublished work but we don't have acess to their statistical analysis methods to compare results with. Besides I will be utilizing the processed data provided by them  hence hard to conclude a result and if my results are reliable. But my goal is to use a snapshot of their comrehensive dataset, to perform Difrerential gene expresion analysis to see if indeed there are differentially expressed genes in the samples with marijuana exposure, learn the challenges of using publicly available data and maybe compare two diffrent methods of doing DE analysis. I also wanted to test if limma is a better tool to do DE analysis where covariates need to be adjusted for. 
 
 ## Study design 
 1. In this study, there are three main exposure groups of interest **a) Marijuana smokers (n = 15) b) Tobacco smokers (n = 16) and c) Controls or non-smokers (n = 10)**. 
@@ -70,7 +70,7 @@ library(dplyr)
 
 In order to read the downloaded dataset from our working directory of interest and to save all files generated there, we need to set R's working directory. We can check our current working directory with the command **`getwd()`** and change it using **`setwd("path/to/file")`**
 
-```{r}
+```{r,eval=TRUE,message=FALSE}
 getwd() #satisfied with my working directory, hence not using setwd() to change it
 
 ```
@@ -148,11 +148,11 @@ head(pheno.data.final)
 
 ## Data exploration and Filtration
 
-Now we start preparing the data for the the test of differential expression. We create three vectors a) `group`, that labels each of the columns as belonging to group "marijuana", "tobacco" or "control" b) 'batch', labels the columns belonging to "batch 1" or "batch 2" c) age, labels thecolumns belonging to various age groups, its a continuous integer. We then use this vector and the gene counts to create a DGEList object that edgeR uses for storing the data from a differential expression experiment. 
+The important quality check steps that I performed were to first create a count only table,by replacing row index with unique gene-ids and removing non-count columns. Then to remove the underexpressed or lowly expressed genes from the dataset I chose a cutoff based on median log~2-transformed counts per gene per million mapped reads (cpm). edgeR provides the function, `cpm`, to compute the counts per million. However, since it produced some negative values, not ideal for DE analysis, I added a pseudo-number to the log-2 transformed values. I decided to stick with this filtration based on the boxplots that showed how scalable my transformed counts were. It is also important to transorm before fitting linear models.
 
-The important quality check steps that I performed were to first create a count only table,by replacing row index with unique gene-ids and removing non-count columns. Then to remove the underexpressed or lowly expressed genes from the dataset I chose a cutoff based on median log~2-transformed counts per gene per million mapped reads (cpm). edgeR provides the function, `cpm`, to compute the counts per million. However, since it produced some negative values, not ideal for DE analysis, I added a pseudo-number to the log-2 transformed values. I decided to stick with this filtration based on the boxplots that showed how scalable my transformed counts were. Next we are only keeping a gene if it has a cpm of 0.5 or greater for at least two samples. Ideally one should know the library size of the samples to set such thresholds but sinceI did not have that information, I chose a random cutoff to only keep genes with reasonable expression. 
+Next we are only keeping a gene if it has a cpm of 0.5 or greater for at least two samples. Ideally one should know the library size of the samples to set such thresholds but sinceI did not have that information, I chose a random cutoff to only keep genes with reasonable expression. I skipped normalization because theraw data online seemed alredy normalized. 
 
-I also Visualized sample relationships with multidimensional scaling (MDS).
+I used the count table and the phenotype data to prepare the DGEList object that edgeR uses for storing the data from a differential expression experiment. I also Visualized sample relationships with multidimensional scaling (MDS).
 
 ```{r,eval=TRUE, message=FALSE}
 
@@ -161,51 +161,77 @@ count.table <- feature.table
 rownames(count.table) <- feature.table$Features
 count.table$Features <- NULL
 
-#creating group vectors for pasing into design matrix 
-group <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
-batch <- c(rep("batch1", 30), rep("batch2", 11))
-age <- as.numeric(c("22", "23", "24", rep("25",2), "29", rep("30",5), rep("31",2), "32", "33", rep("34",2), rep("35",2), rep("36",2), rep("37",2), rep("38",3), rep("39",3), rep("40",2), rep("41",3), "47", rep("50",3), "53", "54", "55"))
-
-#log transformation
-cpm_log <- cpm(count.table, log = TRUE)
-head(cpm_log)
-
-#boxplot showing transformed count data
-boxplot(count.table, las = 2, main = "Before Log2 transformation")
-boxplot(cpm_log, las = 2, main = "After log2 transformation")
-
-#adding pseudo numbr to avoid negative values
-count_log2 <- log2(count.table + 1)
-head(count_log2)
-
 #Creating DGElist object with "Groups"
-mydata <- DGEList(count_log2, group=factor(pheno.data.final$group))
+mydata <- DGEList(count.table, group=factor(pheno.data.final$group))
 
 dim(mydata)
 head(mydata$counts)
 head(mydata$samples)
 
-#creating a copy of mydata
-mydata.copy <- mydata
-
 #calculatin counts per million uing cpm() funcion for each gene
-head(cpm(mydata.copy))
+head(cpm(mydata))
 
 #calculating total gene count per sample
-apply(mydata.copy$counts, 2, sum)
+apply(mydata$counts, 2, sum)
 
 #Keeping genes atleast a count of 0.5 cpm for atleat 2samples and removing the rest from our dataset
-keep.genes <- rowSums(cpm(mydata.copy)>0.5) >= 2 #keep genes is a logical vector with TRUE and FALSE values
+keep.genes <- rowSums(cpm(mydata)>0.5) >= 2 #keep genes is a logical vector with TRUE and FALSE values
 table(keep.genes)
-mydata.copy <- mydata.copy[keep.genes,]
+mydata <- mydata[keep.genes,]
+dim(mydata)
+
+#log transformation
+cpm_log <- cpm(mydata$counts, log = TRUE)
+head(cpm_log)
+```
+
+
+### Boxplot
+
+Boxplot of each gene tag to visualize effect of transformation and if it is meaningful
+
+```{r,eval=TRUE, message=FALSE}
+
+#boxplot showing transformed count data
+boxplot(count.table, las = 2, main = "Before Log2 transformation")
+boxplot(cpm_log, las = 2, main = "After log2 transformation")
+
+```
+
+>I plotted the box plots of gene tags to assess if the log2 transformation improves the data and normalizes it a bit, because we were dealing with really small values/integers. The plots show that it mads sense to use transformed values.   
+
+
+
+```{r,eval=TRUE, message=FALSE}
+
+#The log transformation, produced negative counts for values <0, so i used the below trick
+#adding pseudo numbr to avoid negative values
+count_log2 <- log2(mydata$counts + 1)
+head(count_log2)
+
+#boxplot of transformed values
+boxplot(count_log2, las = 2, main = "After log2+1 transformation")
+
+#creating DGElist with the transformed counts
+mydata.copy <- DGEList(count_log2, group=factor(pheno.data.final$group))
 dim(mydata.copy)
+head(mydata.copy$counts)
+```
+
+
+### Multidimensional scaling plot of distances between  gene expression profiles
+
+```{r,eval=TRUE, message=FALSE}
+
+#sample relationship on multidimendionl scale based on all covariates in the list 
+plotMDS(mydata.copy)
 
 #Plotting sample relationship on multidimendionl scale based on exposure 
 plotMDS(mydata.copy, method="bcv", col=as.numeric(mydata.copy$samples$group))
 legend("bottomleft", as.character(unique(mydata.copy$samples$group)), col=1:3, pch=20)
 
 
-#Plotting sample relationship on multidimendionl scale based on batch effect
+#Plotting sample relationship on multidimendionl scale based on batch effect alone
 mydata.batch <- DGEList(count_log2, group=factor(pheno.data.final$tech.batch))
 mydata.batch
 
@@ -222,22 +248,30 @@ legend("bottomleft", as.character(unique(mydata.batch$samples$group)), col=1:3, 
 ```
 
 
-> based on the two plots, there is no clear separation of samples based on the exposure alone but some separatio based on the technical batch. This could be because there are not many differentially expressed genes between these exposure groups. 
+> based on the two plots, there is no clear separation of samples based on the exposure alone but some separatio based on the technical batch. But mostly we see that the smokers tent to cluster together while the non-smokers and marijuana smokers cluster nearby as well. This could be because there are not many differentially expressed genes between these exposure groups. 
 
-#Results
+# Results
 
 ## Differential Expression (DE) Analysis using Generalized Linear Model (GLM) 
 
-I chose a Generalized Linear model (GLM) framework, because this is more than a two group comparison and has covariates like age that I am adjusting for. First step is to prepare the design matrix and then decide the contrast groups I will be comparing for gene expression levels.  
+Now we start preparing the data for the the test of differential expression. We create three vectors a) `group`, that labels each of the columns as belonging to group "marijuana", "tobacco" or "control" b) 'batch', labels the columns belonging to "batch 1" or "batch 2" c) age, labels thecolumns belonging to various age groups, its a continuous integer. We then use this vector and the gene counts to create a design matrix. 
+
+I chose a Generalized Linear model (GLM) framework, because this is more than a two group comparison and has covariates like age that I am adjusting for. First step is to prepare the design matrix and then decide the contrast groups I will be comparing for gene expression levels. The linear model we construct will not have an intercept. This is referred to as the group-means parametrization 
 
 ```{r, eval=TRUE, message=FALSE}
+
+#creating group vectors for pasing into design matrix 
+group <- c(rep("marijuana", 15), rep("tobacco", 16), rep("control", 10))
+batch <- c(rep("batch1", 30), rep("batch2", 11))
+age <- as.numeric(c("22", "23", "24", rep("25",2), "29", rep("30",5), rep("31",2), "32", "33", rep("34",2), rep("35",2), rep("36",2), rep("37",2), rep("38",3), rep("39",3), rep("40",2), rep("41",3), "47", rep("50",3), "53", "54", "55"))
 
 #design matrix to describe the statistical model
 design <- model.matrix(~0 + group + batch + age)
 colnames(design) <- gsub("group", "", colnames(design))
 design
-design.copy <- design
+design.copy <- design #copy of design in case we make any mistakes
 
+#This is not necessary if your GLM does not have an intercept, but I made it to visualize the contrast groups explicitly
 contrast.matrix <- makeContrasts(mari_vs_cont = marijuana - control,
                               tobacco_vs_cont = tobacco - control,
                               mari_vs_tobacco = marijuana - tobacco,
@@ -246,50 +280,90 @@ contrast.matrix
 
 #gene-specific (referred to in edgeR as tagwise) dispersion estimates are used in the test for differential expression
 mydata.copy <- estimateDisp(mydata.copy, design.copy)
-mydata.copy
+head(mydata.copy)
+
+plotBCV(mydata.copy)
+
 
 #fitting a GLM
 fit <- glmFit(mydata.copy, design.copy)
 
 #fit the contrasts
-lrt_mc <- glmLRT(fit, contrast=makeContrasts(mari_vs_cont = marijuana - control, levels = colnames(design)))
-lrt_tc <- glmLRT(fit, contrast=makeContrasts(tobacco_vs_cont = tobacco - control, levels = colnames(design)))
-lrt_mt <- glmLRT(fit, contrast=makeContrasts(mari_vs_tobacco = marijuana - tobacco, levels = colnames(design)))
+lrt_mc <- glmLRT(fit, coef = 2)
+lrt_tc <- glmLRT(fit, coef = 3)
+lrt_mt <- glmLRT(fit, contrast = c(0,1,-1,0,0))
 
-#use toptags() to rank top genes based on expression levels
-marijuana <- topTags(lrt_mc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
-tobacco <- topTags(lrt_tc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
-mari_vs_tobacco <- topTags(lrt_mt, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = 1)
 
-#write.table(tobacco, file="top-mc.txt")
-#write.table(tobacco, file="top-tc.txt")
+#use toptags() to rank top genes for each contrast groups
+marijuana <- topTags(lrt_mc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = .05)
+topTags(lrt_mc, n=10)
+
+tobacco <- topTags(lrt_tc, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = .05)
+topTags(lrt_tc, n=10)
+
+mari_vs_tobacco <- topTags(lrt_mt, n=Inf, adjust.method = "BH", sort.by = "PValue", p.value = .05)
+topTags(lrt_mt, n=10)
+
+#saving the top genes list to use later
+write.table(tobacco, file="top-mc.txt")
+write.table(tobacco, file="top-tc.txt")
 
 #identify DE genes, upregulated, non-expressed and downregulated in each group
-mc_DE <- decideTestsDGE(lrt_mc, adjust.method="BH", p.value = 1)
+mc_DE <- decideTestsDGE(lrt_mc, adjust.method="BH", p.value = .05)
 summary(mc_DE)
 
-tc_DE <- decideTestsDGE(lrt_tc, adjust.method="BH", p.value = 1)
+tc_DE <- decideTestsDGE(lrt_tc, adjust.method="BH", p.value = .05)
 summary(tc_DE)
 
-mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = 1)
+mt_DE <- decideTestsDGE(lrt_mt, adjust.method="BH", p.value = .05)
 summary(mt_DE)
 
 #boxplot of one random top expressed gene in the "mari_vs_control" group
 boxplot(as.numeric(count.table["ENSG00000138061", ]) ~ group)
 
 
-#plotting the entire DGElist
-plotMDS(mydata)
-
-
-#testing
+#edgeR tests for differential expression between two classes using exactTest() function
 et <- exactTest(mydata.copy)
 results_edgeR <- topTags(et, n = nrow(mydata.copy), sort.by = "none")
 head(results_edgeR$table)
 
-sum(results_edgeR$table$FDR < 1)
-plotSmear(et, de.tags = rownames(results_edgeR)[results_edgeR$table$FDR < 1])
+sum(results_edgeR$table$FDR < 0.05)
+plotSmear(et, de.tags = rownames(results_edgeR)[results_edgeR$table$FDR < 0.05])
 abline(h = c(-2, 2), col = "blue")
+
+```
+
+
+### Testing DE analysis using Limma-voom packages
+
+```{r,eval=TRUE,message=FALSE}
+
+v_DE <- voom(mydata.copy, design.copy, plot = TRUE)
+v_DE
+
+#Fit a linear model per gene
+fit_limma <- lmFit(mydata.copy, design.copy)
+
+## Calculate the statistics for our specific contrasts of interest
+vfit <- contrasts.fit(vfit, contrasts = contrast.matrix)
+
+#Use an empirical Bayes algorithm to shrink the gene-specific variances towards the average variance across all genes
+efit <- eBayes(vfit)
+
+#diagnostic plot to check if voom removed mean-variance relationship
+plotSA(efit, main = "Final model: Mean−variance trend")
+
+#Tabulate the results
+summary(decideTests(efit))
+
+#If the magnitude of the effect size is important for downstream analysis, we can specify a minimal log-fold-change with the function `treat`
+tfit <- treat(vfit, lfc = .05)
+
+dt <- decideTests(tfit)
+summary(dt)
+
+# Identify top DE genes for Marijuana group, just to compare result with edgeR 
+topTreat(tfit, coef = 2, n = 10)
 
 ```
 
@@ -337,8 +411,11 @@ merged.feature <- merged.feature[complete.cases(merged.feature),]
 ```
 
 
-#Conclusion
-There are indeed differentially expressed genes that are clearly upregulated and down regulated in each exposure group but with some overlaps. I tried to validate my result by trying to check for one of the "smoking positive" henes "CYP1B!" or "CYP1A1" in either the Marijuana_vs_control or tobacco_vs_control groups because they are known to be upregulated on cigarette exposure. I did find CYP1B1 (see boxplot above) but not CYP1A1, maybe because it was not well covered by sequencing reads. I was also able to find several genes mentioned by the authors to be differenially expressed in the marijuana and tobaco groups. A good next step would be to use the gene annotated dataset to perform a GSEA or Gene enrichment analysis to see what pathways are up or down-regulated in these exposure groups. 
+# Conclusion
+
+The result of DE genes were simlar between limma and edgeR and hence I cannot say which package is better. perhaps a venndiagram of how many DE genes each method grabbed could help conclude this issue better. edgegR seemed to be less sensitive.
+
+There are indeed differentially expressed genes that are clearly upregulated and down regulated in each exposure group but with some overlaps. I tried to validate my result by trying to check for one of the "smoking positive" henes "CYP1B!" or "CYP1A1" in either the Marijuana_vs_control or tobacco_vs_control groups because they are known to be upregulated on cigarette exposure. I did find CYP1B1 (see boxplot above) but not CYP1A1, maybe because it was not well covered by sequencing reads. I was also able to find several genes mentioned by the authors to be differenially expressed in the marijuana and tobaco groups. A good next step would be to use the gene annotated dataset to perform a GSEA or Gene enrichment analysis to see what pathways are up or down-regulated in these exposure groups. I skipped normalization because theraw data online seemed alredy normalized. 
 
 However, one of the greatest limitation was the publicly available dataset that was pre-normalized, which is not ideal for DE analysis and can bias the results. There is no way to know if the log2 transformation inut some bias in my dataset. Ideally for research purposes, in such cases getting the raw data from the SRA database and starting from the fastqs and mapping them to a genome is a better idea than the count table. But its beyond the scope of this class. 
 
@@ -350,6 +427,9 @@ However, one of the greatest limitation was the publicly available dataset that 
 4. Case studies and user guide on edgeR: https://bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf
 
 
+# Setup 
+
+The analysis was conducted on-
 
 ```{r info}
 
