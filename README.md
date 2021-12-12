@@ -9,5 +9,5 @@ This repository contains file stack used to document, run and analyze my final p
 ├── final_project_template.Rmd     # R markdown file with original code chunks
 ├── final_project_template.html    # Knitted HTML document of the Rmd file 
 ├── Data                           # Data files acquired from GEO omnibus used in this analysis
-└── tmp                            # Temporary data ignored by git. See ".gitignore"
+└── GSE155213                      # Raw data files used for the analysis
 ```
