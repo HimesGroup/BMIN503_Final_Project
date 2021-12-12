@@ -336,16 +336,18 @@ abline(h = c(-2, 2), col = "blue")
 
 ### Testing DE analysis using Limma-voom packages
 
+When the library sizes are quite variable between samples, then the voom approach is theoretically more powerful than limma-trend. I am passing the filtered DGElist to Voom because voom convert the read counts to log2-cpm, with associated weights, ready for linear modelling, and my **mydata.copy** list is already log-transformed. This could make the comparison beiween the two DE analysis mrhthods little difficult but overall the steps follwed are similar. 
+
 ```{r,eval=TRUE,message=FALSE}
 
-v_DE <- voom(mydata.copy, design.copy, plot = TRUE)
-v_DE
+v_DE <- voom(mydata, design.copy, plot = TRUE)
+dim(v_DE)
 
 #Fit a linear model per gene
-fit_limma <- lmFit(mydata.copy, design.copy)
+fit_limma <- lmFit(v_DE, design.copy)
 
 ## Calculate the statistics for our specific contrasts of interest
-vfit <- contrasts.fit(vfit, contrasts = contrast.matrix)
+vfit <- contrasts.fit(fit_limma, contrasts = contrast.matrix)
 
 #Use an empirical Bayes algorithm to shrink the gene-specific variances towards the average variance across all genes
 efit <- eBayes(vfit)
@@ -363,7 +365,7 @@ dt <- decideTests(tfit)
 summary(dt)
 
 # Identify top DE genes for Marijuana group, just to compare result with edgeR 
-topTreat(tfit, coef = 2, n = 10)
+mari_tobacco <- topTreat(tfit, coef = 3, n = 10)
 
 ```
 
@@ -371,12 +373,14 @@ topTreat(tfit, coef = 2, n = 10)
 
 ## Gene Annotation
 
+Annotating the Ensemble Gene IDs in the `mari_tobacco` file, i.e. output of top 10 DE genes in the Marijuana_vs_tobacco group with gene symbols. This is just a step to prepare datasets for GSEA. or interpret results better, But here I am simply merging the files toattempt gene annotation and interpret the result. The `connection` to ensemble.org is temporarily unavailable, hence I have commented the line, in order to avoid haulting of knitting process. mart package has been haulted 
+
 ```{r,eval=TRUE, message=FALSE}
 
 # interrogate the BioMart database to get gene symbol and description for these genes 
-mart <- useMart(biomart="ENSEMBL_MART_ENSEMBL", host="https://grch37.ensembl.org", path="/biomart/martservice", dataset="hsapiens_gene_ensembl")
+us_mart <- useEnsembl(biomart="ENSEMBL_MART_ENSEMBL", host="https://grch37.ensembl.org", dataset="hsapiens_gene_ensembl", mirror = "uswest")
 
-genes <- biomaRt::getBM(attribute=c('ensembl_gene_id', 'hgnc_symbol'), values=feature.table$Features, mart=mart)
+genes <- biomaRt::getBM(attribute=c('ensembl_gene_id', 'hgnc_symbol'), values=feature.table$Features, mart=us_mart)
 
 #removing any duplicate gene ids
 genes.matrix <- genes[-which(duplicated(genes$ensembl_gene_id)),]
@@ -388,18 +392,21 @@ length(unique(genes.matrix$ensembl_gene_id))
 #Replacing blank cells with NAs
 genes.matrix[genes.matrix == ""] <- NA
 
+genes_id <- as.character(rownames(mari_tobacco))
+length(genes_id)
+
 # select genes of interest only
 rownames(genes.matrix)<-genes.matrix$ensembl_gene_id
-features.annot <- genes.matrix[as.character(copy.main$Features),]
+gene.annot <- genes.matrix[as.character(genes_id),]
 
 # join the two tables
-rownames(copy.main) <- copy.main$Features
-merged.feature.table <- cbind(features.annot,copy.main)
+rownames(mari_tobacco) <- mari_tobacco$ID
+merged.feature.table <- cbind(gene.annot,mari_tobacco)
 
 head(merged.feature.table)
 
 #Removing features column
-merged.feature <- subset(merged.feature.table, select = -c(Features))
+merged.feature <- subset(merged.feature.table, select = -c(ensembl_gene_id))
 
 #checking NA rows for symbol in merged.feature table before deleting them
 row.has.na <- apply(merged.feature, 1, function(x){any(is.na(x))})
@@ -420,11 +427,13 @@ There are indeed differentially expressed genes that are clearly upregulated and
 However, one of the greatest limitation was the publicly available dataset that was pre-normalized, which is not ideal for DE analysis and can bias the results. There is no way to know if the log2 transformation inut some bias in my dataset. Ideally for research purposes, in such cases getting the raw data from the SRA database and starting from the fastqs and mapping them to a genome is a better idea than the count table. But its beyond the scope of this class. 
 
 
-#References
+# References
+
 1. Bioconductor EdgeR manual: https://bioconductor.org/packages/devel/bioc/manuals/edgeR/man/edgeR.pdf
 2. Tutorial on DE analysis with edgeR:https://web.stanford.edu/class/bios221/labs/rnaseq/lab_4_rnaseq.html  
 3. Forum on CPM cutoff: https://support.bioconductor.org/p/101838/
 4. Case studies and user guide on edgeR: https://bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf
+5. Limma manual: https://bioconductor.org/packages/release/bioc/vignettes/limma/inst/doc/usersguide.pdf
 
 
 # Setup 
