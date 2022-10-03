@@ -1,0 +1,136 @@
+---
+title: "medicare_enrollment_by_county"
+format: html
+editor: visual
+
+project:
+  execute-dir: project
+---
+
+## Merge ACO and Medicare Enrollment Data
+*Assumptions*
+- If there <10 benes of ACO enrollment in a county, assume the enrollment is zero.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(here)
+library(readr)
+library(stringr)
+aco_enroll <- read_delim(here("data", "interim", "aco_enrollment.csv"), 
+     delim = "|", escape_double = FALSE, trim_ws = TRUE)
+med_enroll <- read_delim(here("data", "interim", "medicare_enrollment.csv"), 
+     delim = "|", escape_double = FALSE, trim_ws = TRUE)
+
+aco_enroll$StateCounty <- paste(aco_enroll$County_Name, '|', aco_enroll$State_Name)
+med_enroll$StateCounty <- paste(med_enroll$BENE_COUNTY_DESC, '|', med_enroll$BENE_STATE_DESC)
+med_enroll <- rename(med_enroll, Year = YEAR)
+aco_counties <- unique(aco_enroll$StateCounty)
+med_counties <- unique(med_enroll$StateCounty)
+
+length(union(med_counties, aco_counties))
+length(intersect(med_counties, aco_counties))
+length(setdiff(med_counties, aco_counties))
+
+diff <- setdiff(med_counties, aco_counties)
+aco_diff <- setdiff(aco_counties, med_counties)
+length(diff)
+
+select(filter(med_enroll, med_enroll$StateCounty %in% diff), c("Year", "TOT_BENES")) %>% 
+  group_by(Year) %>%
+  summarize(sum(TOT_BENES, na.rm=TRUE))
+```
+Some data cleaning required to merge counties. Overall, pretty great.
+
+About 150k per year which appear in all medicare file, but not ACO file. No ACO penetration in those areas...
+
+Due to difference in how names are represented... LaSalle in one file, La Salle in another. Can fix this mapping up front.
+
+In VA:
+Colonial Heights Cit
+Colonial Heights City
+
+```{r}
+select(filter(med_enroll, med_enroll$StateCounty %in% diff), c("Year", "TOT_BENES")) %>% 
+  group_by(Year) %>%
+  summarize(sum(TOT_BENES, na.rm=TRUE))
+
+med_enroll.diff <- select(filter(med_enroll, med_enroll$StateCounty %in% diff), c("Year", "TOT_BENES", "StateCounty"))
+med_enroll.diff[order(-med_enroll.diff$TOT_BENES), ]
+
+select(filter(aco_enroll, aco_enroll$StateCounty %in% aco_diff), c("Year", "Tot_AB_Psn_Yrs")) %>% 
+  group_by(Year) %>%
+  summarize(sum(Tot_AB_Psn_Yrs, na.rm=TRUE))
+
+aco_enroll.diff <- select(filter(aco_enroll, aco_enroll$StateCounty %in% aco_diff), c("Year", "Tot_AB_Psn_Yrs", "StateCounty"))
+aco_enroll.diff[order(-aco_enroll.diff$Tot_AB_Psn_Yrs), ]
+```
+Group ACO data to county level
+```{r}
+aco_enroll[is.na(aco_enroll$Tot_AB_Psn_Yrs), "Tot_AB_Psn_Yrs"] <- 0
+aco_by_county <- aco_enroll %>%
+  group_by(Year, StateCounty) %>%
+  summarize(ACOBenePsnYrs = sum(Tot_AB_Psn_Yrs))
+```
+Merging the data
+```{r}
+merged <- merge(
+  med_enroll,
+  aco_by_county,
+  by=c("StateCounty", "Year"),
+  all.x = TRUE
+)
+merged <- rename(
+  merged,
+  AllMedBenePsnYrs = TOT_BENES,
+  OrigMedBenePsnYrs = ORGNL_MDCR_BENES,
+  MA_BenePsnYrs = MA_AND_OTH_BENES,
+)
+merged.subset <- select(
+  merged,
+  c("StateCounty", "Year", "AllMedBenePsnYrs", "OrigMedBenePsnYrs", "MA_BenePsnYrs", "ACOBenePsnYrs")
+)
+
+# filter obs where total medicare enroll is unknown
+print(count(merged.subset))
+merged.subset <- filter(
+  merged.subset, 
+  !is.na(merged.subset$AllMedBenePsnYrs)
+)
+merged.subset[is.na(merged.subset$ACOBenePsnYrs), "ACOBenePsnYrs"] <- 0
+```
+
+Add new columns
+```{r}
+merged.subset <- merged.subset %>%
+  mutate(ACOPenetration = ACOBenePsnYrs / AllMedBenePsnYrs) %>%
+  mutate(MAPenetration = MA_BenePsnYrs / AllMedBenePsnYrs) %>%
+  mutate(VBCPenetration = MAPenetration + ACOPenetration) %>%
+  mutate(LogAllMedBenePsnYrs = log(AllMedBenePsnYrs))
+
+library(ggplot2)
+plt <- ggplot(filter(merged.subset, Year == 2019), mapping=aes(x=VBCPenetration, y=LogAllMedBenePsnYrs)) +
+  geom_point()
+plt
+```
+Observations:
+- Maybe a relationship between Bene count and VBC penetration. This could result from removal of small counties...
+- Why are there pene figures > 1?
+
+Looks like there was an issue in calculating in 2019? All issues occur in 2019, affects 63 records. Need to verify that assignables really are drawn from the entire medicare population.
+
+```{r}
+count(merged.subset)
+gt.zero <- filter(merged.subset, VBCPenetration > 1)
+count(gt.zero)
+gt.zero
+```
+
+Validate MA enrollment figure...
+1-2% under [KFF Report](https://www.kff.org/medicare/issue-brief/medicare-advantage-in-2022-enrollment-update-and-key-trends/#:~:text=In%202022%2C%20nearly%20half%20of,(19%25%20to%2048%25).), but reasonable
+```{r}
+merged.subset %>%
+  group_by(Year) %>%
+  summarize(ma_sum = sum(MA_BenePsnYrs, na.rm = TRUE), med_sum = sum(AllMedBenePsnYrs), 
+            pene = sum(MA_BenePsnYrs, na.rm=TRUE) / sum(AllMedBenePsnYrs, na.rm=TRUE))
+```
