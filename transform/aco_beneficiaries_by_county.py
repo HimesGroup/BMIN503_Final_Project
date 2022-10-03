@@ -6,8 +6,6 @@ Filter records where there are <10 members in a county
 import csv
 import glob
 import os
-import shutil
-from unicodedata import numeric
 
 CWD = os.getcwd()
 RAW_DATA_LST = glob.glob(os.path.join(CWD, "data", "raw", "open_source", "Number_Of_ACO_Assigned_Beneficiaries_by_County_PUF_*.csv"))
@@ -26,14 +24,7 @@ FINAL_COL_LST = [
     "Tot_AB_Psn_Yrs",
     "Tot_AB"
 ]
-NUMERIC_COLS = [
-    "AB_Psn_Yrs_ESRD",
-    "AB_Psn_Yrs_DIS",
-    "AB_Psn_Yrs_AGDU",
-    "AB_Psn_Yrs_AGND",
-    "Tot_AB_Psn_Yrs",
-    "Tot_AB"
-]
+
 
 def main():
     with open(FILE_OUT, "w", newline='') as f:
