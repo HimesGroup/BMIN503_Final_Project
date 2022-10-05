@@ -14,6 +14,7 @@ from zipfile import ZipFile
 import glob
 import os
 import shutil
+from .aco_beneficiaries_by_county import ssa_mappings
 
 CWD = os.getcwd()
 RAW_DATA_LST = glob.glob(os.path.join(CWD, "data", "raw", "open_source", "nursing_home_compare", "*.zip"))
@@ -22,7 +23,12 @@ COL_MAPPING = json.load(open(os.path.join(CWD, "transform", "mappings", "nhc_pro
 COL_MAPPING = {k.lower().replace(" ", "_"): val.lower().replace(" ", "_") for k, val in COL_MAPPING.items()}
 ALL_COLS = set(COL_MAPPING.keys()).union(set(COL_MAPPING.values()))
 COL_COUNT = 35
-FINAL_COL_LST = list(COL_MAPPING.values())[0:COL_COUNT]
+FINAL_COL_LST = [
+    "SSA_Code",
+    "FIPS_Code",
+    "StateAbbrev",
+    "StdCountyName"
+    ] + list(COL_MAPPING.values())[0:COL_COUNT] + ["source_file"]
 COL_MAPPING.update({v: v for v in COL_MAPPING.values()})
 ALLOWED_OMMISSIONS = {
     # not present in 2022-07 data, replaced by turnover?
@@ -31,9 +37,10 @@ ALLOWED_OMMISSIONS = {
 }
 
 def extract_zips():
+    ssa_idx, _, state_ssa = ssa_mappings()
     with open(FILE_OUT, "w", newline='') as f:
         writer = csv.writer(f, delimiter='|')
-        writer.writerow(FINAL_COL_LST + ["source_file"])
+        writer.writerow(FINAL_COL_LST)
     for archive in RAW_DATA_LST:
         with ZipFile(archive, 'r') as zip1:
             file_lst = zip1.namelist()
@@ -57,7 +64,7 @@ def extract_zips():
                     if len(mapped_cols) != COL_COUNT:
                         print([col for col in header if col not in ALL_COLS])
                         print(len(mapped_cols))
-                        missing_cols = set(FINAL_COL_LST) - set(mapped_cols.keys())
+                        missing_cols = set(FINAL_COL_LST[4:-1]) - set(mapped_cols.keys())
                         print(missing_cols)
                         if len(missing_cols - ALLOWED_OMMISSIONS) > 0:
                             raise(Exception)
@@ -70,13 +77,21 @@ def extract_zips():
                             if len(row) == 0:
                                 break
                             row_to_write = []
-                            for col in FINAL_COL_LST:
+                            for col in FINAL_COL_LST[4:-1]:
                                 idx = mapped_cols.get(col, None)
                                 if idx is not None:
                                     row_to_write.append(row[idx])
                                 else:
                                     row_to_write.append("")
-                            row_to_write += [f]
+                            state_cd = state_ssa.get(row[4], None)
+                            ssa_cd = state_cd + row[7].zfill(3) if state_cd else "Unknown"
+                            county_mappings = [
+                                ssa_cd,
+                                ssa_idx[ssa_cd]["FIPS County Code"] if ssa_idx.get(ssa_cd, None) else "Unknown",
+                                ssa_idx[ssa_cd]["State"] if ssa_idx.get(ssa_cd, None) else "Unknown",
+                                ssa_idx[ssa_cd]["County Name"] if ssa_idx.get(ssa_cd, None) else "Unknown"
+                            ]
+                            row_to_write = county_mappings + row_to_write + [f]
                             writer.writerow(row_to_write)
                             count+=1
                         print(f"{f}.{file_name}: {count} rows written")

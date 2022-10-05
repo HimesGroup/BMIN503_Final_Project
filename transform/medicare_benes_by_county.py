@@ -4,11 +4,16 @@ Remove
 
 import csv
 import os
+from .aco_beneficiaries_by_county import ssa_mappings
 
 CWD = os.getcwd()
 FILE_IN = os.path.join(CWD, "data", "raw", "open_source", "enroll_052022_sorted.csv")
 FILE_OUT = os.path.join("data", "interim", "medicare_enrollment.csv")
 FINAL_COL_LST = [
+    "SSA_Code",
+    "FIPS_Code",
+    "StateAbbrev",
+    "StdCountyName",
     "YEAR",
     "MONTH",
     "BENE_GEO_LVL",
@@ -35,11 +40,13 @@ FINAL_COL_LST = [
 NUMERIC_COLS = FINAL_COL_LST[7:]
 
 def main():
+    _, fips_idx, _ = ssa_mappings()
+    
     with open(FILE_OUT, "w", newline='') as f:
         writer = csv.writer(f, delimiter='|')
         writer.writerow(FINAL_COL_LST + ["source_file"])
 
-    with open(FILE_IN, "r", encoding='latin-1') as fi:        
+    with open(FILE_IN, "r", encoding='latin-1') as fi:    
         file_name = os.path.basename(FILE_IN)
         reader = csv.reader(fi)
         next(reader)
@@ -48,11 +55,18 @@ def main():
             count=0
             skipped_count=0
             for row in reader:
+                fips_cd = row[6]
+                county_mappings = [
+                    fips_idx[fips_cd]["SSACD"] if fips_idx.get(fips_cd, None) else "Unknown",
+                    fips_cd,
+                    fips_idx[fips_cd]["State"] if fips_idx.get(fips_cd, None) else "Unknown",
+                    fips_idx[fips_cd]["County Name"] if fips_idx.get(fips_cd, None) else "Unknown"
+                ]
                 numeric_data = row[7:]
                 if not (row[1] == "Year" and row[2] == "County"):
                     skipped_count+=1
                     continue
-                row_to_write = row[0:7] + [
+                row_to_write = county_mappings + row[0:6] + [
                     obs if obs.replace(".", "").isnumeric() else "" for obs in numeric_data
                 ] + [file_name]
                 writer.writerow(row_to_write)
