@@ -32,6 +32,17 @@ unique(provider_info_tmp$processing_date)
 provider_info_tmp$processing_date[provider_info_tmp$processing_date == "10/1/2019"] <- "2019-10-01"
 provider_info_tmp$processing_date <- as.Date(provider_info_tmp$processing_date)
 ```
+County Level Missingness
+```{r}
+count(provider_info_tmp)
+# guam and virgin islands
+count(filter(provider_info_tmp, SSA_Code == "Unknown"))
+
+# 758 obs without FIPS mapping... Dropping
+count(filter(provider_info_tmp, StateAbbrev == "Unknown"))
+
+provider_info_tmp <- filter(provider_info_tmp, StateAbbrev != "Unknown")
+```
 
 ## Descriptive Stats
 
@@ -130,12 +141,26 @@ select(filtered_data,
 ## Export Facility Level
 
 ```{r}
-save(filtered_data,file=here("data", "interim", "staffing_data.Rda"))
+snf_level_data <- filtered_data
+rm(filtered_data)
+save(snf_level_data, file=here("data", "interim", "snf_provider_info.Rda"))
 ```
 
 ## Aggregate To County Level
-Since payer mix (VBC penetration) is not observed at the facility level and it is the main explanatory variable of interest, the dependent variables should be aggregated to the same level (county). Advisor indicated that variables from high level dimensions are often included as fixed effects, but not for the primary variable of interest. As an example, census tract level social determinants of health are often projected to the indvidual level. However, these are typically used as controls, rather than the primary variable of interest.
+Since payer mix (VBC penetration) is not observed at the facility level and it is the main explanatory variable of interest, the dependent variables should be aggregated to the same level (county). Advisor indicated that variables from high level dimensions are often included as fixed effects, but not for the primary variable of interest. As an example, census tract level social determinants of health are often projected to the individual level. However, these are typically used as controls, rather than the primary variable of interest.
 
 ```{r}
-staffing_data <- load(here("data", "interim", "staffing_data.Rda"))
+load(here("data", "interim", "snf_provider_info.Rda"))
+```
+
+```{r}
+group_cols <- c("SSA_Code", "StateAbbrev", "StdCountyName", "collection_yr")
+
+county_groups <- snf_level_data %>%
+  group_by(across(allof(cols))) %>%
+  summarize(
+    cerfied_beds = sum(number_of_certified_beds, na.rm=TRUE),
+    sum_avg_daily_residents = sum(avg_number_of_residents_per_day, na.rm=TRUE),
+    mean_cna_reported_hprd = weighted.mean(reported_nurse_aide_staffing_hours_per_resident_per_day, avg_number_of_residents_per_day, na.rm=TRUE))
+  )
 ```
