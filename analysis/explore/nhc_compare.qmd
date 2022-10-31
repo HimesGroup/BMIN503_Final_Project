@@ -32,7 +32,9 @@ unique(provider_info_tmp$processing_date)
 provider_info_tmp$processing_date[provider_info_tmp$processing_date == "10/1/2019"] <- "2019-10-01"
 provider_info_tmp$processing_date <- as.Date(provider_info_tmp$processing_date)
 ```
+
 County Level Missingness
+
 ```{r}
 count(provider_info_tmp)
 # guam and virgin islands
@@ -147,6 +149,7 @@ save(snf_level_data, file=here("data", "interim", "snf_provider_info.Rda"))
 ```
 
 ## Aggregate To County Level
+
 Since payer mix (VBC penetration) is not observed at the facility level and it is the main explanatory variable of interest, the dependent variables should be aggregated to the same level (county). Advisor indicated that variables from high level dimensions are often included as fixed effects, but not for the primary variable of interest. As an example, census tract level social determinants of health are often projected to the individual level. However, these are typically used as controls, rather than the primary variable of interest.
 
 ```{r}
@@ -155,12 +158,31 @@ load(here("data", "interim", "snf_provider_info.Rda"))
 
 ```{r}
 library(tidyr)
-group_cols <- c("SSA_Code", "StateAbbrev", "StdCountyName", "collection_yr")
+group_cols <- c("FIPS_Code", "StateAbbrev", "StdCountyName", "collection_yr")
 
-county_groups <- snf_level_data %>%
-  group_by(across(all_of(cols))) %>%
+snf_level_data <- snf_level_data %>% rename(case_mix_total_nurse_prpd = `case-mix_total_nurse_staffing_hours_per_resident_per_day`,
+case_mix_cna_prpd = `case-mix_nurse_aide_staffing_hours_per_resident_per_day`,
+chow = provider_changed_ownership_in_last_12_months)
+county_staffing <- snf_level_data %>%
+  group_by(across(all_of(group_cols))) %>%
   summarize(
+    row_cnt = n(),
     cerfied_beds = sum(number_of_certified_beds, na.rm=TRUE),
-    sum_avg_daily_residents = sum(avg_number_of_residents_per_day, na.rm=TRUE),
-    mean_cna_reported_hprd = weighted.mean(reported_nurse_aide_staffing_hours_per_resident_per_day, avg_number_of_residents_per_day, na.rm=TRUE))
+    sum_avg_daily_residents = sum(average_number_of_residents_per_day, na.rm=TRUE),
+    mean_cna_reported_hprd = weighted.mean(reported_nurse_aide_staffing_hours_per_resident_per_day, average_number_of_residents_per_day, na.rm=TRUE),
+    mean_lpn_reported_hprd = weighted.mean(reported_lpn_staffing_hours_per_resident_per_day, average_number_of_residents_per_day, na.rm=TRUE),
+    mean_rn_reported_hprd = weighted.mean(reported_rn_staffing_hours_per_resident_per_day, average_number_of_residents_per_day, na.rm=TRUE),
+    mean_licensed_reported_hprd = weighted.mean(reported_licensed_staffing_hours_per_resident_per_day, average_number_of_residents_per_day, na.rm=TRUE),
+    mean_total_reported_hprd = weighted.mean(reported_total_nurse_staffing_hours_per_resident_per_day, average_number_of_residents_per_day, na.rm=TRUE),
+    mean_total_cm_hprd = weighted.mean(case_mix_total_nurse_prpd, average_number_of_residents_per_day, na.rm=TRUE),
+  mean_cna_cm_hprd = weighted.mean(case_mix_cna_prpd, average_number_of_residents_per_day, na.rm=TRUE))
+# TODO add additional weighted averages... % privately owned etc...
+
+library(here)
+save(county_staffing, file=here("data", "interim", "county_level_staffing.Rda"))
+```
+
+```{r}
+plt <- ggplot(county_staffing, aes(x=row_cnt)) + geom_histogram(binwidth=5) + xlim(0,100)
+plt
 ```

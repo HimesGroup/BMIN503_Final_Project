@@ -1,0 +1,134 @@
+---
+title: "County Level Regressions"
+author: "David Roberts"
+format: html
+editor: visual
+
+project:
+  execute-dir: project
+---
+
+## Purpose
+- Merge NHC and VBC penetration data
+- Visualize and explore patterns across time
+- Linear modeling at the county level
+
+## Imports
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(here)
+```
+
+## Load Data
+
+```{r}
+load(here("data", "interim", "county_vbc_penetration.Rda"))
+load(here("data", "interim", "county_level_staffing.Rda"))
+county_pene <- merged.subset
+rm(merged.subset)
+```
+
+```{r}
+county_staffing <- rename(
+  county_staffing,
+  Year = collection_yr
+)
+
+merged <- merge(
+  county_pene,
+  county_staffing,
+  by=c("FIPS_Code", "Year"),
+  all.x = TRUE
+)
+merged$VBCPenetration = merged$VBCPenetration * 100
+
+merged$MAPenetration = merged$MAPenetration * 100
+merged$ACOPenetration = merged$ACOPenetration * 100
+
+merged$YearFactor = as.factor(merged$Year)
+```
+
+# Visualize across time
+
+```{r}
+plt <- ggplot(filter(merged, Year == 2017), mapping=aes(x = VBCPenetration, y = mean_cna_reported_hprd)) + geom_point() + xlim(0,100) + ylim(0,6) + ggtitle(label="Reported Nursing Aid Hours Per Resident Per Day By VBC Penetration (2017)")
+plt
+plt <- ggplot(filter(merged, Year == 2018), mapping=aes(x = VBCPenetration, y = mean_cna_reported_hprd)) + geom_point()  + xlim(0,100) + ylim(0,6) + ggtitle(label="Reported Nursing Aid Hours Per Resident Per Day By VBC Penetration (2018)")
+plt
+plt <- ggplot(filter(merged, Year == 2019), mapping=aes(x = VBCPenetration, y = mean_cna_reported_hprd)) + geom_point()  + xlim(0,100) + ylim(0,6) + ggtitle(label="Reported Nursing Aid Hours Per Resident Per Day By VBC Penetration (2019)")
+plt
+plt <- ggplot(filter(merged, Year == 2020), mapping=aes(x = VBCPenetration, y = mean_cna_reported_hprd)) + geom_point()  + xlim(0,100) + ylim(0,6)+ ggtitle(label="Reported Nursing Aid Hours Per Resident Per Day By VBC Penetration (2020)")
+plt
+plt <- ggplot(filter(merged, Year == 2021), mapping=aes(x = VBCPenetration, y = mean_cna_reported_hprd)) + geom_point() + xlim(0,100) + ylim(0,6) + ggtitle(label="Reported Nursing Aid Hours Per Resident Per Day By VBC Penetration (2021)")
+plt
+```
+
+How to explain the spike in VBC penetration in 2019? Something appears to be wrong with the data... Seeing rates >1
+
+https://www.naacos.com/press-release--medicare-aco-participation-flat-in-2022
+Drop in ACO's in 2019. So why did VBC pene increase in this year? So why did VBC pene increase in this year? Is COVID impactful?
+
+# Regresion Models
+
+### VBC Penetration by year
+
+Negligible association, not clinically meaningful .002 \~= 7 seconds per resident per year In 2020-2021, increases to .005 \~= 17 seconds
+
+Interesting that without adding state fixed effects, CNA casemix variable is not statistically significant.
+
+```{r}
+for (yr in 2017:2021) {
+  filtered <- filter(merged, Year==yr)
+  model <- lm(mean_cna_reported_hprd ~ VBCPenetration + mean_cna_cm_hprd, filtered)
+  print(summary(model))
+}
+```
+
+### VBC Penetration, Decomposed by Year
+
+Still negligible. ACO pene loses stat signficance in 2019. This is the strange year where VBC penetration \> 1 in \~60 cases.
+
+```{r}
+for (yr in 2017:2021) {
+  filtered <- filter(merged, Year==yr)
+  model <- lm(mean_cna_reported_hprd ~ MAPenetration + ACOPenetration + mean_cna_cm_hprd, filtered)
+  print(summary(model))
+}
+```
+
+### VBC Decomposed with State / Year fixed effects
+State / year fixed effects should prove influential for two reasons:
+- Regulatory environment varies by state and year.
+- COVID had a differential impact depending on statewide policies and cultural norms regarding vaccination.
+
+\~10 second drop per pct point increase of MA penetration. ACO penetration is stat insignificant and tiny magnitude. Results are robust to incorporating case mix variable. In fact, the impact increases 3 seconds when adjusting for case-mix.
+
+This is interesting. Reflects the differing levers in the MA program vs. the ACO program. MA payors contract directly with SNF's. A hospital based ACO's levers are indirect. May influence referral patterns, but only to the extent that they can influence hospital-based case managers. A physician based ACO probably has very limited influence in the SNF world.
+
+```{r}
+model <- lm(mean_cna_reported_hprd ~ MAPenetration + ACOPenetration + StateAbbrev.x:YearFactor + mean_cna_cm_hprd, merged)
+print(summary(model))
+```
+
+### VBC Decomposed, total staffing
+
+Total staffing initially dropping \~7 seconds with each point of MA penetration. Adjusting for case-mix makes magnitude even more negligible.
+
+```{r}
+model <- lm(mean_total_reported_hprd ~ MAPenetration + ACOPenetration + StateAbbrev.x:YearFactor + mean_total_cm_hprd, merged)
+print(summary(model))
+```
+
+### Conclusions
+
+Domain experts told me it was a nothing burger. My results support their claim that it's a nothing burger.
+
+What counter-balancing forces may contribute to the outcome? 
+
+- SNF's receiving pressure in Part A space, SNF admin responds by increasing services in Part B. AKA, the water balloon effect. 
+- ACO's exert very little influence. Do not have many levers to pull in order to affect behavior. This outcome contradicts portrayals of SNF's as the "ACO piggybank". 
+- Some SNF's may receive financial supports via integration in larger systems. For instance, a SNF onsite at a CCRC or Hospital may be subsidized against financial shocks. 
+- MA contracting may be supportive in some respects. Depending on contract parameters, it may bring predictability that a FFS environment does not. 
+- VBC penetration may actually increase concentration and adversely affect specific SNF's, but not decrease staffing levels on average.

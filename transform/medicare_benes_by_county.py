@@ -7,7 +7,7 @@ import os
 from .aco_beneficiaries_by_county import ssa_mappings
 
 CWD = os.getcwd()
-FILE_IN = os.path.join(CWD, "data", "raw", "open_source", "enroll_052022_sorted.csv")
+FILE_IN = os.path.join(CWD, "data", "raw", "open_source", "enroll_072022_sort.csv")
 FILE_OUT = os.path.join("data", "interim", "medicare_enrollment.csv")
 FINAL_COL_LST = [
     "SSA_Code",
@@ -20,7 +20,7 @@ FINAL_COL_LST = [
     "BENE_STATE_ABRVTN",
     "BENE_STATE_DESC",
     "BENE_COUNTY_DESC",
-    "BENE_FIPS_CD",
+    #"BENE_FIPS_CD",
     "TOT_BENES",
     "ORGNL_MDCR_BENES",
     "MA_AND_OTH_BENES",
@@ -37,7 +37,6 @@ FINAL_COL_LST = [
     "PRSCRPTN_DRUG_PDP_BENES",
     "PRSCRPTN_DRUG_MAPD_BENES"
 ]
-NUMERIC_COLS = FINAL_COL_LST[7:]
 
 def main():
     _, fips_idx, _ = ssa_mappings()
