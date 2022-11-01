@@ -6,42 +6,54 @@ Process detail level nursing home compare staffing data
 import os
 import pandas
 import glob
-from zipfile import ZipFile
 
 CWD = os.getcwd()
-FILE_IN = r"E:/NHC/PBJ_Nurse_2021_Q4/Payroll_Based_Journal_Daily_Nurse_Staffing_2021_Q4.csv"
-RAW_DATA_LIST = glob.glob(
-    r"E:/NHC/*.zip"
-)
-print(RAW_DATA_LIST)
-DIR_OUT = "E:/NHC"
-FILE_OUT = os.path.join("data", "interim", "admin_intensity.xlsx")
-# RAW_DATA_LST = glob.glob(os.path.join(CWD, "data", "raw", "open_source", "nursing_home_compare", "*.zip"))
-# FILE_OUT = os.path.join("data", "interim", "provider_info_tmp.csv")
-# COL_MAPPING = json.load(open(os.path.join(CWD, "transform", "mappings", "nhc_provider_info.json")))
-# COL_MAPPING = {k.lower().replace(" ", "_"): val.lower().replace(" ", "_") for k, val in COL_MAPPING.items()}
-# ALL_COLS = set(COL_MAPPING.keys()).union(set(COL_MAPPING.values()))
+RAW_DATA_LST = glob.glob(os.path.join(CWD, "data", "raw", "open_source", "PBJ*.csv"))
+print(RAW_DATA_LST)
+FILE_OUT = os.path.join(CWD, "data", "interim", "pbj_facility_level.csv")
+COLS = [
+    "PROVNUM","PROVNAME","CITY","STATE","COUNTY_NAME","COUNTY_FIPS","CY_Qtr","WorkDate","MDScensus","Hrs_RNDON","Hrs_RNDON_emp","Hrs_RNDON_ctr","Hrs_RNadmin","Hrs_RNadmin_emp","Hrs_RNadmin_ctr","Hrs_RN","Hrs_RN_emp","Hrs_RN_ctr","Hrs_LPNadmin","Hrs_LPNadmin_emp","Hrs_LPNadmin_ctr","Hrs_LPN","Hrs_LPN_emp","Hrs_LPN_ctr","Hrs_CNA","Hrs_CNA_emp","Hrs_CNA_ctr","Hrs_NAtrn","Hrs_NAtrn_emp","Hrs_NAtrn_ctr","Hrs_MedAide","Hrs_MedAide_emp","Hrs_MedAide_ctr"
+]
 
-def extract_all():
-    for file in RAW_DATA_LIST:
-        print("Extracting", file)
-        with ZipFile(file, 'r') as zipObj:
-            zipObj.extractall(DIR_OUT)
 
-def calc_admin_intensity():
-    df = pandas.read_csv(FILE_IN, encoding='latin-1', dtype={'PROVNUM': str})
+# def extract_all():
+#     for file in RAW_DATA_LST:
+#         print("Extracting", file)
+#         with ZipFile(file, 'r') as zipObj:
+#             zipObj.extractall(FILE_OUT)
+
+
+def main():
+    for i, f in enumerate(RAW_DATA_LST):
+        print("Processing", f)
+        df = pandas.read_csv(f, encoding='latin-1', skiprows=0, dtype={i:str for i in range(8)})#, dtype={'PROVNUM': str})
+        qtr = df.iloc[0,6]
+        if qtr == "2021Q4":
+            start = df.shape[0]
+            df = df.loc[df["incomplete"] == 0]
+            end = df.shape[0]
+            print("Dropped", start - end, "rows due to incomplete data")
+            df.drop(columns=["incomplete"], inplace=True)
+        df.columns = COLS
+        df = calc_admin_intensity(df)
+        if i == 0:
+            df_final = df.copy()
+        else:
+            df_final = pandas.concat([df_final, df], ignore_index=True)
+    df_final.to_csv(FILE_OUT, index=False)
+
+
+def calc_admin_intensity(df):
+    print(df.shape)
     df["Hrs_Admin"] = df["Hrs_RNDON"] + df["Hrs_RNadmin"] + df["Hrs_LPNadmin"]
     df["Hrs_NonAdmin"] = df["Hrs_RN"] + df["Hrs_LPN"] + df["Hrs_CNA"] + df["Hrs_NAtrn"] + df["Hrs_MedAide"]
-    initial_shape = print(df.shape[0])
-    df = df.loc[df["incomplete"] == 0]
-    final = print(df.shape[0])
-    print("Dropped", initial_shape - final, "rows due to incomplete data")
-    grouped = df.groupby("PROVNUM", as_index=False).agg({"MDScensus": "sum", "Hrs_Admin":"sum", "Hrs_NonAdmin":"sum", "ObsDays": "count"})
-    grouped["Hrs_Admin_prpd"] = grouped["Hrs_Admin"] / grouped["MDScensus"]
-    grouped["Hrs_NonAdmin_prpd"] = grouped["Hrs_NonAdmin"] / grouped["MDScensus"]
-    grouped["AdminIntensity"] =grouped["Hrs_Admin_prpd"] / (grouped["Hrs_NonAdmin_prpd"] + grouped["Hrs_Admin_prpd"])
-    grouped.to_excel(FILE_OUT, index=False)
+    grouped = df.groupby(["PROVNUM", "CY_Qtr"], as_index=False).agg({"MDScensus": "sum", "Hrs_Admin":"sum", "Hrs_NonAdmin":"sum", "WorkDate": "count"})
+    grouped["Hrs_Admin_prpd"] = (grouped["Hrs_Admin"] / grouped["MDScensus"]).round(4)
+    grouped["Hrs_NonAdmin_prpd"] = (grouped["Hrs_NonAdmin"] / grouped["MDScensus"]).round(4)
+    grouped["AdminIntensity"] = (grouped["Hrs_Admin_prpd"] / (grouped["Hrs_NonAdmin_prpd"] + grouped["Hrs_Admin_prpd"])).round(4)
+    grouped["EstResidentsPerDay"] = (grouped["MDScensus"] / grouped["WorkDate"]).round(4)
+    print(grouped.shape)
+    return grouped
 
 if __name__ == "__main__":
-    extract_all()
-    # calc_admin_intensity()
+    main()
