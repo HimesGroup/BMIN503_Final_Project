@@ -27,29 +27,35 @@ library(here)
 
 ```{r}
 load(here("data", "interim", "snf_provider_info.Rda"))
-#payroll_2021Q4 <- read.csv("E:/NHC/PBJ_Nurse_2021_Q4/Payroll_Based_Journal_Daily_Nurse_Staffing_2021_Q4.csv")
+pbj <- read.csv(here("data", "interim", "pbj_facility_level.csv"))
 ```
 
 ## Calculate YOY increases in staffing rating
 Landed in 4-5 range is a case
 ```{r}
-staffing_next_yr <- select(snf_level_data, c("federal_provider_number", "staffing_rating", "collection_yr", "adjusted_rn_staffing_hours_per_resident_per_day", "adjusted_total_nurse_staffing_hours_per_resident_per_day")
-)
+staffing_next_yr <- select(snf_level_data, c("federal_provider_number", "staffing_rating", "collection_yr", "adjusted_rn_staffing_hours_per_resident_per_day", "adjusted_total_nurse_staffing_hours_per_resident_per_day", "ownership_type", "average_number_of_residents_per_day", "provider_changed_ownership_in_last_12_months", "continuing_care_retirement_community","average_number_of_residents_per_day"))
 staffing_next_yr$collection_yr = staffing_next_yr$collection_yr - 1
 snf_level_data <- snf_level_data %>%
   left_join(staffing_next_yr, by=c("federal_provider_number", "collection_yr"))
 staffing_yoy <- select(snf_level_data,
     c("federal_provider_number", "staffing_rating.x", "collection_yr",
        "staffing_rating.y","adjusted_rn_staffing_hours_per_resident_per_day.x", "adjusted_total_nurse_staffing_hours_per_resident_per_day.x",
-      "adjusted_rn_staffing_hours_per_resident_per_day.y", "adjusted_total_nurse_staffing_hours_per_resident_per_day.y")
+      "adjusted_rn_staffing_hours_per_resident_per_day.y", "adjusted_total_nurse_staffing_hours_per_resident_per_day.y",
+      "ownership_type.x", "ownership_type.y", "average_number_of_residents_per_day.x",
+      "average_number_of_residents_per_day.y",
+      "provider_changed_ownership_in_last_12_months.y", "continuing_care_retirement_community.y",
+      "average_number_of_residents_per_day.x", "average_number_of_residents_per_day.y")
 ) %>%
   filter(is.na(staffing_rating.y) == FALSE & is.na(staffing_rating.x) == FALSE) %>%
   mutate(star_change=staffing_rating.y - staffing_rating.x) %>%
   mutate(rn_hr_prpd_change=adjusted_rn_staffing_hours_per_resident_per_day.y - adjusted_rn_staffing_hours_per_resident_per_day.x) %>%
   mutate(total_hr_prpd_change=adjusted_total_nurse_staffing_hours_per_resident_per_day.y - adjusted_total_nurse_staffing_hours_per_resident_per_day.x) %>%
-  mutate(status=
+  mutate(status=as.factor(
            ifelse(star_change > 0 & staffing_rating.x < 4 & staffing_rating.y >=4,
-          "Case", "Control"))
+          "Case", "Control"))) %>%
+  mutate(status_v2=as.factor(
+           ifelse(star_change > 1 & staffing_rating.x < 4 & staffing_rating.y >=4,
+          "Case", "Control")))
 ```
 
 
@@ -60,12 +66,119 @@ Among the cases, it only occurs with +3 and +4 stars...
 
 ```{r}
 staffing_yoy %>% count(status, star_change)
+staffing_yoy %>% count(status_v2, star_change)
 filter(staffing_yoy, is.na(rn_hr_prpd_change)) %>% count(status, star_change)
-
 staffing_yoy.complete <- filter(staffing_yoy, !(is.na(rn_hr_prpd_change) | is.na(total_hr_prpd_change)))
 ```
 
 Dropped ~3k observations
-```{r}
 
+Pull corresponding PBJ (Payroll Based Journal), also Peanut Butter and Jelly
+
+```{r}
+pbj <- pbj %>%
+  mutate(year = as.integer(substr(CY_Qtr, 1, 4))) %>%
+  mutate(quarter = as.integer(substr(CY_Qtr, 6, 6)))
+
+pbj.q4 <- pbj %>%
+  filter(quarter==4)
+
+pbj.q4.merged <- pbj.q4 %>%
+  mutate(year = year + 1) %>%
+  left_join(pbj.q4, by=c("PROVNUM", "year")) %>%
+  filter(!is.na(quarter.y)) %>%
+  mutate(admin_change_pct_pt = (AdminIntensity.y - AdminIntensity.x) * 100)
+```
+
+55939 obs in pbj.q4.merged
+55473 obs in staffing_yoy
+54807 obs in final dataframe
+
+Assess reliability of data calculated from pbj detail
+```{r}
+library(stringr)
+
+staffing_yoy.complete$year = staffing_yoy.complete$collection_yr + 1
+pbj.q4.merged <- rename(pbj.q4.merged, federal_provider_number = PROVNUM )
+final.df <- staffing_yoy.complete %>%
+  inner_join(pbj.q4.merged, by=c("year", "federal_provider_number"))
+final.df <- subset(final.df, select=-c(
+  collection_yr,
+  CY_Qtr.x,
+  CY_Qtr.y,
+  quarter.x,
+  quarter.y
+))
+final.df$year_factor <- as.factor(final.df$year)
+final.df$status <- as.factor(final.df$status)
+final.df <- final.df %>%
+  mutate(for_profit = ifelse(str_detect(ownership_type.y, 'For profit'), TRUE, FALSE))
+```
+
+Visualize
+```{r}
+plt <- ggplot(final.df, aes(x=year_factor, y=admin_change_pct_pt)) + geom_violin()
+plt
+```
+
+```{r}
+plt <- ggplot(final.df, aes(x=admin_change_pct_pt, y=star_change, color=status)) + geom_point()
+plt
+```
+
+```{r}
+plt <- ggplot(final.df, aes(x=as.factor(staffing_rating.x), y=admin_change_pct_pt)) + geom_violin()
+plt
+```
+
+```{r}
+library(gtsummary)
+select(final.df, 
+      c(staffing_rating.x, star_change, status, year_factor),
+      c(admin_change_pct_pt)
+      ) %>% tbl_summary()
+```
+
+
+Admin intensity reducing the probability of case group
+One thought... Incorporate drop in quality scores. We're worried about increasing admin intensity in ways that doesn't benefit residents.
+```{r}
+model <- glm(status ~ admin_change_pct_pt, family=binomial, final.df)
+summary(model)
+exp(coef(summary(model))[5])
+```
+
+```{r}
+model <- glm(status ~ admin_change_pct_pt + for_profit:admin_change_pct_pt +  provider_changed_ownership_in_last_12_months.y + continuing_care_retirement_community.y + average_number_of_residents_per_day.x + average_number_of_residents_per_day.y + year_factor, family=binomial, final.df)
+summary(model)
+```
+
+```{r}
+linear.model <- lm(star_change ~ admin_change_pct_pt + admin_change_pct_pt * for_profit, final.df)
+summary(linear.model)
+```
+
+
+```{r}
+model <- glm(status ~ admin_change_pct_pt + for_profit:admin_change_pct_pt +  provider_changed_ownership_in_last_12_months.y, family=binomial, filter(final.df, year_factor==2018))
+summary(model)
+```
+
+
+```{r}
+model <- glm(status_v2 ~ admin_change_pct_pt + for_profit:admin_change_pct_pt +  provider_changed_ownership_in_last_12_months.y + continuing_care_retirement_community.y, family=binomial, final.df)
+summary(model)
+```
+
+
+
+Model star change as a function of admin intensity change
+```{r}
+linear.model <- lm(star_change ~ 0 + admin_change_pct_pt, filter(final.df, star_change > 0))
+summary(linear.model)
+```
+
+```{r}
+linear.model <- lm(star_change ~ 0 + admin_change_pct_pt + for_profit:admin_change_pct_pt, final.df)
+summary(linear.model)
 ```
