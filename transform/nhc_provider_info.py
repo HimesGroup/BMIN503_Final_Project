@@ -22,7 +22,7 @@ FILE_OUT = os.path.join("data", "interim", "provider_info_tmp.csv")
 COL_MAPPING = json.load(open(os.path.join(CWD, "transform", "mappings", "nhc_provider_info.json")))
 COL_MAPPING = {k.lower().replace(" ", "_"): val.lower().replace(" ", "_") for k, val in COL_MAPPING.items()}
 ALL_COLS = set(COL_MAPPING.keys()).union(set(COL_MAPPING.values()))
-COL_COUNT = 35
+COL_COUNT = 41
 FINAL_COL_LST = [
     "SSA_Code",
     "FIPS_Code",

@@ -14,6 +14,7 @@ project:
 -   Construct a measure which attempts to measure diversion of resources to admin duties.
     -   How can I measure this?
 -   Test correlation between case-mix and diversion of resources to admin duties.
+-   105319 - Sun Terrace, admin spike in 2019
 
 ## Imports
 
@@ -31,9 +32,12 @@ pbj <- read.csv(here("data", "interim", "pbj_facility_level.csv"))
 ```
 
 ## Calculate YOY increases in staffing rating
+
 Landed in 4-5 range is a case
+
 ```{r}
-staffing_next_yr <- select(snf_level_data, c("federal_provider_number", "staffing_rating", "collection_yr", "adjusted_rn_staffing_hours_per_resident_per_day", "adjusted_total_nurse_staffing_hours_per_resident_per_day", "ownership_type", "average_number_of_residents_per_day", "provider_changed_ownership_in_last_12_months", "continuing_care_retirement_community","average_number_of_residents_per_day"))
+staffing_next_yr <- select(snf_level_data, c("federal_provider_number", "staffing_rating", "collection_yr", "adjusted_rn_staffing_hours_per_resident_per_day", "adjusted_total_nurse_staffing_hours_per_resident_per_day", "ownership_type", "average_number_of_residents_per_day", "provider_changed_ownership_in_last_12_months", "continuing_care_retirement_community","average_number_of_residents_per_day",
+"overall_rating", "health_inspection_rating", "qm_rating"))
 staffing_next_yr$collection_yr = staffing_next_yr$collection_yr - 1
 snf_level_data <- snf_level_data %>%
   left_join(staffing_next_yr, by=c("federal_provider_number", "collection_yr"))
@@ -44,34 +48,42 @@ staffing_yoy <- select(snf_level_data,
       "ownership_type.x", "ownership_type.y", "average_number_of_residents_per_day.x",
       "average_number_of_residents_per_day.y",
       "provider_changed_ownership_in_last_12_months.y", "continuing_care_retirement_community.y",
-      "average_number_of_residents_per_day.x", "average_number_of_residents_per_day.y")
-) %>%
+      "average_number_of_residents_per_day.x", "average_number_of_residents_per_day.y",
+      "overall_rating.x", "overall_rating.y", 
+      "health_inspection_rating.x", "health_inspection_rating.y", 
+      "qm_rating.x", "qm_rating.y")) %>%
   filter(is.na(staffing_rating.y) == FALSE & is.na(staffing_rating.x) == FALSE) %>%
-  mutate(star_change=staffing_rating.y - staffing_rating.x) %>%
+  mutate(overall_star_change=overall_rating.y - overall_rating.x) %>%
+  mutate(inspect_star_change=health_inspection_rating.y - health_inspection_rating.x) %>%
+  mutate(qm_star_change=qm_rating.y - qm_rating.x) %>%
+  mutate(staff_star_change=staffing_rating.y - staffing_rating.x) %>%
   mutate(rn_hr_prpd_change=adjusted_rn_staffing_hours_per_resident_per_day.y - adjusted_rn_staffing_hours_per_resident_per_day.x) %>%
   mutate(total_hr_prpd_change=adjusted_total_nurse_staffing_hours_per_resident_per_day.y - adjusted_total_nurse_staffing_hours_per_resident_per_day.x) %>%
   mutate(status=as.factor(
-           ifelse(star_change > 0 & staffing_rating.x < 4 & staffing_rating.y >=4,
+           ifelse(staff_star_change > 0 & staffing_rating.x < 4 & staffing_rating.y >=4,
           "Case", "Control"))) %>%
   mutate(status_v2=as.factor(
-           ifelse(star_change > 1 & staffing_rating.x < 4 & staffing_rating.y >=4,
+           ifelse(staff_star_change > 1 & staffing_rating.x < 4 & staffing_rating.y >=4,
+          "Case", "Control"))) %>%
+  mutate(status_v3=as.factor(
+           ifelse((staff_star_change > 0 & staffing_rating.x < 4 & staffing_rating.y >=4)
+                  & (qm_star_change < 0 | inspect_star_change < 0),
           "Case", "Control")))
 ```
 
-
-Assess missingness...
-To create a clean analysis, probably worth removing observations where an staffing observation is not available. This drops the staffing rating to 1...
+Assess missingness... To create a clean analysis, probably worth removing observations where an staffing observation is not available. This drops the staffing rating to 1...
 
 Among the cases, it only occurs with +3 and +4 stars...
 
 ```{r}
-staffing_yoy %>% count(status, star_change)
-staffing_yoy %>% count(status_v2, star_change)
-filter(staffing_yoy, is.na(rn_hr_prpd_change)) %>% count(status, star_change)
+staffing_yoy %>% count(status, staff_star_change)
+staffing_yoy %>% count(status_v2, staff_star_change)
+staffing_yoy %>% count(status_v3, staff_star_change)
+filter(staffing_yoy, is.na(rn_hr_prpd_change)) %>% count(status, staff_star_change)
 staffing_yoy.complete <- filter(staffing_yoy, !(is.na(rn_hr_prpd_change) | is.na(total_hr_prpd_change)))
 ```
 
-Dropped ~3k observations
+Dropped \~3k observations
 
 Pull corresponding PBJ (Payroll Based Journal), also Peanut Butter and Jelly
 
@@ -90,11 +102,10 @@ pbj.q4.merged <- pbj.q4 %>%
   mutate(admin_change_pct_pt = (AdminIntensity.y - AdminIntensity.x) * 100)
 ```
 
-55939 obs in pbj.q4.merged
-55473 obs in staffing_yoy
-54807 obs in final dataframe
+55939 obs in pbj.q4.merged 55473 obs in staffing_yoy 54807 obs in final dataframe
 
 Assess reliability of data calculated from pbj detail
+
 ```{r}
 library(stringr)
 
@@ -116,13 +127,14 @@ final.df <- final.df %>%
 ```
 
 Visualize
+
 ```{r}
 plt <- ggplot(final.df, aes(x=year_factor, y=admin_change_pct_pt)) + geom_violin()
 plt
 ```
 
 ```{r}
-plt <- ggplot(final.df, aes(x=admin_change_pct_pt, y=star_change, color=status)) + geom_point()
+plt <- ggplot(final.df, aes(x=admin_change_pct_pt, y=staff_star_change, color=status)) + geom_point()
 plt
 ```
 
@@ -134,14 +146,13 @@ plt
 ```{r}
 library(gtsummary)
 select(final.df, 
-      c(staffing_rating.x, star_change, status, year_factor),
+      c(staffing_rating.x, staff_star_change, status, year_factor),
       c(admin_change_pct_pt)
-      ) %>% tbl_summary()
+      ) %>% tbl_summary(by=year_factor)
 ```
 
+Admin intensity reducing the probability of case group One thought... Incorporate drop in quality scores. We're worried about increasing admin intensity in ways that doesn't benefit residents.
 
-Admin intensity reducing the probability of case group
-One thought... Incorporate drop in quality scores. We're worried about increasing admin intensity in ways that doesn't benefit residents.
 ```{r}
 model <- glm(status ~ admin_change_pct_pt, family=binomial, final.df)
 summary(model)
@@ -154,31 +165,46 @@ summary(model)
 ```
 
 ```{r}
-linear.model <- lm(star_change ~ admin_change_pct_pt + admin_change_pct_pt * for_profit, final.df)
+linear.model <- lm(staff_star_change ~ admin_change_pct_pt + admin_change_pct_pt * for_profit, final.df)
 summary(linear.model)
 ```
-
 
 ```{r}
 model <- glm(status ~ admin_change_pct_pt + for_profit:admin_change_pct_pt +  provider_changed_ownership_in_last_12_months.y, family=binomial, filter(final.df, year_factor==2018))
 summary(model)
 ```
 
-
 ```{r}
 model <- glm(status_v2 ~ admin_change_pct_pt + for_profit:admin_change_pct_pt +  provider_changed_ownership_in_last_12_months.y + continuing_care_retirement_community.y, family=binomial, final.df)
 summary(model)
 ```
 
-
-
 Model star change as a function of admin intensity change
+
 ```{r}
-linear.model <- lm(star_change ~ 0 + admin_change_pct_pt, filter(final.df, star_change > 0))
+linear.model <- lm(staff_star_change ~ 0 + admin_change_pct_pt, filter(final.df, staff_star_change > 0))
 summary(linear.model)
 ```
 
 ```{r}
-linear.model <- lm(star_change ~ 0 + admin_change_pct_pt + for_profit:admin_change_pct_pt, final.df)
+linear.model <- lm(staff_star_change ~ 0 + admin_change_pct_pt + for_profit:admin_change_pct_pt, final.df)
+summary(linear.model)
+```
+
+
+What is the impact of an admin intensity spike, on average?
+```{r}
+summary(final.df$admin_change_pct_pt)
+quantile(final.df$admin_change_pct_pt, .95)
+quantile(final.df$admin_change_pct_pt, .99)
+
+spike.facilities <- filter(final.df, admin_change_pct_pt > quantile(admin_change_pct_pt, .99)) %>%
+    select(federal_provider_number)
+
+final.df.spikes <- inner_join(final.df, spike.facilities, by="federal_provider_number")
+```
+
+```{r}
+linear.model <- lm(qm_star_change ~ 0 + admin_change_pct_pt, final.df)
 summary(linear.model)
 ```
