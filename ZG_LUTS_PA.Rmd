@@ -1,0 +1,331 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "Zoe Gan"
+output: 
+  html_document:
+    theme: paper 
+    highlight: tango
+---
+
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+
+### Overview
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+
+### Introduction 
+Describe the problem addressed, its significance, and some background to motivate the problem.
+
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+
+Importing Packages (if needed)
+
+```{r}
+install.packages("tidyverse")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("viridis")
+```
+Loading Packages
+```{r}
+library(tidyverse) 
+library(dplyr)
+library(ggplot2)
+library(viridis)
+```
+
+Reading in Data
+```{r}
+bladderhealth.df <- read.csv("PennBladderHealthStu_DATA_2022-09-23_1043.csv")
+
+#Remove email addresses
+bladderhealth.df <- select(bladderhealth.df, -email)
+
+#Answers to pa_80, "Do you avoid exercising because of urinary symptoms or leakage?"
+table(bladderhealth.df$pa_80)
+```
+   1    2    3    4    5 
+1515  147   33   34   11
+```{r}
+bladderhealth.df %>% count(pa_80 > 1) #225 true.
+```
+#12.9% avoid exercising because of urinary symptoms or leakage (a few times, about half the time, most of the time, every time).
+
+#Answers to pa_82, "Have you stopped a workout because of bladder symptoms or leakage?"
+table(bladderhealth.df$pa_82)
+
+   1    2    3    4    5 
+1473  227   18   13    7 
+
+bladderhealth.df %>% count(pa_82 > 1)
+
+1     FALSE 1473
+2      TRUE  265
+3        NA   17
+
+265/(265+1473)*100
+#15.2% of women have stopped a workout because of bladder symptoms or leakage (a few times, about half the time, most of the time, every time).
+
+#Count missing values for either pa_80 or pa_82, then for pa_80 and pa_82
+bladderhealth.df %>% count(is.na(pa_80) | is.na(pa_82))
+
+1                       FALSE 1738
+2                        TRUE   17
+
+bladderhealth.df %>% count(is.na(pa_80) & is.na(pa_82))
+
+1                       FALSE 1740
+2                        TRUE   15
+
+#How many women have EITHER avoided exercising OR stopped a workout because of urinary symptoms or leakage?
+
+#Create new df with only these women, dropping NA values for questions pa_80 and pa_82 
+
+bladderhealth3.df <- bladderhealth.df %>% filter(!is.na(pa_80), !is.na(pa_82))
+
+#1738 women with data for both pa_80 and pa_82. Now filter down to those who EITHER avoided exercising OR stopped a workout because of urinary symptoms or leakage.
+
+bladderhealth3.df <- bladderhealth3.df %>% filter(pa_80 > 1 | pa_82 > 1)
+
+332/1738*100
+
+#332 women (19.1%) EITHER avoided exercising OR stopped a workout because of urinary symptoms or leakage.
+
+#Want to look at types of bladder sxs these women who are avoiding exercise or stopping a workout are having.
+```{r}
+#Convert LURN SI-29 item reponses from 1-5 (per ResearchMatch) to 0-4 (LURN scoring), excluding question "additional_56 (already 1/0 due to yes/no):
+lurnvars_convert <- c("casus_33", "casus_34", "casus_35", "casus_36", "casus_37", "casus_38", "pain_39", "pain_40", "pain_41", "pain_42", "voidingdiff_43", "voidingdiff_44", "voidingdiff_45", "voidingdiff_46", "voidingdiff_47", "urgency_48", "urgency_49", "urgency_50", "nocturia_51", "nocturia_52", "additional_53", "additional_54", "additional_55", "additional_57", "additional_58", "additional_59", "additional_60")
+
+bladderhealth3.df <- cbind(bladderhealth3.df[,!names(bladderhealth3.df) %in% lurnvars_convert], apply(bladderhealth3.df[lurnvars_convert], 2, function(x) x - 1))
+
+summary(bladderhealth3.df[, lurnvars]) #confirm appropriate score ranges for each variable
+
+#Convert LURN SI-29 NA variable values to 0 (including additional_56).
+lurnvars <- c("casus_33", "casus_34", "casus_35", "casus_36", "casus_37", "casus_38", "pain_39", "pain_40", "pain_41", "pain_42", "voidingdiff_43", "voidingdiff_44", "voidingdiff_45", "voidingdiff_46", "voidingdiff_47", "urgency_48", "urgency_49", "urgency_50", "nocturia_51", "nocturia_52", "additional_53", "additional_54", "additional_55", "additional_56", "additional_57", "additional_58", "additional_59", "additional_60")
+bladderhealth3.df[lurnvars][is.na(bladderhealth3.df[lurnvars])] <- 0 
+
+bladderhealth4.df <- bladderhealth3.df #to preserve remaining code done on bladderhealth4.df the first go-around
+```
+#ALT (original method)
+```{r}
+#Need to recode all questions 1-5 to 0-4 (except additional_56). Found a way to do this but drops all other variables. Don't really need to keep other variables for now.
+
+bladderhealth4.df <- bladderhealth3.df %>% select(., casus_33:nocturia_51, nocturia_52:additional_53, additional_54:additional_55, additional_57:additional_60) %>% apply(2, function(x) x-1) %>% as.data.frame()
+
+#Need to add on additional_56 yes/no, since this was already 1/0. Also need to add on pa_80, pa_82, pa_78, pa_72e.
+
+bladderhealth4.df$additional_56 <- bladderhealth3.df$additional_56
+bladderhealth4.df$pa_80 <- bladderhealth3.df$pa_80
+bladderhealth4.df$pa_82 <- bladderhealth3.df$pa_82
+bladderhealth4.df$pa_78 <- bladderhealth3.df$pa_78
+bladderhealth4.df$pa_72e <- bladderhealth3.df$pa_72e
+
+
+#Convert LURN SI-29 NA variable values to 0 (including additional_56).
+lurnvars <- c("casus_33", "casus_34", "casus_35", "casus_36", "casus_37", "casus_38", "pain_39", "pain_40", "pain_41", "pain_42", "voidingdiff_43", "voidingdiff_44", "voidingdiff_45", "voidingdiff_46", "voidingdiff_47", "urgency_48", "urgency_49", "urgency_50", "nocturia_51", "nocturia_52", "additional_53", "additional_54", "additional_55", "additional_56", "additional_57", "additional_58", "additional_59", "additional_60")
+
+summary(bladderhealth4.df$lurnvars
+ggplot(bladderhealth4.df, aes(x = lurnsi29)) + geom_histogram(binwidth = 1)
+bladderhealth.df[lurnvars][is.na(bladderhealth.df[lurnvars])] <- 0 
+```
+#Continue here
+```{r}
+#See how many women have pa_78 = 1 (inclusion criteria later on: answering "never" to "Do you (or did you) do an exercise or activity that makes you leak urine?")
+
+bladderhealth4.df %>% count(pa_78 == 1) #216 false, 116 true
+
+#Now see if any of these women who avoid exercise or stop a workout due to LUTS, AND report not currently or previously having incontinence, actually report exercise-related leakage on LURN-SI 29 (answering anything other than "never" for casus_37, "How often did you leak urine or wet a pad when doing physical activities, such as exercising or lifting a heavy object?")
+
+bladderhealth4.df %>% filter(pa_78 == 1) %>% count()
+
+bladderhealth4.df %>% filter(pa_78 == 1) %>% count(casus_37 > 0)
+
+1        FALSE 49
+2         TRUE 67
+
+#Looks like 67/116 women (57.8%) who avoid exercise or stop a workout due to LUTS, AND report not currently or previously having incontinence, actually report some degree of exercise-related incontinence in LURN SI-29
+```
+#Now compile totals of each LURN SI-29 category.
+```{r}
+
+
+bladderhealth4.df <- bladderhealth4.df %>% mutate(casus_total = select(., casus_33:casus_38) %>% rowSums()) %>% mutate(pain_total = select(., pain_39:pain_42) %>% rowSums()) %>% mutate(voidingdiff_total = select(., voidingdiff_43:voidingdiff_47) %>% rowSums()) %>% mutate(urgency_total = select(., urgency_48:urgency_50) %>% rowSums()) %>% mutate(nocturia_total = select(., nocturia_51, nocturia_52) %>% rowSums()) %>% mutate(additional_total = select(., additional_53:additional_60) %>% rowSums()) %>% mutate(lurnsi29 = select(., casus_total:additional_total) %>% rowSums())
+  
+summary(bladderhealth4.df$lurnsi29)
+ggplot(bladderhealth4.df, aes(x = lurnsi29)) + geom_histogram(binwidth = 1)
+
+#To set up box plot to look at distributions of LURN-SI 29 scores in each domain, will need to pivot longer. Also going to use pivot to look at scores for each of the LURN-SI 29 "additional" questions. Drop NA values (15,936 - 15,648 = 288 values just watching the #of observations)
+
+bladderhealth5.df <- bladderhealth4.df %>% pivot_longer(c('casus_total', 'pain_total', 'voidingdiff_total', 'urgency_total', 'nocturia_total', 'additional_total'), names_to = "lurn_cat", values_to = "score") %>% pivot_longer(c('additional_53', 'additional_54', 'additional_55', 'additional_56', 'additional_57', 'additional_58', 'additional_59', 'additional_60'), names_to = "additional", values_to = "addl_score") 
+
+#Plot scores for each LURN SI-29 category
+bladderhealth5.df %>% ggplot(aes(x = score, y = lurn_cat)) +
+ggtitle("LUTS in women who report avoiding or stopping \n exercise due to LUTS") +
+xlab("LURN-SI 29 Subscore") +
+ylab("LURN-SI 29 Domain") +
+geom_boxplot(width = 0.3, color = "black", alpha = 0.2) + 
+theme(plot.title = element_text(color = "black", size = 12)) + 
+theme(axis.title.x = element_text(color = "black", size = 10)) + 
+theme(axis.title.y = element_text(color = "black", size = 10)) +
+scale_y_discrete(labels=c("casus_total" = "Incontinence", "voidingdiff_total" = "Voiding Difficulty", "urgency_total" = "Urgency", "pain_total" = "Pain", "nocturia_total" = "Nocturia", "additional_total" = "Additional Items"))
+
+ggsave("LURN-SI 29 Subscores.png", units="in", width=6, height=4, dpi=300)  
+  
+#Find actual values of box plot, medians etc. 
+var <- boxplot(score ~ lurn_cat, data = bladderhealth5.df)
+var$stats
+  
+     [,1] [,2] [,3] [,4] [,5] [,6]
+[1,]    0    0    0    0    0    0
+[2,]    7    2    2    1    3    2
+[3,]    9    4    4    2    4    4
+[4,]   12    7    5    4    7    7
+[5,]   19   14    7    8   12   14
+  
+#Plot scores for each "additional" question. Responses are generally 1-2 across all questions, no clear standout. Bother question, additional_60, is still median 1 (slightly bothered)
+
+bladderhealth5.df %>% ggplot(aes(x = addl_score, y = additional)) + 
+geom_boxplot(width = 0.3, color = "sienna4", alpha = 0.2)
+
+#Find values of box plot, medians etc. 
+var_addl <- boxplot(addl_score ~ additional, data = bladderhealth5.df)
+var_addl$stats
+  
+     [,1] [,2] [,3] [,4] [,5] [,6] [,7] [,8]
+[1,]    0    1    0    0    0    0    0    0
+[2,]    1    2    1    0    0    0    0    1
+[3,]    1    2    2    0    1    1    1    1
+[4,]    2    3    3    1    2    1    1    2
+[5,]    3    4    3    1    4    2    2    3
+  
+#LURN SI-29 total in women who report avoiding or stopping exercise
+summary(bladderhealth4.df$lurnsi29)
+
+   Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+   3.00   20.00   29.00   31.29   41.75   81.00       6 
+
+```
+#Check if any of these women stopping/avoiding exercise and reporting non-incontinence LUTS have previously leaked with activity
+```{r}
+#pa_72e: Do you, or did you previously, leak urine during your regular sport or activity? 
+
+table(bladderhealth3.df$pa_72e)
+
+ 1  2  3  4  5
+94 59 16  4  1 
+
+#pa_78: Do you (or did you) do an exercise or activity that makes you leak urine? (Never, a few times, about half the time, most of the time, every time) 
+
+table(bladderhealth3.df$pa_78)
+
+  1   2   3   4   5 
+116 145  35  27   9 
+
+#Filter out those who currently do (or previously did) an exercise or activity causing urine leakage.
+
+bladderhealth6.df <- bladderhealth5.df %>% filter(pa_78 == 1)
+
+#Plot results
+bladderhealth6.df %>% ggplot(aes(x = score, y = lurn_cat)) +
+ggtitle("LUTS in women without incontinence during exercise or \n activity who report avoiding or stopping exercise \n due to LUTS") +
+xlab("LURN-SI 29 Subscore") +
+ylab("LURN-SI 29 Domain") +
+geom_boxplot(width = 0.3, color = "black", alpha = 0.2) + 
+theme(plot.title = element_text(color = "black", size = 12)) + 
+theme(axis.title.x = element_text(color = "black", size = 10)) + 
+theme(axis.title.y = element_text(color = "black", size = 10)) +
+scale_y_discrete(labels=c("casus_total" = "Incontinence", "voidingdiff_total" = "Voiding Difficulty", "urgency_total" = "Urgency", "pain_total" = "Pain", "nocturia_total" = "Nocturia", "additional_total" = "Additional Items"))
+
+ggsave("LURN-SI 29 Subscores no incont.tiff", units="in", width=6, height=4, dpi=300) 
+  
+#Find actual values of box plot, medians etc. 
+var2 <- boxplot(score ~ lurn_cat, data = bladderhealth6.df)
+var2$stats
+  
+     [,1] [,2] [,3] [,4] [,5] [,6]
+[1,]    2    0    0    0    0    0
+[2,]    6    1    2    0    2    2
+[3,]    9    3    4    2    4    4
+[4,]   11    6    5    4    6    7
+[5,]   18   12    7   10   12   13
+  
+#try for pa_72e
+bladderhealth7.df <- bladderhealth5.df %>% filter(pa_72e == 1)  
+  
+#Plot results filtered by pa_72e (exploratory)
+bladderhealth7.df %>% ggplot(aes(x = score, y = lurn_cat)) +
+ggtitle("LUTS in women without incontinence during exercise or \n activity who report avoiding or stopping exercise \n due to LUTS") +
+xlab("LURN-SI 29 Subscore") +
+ylab("LURN-SI 29 Domain") +
+geom_boxplot(width = 0.3, color = "black", alpha = 0.2) + 
+theme(plot.title = element_text(color = "black", size = 12)) + 
+theme(axis.title.x = element_text(color = "black", size = 10)) + 
+theme(axis.title.y = element_text(color = "black", size = 10)) +
+scale_y_discrete(labels=c("casus_total" = "Incontinence", "voidingdiff_total" = "Voiding Difficulty", "urgency_total" = "Urgency", "pain_total" = "Pain", "nocturia_total" = "Nocturia", "additional_total" = "Additional Items"))  
+  
+#Plot looks roughly similar.
+
+#Try filtering out those who report anything other than "never" for casus_37, "How often did you leak urine or wet a pad when doing physical activities, such as exercising or lifting a heavy object?"
+
+bladderhealth8.df <- bladderhealth5.df %>% filter(pa_78 == 1, casus_37 == 0)
+
+#Then plot scores for each LURN SI-29 category
+bladderhealth8.df %>% ggplot(aes(x = score, y = lurn_cat)) +
+ggtitle("LUTS in women without incontinence during exercise or \n activity who report avoiding or stopping exercise \n due to LUTS") +
+xlab("LURN-SI 29 Subscore") +
+ylab("LURN-SI 29 Domain") +
+geom_boxplot(width = 0.3, color = "black", alpha = 0.2) + 
+theme(plot.title = element_text(color = "black", size = 12)) + 
+theme(axis.title.x = element_text(color = "black", size = 10)) + 
+theme(axis.title.y = element_text(color = "black", size = 10)) +
+scale_y_discrete(labels=c("casus_total" = "Incontinence", "voidingdiff_total" = "Voiding Difficulty", "urgency_total" = "Urgency", "pain_total" = "Pain", "nocturia_total" = "Nocturia", "additional_total" = "Additional Items"))
+
+ggsave("LURN-SI 29 Subscores no incont casus.tiff", units="in", width=6, height=4, dpi=300) 
+
+#Find actual values of box plot, medians etc. 
+var3 <- boxplot(score ~ lurn_cat, data = bladderhealth8.df)
+var3$stats
+
+     [,1] [,2] [,3] [,4] [,5] [,6]
+[1,]    2    0    0    0    0    0
+[2,]    6    0    2    1    2    2
+[3,]    8    1    4    2    3    3
+[4,]   10    2    5    3    4    5
+[5,]   16    4    7    5    7    9
+
+#Plot scores for each "additional" question. Means 0-2 across all questions. Bother question, additional_60, is still median 1 (slightly bothered)
+
+bladderhealth8.df %>% ggplot(aes(x = addl_score, y = additional)) + 
+geom_boxplot(width = 0.3, color = "sienna4", alpha = 0.2)
+
+ggsave("LURN-SI 29 scores for additional items.tiff", units="in", width=6, height=4, dpi=300) 
+
+#Find values of box plot, medians etc. 
+var_addl_noincont <- boxplot(addl_score ~ additional, data = bladderhealth8.df)
+var_addl_noincont$stats
+  
+     [,1] [,2] [,3] [,4] [,5] [,6] [,7] [,8]
+[1,]    0    1    0    0    0    0    0    1
+[2,]    1    2    1    0    0    0    0    1
+[3,]    1    2    2    0    1    0    0    1
+[4,]    2    3    2    0    1    0    1    1
+[5,]    3    4    3    0    2    0    2    1
+
+#LURN SI-29 total for those without incontinence sxs
+summary(noincontinence3.df$lurnsi29)
+
+   Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+   0.00    8.00   12.00   13.21   17.00   54.00       9 
+
+
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
