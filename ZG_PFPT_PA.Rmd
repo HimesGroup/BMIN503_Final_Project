@@ -1,0 +1,765 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "Zoe Gan"
+output: 
+  html_document:
+    theme: paper 
+    highlight: tango
+---
+
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+
+### Overview
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+
+### Introduction 
+Describe the problem addressed, its significance, and some background to motivate the problem.
+
+Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+
+#Importing Packages (if needed)
+
+install.packages("tidyverse")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("modelsummary")
+install.packages("viridis")
+
+#Loading Packages
+
+library(tidyverse) 
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(modelsummary)
+
+#Reading in Data
+
+bladderhealth.df <- read.csv("PennBladderHealthStu_DATA_2022-09-23_1043.csv")
+
+#Remove email addresses
+bladderhealth.df <- select(bladderhealth.df, -email)
+
+#Are more active women more likely to do PFPT than less active women?
+
+#Create data frame with kegel questions only
+kegels.df <- bladderhealth.df %>% select(kegel_86:kegel_102)
+
+#Count missing values for kegels questions
+sapply(kegels.df, function(x) sum(is.na(x)))
+
+        kegel_86         kegel_87         kegel_88         kegel_89 
+              18               20                5               17 
+       kegel_89a        kegel_89b         kegel_90      kegel_90uns 
+            1247              695                0             1362 
+    kegel_91___1     kegel_91___2     kegel_91___3     kegel_91___4 
+               0                0                0                0 
+    kegel_91___5     kegel_91___6     kegel_91___7     kegel_91___8 
+               0                0                0                0 
+    kegel_91___9    kegel_91___10   kegel_91_other     kegel_92___1 
+               0                0                0                0 
+    kegel_92___2     kegel_92___3     kegel_92___4     kegel_92___5 
+               0                0                0                0 
+    kegel_92___6     kegel_92___7 kegel_93_other_2         kegel_93 
+               0                0                0              536 
+  kegel_93_other         kegel_94        kegel_103     kegel_95___1 
+               0              533                0                0 
+    kegel_95___2     kegel_95___3     kegel_95___4     kegel_95___5 
+               0                0                0                0 
+  kegel_95_other         kegel_96      kegel_96uns         kegel_97 
+               0                1             1190                1 
+     kegel_97uns         kegel_98         kegel_99        kegel_100 
+            1408              532              534              534 
+ kegel_100_other        kegel_101        kegel_102 
+               0              536              536 
+
+#Remove subjects with missing values for exposure and outcome  questions of interest:
+
+#Exposure
+#pa_61: In general, how often do you exercise? (higher numbers indicate more exercise)
+#ipaq: high, moderate, low
+
+#Outcome
+#kegel_86: Have you ever heard of Kegel exercises?
+#kegel_87: Have you heard of pelvic exercises or pelvic floor muscle exercises?
+#kegel_89: Do you do Kegels or pelvic muscle exercises?
+#kegel_102: Do you tighten your pelvic floor muscles when you feel a cough, sneeze, laugh, or when you exercise?
+
+bladderhealth2.df <- bladderhealth.df %>% drop_na(pa_61, kegel_86, kegel_87, kegel_89, kegel_102)
+#1748 obs to 1217 obs
+
+#Create composite score for incontinence, casus_total
+bladderhealth2.df <- bladderhealth2.df %>% mutate(casus_total = select(., casus_33:casus_38) %>% rowSums())
+
+#Create categories of casus_total based on score <6, score 7-10, score 11-30
+bladderhealth2.df$casuscat <- bladderhealth2.df$casus_total
+bladderhealth2.df$casuscat <- cut(bladderhealth2.df$casus_total, c(0, 7, 11, 31), right = FALSE, labels = c("casus6", "casus7-10", "casus11-30"))
+
+#Look at stacked/proportional bar graph for kegel_86 stratified by pa_61: knowledge of what kegels are appears roughly constant with increasing activity category
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_86), x = pa_61)) + geom_bar(position = "fill")
+
+#Look at stacked/proportional bar graph for kegel_87 stratified by pa_61: knowledge of what PFMs are increases with increasing activity category
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_87), x = pa_61)) + geom_bar(position = "fill")
+
+#Look at stacked/proportional bar graph for kegel_89 stratified by pa_61: women who exercise daily (answer 5) have the greatest proportion who do Kegels several times a week or daily (answer 5 or 6)
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_89), x = pa_61)) + geom_bar(position = "fill")
+
+#Kruskal-Wallis test for pa_61 and pa_89: not significant
+
+kruskal.test(bladderhealth2.df$kegel_89, bladderhealth2.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth2.df$kegel_89 and bladderhealth2.df$pa_61
+Kruskal-Wallis chi-squared = 8.5806, df = 4, p-value = 0.07248
+
+#Same as above but with counts not proportions
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_89), x = pa_61)) + geom_bar(position = "dodge")
+
+#Look at distribution of kegel_89 answers, doesn't appear to be any 1s (never did Kegels)
+
+ggplot(bladderhealth2.df, aes(x = kegel_89)) + geom_histogram(binwidth = 1)
+
+#Confirmed nobody answered 1
+count(bladderhealth2.df, kegel_89 == 1)
+  kegel_89 == 1    n
+1         FALSE 1212
+
+#Look at distribution of kegel_89b, why don't you do kegels. Most women said other (6), 2nd most said I'm too lazy (5), then I don't need to (1) and they don't help (4). Very few said they were too difficult (2) or take too much time (3).
+
+ggplot(bladderhealth2.df, aes(x = kegel_89b)) + geom_histogram(binwidth = 1)
+
+#Combine categories 4-6 in kegel_89 (I do [Kegels] several times a month, several times a week, daily). Try plotting and re-running Kruskal-Wallis. Still not significant.
+
+bladderhealth2.df$kegel_89 <- as.factor(bladderhealth2.df$kegel_89)
+
+bladderhealth6.df <- bladderhealth2.df %>% mutate(kegel_89 = fct_collapse(kegel_89, "4" = c("4", "5", "6")))
+
+ggplot(bladderhealth6.df, aes(fill = kegel_89, x = pa_61)) + geom_bar(position = "fill")
+
+kruskal.test(bladderhealth6.df$kegel_89, bladderhealth6.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth6.df$kegel_89 and bladderhealth6.df$pa_61
+Kruskal-Wallis chi-squared = 8.1254, df = 4, p-value = 0.08709
+
+#Try stratifying by casuscat (incontinence severity, "casus6", "casus7-10", "casus11-30"): when stratifying by incontinence severity, more physically active women do Kegels more often. Will need to include casuscat in multivariable model later.
+
+bladderhealth2.df %>% filter(casuscat == "casus6") %>% ggplot(aes(fill = as.factor(kegel_89), x = pa_61)) + geom_bar(position = "fill")
+
+bladderhealth2.df %>% filter(casuscat == "casus7-10") %>% ggplot(aes(fill = as.factor(kegel_89), x = pa_61)) + geom_bar(position = "fill")
+
+bladderhealth2.df %>% filter(casuscat == "casus11-30") %>% ggplot(aes(fill = as.factor(kegel_89), x = pa_61)) + geom_bar(position = "fill")
+
+#Kruskal wallis test on casus6: not significant
+
+bladderhealth3.df <- bladderhealth2.df[!(bladderhealth2.df$casuscat == "casus7-10" | bladderhealth2.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth3.df$kegel_89, bladderhealth3.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth3.df$kegel_89 and bladderhealth3.df$pa_61
+Kruskal-Wallis chi-squared = 2.3077, df = 4, p-value = 0.6794
+
+#Same but with condensed kegel_89 categories: not significant
+
+bladderhealth7.df <- bladderhealth6.df[!(bladderhealth6.df$casuscat == "casus7-10" | bladderhealth6.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth7.df$kegel_89, bladderhealth7.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth7.df$kegel_89 and bladderhealth7.df$pa_61
+Kruskal-Wallis chi-squared = 2.3377, df = 4, p-value = 0.6739
+
+#Kruskal wallis test on casus7-10: not significant
+
+bladderhealth4.df <- bladderhealth2.df[!(bladderhealth2.df$casuscat == "casus6" | bladderhealth2.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth4.df$kegel_89, bladderhealth4.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth4.df$kegel_89 and bladderhealth4.df$pa_61
+Kruskal-Wallis chi-squared = 4.3533, df = 4, p-value = 0.3603
+
+#Same but with condensed kegel_89 categories: not significant
+
+bladderhealth8.df <- bladderhealth6.df[!(bladderhealth6.df$casuscat == "casus6" | bladderhealth2.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth8.df$kegel_89, bladderhealth8.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth8.df$kegel_89 and bladderhealth8.df$pa_61
+Kruskal-Wallis chi-squared = 3.975, df = 4, p-value = 0.4094
+
+#Kruskal wallis test on casus11-30: not significant
+
+bladderhealth5.df <- bladderhealth2.df[!(bladderhealth2.df$casuscat == "casus7-10" | bladderhealth2.df$casuscat == "casus6"),]
+
+kruskal.test(bladderhealth5.df$kegel_89, bladderhealth5.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth5.df$kegel_89 and bladderhealth5.df$pa_61
+Kruskal-Wallis chi-squared = 6.1097, df = 4, p-value = 0.1911
+
+#Same but with condensed kegel_89 categories: not significant
+
+bladderhealth9.df <- bladderhealth6.df[!(bladderhealth6.df$casuscat == "casus7-10" | bladderhealth2.df$casuscat == "casus6"),]
+
+kruskal.test(bladderhealth9.df$kegel_89, bladderhealth9.df$pa_61)
+
+	Kruskal-Wallis rank sum test
+
+data:  bladderhealth9.df$kegel_89 and bladderhealth9.df$pa_61
+Kruskal-Wallis chi-squared = 6.4991, df = 4, p-value = 0.1648
+
+#Look at stacked/proportional bar graph for kegel_102 stratified by pa_61: maybe more active women do practical kegels a little less, but overall similar
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_102), x = pa_61)) + geom_bar(position = "fill")
+
+#Same stratification as above: for casus6 and casus7-10, more physically active women tend to do practical kegels less, but for casus11-30, more physically active women tend to do practical kegels more.
+bladderhealth2.df %>% filter(casuscat == "casus6") %>% ggplot(aes(fill = as.factor(kegel_102), x = pa_61)) + geom_bar(position = "fill")
+
+bladderhealth2.df %>% filter(casuscat == "casus7-10") %>% ggplot(aes(fill = as.factor(kegel_102), x = pa_61)) + geom_bar(position = "fill")
+
+bladderhealth2.df %>% filter(casuscat == "casus11-30") %>% ggplot(aes(fill = as.factor(kegel_102), x = pa_61)) + geom_bar(position = "fill")
+
+#Does age distribution vary based on Kegel frequency? Reviewing violin plot, not really.
+ggplot(bladderhealth2.df, aes(x = factor(kegel_89), y = demo_age)) +
+  geom_violin(fill = "lightyellow", color = "sienna4") +
+  geom_boxplot(width = 0.1, color = "sienna4", alpha = 0.2)
+summary((lm(demo_age ~ factor(kegel_89), data = bladderhealth2.df)))
+
+#Does insurance distribution vary based on Kegel frequency? Slight trend towards women who do Kegels more being uninsured (do them instead of getting surgery?) although not a definite relationship.
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(demo_insurance), x = kegel_89)) + geom_bar(position = "fill")
+
+#Does race distribution vary based on Kegel frequency?
+
+#create demo_race variable with all the races 1-7 coded***
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(demo_race), x = kegel_89)) + geom_bar(position = "fill")
+
+
+#look into leakage with exercise?
+#try running multivariable model?
+
+#Look at percentages of kegel_102 answers per pa_61 category:
+prop.table(bladderhealth2.df$kegel_102, bladderhealth2.df$pa_61)
+Error in seq_along(dims)[-MARGIN] : 
+  only 0's may be mixed with negative subscripts
+#-------
+
+#IPAQ scoring instead of pa_61
+
+#Clean data
+```{r}
+#Clean data
+
+#Check class of time variables
+class(bladderhealth.df$pa_66a_days)
+
+#Convert time variables from character to numeric
+cols <- c("pa_66a_days", "pa_66b_hours", "pa_66b_minutes", "pa_67a_days", "pa_67b_hours", "pa_67b_minutes", "pa_68a_days", "pa_68b_hours", "pa_68b_minutes", "pa_69_hours", "pa_69_minutes")
+bladderhealth.df[cols] <- sapply(bladderhealth.df[cols], as.numeric)
+#Warning that NAs introduced by coercion. This is ok for our purposes.
+
+#Confirm all time variables are now numeric. 
+sapply(bladderhealth.df[cols], class)
+
+#Convert any NA values for time variables to 0
+bladderhealth.df[cols][is.na(bladderhealth.df[cols])] <- 0 
+
+#Check ranges of time variables to ensure appropriate values
+sapply(bladderhealth.df[cols], range, na.rm = TRUE)
+#Looks like all the days variables have outliers (can't have more than 7 days a week). 
+
+#Convert LURN SI-29 item reponses from 1-5 (per ResearchMatch) to 0-4 (LURN scoring), excluding question "additional_56 (already 1/0 due to yes/no):
+lurnvars_convert <- c("casus_33", "casus_34", "casus_35", "casus_36", "casus_37", "casus_38", "pain_39", "pain_40", "pain_41", "pain_42", "voidingdiff_43", "voidingdiff_44", "voidingdiff_45", "voidingdiff_46", "voidingdiff_47", "urgency_48", "urgency_49", "urgency_50", "nocturia_51", "nocturia_52", "additional_53", "additional_54", "additional_55", "additional_57", "additional_58", "additional_59", "additional_60")
+bladderhealth.df <- cbind(bladderhealth.df[,!names(bladderhealth.df) %in% lurnvars_convert], apply(bladderhealth.df[lurnvars_convert], 2, function(x) x - 1))
+
+#Convert LURN SI-29 NA variable values to 0 (including additional_56).
+lurnvars <- c("casus_33", "casus_34", "casus_35", "casus_36", "casus_37", "casus_38", "pain_39", "pain_40", "pain_41", "pain_42", "voidingdiff_43", "voidingdiff_44", "voidingdiff_45", "voidingdiff_46", "voidingdiff_47", "urgency_48", "urgency_49", "urgency_50", "nocturia_51", "nocturia_52", "additional_53", "additional_54", "additional_55", "additional_56", "additional_57", "additional_58", "additional_59", "additional_60")
+bladderhealth.df[lurnvars][is.na(bladderhealth.df[lurnvars])] <- 0 
+
+```
+#Visualize outliers for all IPAQ time variables.
+```{r}
+#Take a look at histograms for all. Need to create cols variable using pivot longer first.
+bladderhealth10.df <- bladderhealth.df %>% pivot_longer(all_of(cols), names_to = "time_var", values_to = "time_num")
+ggplot(bladderhealth10.df, aes(x = time_num)) + geom_histogram(binwidth = 1) + facet_wrap(~time_var, scales = "free")
+```
+Can't have more than 7 days per week. Not sure whether to change these numbers to hours/minutes per day/week, so going to drop these values.
+pa_66a_days appears to have single value over 7, 30. 
+pa_67a_days appears to have single value over 7, 60+
+pa_68a_days appears to have a few values over 7, up to 15. 
+
+Can't do an activity for most hours of the day (15h cutoff). Will convert these values to minutes.
+pa_66b_hours appears to have several values 20 or higher, up to 60.
+pa_67b_hours appears to have several values 15 or higher, up to 45.
+pa_68b_hours appears to have several values 15 or higher, up to 60.
+pa_69_hours appears to have several values 15 or higher, up to nearly 300.
+
+Anything over 180 minutes will get recoded to 180 min. (Does not apply to pa_69_minutes, sitting time.)
+pa_66b_minutes doesn't have anything over 180 min.
+pa_67b_minutes has some values over 180 min.
+pa_68b_minutes has some values over 180 min.
+
+```{r}
+#Create new variable "exclude" to label subjects to exclude.
+bladderhealth11.df <- bladderhealth.df %>% mutate(exclude = ifelse(pa_66a_days > 7 | pa_67a_days > 7 | pa_68a_days > 7, 1, 0))
+table(bladderhealth11.df$exclude) #seven 1's to exclude, rest are 0s, no NAs
+bladderhealth11.df <- bladderhealth11.df %>% filter(exclude == 0)
+
+#Create data frame with outlying hour values to see if these subjects reported anything for minutes. 
+bladderhealth12.df <- bladderhealth11.df %>% filter(pa_66b_hours >= 15 | pa_67b_hours >= 15 | pa_68b_hours >= 15 | pa_69_hours >= 15) %>% select("pa_66b_hours", "pa_66b_minutes", "pa_67b_hours", "pa_67b_minutes", "pa_68b_hours", "pa_68b_minutes", "pa_69_hours", "pa_69_minutes")
+#Looking at data frame, will need to combine hours and minutes for these outlying values.
+
+#Switch outlying hour values to minutes (will use cutoff of 15 based on IPAQ data cleaning recs). i.e. if hours entry is 15 or higher, change this to minutes (add to anything existing in minutes column) and change original outlying hour entries to 0. 
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(pa_66b_minutes = ifelse(pa_66b_hours >= 15, pa_66b_hours + pa_66b_minutes, pa_66b_minutes)) %>% 
+  mutate(pa_66b_hours = ifelse(pa_66b_hours >= 15, 0, pa_66b_hours)) %>% 
+  mutate(pa_67b_minutes = ifelse(pa_67b_hours >= 15, pa_67b_hours + pa_67b_minutes, pa_67b_minutes)) %>% 
+  mutate(pa_67b_hours = ifelse(pa_67b_hours >= 15, 0, pa_67b_hours)) %>%   
+  mutate(pa_68b_minutes = ifelse(pa_68b_hours >= 15, pa_68b_hours + pa_68b_minutes, pa_68b_minutes)) %>% 
+  mutate(pa_68b_hours = ifelse(pa_68b_hours >= 15, 0, pa_68b_hours)) %>%
+  mutate(pa_69_minutes = ifelse(pa_69_hours >= 15, pa_69_hours + pa_69_minutes, pa_69_minutes)) %>% 
+  mutate(pa_69_hours = ifelse(pa_69_hours >= 15, 0, pa_69_hours))
+
+#Check one of the hour variables to confirm no remaining hour values >= 15; ok.
+bladderhealth11.df %>% count(pa_67b_hours >= 15)
+
+#Recode any time <10 min to 0 (except for sitting pa_69)
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(pa_66b_minutes = ifelse(pa_66b_minutes < 10, 0, pa_66b_minutes)) %>% 
+  mutate(pa_67b_minutes = ifelse(pa_67b_minutes < 10, 0, pa_67b_minutes)) %>% 
+  mutate(pa_68b_minutes = ifelse(pa_68b_minutes < 10, 0, pa_68b_minutes))  
+
+#Recode any total time >180 min to 180 min (except for sitting pa_69)
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(pa_66b_minutes = ifelse(pa_66b_minutes > 180, 180, pa_66b_minutes)) %>% 
+  mutate(pa_67b_minutes = ifelse(pa_67b_minutes > 180, 180, pa_67b_minutes)) %>% 
+  mutate(pa_68b_minutes = ifelse(pa_68b_minutes > 180, 180, pa_68b_minutes))  
+
+#Create variables for total minutes per day for each intensity category and walking. 
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(minutes_day_66 = (pa_66b_hours*60) + pa_66b_minutes) %>%
+  mutate(minutes_day_67 = (pa_67b_hours*60) + pa_67b_minutes) %>%
+  mutate(minutes_day_68 = (pa_68b_hours*60) + pa_68b_minutes) %>%
+  mutate(minutes_day_69 = (pa_69_hours*60) + pa_69_minutes) 
+
+#Check ranges of total minutes per day variables to ensure appropriate values.
+timecols <- c("minutes_day_66", "minutes_day_67", "minutes_day_68", "minutes_day_69")
+sapply(bladderhealth11.df[timecols], range) #no activity variables have time over 960 min/day (would otherwise drop per IPAQ data cleaning recs). 
+
+#Calculate total MET-min/week for each subject.
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(MET_min_week = 8*pa_66a_days*minutes_day_66 + 4*pa_67a_days*minutes_day_67 + 3.3*pa_68a_days*minutes_day_68)
+
+#Calculate IPAQ score based on activity categories.
+#High: at least 7 days of any activity AND at least 3,000 MET-min/week, OR at least 3 days of vigorous activity AND at least 1500 MET-minutes/week. 
+#Mod: at least 3 days of vigorous activity AND at least 20 minutes per day, OR at least 5 days of moderate-intensity activity and/or walking of at least 30 minutes per day, OR at least 5 days of any activity AND at least 600 MET-min/week.
+#Low: everyone else not meeting above criteria
+
+bladderhealth11.df <- bladderhealth11.df %>%
+  mutate(ipaq = ifelse(pa_66a_days + pa_67a_days + pa_68a_days >=7 & MET_min_week >= 3000, "3",
+                       ifelse(pa_66a_days >= 3 & MET_min_week >= 1500, "3",
+                              ifelse(pa_66a_days >=3 & minutes_day_66 >= 20, "2",
+                                     ifelse(pa_67a_days + pa_68a_days >=5 & minutes_day_67 + minutes_day_68 >= 30, "2",
+                                            ifelse(pa_66a_days + pa_67a_days + pa_68a_days >= 5 & MET_min_week >= 600, "2", "1"
+                                            ))))))
+
+#Look at distribution of IPAQ scores:
+table(bladderhealth11.df$ipaq) 
+#459 high (26%), 457 moderate (26%), 832 low (48%). 
+
+class(bladderhealth11.df$ipaq) #character, convert to numeric
+bladderhealth11.df$ipaq <- as.numeric(bladderhealth11.df$ipaq) 
+class(bladderhealth11.df$ipaq) #numeric, convert to factor
+bladderhealth11.df <- bladderhealth11.df %>% 
+  mutate(ipaq = factor(ipaq, order = TRUE, levels = c(1, 2, 3), labels = c("low", "moderate", "high"))) 
+  
+#use the following code for per-ipaq analysis, but not for MV regression:
+bladderhealth11.df <- bladderhealth11.df %>% mutate(kegel_89 = factor(kegel_89, order = TRUE, levels = c(1, 2, 3, 4, 5, 6), labels = c("No, I never did these", "I used do them but stopped", "I do them occasionally when I think of it", "I do them several times a month", "I do them several times a week", "I do them daily"))) 
+  
+
+```
+#Repeat analysis
+
+#Exposure
+#ipaq: high, moderate, low
+
+#Outcome
+#kegel_86: Have you ever heard of Kegel exercises?
+#kegel_87: Have you heard of pelvic exercises or pelvic floor muscle exercises?
+#kegel_89: Do you do Kegels or pelvic muscle exercises?
+#kegel_102: Do you tighten your pelvic floor muscles when you feel a cough, sneeze, laugh, or when you exercise?
+```{r}
+#Drop NA values for questions of interest
+bladderhealth13.df <- bladderhealth11.df %>% drop_na(kegel_86)
+rm(bladderhealth13.df)
+bladderhealth13.df <- bladderhealth11.df %>% drop_na(kegel_87)
+rm(bladderhealth13.df)
+bladderhealth13.df <- bladderhealth11.df %>% drop_na(kegel_89)
+#1748 obs to 1731 obs with kegel_89 alone
+rm(bladderhealth13.df)
+bladderhealth13.df <- bladderhealth11.df %>% drop_na(kegel_102)
+#1748 obs to 1213 obs with kegel_102 alone. 
+rm(bladderhealth13.df)
+#bladderhealth13.df <- bladderhealth11.df %>% drop_na(kegel_86, kegel_87, kegel_89, #kegel_102)
+#1748 obs to 1211 obs.
+
+#How many women have heard of Kegels or PFMs? (1, Yes, I know what they are | 2, Yes, I've heard of them but I don't know what they are)
+bladderhealth13.df %>% count(kegel_86 < 3 | kegel_87 < 3) #1685 have heard of Kegels or PFMs. 1685/1731 = 97.3%
+bladderhealth13.df %>% count(kegel_86 == 1 | kegel_87 == 1) #1551 have heard of them and know what they are. 1551/1731 = 89.6%
+
+#Why don't women do Kegels?
+table(bladderhealth13.df$kegel_89b) 
+#Most women said other (6), 2nd most said I'm too lazy (5), then I don't need to (1) and they don't help (4). Very few said they were too difficult (2) or take too much time (3).
+ggplot(bladderhealth13.df, aes(x = kegel_89b)) + geom_histogram(binwidth = 1)
+#What about for low/mod activity women?
+bladderhealth_lowmod.df <- bladderhealth13.df %>% filter(ipaq != "high") #1272 observations
+ggplot(bladderhealth_lowmod.df, aes(x = kegel_89b)) + geom_histogram(binwidth = 1) #basically the same
+table(bladderhealth_lowmod.df$kegel_89b) #227/1272 said too lazy. Of those who gave reason in lowmod group, 227/(227+104+7+17) = 63.4%.
+#What about for high activity women?
+bladderhealth_high.df <- bladderhealth13.df %>% filter(ipaq == "high") #459 observations
+ggplot(bladderhealth_high.df, aes(x = kegel_89b)) + geom_histogram(binwidth = 1) #basically the same
+table(bladderhealth_high.df$kegel_89b) #69/459 said too lazy. Of those who gave reason in high group, 69/(59+4+10+34+69) = 39.2%.
+
+#Look at stacked/proportional bar graph for kegel_86 stratified by ipaq: pretty much everyone in all groups knows what kegels are
+
+ggplot(bladderhealth13.df, aes(fill = as.factor(kegel_86), x = ipaq)) + geom_bar(position = "fill")
+
+#Look at stacked/proportional bar graph for kegel_87 stratified by ipaq: knowledge of what PFMs consistent across groups
+
+ggplot(bladderhealth13.df, aes(fill = as.factor(kegel_87), x = ipaq)) + geom_bar(position = "fill")
+
+#Look at stacked/proportional bar graph for kegel_89 stratified by ipaq: frequency of doing kegels generally same across groups, maybe a little more in low vs mod
+
+ggplot(bladderhealth13.df, aes(fill = kegel_89, x = ipaq)) + geom_bar(position = "fill") + ggtitle("Do you do Kegels or pelvic muscle exercises?") +
+xlab("Activity category") +
+ylab("Percentage of respondents") +
+theme(plot.title = element_text(color = "black", size = 12)) + 
+theme(axis.title.x = element_text(color = "black", size = 10)) + 
+theme(axis.title.y = element_text(color = "black", size = 10)) +
+scale_x_discrete(labels = c("low" = "Low", "moderate" = "Moderate", "high" = "High")) + scale_y_continuous(labels = scales::percent) +
+  theme(legend.title = element_blank())
+
+ggsave("Kegels by IPAQ category.tiff", units="in", width=6, height=4, dpi=300) 
+
+#Get numbers for each category
+write.csv(table(bladderhealth13.df$kegel_89, bladderhealth13.df$ipaq))
+write.csv(prop.table(table(bladderhealth13.df$kegel_89, bladderhealth13.df$ipaq), 2))
+#Get proportions for each category
+kegel_89.ipaq.df <- data.frame(table(bladderhealth13.df$kegel_89, bladderhealth13.df$ipaq))
+kegel_89_ipaq.m <- apply(as.matrix.noquote(kegel_89.ipaq.df), 2, as.numeric)
+prop.table(kegel_89_ipaq.m)
+
+#For all groups, how many report doing PFMs several times a month or more?
+table(bladderhealth13.df$kegel_89) #66+91+72 = 229, 229/1731*100 = 13.2%
+#Sources of Kegels
+bladderhealth13.df %>% select(kegel_92___1:kegel_92___7) %>% colSums() 
+
+#Kruskal-Wallis test for ipaq and pa_89: significant, p = 0.002344
+
+kruskal.test(bladderhealth13.df$kegel_89, bladderhealth13.df$ipaq)
+
+#Same as above but with counts not proportions
+ggplot(bladderhealth13.df, aes(fill = as.factor(kegel_89), x = ipaq)) + geom_bar(position = "dodge")
+
+#Look at distribution of kegel_89 answers, doesn't appear to be any 1s (never did Kegels). Of note, count of people is pretty low in the low ipaq group (most of these people didn't had NA for Kegels questions)
+
+ggplot(bladderhealth2.df, aes(x = kegel_89)) + geom_histogram(binwidth = 1)
+
+#Look at distribution of kegel_89b, why don't you do kegels. Most women said other (6), 2nd most said I'm too lazy (5), then I don't need to (1) and they don't help (4). Very few said they were too difficult (2) or take too much time (3).
+
+ggplot(bladderhealth13.df, aes(x = kegel_89b)) + geom_histogram(binwidth = 1)
+
+#Combine categories 4-6 in kegel_89 (I do [Kegels] several times a month, several times a week, daily). Try plotting and re-running Kruskal-Wallis***
+
+bladderhealth14.df <- bladderhealth13.df %>% mutate(kegel_89 = fct_collapse(kegel_89, "4" = c("4", "5", "6")))
+
+ggplot(bladderhealth14.df, aes(fill = kegel_89, x = ipaq)) + geom_bar(position = "fill")
+table(bladderhealth14.df$kegel_89)
+kruskal.test(bladderhealth14.df$kegel_89, bladderhealth14.df$ipaq)
+```
+#Try stratifying by casuscat (incontinence severity, "casus6", "casus7-10", "casus11-30"): 
+
+```{r}
+#Create composite score for incontinence, casus_total
+bladderhealth13.df <- bladderhealth13.df %>% mutate(casus_total = select(., casus_33:casus_38) %>% rowSums())
+
+#Create categories of casus_total based on score <6, score 7-10, score 11-30
+bladderhealth13.df$casuscat <- bladderhealth13.df$casus_total
+bladderhealth13.df$casuscat <- cut(bladderhealth13.df$casus_total, c(0, 7, 11, 31), right = FALSE, labels = c("casus6", "casus7-10", "casus11-30"))
+
+bladderhealth13.df %>% filter(casuscat == "casus6") %>% ggplot(aes(fill = as.factor(kegel_89), x = ipaq)) + geom_bar(position = "fill")
+#similar findings to overall
+
+bladderhealth13.df %>% filter(casuscat == "casus7-10") %>% ggplot(aes(fill = as.factor(kegel_89), x = ipaq)) + geom_bar(position = "fill")
+#low/mod a bit more similar, otherwise high still does kegels the most
+
+bladderhealth13.df %>% filter(casuscat == "casus11-30") %>% ggplot(aes(fill = as.factor(kegel_89), x = ipaq)) + geom_bar(position = "fill")
+
+#for casus11-30, everyone (1 person) in low activity group does kegels daily. Look at numbers: 650 in casus6, 817 in casus 7-10, 264 in casus 11-30. For casus11-30, 56 people in moderate group.
+table(bladderhealth13.df$casuscat)
+nrow(bladderhealth13.df[bladderhealth13.df$casuscat == 'casus11-30' & bladderhealth13.df$ipaq == 'moderate',])
+
+#Kruskal wallis test on casus6: not significant, p = 0.18
+
+bladderhealth15.df <- bladderhealth13.df[(bladderhealth13.df$casuscat == "casus6"),]
+
+kruskal.test(bladderhealth15.df$kegel_89, bladderhealth15.df$ipaq)
+
+#Same but with condensed kegel_89 categories: ***
+
+bladderhealth16.df <- bladderhealth14.df[(bladderhealth14.df$casuscat == "casus6"),]
+
+kruskal.test(bladderhealth16.df$kegel_89, bladderhealth16.df$ipaq)
+
+#Kruskal wallis test on casus7-10: significant, p = 0.002
+
+bladderhealth17.df <- bladderhealth13.df[(bladderhealth13.df$casuscat == "casus7-10"),]
+
+kruskal.test(bladderhealth17.df$kegel_89, bladderhealth17.df$ipaq)
+
+#Same but with condensed kegel_89 categories: ***
+
+bladderhealth18.df <- bladderhealth14.df[(bladderhealth14.df$casuscat == "casus7-10"),]
+
+kruskal.test(bladderhealth18.df$kegel_89, bladderhealth18.df$ipaq)
+
+#Kruskal wallis test on casus11-30: not significant, p = 0.7
+
+bladderhealth19.df <- bladderhealth13.df[(bladderhealth13.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth19.df$kegel_89, bladderhealth19.df$ipaq)
+
+#Same but with condensed kegel_89 categories: ***
+
+bladderhealth20.df <- bladderhealth14.df[(bladderhealth14.df$casuscat == "casus11-30"),]
+
+kruskal.test(bladderhealth20.df$kegel_89, bladderhealth20.df$ipaq)
+
+#Look at stacked/proportional bar graph for kegel_102 stratified by pa_61: maybe more active women do practical kegels a little less, but overall similar
+
+ggplot(bladderhealth2.df, aes(fill = as.factor(kegel_102), x = pa_61)) + geom_bar(position = "fill")
+
+#Same stratification as above. Using pa_61, for casus6 and casus7-10, more physically active women tend to do practical kegels less, but for casus11-30, more physically active women tend to do practical kegels more. Using ipaq, for casus6, more physically active women tend to do practical kegels less, but for casus 7-10 and casus11-30, more physically active women tend to do practical kegels more. BUT for last graph (casus11-30) only 1 person is in low activity group.
+
+bladderhealth13.df$ipaq <- factor(bladderhealth13.df$ipaq, levels = c("low", "moderate", "high"))
+
+bladderhealth13.df %>% filter(casuscat == "casus6") %>% ggplot(aes(fill = as.factor(kegel_102), x = ipaq)) + geom_bar(position = "fill")
+
+bladderhealth13.df %>% filter(casuscat == "casus7-10") %>% ggplot(aes(fill = as.factor(kegel_102), x = ipaq)) + geom_bar(position = "fill")
+
+bladderhealth13.df %>% filter(casuscat == "casus11-30") %>% ggplot(aes(fill = as.factor(kegel_102), x = ipaq)) + geom_bar(position = "fill")
+```
+#Will look at multivariable model to see if anything predicts doing Kegels, pa_89.
+#Variables to include:
+age (demo_age)
+bmi (need to calculate)
+gender (demo_gender), may want to recode to female/male/other
+education level (demo_edu)
+race (demo_race)
+ethnicity (demo_hisp)
+smoking hx (demo_cig)
+insurance (demo_insurance)
+general health (health_gen), can also consider comorbidities but need to recode
+vaginal deliveries (repro_children)
+sexually active (sex_active)
+LURN-SI 29 score (lurnsi29)
+
+#Clean data
+```{r}
+#Figure out BMI calculation
+
+#Clean up height: code for planning
+table(bladderhealth11.df$demo_height) #answers range from 6-34
+table(bladderhealth11.df$demo_height_cm) #some of these values will need to be recoded.
+bladderhealth_height.df <- bladderhealth11.df %>% filter(!is.na(demo_height_cm)) %>% select(record_id, demo_height, demo_height_cm) #filter didn't really work, but can still get info. The following values for demo_height_cm need to be converted over to demo_height (currently NA): 1.68, 62, 158, 164, 170, 5'8' (record_ID 860), 5' 2' (record_id 1367), 5'1' (record_id 1395)
+#Then can drop all demo_height_cm values (remaining entries in demo_height_cm have corresponding values in demo_height).
+#Convert the inches categories (6-34) to actual inches.
+
+#Clean up weight: code for planning
+table(bladderhealth11.df$demo_weight) #range 25-390, 25 probably meant to be kg so will convert to lbs in code chunk below. How tall is this person?
+bladderhealth11.df %>% filter(demo_weight == 25) %>% select(demo_weight, demo_height)
+table(bladderhealth11.df$demo_weight_kg) #5'3", so 55 lbs still seems really low. Will exclude this value from multivariable dataframe.
+bladderhealth_weight.df <- bladderhealth11.df %>% select(record_id, demo_weight, demo_weight_kg) %>% filter(!is.na(demo_weight_kg), is.na(demo_weight)) 
+#record_id 1698 has 105 recorded. lbs or kg? will check height
+bladderhealth11.df %>% filter(record_id == 1698) %>% select(demo_height_cm, demo_weight_kg)
+#someone who is 5'5" could plausibly be 230 lbs more likely than 105 lbs, so will keep 105 as kg.
+#For all entries with kg entry but no lbs entry, convert kg to lbs. Need to convert demo_weight_kg to numeric before multiplying by 2.2. Then drop the kg values.
+
+#Create new df for MV analysis. Put all the code together to clean up height & weight.
+bladderhealth_mv.df <- bladderhealth11.df %>% 
+mutate(demo_height = ifelse(demo_height_cm == "1.68", 21, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(demo_height_cm == "1.68", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(demo_height_cm == "62", 17, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(demo_height_cm == "62", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(demo_height_cm == "158", 17, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(demo_height_cm == "158", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(demo_height_cm == "164", 20, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(demo_height_cm == "164", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(demo_height_cm == "170", 20, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(demo_height_cm == "170", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(record_id == "860", 23, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(record_id == "860", NA, demo_height_cm)) %>%
+  mutate(demo_height = ifelse(record_id == "1367", 17, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(record_id == "1367", NA, demo_height_cm)) %>%
+    mutate(demo_height = ifelse(record_id == "1395", 16, demo_height)) %>%
+  mutate(demo_height_cm = ifelse(record_id == "1395", NA, demo_height_cm)) %>%
+mutate(demo_height = ifelse(!is.na(demo_height_cm) & is.na(demo_height), 16, demo_height)) %>%
+mutate(demo_height_cm = ifelse(!is.na(demo_height_cm) & !is.na(demo_height), NA, demo_height_cm)) %>%
+mutate(demo_height = ifelse(demo_height == "6", 52, ifelse(demo_height == "8", 54, ifelse(demo_height == "11", 57, ifelse(demo_height == "12", 58, ifelse(demo_height == "13", 59, ifelse(demo_height == "15", 60, ifelse(demo_height == "16", 61, ifelse(demo_height == "17", 62, ifelse(demo_height == "18", 63, ifelse(demo_height == "19", 64, ifelse(demo_height == "20", 65, ifelse(demo_height == "21", 66, ifelse(demo_height == "22", 67, ifelse(demo_height == "23", 68, ifelse(demo_height == "24", 69, ifelse(demo_height == "25", 70, ifelse(demo_height == "26", 71, ifelse(demo_height == "28", 72, ifelse(demo_height == "29", 73, ifelse(demo_height == "34", 78, NA))))))))))))))))))))) %>%
+  mutate(demo_weight = ifelse(demo_weight == "25", NA, demo_weight)) %>%
+  mutate(demo_weight_kg = as.numeric(demo_weight_kg)) %>%
+  mutate(demo_weight = ifelse(is.na(demo_weight) & (!is.na(demo_weight_kg)), demo_weight_kg*2.2, demo_weight)) %>%
+  mutate(demo_weight_kg = ifelse(!is.na(demo_weight_kg), NA, demo_weight_kg))
+
+#Recheck height & weight variables
+table(bladderhealth_mv.df$demo_height) #range 52-78 inches, correct
+table(bladderhealth_mv.df$demo_height_cm) #no values, correct
+table(bladderhealth_mv.df$demo_weight) #range 90-390 lbs, correct
+table(bladderhealth_mv.df$demo_weight_kg) #no values, correct
+
+
+#Clean up/create other variables
+bladderhealth_mv.df <- bladderhealth_mv.df %>% rename(age = demo_age, height = demo_height, weight = demo_weight, gender = demo_gender, edu = demo_edu, hisp = demo_hisp, cig_hx = demo_cig, insurance = demo_insurance, vag_del = repro_children, sex_active = repro_sex) %>%
+  mutate(gender = ifelse(gender == "1", 1, ifelse(gender == "2", 2, ifelse(gender == "3" | gender == "4" | gender == "5" | gender == "6" | gender == "7", 3, ifelse(gender == "8", NA, NA))))) %>%
+  mutate(gender = factor(gender, levels = c(1, 2, 3))) %>%
+  mutate(edu = factor(edu, levels = c(1, 2, 3, 4, 5, 6, 7))) %>%
+  mutate(race = ifelse(demo_race___1 == "1", 1, ifelse(demo_race___2 == "1", 2, ifelse(demo_race___3 == "1", 3, ifelse(demo_race___4 == "1", 4, ifelse(demo_race___5 == "1", 5, ifelse(demo_race___6 == "1", 6, ifelse(demo_race___7 == "1", 7, NA)))))))) %>%
+  mutate(hisp = factor(hisp, levels = c(1, 0))) %>%
+  mutate(cig_hx = factor(cig_hx, levels = c(1, 0))) %>%
+  mutate(insurance = ifelse(insurance == 1, 1, 0)) %>%
+  mutate(insurance = factor(insurance, levels = c(0, 1))) %>%
+  mutate(health_gen = factor(health_gen, levels = c(1, 2, 3, 4, 5))) %>%
+  mutate(vag_del = ifelse(vag_del == "1", 1, ifelse(vag_del == "2", 2, ifelse(vag_del == "3", 3, 4)))) %>%
+  mutate(vag_del = factor(vag_del, levels = c(1, 2, 3, 4))) %>% #creating new category 4, which is 4 or more vaginal deliveries
+  mutate(sex_active = ifelse(sex_active != "2", 1, 0)) %>%
+  mutate(sex_active = factor(sex_active, levels = c(1, 0))) %>%
+  mutate(bmi = weight*703/(height^2)) %>%
+  mutate(casus_total = select(., casus_33:casus_38) %>% rowSums()) %>% mutate(pain_total = select(., pain_39:pain_42) %>% rowSums()) %>% mutate(voidingdiff_total = select(., voidingdiff_43:voidingdiff_47) %>% rowSums()) %>% mutate(urgency_total = select(., urgency_48:urgency_50) %>% rowSums()) %>% mutate(nocturia_total = select(., nocturia_51, nocturia_52) %>% rowSums()) %>% mutate(additional_total = select(., additional_53:additional_60) %>% rowSums()) %>% mutate(lurnsi29 = select(., casus_total:additional_total) %>% rowSums()) %>%
+  mutate(kegel_89_binary = ifelse(kegel_89 >3, 1, 0)) %>%
+  mutate(kegel_89_binary = factor(kegel_89_binary, levels = c(0, 1), labels = c("Not doing Kegels", "Doing Kegels several times a month or more")))
+
+
+
+#See how many LURN SI-29 values missing: 
+bladderhealth_mv.df %>% count(is.na(lurnsi29))
+
+
+#0
+#Check distribution of LURN SI-29 scores, will need to convert to categorical/factor for multivariate analysis.
+ggplot(bladderhealth_mv.df, aes(x = lurnsi29)) + geom_histogram(binwidth = 1)
+summary(bladderhealth_mv.df$lurnsi29)
+#Find tertiles of lurnsi29
+vTert = quantile(bladderhealth_mv.df$lurnsi29, c(0:3/3), na.rm = TRUE)
+bladderhealth_mv.df$lurnsi29cat = with(bladderhealth_mv.df, 
+               cut(lurnsi29, 
+                   vTert, 
+                   include.lowest = T, 
+                   labels = c("Low", "Medium", "High")))
+summary(bladderhealth_mv.df$lurnsi29cat)
+
+#Check distribution of CASUS scores, will need to convert to categorical/factor for multivariate analysis.
+ggplot(bladderhealth_mv.df, aes(x = casus_total)) + geom_histogram(binwidth = 1)
+summary(bladderhealth_mv.df$casus_total)
+#Tried to find tertiles of casus_total -> "error in cut, breaks are not unique" likely because most values are 0. Will stratify by 0 and >0 instead.
+bladderhealth_mv.df <- bladderhealth_mv.df %>% mutate(casus_total_cat = ifelse(casus_total == 0, 0, 1)) %>%
+  mutate(casus_total_cat = factor(casus_total_cat, levels = c(0, 1), labels = c("no_incontinence", "incontinence")))
+summary(bladderhealth_mv.df$casus_total_cat)
+
+
+#Troubleshooting code
+class(bladderhealth_mv.df$kegel_89_binary)
+bladderhealth_mv.df %>% count(kegel_89 = "I used to do them but stopped")
+table(bladderhealth11.df$kegel_89) 
+table(bladderhealth_mv.df$kegel_89) 
+rm(bladderhealth11.df)
+rm(bladderhealth_mv.df)  
+table(bladderhealth11.df$kegel_89_binary) 
+table(bladderhealth_mv.df$kegel_89_binary) 
+
+                        
+#Look at distribution of kegel_89. Will stratify so that 1-3 is not doing Kegels regularly (never did them, used to but stopped, occasionally when I think of them) and 4-6 is doing Kegels regularly (several times/month, several times/week, daily)
+table(bladderhealth_mv.df$kegel_89)
+#Look at distribution out kegel_89_binary. 1502 not doing Kegels regulary, 229 doing them regularly.
+table(bladderhealth_mv.df$kegel_89_binary)
+              
+#Failed code to create kegel_89_binary. Fix: Don't make kegel_89 a factor beforehand.
+#mutate(kegel_89_binary = ifelse(kegel_89 < 4, 0, 1))
+#mutate(kegel_89_binary = ifelse(kegel_89 = 1 | kegel_89 = 2 | kegel_89 = 3, 0, 1))
+#mutate(kegel_89_binary = forcats::fct_collapse(kegel_89, 0 = c(1, 2, 3), 1 = c(4, 5, 6)))
+#bladderhealth_mv.df$kegel_89_binary <- fct_collapse(bladderhealth_mv.df$kegel_89_binary, 0 == c(1, 2, 3), 1 == c(4, 5, 6))
+#mutate(kegel_89_binary = kegel_89) %>%
+#mutate(kegel_89_binary = ifelse(kegel_89_binary, "0" = c("1", "2", "3"), "1" = c("4", "5", "6")))
+#mutate(kegel_89_binary = fct_recode(kegel_89_binary, '1' = "0", '2' = "0", '3' = "0", '4' = "1", '5' = "1", '6' = "1"))
+
+
+                         
+#Create vector for predictors
+predictors <- c("age", "bmi", "gender", "edu", "hisp", "cig_hx", "insurance", "vag_del", "sex_active", "lurnsi29cat", "ipaq")
+
+predictors_casus <- c("age", "bmi", "gender", "edu", "hisp", "cig_hx", "insurance", "vag_del", "sex_active", "casus_total_cat", "ipaq")
+
+#How many missing values per variable? 
+summary(bladderhealth_mv.df[, predictors])
+#~2-25 missing values per variable, not terrible.
+summary(bladderhealth_mv.df[, predictors_casus])
+#similar
+
+#Drop NA values for variables of interest. 1748 obs to 341 obs.
+#bladderhealth_mv2.df <- bladderhealth_mv.df %>% drop_na(all_of(predictors), kegel_86, kegel_87, kegel_89, kegel_102)    
+
+#Drop NA values for variables of interest, only kegel_89 as outcome. 1748 obs to 1710 obs.
+bladderhealth_mv2.df <- bladderhealth_mv.df %>% drop_na(all_of(predictors), kegel_89)
+bladderhealth_mv3.df <- bladderhealth_mv.df %>% drop_na(all_of(predictors_casus), kegel_89)
+
+
+#troubleshooting code
+rm(bladderhealth_mv.df)
+rm(bladderhealth_mv2.df)
+summary(bladderhealth_mv.df$ipaq)
+
+```
+#Running MVA
+```{r}
+kegel89.fit <- glm(kegel_89_binary ~ age + bmi + gender + edu + hisp + cig_hx + insurance + vag_del + sex_active + lurnsi29cat + ipaq, 
+                  data = bladderhealth_mv2.df, 
+                  family = binomial())
+summary(kegel89.fit) #insurance2 (intermittent coverage), insurance3 (emergency coverage only), and sex_active0 (not sexually active) significant
+
+#Check numbers for intermittent/emergent insurance coverage. 1549 insured, 86 intermittent, 13 emergency only, 62 uninsured.
+table(bladderhealth_mv2.df$insurance)
+
+
+#try for casus_total instead of lurnsi29
+kegel89.fit_casus <- glm(kegel_89_binary ~ age + bmi + gender + edu + hisp + cig_hx + insurance + vag_del + sex_active + casus_total_cat + ipaq, 
+                  data = bladderhealth_mv3.df, 
+                  family = binomial())
+summary(kegel89.fit_casus) 
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
