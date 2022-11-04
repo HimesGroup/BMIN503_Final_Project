@@ -1,5 +1,5 @@
 ---
-title: "BMIN503/EPID600 Project: Title TBD"
+title: "BMIN503/EPID600 Project: Examining the association between fertility treatment and live birth"
 author: "Julia DiTosto"
 output: 
   html_document:
@@ -7,21 +7,120 @@ output:
     highlight: tango
 ---
 
-
-***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+```{r global options, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+``` 
 
 ### Overview
 Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
 
+> The aims of this analysis are threefold and have been extensively discussed with Penn Epidemiology faculty members Ellen Caniglia, ScD, and Sunni Mumford, PhD. Both faculty advised on the topic idea and research question, and Sunni Mumford provided access to the data. First, using data from the Folic Acid and Zinc Supplement Trial (FAZST; https://clinicaltrials.gov/ct2/show/NCT01857310) we aim to examine risk of livebirth by type of fertility treatment among females attempting to conceive. Second, we aim to use a time-to-event analysis to examine time to pregnancy that results in a livebirth by type of fertility treatment among females attempting to conceive. Third, we aim to use supervised machine learning techniques to generate a prediction model of time to pregnancy by fertility treatment type and other important predictors that will be identified a posteriori based on the results of the data. Hypothesized predictors include fertility treatment insurance, parity, age and BMI of both partners, and presence of infertility diagnosis. 
+
+> The final project GitHub respository can be accessed here: https://github.com/jditosto/BMIN503_Final_Project
 
 ### Introduction 
 Describe the problem addressed, its significance, and some background to motivate the problem.
 
 Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
 
+> Between 7-17% of couples seek fertility treatment annually in the United States (US). With scientific and medical advances in reproductive endocrinology and infertility, there are multiple fertility treatment options available, including ovulation induction (OI), intrauterine insemination (IUI), and in vitro fertilization (IVF). Deciding upon which treatment to use is individualized and depends on shared decision making between the patient and provider. Individuals may try multiple different types of treatments during their fertility process, often starting with the least invasive treatments and move to more invasive if unsuccessful. However, it is estimated that nearly 65% of individuals seeking fertility treatment do have not have a livebirth within one year of seeking treatment, which is the outcome of most interest to individuals seeking pregnancy. 
+
+> Better understanding both the probability of live birth and time to pregnancy that results in a livebirth given specific fertility treatments is of critical interest to patients and providers. This analysis will use high quality data from a multi-site, large randomized-controlled trial. Epidemiologic methods will be combined with supervised machine learning to generate a prediction model of time to pregnancy that results in a livebirth by fertility treatment. 
 
 ### Methods
+
+# Load packages required for analysis
+```{r eval = TRUE, message = FALSE}  
+library(dplyr)
+library(ggplot2)
+library(haven)
+library(tidyverse)
+```
+
+# Load original data set and do a quick clean
+```{r eval = TRUE, message = FALSE}  
+# Load the original dataset
+original_data <- read_sas("~/Desktop/Fall 2022/EPID6000/Final project/vitd_metab_rev.sas7bdat", 
+    NULL)
+
+fertility_data <- original_data %>%
+  select(c(COUPLEID, site, STRATA, randomization_date, Treatment, Followup_Days, Status, tx_status,
+           Total_Preg_Num, Date_Final_Status, LMP_source, LMP_final, LMP_ppt_date, preg_ppt, date_ppt,
+           preg_hcg, date_hcg, preg_quest, date_quest, LMP_quest_date, preg_sac, sac_total_fetus_num,
+           date_sac, LMP_sac_date, preg_wuc, wuc_total_fetus_num, date_wuc, LMP_wuc_date, preg_ult, 
+           ult_total_fetus_num, date_ult, LMP_ult_date, preg_lb, lb_total_fetus_num, date_lb, GA_delivery,
+           Marital_status_f, Annual_Household_Income_f,
+           Health_Insur_f, Fertility_Insur_f, race_m, Race_f,
+           Highest_Degree_f, BMI_m, BMI_f, Age_f, Age_m, employment_f, employment_m,
+           F3FERTDX, F3FERTDX, live_birth, early_loss, stillbirth, neonatal_death)) %>%
+  ungroup(.) %>%
+  mutate(site = factor(site)) %>% #Recode variables to factors
+  mutate(STRATA = factor(STRATA)) %>%
+  mutate(Treatment = factor(Treatment)) %>%
+  mutate(LMP_source = factor(LMP_source)) %>% #levels = c(...) **What is this variable? Coded as 1-15 with 0.5 numbers) 
+  mutate(preg_ppt = factor(preg_ppt)) %>%
+  mutate(preg_ppt = ifelse(is.na(preg_ppt), 0, preg_ppt)) %>% #Recode missing as 0
+  mutate(preg_hcg = factor(preg_hcg)) %>%
+  mutate(preg_hcg = ifelse(is.na(preg_hcg), 0, preg_hcg)) %>% #Recode missing as 0
+  mutate(preg_quest = factor(preg_quest)) %>%
+  mutate(preg_quest = ifelse(is.na(preg_quest), 0, preg_quest)) %>% #Recode missing as 0
+  mutate(preg_sac = factor(preg_sac)) %>%
+  mutate(preg_sac = ifelse(is.na(preg_sac), 0, preg_sac)) %>% 
+  mutate(preg_wuc = factor(preg_wuc)) %>%
+  mutate(preg_wuc = ifelse(is.na(preg_wuc), 0, preg_wuc)) %>% 
+  mutate(preg_ult = factor(preg_ult)) %>%
+  mutate(preg_ult = ifelse(is.na(preg_ult), 0, preg_ult)) %>% 
+  mutate(preg_lb = factor(preg_lb)) %>%
+  mutate(preg_lb = ifelse(is.na(preg_lb), 0, preg_lb)) %>%   
+  mutate(Martial_status_f = factor(Marital_status_f)) %>%
+  mutate(Annual_Household_Income_f = factor(Annual_Household_Income_f)) %>%
+  mutate(Health_Insur_f = factor(Health_Insur_f)) %>% 
+  mutate(Fertility_Insur_f = factor(Fertility_Insur_f)) %>%
+  mutate(Race_f = factor(Race_f)) %>%
+  mutate(Highest_Degree_f = factor(Highest_Degree_f)) %>%
+  mutate(F3FERTDX = factor(F3FERTDX)) %>%
+  mutate(live_birth = factor(live_birth, levels = c(0,1), labels = "Livebirth - Yes", "Livebirth - No")) %>%
+  mutate(early_loss = factor(early_loss)) %>%
+  mutate(stillbirth = factor(stillbirth)) %>%  
+  mutate(neonatal_death = factor(neonatal_death))  
+
+remove(original_data) #Remove original data set from environment
+```
+
+# The exposure of interest is fertility treatment. We are categorizing fertility treatment based on the most aggressive treatment used. For instance, an individual who started on OI but switched to IVF will be grouped in the IVF group. 
+```{r eval = TRUE, message = FALSE}  
+#View distribution of tx_status
+table(fertility_data$tx_status)
+
+#Create 4 categories: 0 = No fertility treatment; 1 = IVF; 2 = IUI; 3 = OI
+fertility_data <- fertility_data %>%
+  mutate(tx_cat = ifelse(tx_status == "Cycle comments" | tx_status == "Natural Cycle" | 
+                              tx_status == "No Fertility Tx", 0,
+                            ifelse(tx_status == "IVF only" | tx_status == "IVF+IUI" | tx_status == "IVF+IUI+OI" | tx_status == "IVF+OI" | tx_status == "Monthly Questionnaire - IVF", 1,
+                                   ifelse(tx_status == "IUI only" | tx_status == "IUI+OI" | tx_status == "Monthly Questionnaire - Non-IVF", 2,3)
+                                   ))) %>%
+  mutate(tx_cat = factor(tx_cat, levels = c(0,1,2,3), labels = c("No fertility treatment", 
+                                                                       "IVF", "IUI", "OI"))) 
+
+table(fertility_data$tx_cat)
+```
+
+```{r eval = TRUE, message = FALSE}  
+#View outcome by exposure group using basic descriptive plots
+ggplot(data = fertility_data, aes(x = tx_cat, fill = live_birth)) +
+  geom_bar() + 
+  xlab("Fertility treatment") + ylab("Number of participants (N)") +
+  labs(fill = "Livebirth") + #How do I make the labels in the legend?
+  theme_bw()
+
+ggplot(data = fertility_data, aes(x = tx_cat, fill = live_birth)) +
+  geom_bar(position = "fill") + 
+  xlab("Fertility treatment") +
+  theme_bw()
+```
+
+
+
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
 
