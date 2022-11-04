@@ -47,11 +47,15 @@ def calc_admin_intensity(df):
     print(df.shape)
     df["Hrs_Admin"] = df["Hrs_RNDON"] + df["Hrs_RNadmin"] + df["Hrs_LPNadmin"]
     df["Hrs_NonAdmin"] = df["Hrs_RN"] + df["Hrs_LPN"] + df["Hrs_CNA"] + df["Hrs_NAtrn"] + df["Hrs_MedAide"]
-    grouped = df.groupby(["PROVNUM", "CY_Qtr"], as_index=False).agg({"MDScensus": "sum", "Hrs_Admin":"sum", "Hrs_NonAdmin":"sum", "WorkDate": "count"})
+    df["Hrs_RNDON_Pct"] = df["Hrs_RNDON"] / (df["Hrs_RNadmin"] + df["Hrs_LPNadmin"] + df["Hrs_RN"] + df["Hrs_LPN"] + df["Hrs_CNA"] + df["Hrs_NAtrn"] + df["Hrs_MedAide"] + df["Hrs_RNDON"])
+    df["IsMajorityDON"] = df["Hrs_RNDON_Pct"].apply(lambda x: 1 if x >= 0.5 else 0)
+    grouped = df.groupby(["PROVNUM", "CY_Qtr"], as_index=False).agg({"MDScensus": "sum", "Hrs_Admin":"sum", "Hrs_NonAdmin":"sum", "Hrs_RNDON": "sum", "WorkDate": "count", "IsMajorityDON": "sum"})
+    grouped["Hrs_DON_prpd"] = (grouped["Hrs_RNDON"] / grouped["MDScensus"]).round(4)
     grouped["Hrs_Admin_prpd"] = (grouped["Hrs_Admin"] / grouped["MDScensus"]).round(4)
     grouped["Hrs_NonAdmin_prpd"] = (grouped["Hrs_NonAdmin"] / grouped["MDScensus"]).round(4)
     grouped["AdminIntensity"] = (grouped["Hrs_Admin_prpd"] / (grouped["Hrs_NonAdmin_prpd"] + grouped["Hrs_Admin_prpd"])).round(4)
     grouped["EstResidentsPerDay"] = (grouped["MDScensus"] / grouped["WorkDate"]).round(4)
+    grouped["PctDaysMajorityDON"] = grouped["IsMajorityDON"] / grouped["WorkDate"]
     print(grouped.shape)
     return grouped
 
