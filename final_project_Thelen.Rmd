@@ -60,6 +60,7 @@ library(tibble)
 library(tidyr)
 library(stringr)
 library(pROC)
+library(PRROC)
 ```
 
 #### Read in the Data
@@ -151,7 +152,7 @@ ggplot(data = data.complete.factors, aes(x=icu, fill = aki)) +
 ```
 
 Using a Chi-square test, we can check if there is a statistically significant difference in AKI rates.
-```{r, eva; = T}
+```{r, eval = T}
 # Chi-Square test
 chisq.test(table(data.complete$aki, data.complete$icu))
 ```
@@ -182,7 +183,7 @@ for(i in 1:K){
   pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.predictions
   
 	#RF train/test
-	rf <- randomForest(aki ~ ., data = train, ntree = 100)
+	rf <- randomForest(aki ~ ., data = train, ntree = 100, importance = TRUE)
 	rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
 	pred.outputs.rf[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
 	
@@ -192,16 +193,20 @@ for(i in 1:K){
 
 
 ```{r, eval = T}
-
-#AUC
+# AUC
 roc(obs.outputs, pred.outputs.glm) # glm with cross validation
 roc(obs.outputs, pred.outputs.rf, ci = TRUE) # rf with cross validation
 
-#ROC Curves
+# ROC Curves
 plot.roc(obs.outputs, pred.outputs.glm, col = "darkred") # Glm, k fold cross validated
 plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "navy", add = TRUE) # RF, K-fold cross validated
 legend("bottomright", legend = c("glm cross-validation", "rf cross-validation"), col = c("darkred", "navy"), lwd = 1)
 
+
+# PR Curves
+pr <- pr.curve(pred.outputs.glm[obs.outputs == "2"], 
+               pred.outputs.glm[obs.outputs == "1"], curve=TRUE)
+plot(pr)
 ```
 Next, we need to identify the top predictors
 
@@ -227,7 +232,7 @@ for(i in 1:K){
   pred.outputs.glm.icu[1:length(s[s == i]) + offset] <- glm.predictions.icu
   
 	#RF train/test
-	rf.icu <- randomForest(aki ~ ., data = train, ntree = 100)
+	rf.icu <- randomForest(aki ~ ., data = train, ntree = 100, importance = TRUE)
 	rf.pred.curr.icu <- predict(rf.icu, newdata = test, type = "prob") 
 	pred.outputs.rf.icu[1:length(s[s == i]) + offset] <- rf.pred.curr.icu[ , 2]
 	
@@ -237,7 +242,6 @@ for(i in 1:K){
 
 
 ```{r, eval = T}
-
 #AUC
 roc(obs.outputs.icu, pred.outputs.glm.icu) # glm with cross validation
 roc(obs.outputs.icu, pred.outputs.rf.icu, ci = TRUE) # rf with cross validation
@@ -246,6 +250,11 @@ roc(obs.outputs.icu, pred.outputs.rf.icu, ci = TRUE) # rf with cross validation
 plot.roc(obs.outputs.icu, pred.outputs.glm.icu, col = "darkred") # Glm, k fold cross validated
 plot.roc(obs.outputs.icu, pred.outputs.rf.icu, ci = TRUE, col = "navy", add = TRUE) # RF, K-fold cross validated
 legend("bottomright", legend = c("glm cross-validation", "rf cross-validation"), col = c("darkred", "navy"), lwd = 1)
+
+# PR Curves
+pr.icu <- pr.curve(pred.outputs.glm.icu[obs.outputs.icu == "2"], 
+               pred.outputs.glm.icu[obs.outputs.icu == "1"], curve=TRUE)
+plot(pr.icu)
 
 ```
 ##### Mobel Building Regression for ICU Dataset
@@ -270,7 +279,7 @@ for(i in 1:K){
   pred.outputs.glm.nonicu[1:length(s[s == i]) + offset] <- glm.predictions.nonicu
   
 	#RF train/test
-	rf.nonicu <- randomForest(aki ~ ., data = train, ntree = 100)
+	rf.nonicu <- randomForest(aki ~ ., data = train, ntree = 100, importance = TRUE)
 	rf.pred.curr.nonicu <- predict(rf.nonicu, newdata = test, type = "prob") 
 	pred.outputs.rf.nonicu[1:length(s[s == i]) + offset] <- rf.pred.curr.nonicu[ , 2]
 	
@@ -280,7 +289,6 @@ for(i in 1:K){
 
 
 ```{r, eval = T}
-
 #AUC
 roc(obs.outputs.nonicu, pred.outputs.glm.nonicu) # glm with cross validation
 roc(obs.outputs.nonicu, pred.outputs.rf.nonicu, ci = TRUE) # rf with cross validation
@@ -290,10 +298,144 @@ plot.roc(obs.outputs.nonicu, pred.outputs.glm.nonicu, col = "darkred") # Glm, k 
 plot.roc(obs.outputs.nonicu, pred.outputs.rf.nonicu, ci = TRUE, col = "navy", add = TRUE) # RF, K-fold cross validated
 legend("bottomright", legend = c("glm cross-validation", "rf cross-validation"), col = c("darkred", "navy"), lwd = 1)
 
+# PR Curves
+pr.nonicu <- pr.curve(pred.outputs.glm.nonicu[obs.outputs.nonicu == "2"], 
+               pred.outputs.glm.nonicu[obs.outputs.nonicu == "1"], curve=TRUE)
+plot(pr.nonicu)
 ```
-Performance decreased when the data was split between ICU and Non ICU, vs when data was combined. 
+ROC performance decreased when the data was split between ICU and Non ICU, vs when data was combined. 
+However, PRC performance increased for the ICU group. 
 But were the top predictors different? 
 
+# Identifying top predictors
+```{r, eval = T}
+# Identify top predictors for the combined data set
+# Logistic Regression Importance
+glm.aki.sum <- summary(glm.aki)
+glm.aki.z <- data.frame(glm.aki.sum$coefficients[,3]) # make df of zscores
+glm.aki.z <- rownames_to_column(glm.aki.z, "feature") # convert rownames to a column
+glm.aki.z <- glm.aki.z[!(glm.aki.z$feature=="(Intercept)"),] # drop intercept
+colnames(glm.aki.z)[2] <- "z" # rename column to z 
+glm.aki.z$col.flag <- glm.aki.z$z>0 # Create a color flag
+ggplot(glm.aki.z, aes(x = reorder(feature, z), y = z, fill = col.flag)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("navy", "darkred"), name = NULL, labels = c("Protective", "Predictive"))+
+  labs(y="Relative Importance (z-score)", x = "Feature")
+
+#Get 10 Top Predictors by GLM
+glm.aki.pvals <- data.frame(glm.aki.sum$coefficients[,4])
+top.glm.aki.pvals <- glm.aki.pvals %>%
+  filter(rownames(glm.aki.pvals) != "(Intercept)") %>%
+  arrange(glm.aki.sum.coefficients...4.) %>%
+  slice_head(n=10)
+
+# Evaluate change in deviance?
+anova(glm.aki)
+
+# Random Forest Importance
+gini <- as.data.frame(rf$importance)
+gini <- rownames_to_column(gini, "feature") # convert rownames to a column
+ggplot(gini, aes(x = reorder(feature, MeanDecreaseGini) , y = MeanDecreaseGini))+
+  geom_bar(stat = "identity", fill = "darkred") +
+  coord_flip()+
+  labs(y="Mean Decrease in GINI Score", x = "Feature")
+
+# Get 10 top Predictors by RF (highest decrease in GINI)
+top.rf.gini = gini %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  slice_head(n=10)
+```
+
+Repeat process for ICU subset
+```{r, eval = T}
+# Identify top predictors for the icu sub set
+# Logistic Regression Importance
+glm.aki.sum.icu <- summary(glm.aki.icu)
+glm.aki.z.icu <- data.frame(glm.aki.sum.icu$coefficients[,3]) # make df of zscores
+glm.aki.z.icu <- rownames_to_column(glm.aki.z.icu, "feature") # convert rownames to a column
+glm.aki.z.icu <- glm.aki.z.icu[!(glm.aki.z.icu$feature=="(Intercept)"),] # drop intercept
+colnames(glm.aki.z.icu)[2] <- "z" # rename column to z 
+glm.aki.z.icu$col.flag <- glm.aki.z.icu$z>0 # Create a color flag
+ggplot(glm.aki.z.icu, aes(x = reorder(feature, z), y = z, fill = col.flag)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("navy", "darkred"), name = NULL, labels = c("Protective", "Predictive"))+
+  labs(y="Relative Importance (z-score)", x = "Feature")
+
+#Get 10 Top Predictors by GLM
+glm.aki.pvals.icu <- data.frame(glm.aki.sum.icu$coefficients[,4])
+top.glm.aki.pvals.icu <- glm.aki.pvals.icu %>%
+  filter(rownames(glm.aki.pvals.icu) != "(Intercept)") %>%
+  arrange(glm.aki.sum.icu.coefficients...4.) %>%
+  slice_head(n=10)
+
+# Random Forest Importance
+gini.icu <- as.data.frame(rf.icu$importance)
+gini.icu <- rownames_to_column(gini.icu, "feature") # convert rownames to a column
+ggplot(gini.icu, aes(x = reorder(feature, MeanDecreaseGini) , y = MeanDecreaseGini))+
+  geom_bar(stat = "identity", fill = "darkred") +
+  coord_flip()+
+  labs(y="Mean Decrease in GINI Score", x = "Feature")
+
+# Get 10 top Predictors by RF (highest decrease in GINI)
+top.rf.gini.icu = gini.icu %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  slice_head(n=10)
+```
+
+Repeat process for non-ICU subset
+```{r, eval = T}
+# Identify top predictors for the icu sub set
+# Logistic Regression Importance
+glm.aki.sum.nonicu <- summary(glm.aki.nonicu)
+glm.aki.z.nonicu <- data.frame(glm.aki.sum.nonicu$coefficients[,3]) # make df of zscores
+glm.aki.z.nonicu <- rownames_to_column(glm.aki.z.nonicu, "feature") # convert rownames to a column
+glm.aki.z.nonicu <- glm.aki.z.nonicu[!(glm.aki.z.nonicu$feature=="(Intercept)"),] # drop intercept
+colnames(glm.aki.z.nonicu)[2] <- "z" # rename column to z 
+glm.aki.z.nonicu$col.flag <- glm.aki.z.nonicu$z>0 # Create a color flag
+ggplot(glm.aki.z.nonicu, aes(x = reorder(feature, z), y = z, fill = col.flag)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("navy", "darkred"), name = NULL, labels = c("Protective", "Predictive"))+
+  labs(y="Relative Importance (z-score)", x = "Feature")
+
+#Get 10 Top Predictors by GLM
+glm.aki.pvals.nonicu <- data.frame(glm.aki.sum.nonicu$coefficients[,4])
+top.glm.aki.pvals.nonicu <- glm.aki.pvals.nonicu %>%
+  filter(rownames(glm.aki.pvals.nonicu) != "(Intercept)") %>%
+  arrange(glm.aki.sum.nonicu.coefficients...4.) %>%
+  slice_head(n=10)
+
+# Random Forest Importance
+gini.nonicu <- as.data.frame(rf.nonicu$importance)
+gini.nonicu <- rownames_to_column(gini.nonicu, "feature") # convert rownames to a column
+ggplot(gini.nonicu, aes(x = reorder(feature, MeanDecreaseGini) , y = MeanDecreaseGini))+
+  geom_bar(stat = "identity", fill = "darkred") +
+  coord_flip()+
+  labs(y="Mean Decrease in GINI Score", x = "Feature")
+
+# Get 10 top Predictors by RF (highest decrease in GINI)
+top.rf.gini.nonicu = gini.nonicu %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  slice_head(n=10)
+```
+
+Make a table that compare the top predictors for the different methods and the different datasets. 
+```{r, eval = T}
+# Make a dataframe with all the results
+
+top.compare.pval <-data.frame(rownames(top.glm.aki.pvals), rownames(top.glm.aki.pvals.nonicu),  rownames(top.glm.aki.pvals.icu)) %>%
+  rename("combined" = 1, "non-ICU" =2, "ICU" = 3)
+top.compare.pval
+
+top.compare.gini <-data.frame(top.rf.gini$feature,  top.rf.gini.nonicu$feature, top.rf.gini.icu$feature)
+top.compare
+```
+
+Gini score is sensitive variables that have lots of categories or are continuous. These scores are inflated and picking the top ten, may lead to selecting the same continuous variables across each hospital setting. One way around this is to convert continuous variables to discrete variables. In this setting, this could be done by flagging abnormal values, as EHRS often do for clinicians. Can create a flag variables, and repeat the experiment with all the continuous variables converted to categorical variables. 
+
+Mean Decrease in Accuracy has a problem: when variables are dependent on each tother, you cant tell if either is important. 
 
 # References
 1) Goyal A, Daneshpajouhnejad P, Hashmi MF, et al. Acute Kidney Injury. [Updated 2022 Aug 18]. In: StatPearls [Internet]. Treasure Island (FL): StatPearls Publishing; 2022 Jan-. Available from: https://www.ncbi.nlm.nih.gov/books/NBK441896/.
