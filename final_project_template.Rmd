@@ -1,10 +1,12 @@
 ---
-title: "BMIN5030/EPID6000 Final Project"
+title: "State-Level Dynamics and Predictors of Opioid Overdose in the United States (2015-2021)"
 author: "Chris Miller"
-output: 
+output:
   html_document:
     theme: paper 
     highlight: tango
+    fig_height: 12
+    fig_width: 12
 ---
 
 ***
@@ -12,22 +14,151 @@ output:
 ### Overview
 The association between region-specific prescription opioid prescribing and the rate of opioid overdose death was well documented during the time periods when prescription opioids were the primary cause of overdose deaths. However, the role of regional prescribing practices on overdose deaths has been less studied since illicit opioids became the primary causes of opioid-related deaths. The goal of this project is to characterize the dynamics of opioid overdose deaths in the United States from 2015 to 2021 and to evaluate state-level predictors of opioid overdose including prescription opioid prescribing and social determinants of health (e.g., depression, obesity, lack of health insurance, smoking, binge drinking, self-reported poor mental health).
 
-#Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
-
 ### Introduction 
 The opioid overdose epidemic in the United States has transitioned over the past two decades from being primarily driven by misuse and abuse of prescription opioid analgesics in the early 2000s to one driven by heroin in the mid 2010s and by illicit fentanyl and fentanyl analogs after 2016. In recognition of the crisis, federal agencies and professional associations modified recommendations and practice guidelines to minimize the use of prescription opioids for acute and chronic pain. Since 2010, the morphine milligram equivalents (MMEs) of opioids dispensed per person has declined nationally by more than 40%. However, there remains substantial regional variation across the country in opioid prescribing and the rate of overdose deaths attributable to commonly prescribed opioids has not declined since its peak in 2010. 
 
 Previous studies have demonstrated that the regional rate of opioid prescribing per capita was highly associated with the regional rate of opioid overdose deaths when prescription opioids were the primary cause of overdose deaths. But with the dramatic increase in heroin- and fentanyl-related overdose deaths, the relationship between regional patterns in prescription opioid prescribing and all-cause opioid overdose death (i.e, due to prescription or illicit opioids) have not continued to be well characterized. This is despite the fact that one of the primary pathways to illicit opioid use continues to be misuse of prescription opioids. While there are many paths to the development of an opioid use disorder, many individuals initiate the misuse or abuse of opioids due to psychological factors (e.g., depression, anxiety, social isolation) and commonly misuse or abuse other substances (e.g., alcohol, marijuana). The Centers for Disease Control and Prevention (CDC) maintains publicly available databases that report cause-specific opioid overdose death rates by state (Vital Statistics Rapid Release [VSRR]), state-level opioid dispensing rates (IQVIA Xponent), and county-specific data on several social determinants of health (PLACES). This collection of data sources facilitates an updated evaluation of the relationships between opioid overdose deaths, prescription opioid prescribing, and community-level health issues.
 
-
-#Describe the problem addressed, its significance, and some background to motivate the problem.
-
-#Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
-
-
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+```{r eval = TRUE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:\\Users\\cjm2718\\Dropbox\\Penn\\BMIN 5030\\Final Project Data\\")
+library(tidyverse)
+library(ggplot2)
+library(GGally)
+library(sf)
+library(tidycensus)
+library(leaflet)
+library(RColorBrewer)
+library(readxl)
+library(gridExtra)
+library(grid)
+library(clinUtils)
+
+# import county-level prescription opioid dispensing rates by year
+county.disp.2015 <- read_excel("county_dispensing_rates_2015.xlsx")
+county.disp.2016 <- read_excel("county_dispensing_rates_2016.xlsx")
+county.disp.2017 <- read_excel("county_dispensing_rates_2017.xlsx")
+county.disp.2018 <- read_excel("county_dispensing_rates_2018.xlsx")
+county.disp.2019 <- read_excel("county_dispensing_rates_2019.xlsx")
+county.disp.2020 <- read_excel("county_dispensing_rates_2020.xlsx")
+
+
+# merge all county-level prescription opioid dispensing datasets
+county.disp <- full_join(county.disp.2015, county.disp.2016, by = "FIPS.code") %>% 
+  full_join(., county.disp.2017, by = "FIPS.code") %>% 
+  full_join(., county.disp.2018, by = "FIPS.code") %>% 
+  full_join(., county.disp.2019, by = "FIPS.code") %>% 
+  full_join(., county.disp.2020, by = "FIPS.code") %>% 
+  mutate(disp.rate.2015 = as.numeric(gsub("-", "", disp.rate.2015))) %>% 
+  mutate(disp.rate.2016 = as.numeric(gsub("-", "", disp.rate.2016))) %>% 
+  rename("county" = "county.y.y.y") %>% 
+  rename("state" = "state.y.y.y") %>% 
+  select(c("state", "county", "FIPS.code", "disp.rate.2015", "disp.rate.2016", "disp.rate.2017", "disp.rate.2018",
+           "disp.rate.2019", "disp.rate.2020")) %>% 
+  drop_na("county")
+
+# import county-level geometry data
+counties <- readRDS(gzcon(url(
+  "https://raw.githubusercontent.com/HimesGroup/BMIN503/master/DataFiles/uscounties_2010.rds")))
+
+# create FIPS.code for merge with county-level opioid dispensing data
+counties <- counties %>% 
+  mutate(FIPS.code = as.numeric(paste0(STATE, COUNTY)))
+county.disp.map <- merge(county.disp, counties, by.x = "FIPS.code", by.y = "FIPS.code")
+
+# import VSRR on county-level opioid overdose death data by drug type
+vsrr <- read.csv("VSRR_Provisional_Drug_Overdose_Death_Counts.csv")
+
+# import NCHS data on county-level data on drug overdose death rates overall
+nchs <- read.csv("NCHS_-_Drug_Poisoning_Mortality_by_County__United_States.csv")
+
+# import PLACES data on county-level health indicators
+places <- read.csv("PLACES__Local_Data_for_Better_Health__County_Data_2022_release.csv")
+```
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+
+```{r eval = TRUE, message = FALSE, warning = FALSE}
+#  color palette and theme elements
+myPalette <- colorRampPalette(brewer.pal(6, "Reds"))
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.4, "cm"),           
+        legend.text = element_text(size = 12),       
+        legend.title = element_text(size = 12))      
+}
+
+# static chloropleth map of opioid prescribing rates (2015)
+disp.2015 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2015), lty=0) +
+  my_theme() +                                          
+  ggtitle("2015") + 
+  scale_fill_gradientn(name = "Prescriptions Rx \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+# static chloropleth map of opioid prescribing rates (2016)
+disp.2016 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2016), lty=0) +
+  my_theme() +                                          
+  ggtitle("2016") + 
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+# static chloropleth map of opioid prescribing rates (2017)
+disp.2017 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2017), lty=0) +
+  my_theme() +                                          
+  ggtitle("2017") + 
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+# static chloropleth map of opioid prescribing rates (2018)
+disp.2018 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2018), lty=0) +
+  my_theme() +                                          
+  ggtitle("2018") + 
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+# static chloropleth map of opioid prescribing rates (2019)
+disp.2019 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2019), lty=0) +
+  my_theme() +                                          
+  ggtitle("2019") + 
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+# static chloropleth map of opioid prescribing rates (2020)
+disp.2020 <- ggplot() +
+  geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2020), lty=0) +
+  my_theme() +                                          
+  ggtitle("2020") + 
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
+                    colours = myPalette(100), limits=c(0, 150)) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+grid.arrange(disp.2015, disp.2016, disp.2017, disp.2018, disp.2019, disp.2020, 
+             top = textGrob("Opioid Dispensing Rates per 100 People",
+             gp = gpar(fontsize=18, font=2)))
+```
+
