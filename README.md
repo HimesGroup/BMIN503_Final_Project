@@ -18,3 +18,10 @@ DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+
+# FINAL PROJECT
+# ARNAB CHOWDHURY
+
+This project aims to study the impact of the COVID-19 pandemic on solid organ transplantation in the United States using UNOS OPTN data.
+
+FINAL_PROJECT.RMD contains the Introduction, Background and The datails of where the code is from and rough draft of the analyses performed.  
