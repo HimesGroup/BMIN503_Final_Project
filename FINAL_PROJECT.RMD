@@ -37,18 +37,20 @@ Project Question: Impact of COVID-19 on Organ Transplant Organs:
 
 > Decrease in transplantation during COVID-19?
 
-> Increase in mortality in patients on waitlist?
-
-> Corelated with surges in selected states? - NY, NJ, PA?
+> Corelated with COVID-19 cases in United States?
 
 ## Thoracic Data
 
+
 ```{r eval = TRUE}
+# Reading SAS files provided by UNOS OPTN. Reading thoracic data. 
 library(haven)
 thoracic_data <- read_sas("/Users/work/Downloads/SAS Dataset 202209/Thoracic/thoracic_data.sas7bdat")
 ```
 
 ```{r eval = TRUE}
+
+# Cleaning data to filter transplanted patients and lung transplants and filter by year
 library(gtsummary)
 library(tidyverse)
 library(dplyr)
@@ -71,9 +73,13 @@ thoracic_data_subset_lung
 thoracic_data_subset_lung %>% dplyr::select(TXED, DAYSWAIT_CHRON, GENDER, ACTIVATE_DATE, TX_DATE, PERM_STATE) %>%
   tbl_summary(by = TXED) %>% add_p() %>% add_overall()
 
+# Rough visualization of transplant data
 ggplot(thoracic_data_subset_lung, aes(TX_DATE, fill = TXED)) + 
       geom_histogram(binwidth = 30)
+```
 
+```{R eval = TRUE}
+# Create a subset of lung transplants from 2018-2021
 lungtx2018_2021 <- thoracic_data_subset_lung %>%
   dplyr::filter(TX_DATE >= "2018-01-01" & TX_DATE <= "2021-12-31") %>% count(TX_DATE) %>% rename("Number.Transplants" = n) 
 lungtx2018_2021
@@ -83,6 +89,7 @@ lungtx2018_2021.total
 library(dplyr)
 library(lubridate)
 
+# Using monthly data rather than daily data
 lungtx2018_2021.ym <- lungtx2018_2021 %>% mutate(
     TX_DATE = ymd(TX_DATE),
     TX_YEAR_MONTH = format_ISO8601(TX_DATE, precision = "ym")
@@ -92,9 +99,7 @@ lungtx2018_2021.ym <- lungtx2018_2021.ym %>% group_by(TX_YEAR_MONTH) %>%
 
 lungtx2018_2021.ym$TX_YEAR_MONTH <- as.Date(paste(lungtx2018_2021.ym$TX_YEAR_MONTH, "-01", sep=""))
 
-```
-
-```{R eval = TRUE}
+# Rough plot of lung transplants from 2018-2021. Monthly transplants
 library(ggplot2)
 ggplot(data = lungtx2018_2021.ym, aes(x = TX_YEAR_MONTH, y = total_transplants)) +
   geom_point() +
@@ -107,10 +112,33 @@ ggplot(data = lungtx2018_2021.ym, aes(x = TX_YEAR_MONTH, y = total_transplants))
 
 > Visualizing roughly, there was a steady increase in lung transplants until 2020 and then transplant may have taken a dip.
 
--   Find monthly COVID-19 rates in US
++ Using causal impact package to see if there was a cumulative decrease in transplants after start of the pandemic. 
+```{r eval = TRUE}
+lungtx <- thoracic_data_subset_lung %>%
+  filter(TXED == 'yes') %>%
+  group_by(TX_DATE) %>%
+  count(TX_DATE)
+lungtx
 
+library(CausalImpact)
+
+lungtx <- lungtx
+
+time.points <- seq.Date(as.Date("2015-01-05"), by=1, length.out=2803)
+number <- ts(lungtx$n)
+data <- zoo(number, time.points)
+pre.period=as.Date(c("2018-01-05", "2020-03-31"))
+post.period=as.Date(c("2020-04-01", "2022-09-01"))
+impact <- CausalImpact(data, pre.period, post.period)
+plot(impact)
+```
+> Appears to have a cumulative decrease in transplant since the pandemic began. 
+
+
++ Regression analysis to see if decrease in transplants corelated to number of COVID-19 cases. 
 
 ```{R EVAL + TRUE}
+#   Obtain monthly COVID-19 new cases in US
 owid_url <- "https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv?raw=true"
 country <- "United States"
 covid <- read_csv(owid_url)
@@ -131,49 +159,13 @@ covid_cases.ym$TX_YEAR_MONTH <- as.Date(paste(covid_cases.ym$TX_YEAR_MONTH, "-01
 lungtx_covid_join <- left_join(lungtx2018_2021.ym, covid_cases.ym) %>% filter (TX_YEAR_MONTH >= "2020-02-01")
 ```
 
-
--   Linear regression model to see if there is a relationship between COVID-19 infection rate and lung transplant
-
 ```{r eval = TRUE}
 lungtx_covid_lm <- lm(total_transplants ~ total_cases, data = lungtx_covid_join)
 summary(lungtx_covid_lm)
 ```
 
-```{r eval = TRUE}
-```
+> Appears to have a significant corelation. 
 
-```{r eval = TRUE}
-```
-
-```{r eval = TRUE}
-```
-
-```{r eval = TRUE}
-```
-
-```{r eval = TRUE}
-lungtx <- thoracic_data_subset_lung %>%
-  filter(TXED == 'yes') %>%
-  group_by(TX_DATE) %>%
-  count(TX_DATE)
-lungtx
-
-library(CausalImpact)
-
-lungtx <- lungtx
-
-time.points <- seq.Date(as.Date("2015-01-05"), by=1, length.out=2803)
-number <- ts(lungtx$n)
-data <- zoo(number, time.points)
-pre.period=as.Date(c("2018-01-05", "2020-03-31"))
-post.period=as.Date(c("2020-04-01", "2022-09-01"))
-impact <- CausalImpact(data, pre.period, post.period)
-plot(impact)
-```
-
-\`\`\`{r eval = TRUE} library(ggplot2) library(ggpubr) library(plotly)
-
-require(ggplot2) ggplot(A, aes(Dates, GasDiff)) + geom_line( aes(colour = Year))
 
 ### Results
 
