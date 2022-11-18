@@ -1,20 +1,23 @@
-# BMIN503/EPID600 Final Project
+# BMIN5030/EPID6000 Final Project - Chris Miller
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+***
 
+This repository contains the materials for my final project in Data Science for Biomedical Informatics (BMIN5030/EPID6000). 
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+All datasets used in my analyses are freely available from the CDC and can be accessed using the following links:
 
+* [US County Opioid Dispensing Rates, 2015](https://www.cdc.gov/drugoverdose/rxrate-maps/county2015.html)
+* [US County Opioid Dispensing Rates, 2016](https://www.cdc.gov/drugoverdose/rxrate-maps/county2016.html)
+* [US County Opioid Dispensing Rates, 2017](https://www.cdc.gov/drugoverdose/rxrate-maps/county2017.html)
+* [US County Opioid Dispensing Rates, 2018](https://www.cdc.gov/drugoverdose/rxrate-maps/county2018.html)
+* [US County Opioid Dispensing Rates, 2019](https://www.cdc.gov/drugoverdose/rxrate-maps/county2019.html)
+* [US County Opioid Dispensing Rates, 2020](https://www.cdc.gov/drugoverdose/rxrate-maps/county2020.html)
+* [NCHS Drug Poisoning Mortality by County](https://www.cdc.gov/nchs/data-visualization/drug-poisoning-mortality/index.htm)
+* [VSRR Provision Drug Overdose Death by Substance](https://data.cdc.gov/NCHS/VSRR-Provisional-Drug-Overdose-Death-Counts/xkb8-kh2a/)
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+This repository also contains:
 
-DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+* **BMIN5030_FinalProject_Miller.Rmd** : RMarkdown file to run the analyses and generate the report
+* **BMIN5030_FinalProject_Miller.html** : HTML file of report
+* **README.md** : This ReadMe file
+* **BMIN503_Final_Project.Rproj** : R project file
