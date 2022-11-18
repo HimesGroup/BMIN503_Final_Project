@@ -14,6 +14,7 @@ All datasets used in my analyses are freely available from the CDC and can be ac
 * [US County Opioid Dispensing Rates, 2020](https://www.cdc.gov/drugoverdose/rxrate-maps/county2020.html)
 * [NCHS Drug Poisoning Mortality by County](https://www.cdc.gov/nchs/data-visualization/drug-poisoning-mortality/index.htm)
 * [VSRR Provision Drug Overdose Death by Substance](https://data.cdc.gov/NCHS/VSRR-Provisional-Drug-Overdose-Death-Counts/xkb8-kh2a/)
+* [PLACES Data on County-Level Health Indicators](https://chronicdata.cdc.gov/500-Cities-Places/PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb/data)
 
 This repository also contains:
 
