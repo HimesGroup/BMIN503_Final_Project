@@ -40,6 +40,9 @@ library(readxl)
 library(gridExtra)
 library(grid)
 library(clinUtils)
+library(plotly)
+library(gtsummary)
+library(kableExtra)
 
 # import county-level prescription opioid dispensing rates by year
 county.disp.2015 <- read_excel("county_dispensing_rates_2015.xlsx")
@@ -80,9 +83,52 @@ vsrr <- read.csv("VSRR_Provisional_Drug_Overdose_Death_Counts.csv")
 
 # import NCHS data on county-level data on drug overdose death rates overall
 nchs <- read.csv("NCHS_-_Drug_Poisoning_Mortality_by_County__United_States.csv")
+nchs <- nchs %>% 
+  rename("FIPS.code" = "FIPS") 
+
+# create dataset for mapping drug overdose death by county
+nchs.map <- left_join(nchs, counties, by = "FIPS.code")
+
+# create dataset restricted to 2020 for modeling of risk factors
+nchs.2020 <- nchs %>% filter(Year==2020)
 
 # import PLACES data on county-level health indicators
 places <- read.csv("PLACES__Local_Data_for_Better_Health__County_Data_2022_release.csv")
+
+# include only questions of interest from 2020 data and transform dataset from long to wide format
+places.2020 <- places %>% 
+  filter(Year==2020 & Data_Value_Type=="Age-adjusted prevalence" & Short_Question_Text %in% c(
+    "General Health",
+    "Depression", 
+    "Sleep < 7 hours",
+    "Health Insurance",
+    "Obesity",
+    "Binge Drinking",
+    "Physical Health",
+    "Current Smoking",
+    "Physical Inactivity",
+    "Mental Health",
+    "Annual Checkup")) %>% 
+  filter(!StateAbbr=="US") %>% 
+  rename("FIPS.code" = "LocationID") %>% 
+  select(c("Year", "StateAbbr", "StateDesc", "LocationName", "FIPS.code", "Short_Question_Text", "Data_Value")) %>% 
+  spread(Short_Question_Text, Data_Value)
+
+risk.data <- left_join(places.2020, county.disp.2020, by = "FIPS.code") %>% 
+  left_join(., nchs.2020, by = "FIPS.code") %>% 
+  mutate(logdeathrate = log(Model.based.Death.Rate)) %>% 
+  mutate(opioid.rx.10 = disp.rate.2020/10) %>% 
+  mutate(`No Annual Checkup` = 100 - `Annual Checkup`) %>% 
+  mutate(no.checkup.5 = `No Annual Checkup` / 5) %>% 
+  mutate(poor.gen.health.5 = `General Health` / 5) %>% 
+  mutate(depression.5 = `Depression` / 5) %>% 
+  mutate(no.insurance.5 = `Health Insurance` / 5) %>% 
+  mutate(obesity.5 = `Obesity` / 5) %>% 
+  mutate(binge.drink.5 = `Binge Drinking` / 5) %>% 
+  mutate(poor.phys.health.5 = `Physical Health` / 5) %>% 
+  mutate(current.smoke.5 = `Current Smoking` / 5) %>% 
+  mutate(phys.inactive.5 = `Physical Inactivity` / 5) %>% 
+  mutate(mental.health.5 = `Mental Health` / 5)
 ```
 
 ### Results
@@ -91,7 +137,7 @@ The static chloropleth maps illustrate how the rates of opioid prescribing fell 
 
 ```{r eval = TRUE, message = FALSE, warning = FALSE}
 #  color palette and theme elements
-myPalette <- colorRampPalette(brewer.pal(6, "Reds"))
+myPalette <- colorRampPalette(brewer.pal(6, "Blues"))
 my_theme <- function() {
   theme_minimal() +                                  
   theme(axis.line = element_blank(),                 
@@ -108,7 +154,7 @@ disp.2015 <- ggplot() +
   geom_sf(data = county.disp.map, aes(geometry = geometry, fill = disp.rate.2015), lty=0) +
   my_theme() +                                          
   ggtitle("2015") + 
-  scale_fill_gradientn(name = "Prescriptions Rx \nper 100 people",      
+  scale_fill_gradientn(name = "Prescriptions \nper 100 people",      
                     colours = myPalette(100), limits=c(0, 150)) + 
   theme(legend.title = element_text(size = 7), 
                legend.text = element_text(size = 7))
@@ -186,3 +232,199 @@ county.disp.map %>%
   slice(1:20)
 ```
 
+
+```{r eval = TRUE, message = FALSE, warning = FALSE}
+max.rate <- max(nchs.map$Model.based.Death.Rate)
+# static chloropleth maps of overdose rates by county (2015-2020)
+od.2015 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2015), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2015") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) +  
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+od.2016 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2016), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2016") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) +   
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+od.2017 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2017), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2017") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) +  
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+od.2018 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2018), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2018") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+od.2019 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2019), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2019") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) +
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+od.2020 <- ggplot() +
+  geom_sf(data = subset(nchs.map, Year==2020), aes(geometry = geometry, fill = Model.based.Death.Rate), lty=0) +
+  my_theme() +                                          
+  ggtitle("2020") + 
+  scale_fill_gradientn(name = "Overdose Death Rate \nper 100,000 people", limits=c(0, max.rate),
+                    colors=c("white", "lightpink", "red", "red1", "red2", "red3", "red4", "black")) + 
+  theme(legend.title = element_text(size = 7), 
+               legend.text = element_text(size = 7))
+
+grid.arrange(od.2015, od.2016, od.2017, od.2018, od.2019, od.2020, 
+             top = textGrob("Death Rates for Drug Overdose per 100,000 People",
+             gp = gpar(fontsize=18, font=2)))
+```
+
+The distribution of the county-level overdose death rate was highly right-skewed. A log transformation of the death rate normalized the distribution.
+
+```{r eval = TRUE, message = FALSE, warning = FALSE, fig.height=6, fig.width=12}
+
+hist.death.rate <- ggplot(risk.data, aes(x=Model.based.Death.Rate)) + geom_histogram() + theme_classic() + 
+  scale_x_continuous(name = "Overdose Death Rate (2020)")
+
+hist.log.death.rate <- ggplot(risk.data, aes(x=logdeathrate)) + geom_histogram() + theme_classic() + 
+  scale_x_continuous(name = "Log Overdose Death Rate (2020)")
+
+grid.arrange(hist.death.rate, hist.log.death.rate, ncol=2, heights=5,
+             top = textGrob("Rationale for Log Transform of Overdose Death Rate"))
+```
+
+There was a general increasing trend with higher prescription opioid prescribing associated with higher drug overdose death rates. To evaluate the linear trend, the prescription opioid prescribing rate was rescaled to reflect a 10 prescription per 100 person increase within the county. The county-level association between the drug overdose death rate and prescription opioid prescribing was highly statistically significant (p<0.001), prescription opioid prescribing rates within counties predicted only about 5% of the total variance in drug overdose death rates. Since drug overdose deaths was log transformed, the beta coefficients from these models can be interpreted by exponentiating the coefficient estimate minus 1 times 100% (i.e., $(e^\beta - 1) * 100\%$). For this model, a 10 prescription per 100 person increase in opioid prescribing was associated with a $(e^.039997 - 1) * 100\% = 4.1\%$ increase in the drug overdose death rate. 
+
+```{r eval = TRUE, message = FALSE, warning = FALSE, fig.height=6, fig.width=9}
+
+ggplot(risk.data, aes(disp.rate.2020, Model.based.Death.Rate)) +
+  geom_point() + 
+  geom_smooth() +
+  theme_classic()
+
+ggplot(risk.data, aes(disp.rate.2020, logdeathrate)) +
+  geom_point() + 
+  geom_smooth() +
+  theme_classic()
+
+mod1 <- lm(logdeathrate ~ opioid.rx.10, data=risk.data)
+summary(mod1)
+```
+
+
+DESCRIBE 
+
+```{r eval = TRUE, message = FALSE, warning = FALSE}
+health.summary <- risk.data %>%
+  select(`No Annual Checkup`, `Binge Drinking`, `Current Smoking`, `Depression`, `General Health`,
+         `Health Insurance`, `Mental Health`, `Obesity`, `Physical Health`, `Physical Inactivity`) %>%
+  tbl_summary(
+    type = all_continuous() ~ "continuous2",
+    statistic = all_continuous() ~ c("{mean} ({sd})",
+                                     "{median} ({p25}, {p75})", 
+                                     "{min}, {max}"),
+    missing = "no"
+  ) %>% modify_caption("**Summary of County-Level Health Indicators**") %>% bold_labels()
+
+as_kable_extra(health.summary, format = "html", table.attr = "style='width:40%;'") 
+```
+
+
+```{r eval = TRUE, message = FALSE, warning = FALSE, fig.height=15, fig.width=12}
+cor.predictors <- risk.data %>% 
+  select(c("disp.rate.2020", "No Annual Checkup", "General Health", "Depression", "Health Insurance",
+           "Obesity", "Binge Drinking", "Physical Health", "Current Smoking", "Physical Inactivity", 
+           "Mental Health"))
+
+cor.matrix <- cor(cor.predictors, method = "pearson", use = "complete.obs")
+round(cor.matrix, 2)
+
+plot.nc <- ggplot(risk.data, aes(`No Annual Checkup`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.gh <- ggplot(risk.data, aes(`General Health`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.dp <- ggplot(risk.data, aes(`Depression`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.in <- ggplot(risk.data, aes(`Health Insurance`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.ob <- ggplot(risk.data, aes(`Obesity`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.bd <- ggplot(risk.data, aes(`Binge Drinking`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.ph <- ggplot(risk.data, aes(`Physical Health`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.cs <- ggplot(risk.data, aes(`Current Smoking`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.pi <- ggplot(risk.data, aes(`Physical Inactivity`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+plot.mh <- ggplot(risk.data, aes(`Mental Health`, logdeathrate)) +
+  geom_point() +  geom_smooth(method='lm', se=FALSE) + theme_classic()
+
+grid.arrange(plot.nc, plot.gh, plot.dp, plot.in, plot.ob, plot.bd, plot.ph, plot.cs,
+             plot.pi, plot.mh, ncol=2, heights=c(10, 10, 10, 10, 10),
+             top = textGrob("Scatter Plots of Health Indicators and Log Overdose Death Rate"))
+
+# linear regression models for individual predictors
+
+lm.nc <- lm(logdeathrate ~ no.checkup.5, data=risk.data)
+summary(lm.nc)
+
+lm.gh <- lm(logdeathrate ~ poor.gen.health.5, data=risk.data)
+summary(lm.gh)
+
+lm.dp <- lm(logdeathrate ~ depression.5, data=risk.data)
+summary(lm.dp)
+
+lm.in <- lm(logdeathrate ~ no.insurance.5, data=risk.data)
+summary(lm.in)
+
+lm.ob <- lm(logdeathrate ~ obesity.5, data=risk.data)
+summary(lm.ob)
+
+lm.bd <- lm(logdeathrate ~ binge.drink.5, data=risk.data)
+summary(lm.bd)
+
+lm.ph <- lm(logdeathrate ~ poor.phys.health.5, data=risk.data)
+summary(lm.ph)
+
+lm.cs <- lm(logdeathrate ~ current.smoke.5, data=risk.data)
+summary(lm.cs)
+
+lm.pi <- lm(logdeathrate ~ phys.inactive.5, data=risk.data)
+summary(lm.pi)
+
+lm.mh <- lm(logdeathrate ~ mental.health.5, data=risk.data)
+summary(lm.mh)
+
+lm.multivar <- lm(logdeathrate ~ opioid.rx.10 + no.checkup.5 + poor.gen.health.5 + 
+                    depression.5 + no.insurance.5 + binge.drink.5 + poor.phys.health.5 + 
+                    current.smoke.5 + mental.health.5, data=risk.data)
+summary(lm.multivar)
+100*(exp(lm.multivar$coefficients[2:10]) - 1)
+
+```
