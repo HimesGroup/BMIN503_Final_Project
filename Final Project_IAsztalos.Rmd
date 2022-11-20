@@ -1,0 +1,187 @@
+---
+title: "Final Project - Diagnostic Accuracy Metrics in Clustered Study Designs of
+  ECG measurements"
+author: "Ivor Asztalos"
+date: "2022-11-18"
+output: 
+  html_document:
+  toc: false
+  depth: 3
+  theme: paper
+  highlight: tango
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+
+### Overview
+The real world application which prompted this research project was the desire to calculate diagnostic accuracy metrics (Sensitivity (Se), specificity (Sp), Positive Predictive Value (PPV), and Negative Predictive Value (NPV)) for a group of pediatric electrophysiologists determining a pathologically prolonged QTc interval on pediatric electrocardiograms (ECG). This is part of a larger project in which we've trained a deep n neural network to measure QTcs automatically. 
+The GitHub repo for this project is:
+https://github.com/ivor-asztalos/BMIN503_Final_Project
+
+### Introduction 
+Sensitivity (Se), specificity (Sp), Positive Predictive Value (PPV), and Negative Predictive Value (NPV) are commonly reported and commonly used diagnostic accuracy metrics for clinical tests. Because of their ubiquity multiple R packages exist which can calculate these metrics for properly formatted data. However, none of these packages can accommodate a clustered study design. This is unfortunate as diagnostic accuracy studies frequently use clustered study designs, most frequently with repeat measurements on the same patient. The purpose of this project is to write a program which can correctly calculate Se, Sp, PPV, and NPV for a diagnostic accuracy study which uses repeat measurements assessed by multiple raters.
+
+This project is inherently multidisciplinary in that it utilizes clinical cardiac data but requires a thorough understanding of epidemiology, biostatistics, and programming. A separate advantage is that this program will work on any dichotomized data irrespective of the sample size and number of raters (although it does assume no missing data). I have collaborated with Dr. Tsui on the quantitative portion of this project and Dr. Vetter on the clinical portion of this project. 
+
+### Methods
+Study Population: 
+Four pediatric electrophysiologists measured the Bazett corrected QTc on the same 200 15-lead pediatric ECGs randomly selected from all ECGs read by a pediatric electrophyisologist at The Children's Hospital of Philadelphia in 2021. The gold standard will be the QTc as finalized in the patient's chart (to be extracted the GE MUSE ECG database). QTcs will be converted to a dichotomous variable with a cutoff of >=460 ms. The Se, Sp, PPV, and NPV and their respective 95% confidence intervals calculated per the methods described in Kwat et al and delienated in the equations document. 
+
+```{r}
+# Load necessary libraries and data set
+library(tidyr)
+library(dplyr)
+
+# Load in data
+# x <- url("https://github.com/ivor-asztalos/BMIN503_Final_Project/blob/master/QTc%20Measurements_raw%20data.csv")
+# raw_data <- read.table(x, header = TRUE)
+
+raw_data <- read.csv("C:/Users/asztalosi/OneDrive - Children's Hospital of Philadelphia/MBMI/BMIN 503 - Data Science/Final Project/QTc Measurements_raw data.csv")
+
+```
+
+If data is not binary, dichotomize it:
+```{r}
+### Dichotomize variables
+raw_data <- rename(raw_data, gs = Truth, ep1 = Behere, ep2 = Iyer, ep3 = Nash, ep4 = Vetter)
+df <- raw_data # Dichotomized dataframe
+df[["dgs"]] <- ifelse(df[["gs"]] >=460, 1, 0)
+for (i in 1:4){
+  df[[paste("dep", i, sep="")]] <- ifelse(df[[paste("ep", i, sep="")]] >=460, 1, 0)
+}
+df <- df[,c(1,7:11)]
+```
+
+Perform analysis of binary data. This will require creating both a long and a wide version of the data set as all diagnostic accuracy metric calculations require summing across all raters across all measurements and performing operations on only sums of repeat measurements before summing those products. 
+```{r}
+# Create a long version of raw data set
+dfl <- reshape(df, idvar="id", varying=list(3:6), v.names="test", direction="long")
+dfl <- rename(dfl, reader = time)
+N <- dim(dfl)[1]
+J <- dim(df)[2]-2
+
+# For sensitivity
+dfl <- mutate(dfl, tp = test*dgs) # true positives (x_ij)(d_ij)
+true_poss <- sum(dfl$tp) # sum of true positives across all readers
+prolongs <- sum(dfl$dgs) # sum of all disease (prolonged QTc) across all readers
+sen_hat <- true_poss/prolongs # estimate of sensitivity
+dfl <- mutate(dfl, deve_sen = (test-sen_hat)*(dgs)) # deviances from estimate of sensitivity ((xij)-Se_k)*(d_ij)
+
+# For specificity
+dfl <- mutate(dfl, tn = (1-test)*(1-dgs)) # true negatives (1-x_ij)(1-d_ij)
+true_negs <- sum(dfl$tn) # sum of true negatives across all readers
+dfl <- mutate(dfl, nd = (1-dgs)) # non-diseased (1-dij)
+non_prolongs <- sum(dfl$nd) # sum of all non-diseased across all readers
+spe_hat <- true_negs/non_prolongs # estimate of specificity
+dfl <- mutate(dfl, deve_spe = ((1-test)-spe_hat)*(1-dgs)) # deviances from estimate of specificity ((1-xij)-Sp_k)*(1-d_ij)
+
+# For PPV and NPV estimates
+test_poss <- sum(dfl$test) # sum of test positives across all readers
+ppv_hat <- true_poss/test_poss # estimate of ppv
+test_negs <- sum(1-dfl$test) # sum of test negatives across all readers
+npv_hat <- true_negs/test_negs # estimate of npv
+ppv_a_hat <- true_poss/N # proportion of true positives across all measurements across all readers
+ppv_b_hat <- test_poss/N # proportion of test positives across all measurements across all readers
+npv_a_hat <- true_negs/N # proportion of true negatives across all measurements across all readers
+npv_b_hat <- test_negs/N # proportion of test negatives across all measurements across all readers
+# Calculate errors (deviances) of ppv and npv from their respective estimates for each measurement
+dfl <- mutate(dfl, ppv_e = tp - ppv_a_hat-ppv_hat*(test-ppv_b_hat))
+dfl <- mutate(dfl, npv_e = tn - npv_a_hat-npv_hat*((1-test)-npv_b_hat))
+
+# Generate wide dataframe
+dfw <- reshape(select(dfl, c("id", "reader", "deve_sen", "deve_spe", "ppv_e", "npv_e")), direction = "wide", idvar = "id", timevar = "reader")
+n <- dim(dfw)[1]
+
+# Calculate sum of squares, variance, standard errors, and confidence intervals for sensitivity and specificity
+ss_sen <- 0 # Sum of squares of residuals for sensitivity
+sum_deve_sen_j <-0
+for (i in 1:n){
+  for (j in 1:J){
+    sum_deve_sen_j <- sum_deve_sen_j + dfw[i,paste("deve_sen.", j, sep = "")]
+  }
+  j_sq <- sum_deve_sen_j^2
+  ss_sen <- ss_sen +j_sq
+  sum_deve_sen_j <- 0
+}  
+
+ss_spe <- 0 # Sum of squares of residuals for specificity
+sum_deve_spe_j <- 0
+for (i in 1:n){
+  for (j in 1:J){
+    sum_deve_spe_j <- sum_deve_spe_j + dfw[i,paste("deve_spe.", j, sep = "")]
+  }
+  j_sq <- sum_deve_spe_j^2
+  ss_spe <- ss_spe +j_sq
+  sum_deve_spe_j <- 0
+}  
+
+var_sen <- n/(prolongs^2) * ss_sen
+var_spe <- n/(non_prolongs^2) * ss_spe
+std_sen <- var_sen^0.5
+std_spe <- var_spe^0.5
+ste_sen <- std_sen/(n^0.5)
+ste_spe <- std_spe/(n^0.5)
+lower_ci_sen = sen_hat - 1.96*ste_sen
+upper_ci_sen = sen_hat + 1.96*ste_sen
+lower_ci_spe = spe_hat - 1.96*ste_spe
+upper_ci_spe = spe_hat + 1.96*ste_spe
+
+## PPV
+ss_ppv <- 0 # Sum of squares of residuals for ppv
+sum_ppv_e_j <-0
+for (i in 1:n){
+  for (j in 1:J){
+    sum_ppv_e_j <- sum_ppv_e_j + dfw[i,paste("ppv_e.", j, sep = "")]
+  }
+  ppv_e_i <- (1/ppv_b_hat)*sum_ppv_e_j
+  ppv_e_i_sq <- ppv_e_i^2
+  ss_ppv <- ss_ppv + ppv_e_i_sq
+  sum_ppv_e_j <- 0
+} 
+var_ppv <- n/(N^2)*ss_ppv
+std_ppv <- var_ppv^0.5
+ste_ppv <- std_ppv/(n^0.5)
+lower_ci_ppv = ppv_hat - 1.96*ste_ppv
+upper_ci_ppv = ppv_hat + 1.96*ste_ppv
+
+
+### NPV
+ss_npv <- 0 # Sum of squares of residuals for npv
+sum_npv_e_j <-0
+for (i in 1:n){
+  for (j in 1:J){
+    sum_npv_e_j <- sum_npv_e_j + dfw[i,paste("npv_e.", j, sep = "")]
+  }
+  npv_e_i <- (1/npv_b_hat)*sum_npv_e_j
+  npv_e_i_sq <- npv_e_i^2
+  ss_npv <- ss_npv + npv_e_i_sq
+  sum_npv_e_j <- 0
+} 
+var_npv <- n/(N^2)*ss_npv
+std_npv <- var_npv^0.5
+ste_npv <- std_npv/(n^0.5)
+lower_ci_npv = npv_hat - 1.96*ste_npv
+upper_ci_npv = npv_hat + 1.96*ste_npv
+
+```
+
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+```{r}
+# Results:
+cat("Sensitivity (95% CI): ", sen_hat, " (", lower_ci_sen, ", ", upper_ci_sen, ")", "\n", sep="")
+cat("Specificity (95% CI): ", spe_hat, " (", lower_ci_spe, ", ", upper_ci_spe, ")", "\n", sep="")
+cat("PPV (95% CI): ", ppv_hat, " (", lower_ci_ppv, ", ", upper_ci_ppv, ")", "\n", sep="")
+cat("NPV (95% CI): ", npv_hat, " (", lower_ci_npv, ", ", upper_ci_npv, ")", "\n", sep="")
+```
