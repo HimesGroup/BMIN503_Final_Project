@@ -14,6 +14,7 @@ C:\\Users\\McGreevJ\\Desktop\\BMI 5030 Data Science\\BMIN503_Final_Project\\Adju
 AHRQ SDOH data source documentation guide:
 C:\Users\McGreevJ\Desktop\BMI 5030 Data Science\BMIN503_Final_Project\Codebooks and data guides\SDOH-Data-Sources-Documentation-v1-Final.pdf
 
+For the latest version of the project draft, please access the RMD file at: https://github.com/mcgreevj/BMIN503_Final_Project/blob/master/final_project_McGreevey_draft.Rmd
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
