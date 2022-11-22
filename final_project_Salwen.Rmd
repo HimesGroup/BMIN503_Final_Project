@@ -44,7 +44,9 @@ library(nhanesA)
 library(plyr)
 library(dplyr)
 library(tidyverse)
-varlist <- c("DEMO", "DIQ", "OHQ") 
+
+#Loading all the data
+varlist <- c("DEMO", "DIQ", "OHQ", "SMQ", "FSQ") 
 varlist_years <- paste0(rep(varlist, each = 9), c("_B", "_C", "_D", "_E","_F","_G","_H","_I","_J"))
 #Load everything from varlist_years in nhanes as a list
 list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))}) 
@@ -52,69 +54,41 @@ list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))})
 for(i in 1:length(list_all)) {
   assign(names(list_all)[i], list_all[[i]])
 } 
-#Combine section questions from each year into one larger data frame
+#Combine section questions from each year into one larger data frame and remove the year individual data frames
 for (i in 1:length(varlist)) {
   assign(varlist[i], plyr::rbind.fill(mget(grep(varlist[i], ls(), value = T))))
 } 
-rm(list = grep("_[BCDEFGHIJ]", ls(), value = T)) #delete all of the extra data frames 
-for (i in 4:length(varlist)){
-nhanes.data <- full_join(nhanes.data, get(varlist[i]), by = "SEQN")
-} #join the data frames
-rm(list = ls()[-which(ls() == "nhanes.data")]) #delete all the extra data frames
+rm(list = grep("_[BCDEFGHIJ]", ls(), value = T)) 
+
+nhanes.data <- full_join(get(varlist[1]), get(varlist[2]), by = "SEQN") #join the data frames
+
 head(nhanes.data)
+#for some reason I can't figure out OHQ is never added at this point. I looked this up and it's because only 2 data frames allowed for full_join unless you use reduce which then didn't work for other reasons. SO I will add OHQ later but it's nice that everything is loaded together.
 
-varlist("SMQ") #add in Smoking data
-varlist_years <- paste0(rep(varlist, each = 9), c("_B", "_C", "_D", "_E","_F","_G","_H","_I","_J"))
-list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))}) 
-for(i in 1:length(list_all)) {
-  assign(names(list_all)[i], list_all[[i]])
-} 
-for (i in 1:length(varlist)) {
-  assign(varlist[i], plyr::rbind.fill(mget(grep(varlist[i], ls(), value = T))))
-} 
-rm(list = grep("_[BCDEFGHIJ]", ls(), value = T))
-#do some cleaning because really only want a few variables from SMQ
-SMQ <- SMQ %>%
-  dplyr::select(SMQ020, SMD030, SMQ040, SMQ900, SEQN) %>%
-  dplyr::rename(hundred_cigs = SMQ020, smoke_cigs = SMQ040, e_cigs = SMQ900, age_started_smoking = SMD030) %>%
-  dplyr::mutate(hundred_cigs = factor(hundred_cigs, levels = c(1, 2, 3, 7,9), 
-                           labels = c("yes", "no", "refused", "don't know"))) %>%
-  dplyr::mutate(smoke_cigs = factor(smoke_cigs, levels = c(1, 2, 7,9), 
-                           labels = c("everyday", "some days", "not at all", "refused", "don't know"))) %>%
-  dplyr::mutate(e_cigs = factor(e_cigs, levels = c(1, 2, 7,9), 
-                           labels = c("yes", "no", "refused", "don't know")))
-#join SMQ with the other data frame
-nhanes.data <- nhanes.data %>%
-    inner_join(SMQ, by = "SEQN")  
+#Question I was thinking about was maybe I should just be using inner_join because in the linear regression models they don't like it when there's NA
 
-varlist("FSQ") #add in food security data
-varlist_years <- paste0(rep(varlist, each = 9), c("_B", "_C", "_D", "_E","_F","_G","_H","_I","_J"))
-list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))}) 
-for(i in 1:length(list_all)) {
-  assign(names(list_all)[i], list_all[[i]])
-} 
-for (i in 1:length(varlist)) {
-  assign(varlist[i], plyr::rbind.fill(mget(grep(varlist[i], ls(), value = T))))
-} 
-rm(list = grep("_[BCDEFGHIJ]", ls(), value = T))
-
-#do some cleaning because really only want a few variables from FSQ
-SMQ <- SMQ %>%
-  dplyr::select(FSD032A, FSD032B, FSD032C, FSDAD, FSDCH, FSD041, FSD052, SEQN) %>%
-  dplyr::rename(worried_run_out = FSD032A, food_didnt_last = FSD032B, 
-                no_balanced_meals = FSD032C, adult_food_security = FSDAD, 
-                child_food_securityFSDCH, skip_meals = FSD041, 
-                how_often_skip_meals = FSD052) 
-#join FSQ with the other data frame
-nhanes.data <- nhanes.data %>%
-    inner_join(FSQ, by = "SEQN")
-
-#cleaning the rest of the data
+#cleaning the data
 nhanes.data <- nhanes.data %>%
   dplyr::rename(have_diabetes = DIQ010, age_when_diagnosed = DID040, 
                 taking_insulin = DIQ050, how_long_insulin = DID060, A1C = DIQ280,
                 take_metformin = DIQ070) %>%
   dplyr::rename(house_income = INDHHIN2, pregnant = RIDEXPRG) %>%
+  dplyr::rename(sex = RIAGENDR, age = RIDAGEYR, 
+           race = RIDRETH1, education = DMDEDUC2) %>% 
+  dplyr::mutate(sex = factor(sex, levels = c(1, 2), 
+                           labels = c("men", "women"))) %>%
+  dplyr::mutate(race = factor(race, levels = c(3, 1, 2, 4, 5),
+                         labels = c("White", "MexicanAmerican", 
+                                    "Hispanic", "Black", "Other"))) 
+
+nhanes.data <- nhanes.data %>% 
+  dplyr::select(-contains(c("DIQ", "DID", "DMD", "IND", "DMQ", "RID", "WT"))) %>% #this was the smartest thing I've ever done it was taking me so long before to delete everything
+  dplyr::select(-FIAINTRP, -FIALANG, - FIAPROXY,  -MIAINTRP, 
+                -MIALANG, -MIAPROXY, -AIALANG, -AIALANGA,  
+                -SDDSRVYR, -SDMVPSU, -SDMVSTRA, -SIAINTRP, -SIALANG, -SIAPROXY)
+
+#OHQ data
+OHQ <- OHQ %>%
   dplyr::rename(taste_affect = OHQ650, avoid_food = OHQ660, difficulty_eating = OHQ670) %>%
   dplyr::rename(tooth_loose = OHQ855, tooth_looks_wrong = OHQ865) %>%
   dplyr::rename(last_dentist = OHQ030, fluoride = OHQ566, aching = OHQ620, difficulty_bc_teeth = OHQ640,
@@ -125,108 +99,77 @@ nhanes.data <- nhanes.data %>%
            reason_no_dental_afraid = OHQ780G, reason_no_dental_work = OHQ780H,
            reason_no_dental_busy = OHQ780I,reason_no_dental_dissapear = OHQ780J,
            reason_no_dental_other = OHQ780K,
-           gum_disease = OHQ835, rate_health = OHQ845, 
-           gum_disease_treatment = OHQ850, lost_bone = OHQ860, oral_cancer_exam = OHQ880) %>%
-  dplyr::rename(sex = RIAGENDR, age = RIDAGEYR, 
-           race = RIDRETH1, education = DMDEDUC2) %>% 
-  dplyr::mutate(sex = factor(sex, levels = c(1, 2), 
-                           labels = c("men", "women"))) %>%
-  dplyr::mutate(race = factor(race, levels = c(3, 1, 2, 4, 5),
-                         labels = c("White", "MexicanAmerican", 
-                                    "Hispanic", "Black", "Other"))) 
+           gum_disease = OHQ835, rate_dental_health = OHQ845, 
+           gum_disease_treatment = OHQ850, lost_bone = OHQ860) 
 
-
+OHQ <- OHQ %>% 
+  dplyr::select(-contains(c("OHQ", "OHD")))
+#join OHQ
 nhanes.data <- nhanes.data %>%
-  dplyr::select(-OHQ571Q, -OHQ571U, -OHQ576G, -OHQ576Q, -OHQ576U) %>%
-    dplyr::select(-OHQ555G, -OHQ555Q, -OHQ555U, -OHQ560G, -OHQ560Q, 
-                -OHQ560U, -OHQ565, -OHQ570Q, -OHQ570U, -OHQ575G, -OHQ575Q, 
-                -OHQ575U, -OHQ580, -OHQ590G, -OHQ590Q, -OHQ590U,  -OHQ610, 
-                -OHQ612, -OHQ614, -OHQ848G, -OHQ848Q, -OHQ849, -OHQ870, -OHQ875) %>%
-  dplyr::select(-AIALANGA, -DMDBORN4, -DMDCITZN, -DMDFMSIZ, -DMDEDUC3, -DMDHHSIZ, 
-                -DMDHHSZA, -DMDHHSZB, -DMDHHSZE, -DMDHRAGZ, -DMDHREDZ, -DMDHRGND, 
-                -DMDHRMAZ, - DMDHSEDZ, - DMDMARTL, -DMDYRSUS, -DMQADFC, -DMQMILIZ, 
-                -FIAINTRP, -FIALANG, - FIAPROXY, -INDFMIN2, -INDFMPIR, -MIAINTRP, 
-                -MIALANG, -MIAPROXY, -RIDAGEMN, -RIDEXAGM, -RIDEXMON, -RIDSTATR, 
-                -SDDSRVYR, -SDMVPSU, -SDMVSTRA, -SIAINTRP, -SIALANG, -SIAPROXY, 
-                -WTINT2YR, -WTMEC2YR) %>%
-  dplyr::select(-OHQ885, -OHQ895, -OHQ900, -OHQ585Q, -OHQ585U) %>%
-  dplyr::elect(-contains(c("DIQ", "DID")))
+    full_join(OHQ, by = "SEQN")
+
+#SMQ data
+SMQ <- SMQ %>%
+  dplyr::select(SMQ020, SMD030, SMQ040, SMQ900, SEQN) %>%
+  dplyr::rename(hundred_cigs = SMQ020, smoke_cigs = SMQ040, e_cigs = SMQ900, age_started_smoking = SMD030) %>%
+  dplyr::mutate(hundred_cigs = factor(hundred_cigs, levels = c(1, 2, 7,9), 
+                           labels = c("yes", "no", "refused", "don't know"))) %>%
+  dplyr::mutate(smoke_cigs = factor(smoke_cigs, levels = c(1, 2, 3, 7,9), 
+                           labels = c("everyday", "some days", "not at all", "refused", "don't know"))) %>%
+  dplyr::mutate(e_cigs = factor(e_cigs, levels = c(1, 2, 7,9), 
+                           labels = c("yes", "no", "refused", "don't know")))
+#join SMQ with the other data frame
+nhanes.data <- nhanes.data %>%
+    full_join(SMQ, by = "SEQN")  
+
+#FSQ data
+FSQ <- FSQ %>%
+  dplyr::select(FSD032A, FSD032B, FSD032C, FSDAD, FSDCH, FSD041, FSD052, SEQN) %>%
+  dplyr::rename(worried_run_out = FSD032A, food_didnt_last = FSD032B, 
+                no_balanced_meals = FSD032C, adult_food_security = FSDAD, 
+                child_food_security = FSDCH, skip_meals = FSD041, 
+                how_often_skip_meals = FSD052) 
+#join FSQ with the other data frame
+nhanes.data <- nhanes.data %>%
+    full_join(FSQ, by = "SEQN")
  
 
-#creating a new column for people who have diabetes and trying to categorize them into either type1 or type2 based on factors like if they take a blood sugar lowering drug (metformin) or if they aren't taking insulin then these people are likely type 2. With this method, no type 1 will be in type 2 categorization but some type 2 could possibly be in type 1.
-nhanes.data1<- nhanes.data
+#creating a new column for people who have diabetes and trying to categorize them into either type1 or type2 based on factors like if they take a blood sugar lowering drug  or if they aren't taking insulin then these people are likely type 2. With this method, no type 1 will be in type 2 categorization but some type 2 could possibly be in type 1.
+nhanes.data1<- nhanes.data #for now I just made a new one becasaue I don't want to have to reload everything
 
-nhanes.data.T1D <- nhanes.data1 %>%
-  dplyr::filter(have_diabetes == 1) %>%
-  dplyr::filter(take_metformin == 2) %>%
-  dplyr::filter(taking_insulin == 1) 
-
-nhanes.data.T1D <- nhanes.data.T1D %>%
-  dplyr::mutate(diabetes_type = factor(c(have_diabetes == 1, have_diabetes == 2), 
-                                       labels = c("type 1", "not type 1"))) %>%
-  dplyr::select(SEQN, diabetes_type)
-rm(nhanes.data1$diabetes_type)
 nhanes.data1 <- nhanes.data1 %>%
      mutate(diabetes_type1 = ifelse(have_diabetes == 1 & 
            take_metformin == 2 & 
            taking_insulin == 1, "Type 1", ""))
 
 nhanes.data1 <- nhanes.data1 %>%
-  mutate(diabetes_type2 = ifelse(diabetes_type1 != "Type 1" & 
-           have_diabetes == 1, "Type 2", ""))
+  dplyr::mutate(diabetes_type2 = ifelse(diabetes_type1 != "Type 1" & 
+           have_diabetes == 1, "Type 2", "")) 
 
 nhanes.data1 <- nhanes.data1 %>%
-  mutate(diabetes_type = paste(diabetes_type1, diabetes_type2))
+  dplyr::mutate(diabetes_type = paste(diabetes_type1, diabetes_type2)) %>%
+  dplyr::mutate(diabetes_type = factor(diabetes_type, levels = c("Type 1", "Type 2"), 
+                           labels = c("Type 1", "Type 2")))
 
-count(nhanes.data1$diabetes_type)
+head(nhanes.data1)
 
-#loading in the teeth data and making a dmft score
-varlist <- c("OHX") 
-varlist_years <- paste0(rep(varlist, each = 9), c("_D", "_E"))
-#Load everything from varlist_years in nhanes as a list
-list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))}) 
-#Create a data.frame for each section of questions
-for(i in 1:length(list_all)) {
-  assign(names(list_all)[i], list_all[[i]])
-} 
-OHXDEN_D <- OHX_D
-OHXDEN_E <- OHX_E
-rm(OHX_D, OHX_E) #need to change it into the same questionaire as the other years and then delete the rest
-
-varlist <- c("OHXDEN") 
-varlist_years <- paste0(rep(varlist, each = 9), c("_B", "_C","_F","_G","_H","_I","_J"))
-#Load everything from varlist_years in nhanes as a list
-list_all <- sapply(varlist_years, function(x) {data.frame(nhanes(x))}) 
-#Create a data.frame for each section of questions
-for(i in 1:length(list_all)) {
-  assign(names(list_all)[i], list_all[[i]])
-} 
-varlist_years <- paste0(rep(varlist, each = 9), c("_B", "_C","_D", "_E","_F","_G","_H","_I","_J")) #include D and E now
-#Combine section questions from each year into one larger data frame
-for (i in 1:length(varlist)) {
-  assign(varlist[i], plyr::rbind.fill(mget(grep(varlist[i], ls(), value = T))))
-} 
-rm(list = grep("_[BCDEFGHIJ]", ls(), value = T))
-
-#create a new column with the dmft score. Max is 32 and min is 0
-
+#loading in the teeth data and making a dmft score.
+#I am actually no longer doing this anymore because the data did not really line up with the years I want. I am not sure if the questionnaires are enough to assess teeth properly, could use some feedback. However, for a proper dmft score it needs to be dental carries (cavities I think) and not things like dental disease. I was wondering if it would be a good metric to also just do is the tooth there (a more simplified version). But there's also a weird age thing where it seems to skip over 20-30 yr olds. I will see what my results look like and possibly come back to this
 ```
 plans I have to do:
-  - add in B-D
-  - make a new column instead of my new data frame that is my estimation of T1D
   - compare T1D and T2D by my calculations for the diff teeth stuff
   - see if this is statistically significant
   - look at factors of smoking
   - compare the effects of smoking to people with diabetes for a sense of scale
   - compare access to dental care (I will do this by the question that says haven't been to the dentist but exclude the scared and not recommended people)
   - compare results by gender and race 
-  - add in the effect of food security --> does this change stuff (because maybe can't do the diabetes as well since less data)
+  - add in the effect of food security --> does this change anything
 
 
+things to consider
 - what measures are availible for what age groups --> some might not be good for some of the questions
-- the way they work with regressions is it will drop observation it will drop them
-- oral health
-- DMFT score, I can create the score from the data (and then treat as continous)
+- the way they work with regressions is it will drop observation it will drop them. How will I handle this
+- DMFT score, I can create the score from the data (and then treat as continous). I think I will first try with the questionnaire and then see
  
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
@@ -235,7 +178,7 @@ Describe your results and include relevant tables, plots, and code/comments used
 library(ggplot2)
 library(cowplot) 
 
-ggplot(data = nhanes.data.T1D, aes(x = difficulty_bc_teeth)) +
+ggplot(data = nhanes.data2, aes(x = difficulty_bc_teeth, fill(diabetes_type))) +
     geom_bar()
 ggplot(data = nhanes.data.T1D, aes(x = rate_health)) +
     geom_bar()
