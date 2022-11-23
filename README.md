@@ -1,6 +1,6 @@
 # Predicting Acute Kidney Injury in Hospitalized Patients from EHR Data
-## BMIN503/EPID600 Final Project
-## Haedi Thelen
+### BMIN503/EPID600 Final Project
+### Haedi Thelen
 
 This repository contains the rmd, html for the project. 
 
