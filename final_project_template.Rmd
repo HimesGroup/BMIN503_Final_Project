@@ -21,7 +21,130 @@ Heart failure (HF) is a progressive clinical syndrome resulting from any structu
 ### Methods
 For this project, we are using MIMIC-III which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. This is a vast dataset with many variables and limited access. It comes in form of various datasets which were then cleaned. Datatables containing basic demographics, ICD codes and note events were then merged. Heart failure with reduced ejection fraction (HFrEF) definition (using definition from https://phekb.org/  was used to define case and control populations. 
 
-#Data QI and cleaning 
+#Retrieving datatables
+```{r eval = TRUE}
+library(data.table)
+library(medicalrisk)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(caret)
+library(pROC)
+NOTEEVENTS <- read.csv("~/Downloads/NOTEEVENTS.csv", comment.char="#")
+PATIENTS <- read.csv("~/Downloads/PATIENTS.csv")
+Diagnoses_icd_2 <- read.csv("~/Downloads/DIAGNOSES_ICD (1).csv", header=TRUE)
+DIAGNOSES_ICD <- DIAGNOSES_ICD.csv
+ADMISSIONS <- read.csv("~/Downloads/ADMISSIONS.csv", header=TRUE)
+```
+
+#Query the data, QI and cleaning
+```{r eval = TRUE}
+#Quering the dataset
+head(PATIENTS)
+head(DIAGNOSES_ICD)
+head(NOTEEVENTS)
+
+length(unique(DIAGNOSES_ICD$SUBJECT_ID)) #46,520 unique subject IDs
+length(unique(PATIENTS$SUBJECT_ID)) #46,520 unique subject IDs
+length(unique(NOTEEVENTS$SUBJECT_ID)) #46146 unique subject IDs
+
+#Duplicates in subject ID for patient dataset. 
+library(dplyr)
+PATIENTS %>% 
+  group_by(SUBJECT_ID) %>% 
+   filter(n()>1) #There is no duplicate. 
+
+#For our project, we are interested in unstructured text data. As such, we will drop observations without discharge summaries. 
+
+#First let's look at the various types of notes in category 
+unique(NOTEEVENTS$CATEGORY) #type of notes listed in category including discharge summary
+unique(NOTEEVENTS$DESCRIPTION)
+sum(NOTEEVENTS$CATEGORY == "Discharge summary")
+
+#Now, creating new subset of data with only discharge summaries. 
+NOTEEVENTS %>% group_by(CATEGORY) %>% filter (CATEGORY == 'Discharge summary')
+NOTEEVENTS_DC <- filter(NOTEEVENTS, CATEGORY == 'Discharge summary') 
+length(unique(NOTEEVENTS_DC$SUBJECT_ID)) #41,127 unique subject IDs
+Subject_ID_Dup <- data.frame(table(NOTEEVENTS_DC$SUBJECT_ID))
+
+#Of note, Diagnoses_ICD dataset contain the patients with the ICD diagnosis codes. D_ICD_diagnoses is a data dictionary.Also, one may consider pulling echo reports as well using this code 'NOTEEVENTS_DC_ECHO <- filter(NOTEEVENTS, CATEGORY == 'Discharge summary' & 'Echo')' 
+```
+
+
+#Joining the tables Will set to join tables by the variable SUBJECT_ID which is unique. 
+```{r eval = TRUE}
+
+#Joining tables containing patients' discharge summaries (NOTEEVENTS_DC) with table containing patients' basic demographics (PATIENTS). Performing a left join to join patients with discharge summary to patients' demographic in PATIENTS table
+library(dplyr)
+library(plyr) 
+NOTEEVENTS_DC_PATIENTS <- dplyr::left_join(NOTEEVENTS_DC, PATIENTS, by = "SUBJECT_ID")
+dim(NOTEEVENTS_DC_PATIENTS)
+tail(NOTEEVENTS_DC_PATIENTS)
+length(unique(NOTEEVENTS_DC_PATIENTS$SUBJECT_ID)) #41127 unique subject IDs
+
+#Joining the newly created table with ICD9 codes table. 
+NOTEEVENTS_DC_PATIENTS_ICD <- dplyr::left_join(NOTEEVENTS_DC_PATIENTS, DIAGNOSES_ICD, by = "SUBJECT_ID")
+length(unique(NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID)) #41127 unique subject IDs
+
+#The new table 'NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID' contains observations with discharge summaries, patients' demographics and ICD codes (keep in mind that one patient often have more than one ICD code that it is dependent on billing). 
+
+#Joining the table 'NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID' with admissions data which contain admission date. 
+NOTEEVENTS_DC_PATIENTS_ICD_ADM <- dplyr::left_join(NOTEEVENTS_DC_PATIENTS_ICD, ADMISSIONS, by = "SUBJECT_ID")
+length(unique(NOTEEVENTS_DC_PATIENTS_ICD_ADM$SUBJECT_ID)) #41,127 unique subject IDs
+summary(ADMISSIONS$SUBJECT_ID)
+
+
+#Herein will, we will drop variables that are not needed for our project.
+MIMICIII = select(NOTEEVENTS_DC_PATIENTS_ICD_ADM, -ROW_ID.x, -ROW_ID.x.x, -HADM_ID.x, -HADM_ID.y, -ROW_ID.y.y, -HADM_ID, -DEATHTIME, -ADMISSION_LOCATION, -DISCHARGE_LOCATION, -LANGUAGE, -RELIGION, -MARITAL_STATUS, -EDREGTIME, -EDOUTTIME, -HOSPITAL_EXPIRE_FLAG, -HAS_CHARTEVENTS_DATA, -CHARTDATE, -CHARTTIME, -STORETIME, -ISERROR, -ROW_ID.y, -EXPIRE_FLAG, -ADMITTIME, -ADMISSION_TYPE, -DOD_HOSP, -DOD_SSN)
+
+#Removing obs with "addendum" description as they are not needed
+unique(MIMICIII$DESCRIPTION)
+MIMICIII <- filter(MIMICIII, DESCRIPTION != 'Addendum')
+which(is.na(MIMICIII$DESCRIPTION))
+```
+
+#Next, we will create a basic demographic table 
+```{r eval = TRUE}
+##Consider using codes below
+MIMICIII %>% 
+  dplyr::select(-c(INSURANCE, ETHNICITY)) %>%
+  gtsummary::tbl_summary(by = GENDER)%>%
+  gtsummary::add_p()
+
+```
+
+#Creating case and control cohorts. 
+```{r eval = TRUE}
+#Control cohort
+#Creating a new dataset which contains control (aka where HF is not listed as a ICD diagnosis code)
+MIMICIII_control <- MIMICIII[(MIMICIII$ICD9_CODE != "42840") & (MIMICIII$ICD9_CODE != "42841") & (MIMICIII$ICD9_CODE != "42842"), ]
+class(MIMICIII$ICD9_CODE)
+unique(MIMICIII$ICD9_CODE)
+ #Control cohort has 7633150 obs (which + case of 6286 give the initial total of 7639436)
+
+#Case cohort
+#Of note, this case cohort has the similar subject IDs as the case cohort that was pulled from Bigquery Google. 
+MIMICIII_case <- filter(MIMICIII, ICD9_CODE == "42840" | ICD9_CODE == "42841" | ICD9_CODE == "42842") #Case cohort has 6286 obs
+
+#Now finding overlapping subject IDs in control cohort that were listed in case cohort but with a different ICD9_code. Once that list of subject IDs, then remove that list from the control cohort.
+unique(MIMICIII_case$SUBJECT_ID)
+#Find a way to drop all of those subject ID from the control cohort. 
+
+#MIMICIII_control[MIMICIII_control$SUBJECT_ID == 9801 | MIMICIII_control$SUBJECT_ID == 30213,]
+ 
+
+```
+
+
+
+
+```
+
+#Consider using codes below
+#nhanes %>% 
+  #dplyr::select(-c(id, income, education)) %>%
+  #gtsummary::tbl_summary(by = asthma) %>%
+  #g
 
 
 #Demographic and patients' characteristic
