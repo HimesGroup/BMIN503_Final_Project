@@ -15,7 +15,7 @@ For this project, we are using the MIMIC-III dataset which is a large, freely-av
 Subsequently, we queried notes associated with HFrEF encoded encounters and then applied open-source NLP tools to encode pertinent variables. We then developped and applied logic to features that are indicative to HFrEF definition from notes to predict case label. Lastly, we evaluated how well the predictive power of rule logic for phenotyping HFrEF (extrinsic evaluation) and areas for improvement based on errors in NLP and rules (intrinsic evaluation). 
 
 Result:
-We are continuing to work on the result section and should have the results posted soon. Please see final_project_
+We are continuing to work on the result section and should have the results posted soon. Please see final_project_template.rmd file. There has some significant issues with pushing changes to Github. 
 
 Limitation
 To be posted soon herein. 
