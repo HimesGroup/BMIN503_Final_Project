@@ -8,10 +8,9 @@ BMIN503_Final_Project.Rproj : R project file
 
 Within the project, the files below are located:
 
-BMIN5030_FinalProject_DITOSTO.Rmd : RMarkdown file to run the analyses and generate the report
-BMIN5030_FinalProject_DITOSTO.html : HTML file of report
-
-README.md : This ReadMe file
+- BMIN5030_FinalProject_DITOSTO.Rmd : RMarkdown file to run the analyses and generate the report
+- BMIN5030_FinalProject_DITOSTO.html : HTML file of report
+- README.md : This ReadMe file
 
 
 
