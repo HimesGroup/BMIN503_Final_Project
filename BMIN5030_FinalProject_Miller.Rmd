@@ -14,7 +14,7 @@ output:
 ***
 
 # Overview
-The association between region-specific prescription opioid prescribing and the rate of opioid overdose death was well documented during the time periods when prescription opioids were the primary cause of overdose deaths. However, the role of regional prescribing practices on overdose deaths has been less studied since illicit opioids became the primary causes of opioid-related deaths. The goal of this project is to characterize the dynamics of opioid overdose deaths in the United States from 2015 to 2020 and to evaluate state-level predictors of opioid overdose including prescription opioid prescribing and social determinants of health (e.g., depression, obesity, lack of health insurance, smoking, binge drinking, self-reported poor mental health).
+The association between region-specific prescription opioid prescribing and the rate of opioid overdose death was well documented during the time periods when prescription opioids were the primary cause of overdose deaths. However, the role of regional prescribing practices on overdose deaths has been less studied since illicit opioids became the primary causes of opioid-related deaths. The goal of this project is to characterize the dynamics of opioid overdose deaths in the United States from 2015 to 2020 and to evaluate state-level predictors of opioid overdose including prescription opioid prescribing and social determinants of health (e.g., depression, obesity, lack of health insurance, smoking, binge drinking, self-reported poor mental health). 
 
 # Introduction 
 The opioid overdose epidemic in the United States has transitioned over the past two decades from being primarily driven by misuse and abuse of prescription opioid analgesics in the early 2000s to one driven by heroin in the mid 2010s and by illicit fentanyl and fentanyl analogs after 2016. In recognition of the crisis, federal agencies and professional associations modified recommendations and practice guidelines to minimize the use of prescription opioids for acute and chronic pain. Since 2010, the morphine milligram equivalents (MMEs) of opioids dispensed per person has declined nationally by more than 40%. However, there remains substantial regional variation across the country in opioid prescribing and the rate of overdose deaths attributable to commonly prescribed opioids has not declined since its peak in 2010. 
@@ -24,9 +24,11 @@ Previous studies have demonstrated that the regional rate of opioid prescribing 
 # Methods
 Changes in opioid overdose rates by drug (i.e., prescription opioid, heroin, synthetic opioid) from 2015 to 2020 were characterized using [VSRR data](https://data.cdc.gov/NCHS/VSRR-Provisional-Drug-Overdose-Death-Counts/xkb8-kh2a/) on drug overdose deaths. I generated line plots of the number of individuals who died of an overdose by drug type. The state-level increases in overdose rates from 2015 to 2020 by drug were also characterized.
 
-To evaluate changes in the dynamics of recent opioid prescribing, I imported the county-level opioid dispensing tables reported on the [CDC website](https://www.cdc.gov/drugoverdose/rxrate-maps/index.html) into Excel files by year. I merged these files with county-level geometry data by FIPS code to create static chloropleth maps by year. 
+To evaluate changes in the dynamics of recent opioid prescribing, I imported the county-level opioid dispensing tables reported on the [CDC website](https://www.cdc.gov/drugoverdose/rxrate-maps/index.html) into Excel files by year. I merged these files with county-level geometry data by FIPS code to create choropleth maps by year. 
 
 County-level data on opioid-specific overdose mortality are not publicly available. However, the preponderance of drug overdose deaths in the US are attributable to prescription or illicit opioids. For example, in 2020 there were 95,452 drug overdose deaths of which 71,487 (74.9%) were due to opioids. Therefore, I used county-level drug overdose deaths to evaluate the relationship between drug overdose mortality rates, prescription opioid prescribing, and social determinants of health in 2020. I evaluated the relationships between these variables in bivariate linear regression models and built a multivariable model to evaluate the relative contribution of various factors in county-level drug overdose mortality rates. The specific county-level health indicators I evaluated included the following variables in adults: binge drinking prevalence, depression prevalence, current smoking status, lack of health insurance, obesity prevalence, self-reported lack of leisure time, and self-reported poor recent physical health.
+
+At various times throughout this project, I consulted with Prof. John Farrar, Professor of Epidemiology at the University of Pennsylvania, who is an expert in treatments for pain.
 
 ```{r eval = TRUE, message = FALSE, warning = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -48,6 +50,7 @@ library(kableExtra)
 library(viridis)
 library(glmnet)
 library(car)
+library(lubridate)
 
 ## import county-level prescription opioid dispensing rates by year
 county.disp.2015 <- read_excel("county_dispensing_rates_2015.xlsx")
@@ -98,6 +101,15 @@ county.disp.map <- merge(county.disp, counties, by.x = "FIPS.code", by.y = "FIPS
 
 ## import VSRR on state-level opioid overdose death data by drug type
 vsrr <- read.csv("VSRR_Provisional_Drug_Overdose_Death_Counts.csv")
+
+## create dataset to plot drug overdose rates over time in the US
+vsrr.us <- vsrr %>% 
+  filter(State=="US" & Indicator %in% c("Natural & semi-synthetic opioids, incl. methadone (T40.2, T40.3)",
+                                        "Synthetic opioids, excl. methadone (T40.4)",
+                                        "Heroin (T40.1)",
+                                        "Opioids (T40.0-T40.4,T40.6)")) %>% 
+  mutate(tmp = paste(Month, Year)) %>% 
+  mutate(Time = parse_date_time(tmp, "my", tz="CET"))
 
 ## import NCHS data on county-level data on drug overdose death rates overall
 nchs <- read.csv("NCHS_-_Drug_Poisoning_Mortality_by_County__United_States.csv")
@@ -157,8 +169,31 @@ risk.data <- left_join(places.2020, county.disp.2020, by = "FIPS.code") %>%
 ```
 
 # Results
+## Opioid Overdose Deaths Over Time by Type
+
+During the period of interest, the number of opioid overdose deaths more than doubled from approximately 30,000 per year in 2015 to 65,000 per year in 2020. In 2015, most of the approximately 30,000 opioid overdose deaths were due to natural and semi-synthetic opioids, most of which are prescription opioids such as oxycodone, morphine, and hydrocodone. A similar but smaller number of deaths were due to heroin and the smallest number were attributable to synthetic opioids, which includes prescription and illicit fentanyl and fentanyl analogs. After 2016, the number of opioid deaths increased dramatically, driven almost entirely by deaths due to synthetic opioids. While prescription opioids may still serve as a gateway to the misuse and abuse of opioids, it remains unclear how opioid prescribing and dispensing practices are associated with drug overdose rates in this new phase of the opioid epidemic.
+
+```{r eval = TRUE, message = FALSE, warning = FALSE, fig.height=6, fig.width=12}
+vsrr.us.plot <- vsrr.us %>% 
+  filter(Year <= 2020) %>% 
+  select(Time, Indicator, Predicted.Value) %>% 
+  mutate(`Number of Deaths` = as.numeric(gsub(",", "", Predicted.Value))) %>% 
+  arrange(desc(Time), Indicator) %>% 
+  rename("Opioid Type" = "Indicator") %>% 
+  mutate(`Opioid Type` = factor(`Opioid Type`, 
+                                levels = c("Opioids (T40.0-T40.4,T40.6)",
+                                           "Synthetic opioids, excl. methadone (T40.4)",
+                                           "Natural & semi-synthetic opioids, incl. methadone (T40.2, T40.3)",
+                                           "Heroin (T40.1)")))
+
+ggplot(vsrr.us.plot, aes(x=Time, y=`Number of Deaths`, colour=`Opioid Type`)) +
+  geom_line(size=1.5) + theme_classic() + labs(title = "Opioid Overdose Death Rate by Opioid Type (2015-2020)")
+
+```
+
+
 ## Prescription Opioid Dispensing Rates (2015 to 2020)
-Prescription opioid dispensing rates exceeded 100 prescriptions per 100 people in 855 (29.1%) of the 2,938 counties in the US reporting data in 2015. The counties with the highest rate of prescription opioid dispensing in 2015 were in Virginia, Kentucky, and Alabama. In the 10 counties with the highest rates of dispensing in 2015, more than 250 opioid prescriptions were dispensed per 100 residents, or 2.5 opioid prescriptions filled for every man, woman, and child in that year. 
+In 2015, prescription opioid dispensing rates exceeded 100 prescriptions per 100 people in 855 (29.1%) of the 2,938 counties in the US reporting data. The counties with the highest rate of prescription opioid dispensing in 2015 were in Virginia, Kentucky, and Alabama. In the 10 counties with the highest rates of dispensing in 2015, more than 250 opioid prescriptions were dispensed per 100 residents, or 2.5 opioid prescriptions filled for every man, woman, and child in that year. 
 
 ```{r eval = TRUE, message = FALSE, warning = FALSE}
 # number and percent of counties with dispensing rate >100 prescriptions per 100 people in 2015
