@@ -10,15 +10,17 @@ Aim and significance:
 The primary aim for this project is to leverage the unstructured text from medical notes using NLP to assist in HF diagnosis. Specifically, we are seeking to determine the FEASIBILITY of extracting pertinent components of the unstructured text of medical note (e.g. discharge summary) using natural language processing (NLP) methods to assist in making a heart failure diagnosis. Secondarily, we aim to compare the predictic power of the unstructured text to conventional factors in making a heart failure diagnosis. 
 
 Method:
-For this project, we are using the MIMIC-III dataset which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. It comes in form of various datasets which were then cleaned. Datatables containing basic demographics, ICD codes and note events were then merged. Heart failure with reduced ejection fraction (HFrEF) definition (using definition from https://phekb.org/  was used to define case and control populations. 
-
-Subsequently, we queried notes associated with HFrEF encoded encounters and then applied open-source NLP tools to encode pertinent variables. We then developped and applied logic to features that are indicative to HFrEF definition from notes to predict case label. Lastly, we evaluated how well the predictive power of rule logic for phenotyping HFrEF (extrinsic evaluation) and areas for improvement based on errors in NLP and rules (intrinsic evaluation). 
+Step 1: Getting access to the MIMIC-III dataset which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. It comes in form of many variables in various data tables.  
+Step 2: Querying and cleaing the data. Merge pertinent datasets together. Provide basic demographics of the MIMIC-III dataset.
+Step 3: Defying case and cohort of for the population based on ICD 9 codes. Case definition for heart failure with reduced ejection fraction (HFrEF) was adapted from https://phekb.org/ and modified. 
+Step 4: Querying notes associated with HFrEF encoded encounters and then apply open-source NLP tools (cTakes) to encode pertinent variables of interest. We then developped and applied logic to features that are indicative to HFrEF definition from notes to predict case label. 
+Step 5: Lastly, we evaluated how well the predictive power of rule logic for phenotyping HFrEF (extrinsic evaluation) and areas for improvement based on errors in NLP and rules (intrinsic evaluation). 
 
 Result:
 We are continuing to work on the result section and should have the results posted soon. Please see final_project_template.rmd file. There has some significant issues with pushing changes to Github. However, as demonstrated, it is FEASIBLE to use NLP to assist in making HFrEF diagnosis. We are continuing to work on the predictive component of the project. 
 
 Limitation
-To be posted soon herein. 
+There are several limitations including case and control ICD9-based definition, patient population selection, open-source NLP tools. Particularly, ICD9 codes can underestimate or overestimate a specific disease condition within a population as it is primarily used for billing and not for diagnostic purposes. It often does not reflect a true representation of a specific condition. As for patient population selection, we used a ICU cohort which is inherently a different population. 
 
 
 
