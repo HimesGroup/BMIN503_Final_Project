@@ -21,4 +21,3 @@ This repository also contains:
 * **BMIN5030_FinalProject_Miller.Rmd** : RMarkdown file to run the analyses and generate the report
 * **BMIN5030_FinalProject_Miller.html** : HTML file of report
 * **README.md** : This ReadMe file
-* **BMIN503_Final_Project.Rproj** : R project file
