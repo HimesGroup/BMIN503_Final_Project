@@ -1,0 +1,421 @@
+---
+title: "BMIN503 Final Project: Clinical and genetic features of NDMM occuring in patients with excess body weight"
+author: "Beatrice Razzo"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: true
+        smooth_scroll: true
+    depth: 3 
+    theme: simplex
+    highlight: espresso
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1 OVERVIEW: 
+This study aims to identify any associations between newly diagnosed Multiple Myeloma and excess body weight within patients in the MMRF Compass database. These data include ISS risk stratification at diagnosis, adverse cytogenetics, RNA expression and telomere length. We will use BMI as a surrogate marker for excess body weight, recognizing this is an imperfect measure of adiposity.Please find my Github Repository for the final project [here](https://github.com/bearazzo/BMIN503_Final_Project).
+
+# 2 INTRODUCTION:
+Multiple myeloma (MM) is the second most common blood cancer diagnosis, with over 20,000 cases diagnosed each year in the United States. Age, race and genetic factors are known predisposing risk factors, but obesity is the only modifiable characteristic consistently implicated in the development of both MGUS and MM (Carson, Bates, and Tomasson 2014; Landgren et al. 2010; Wallin and Larsson 2011). Persons with excess body weight are 10-20% more likely to develop multiple myeloma, with an estimated number of 12,480 cases attributed to excess body weight in the United States between 2011-2015 (Islami et al. 2019).The pathophysiological basis of this association is not fully understood with systemic and marrow immune dysfunction as putative driver mechanisms. 
+
+This study uses the data from the MMRFcompass database to identify any associations between excess body weight and ISS risk at diagnosis, adverse cytogenetics, RNA expression and telomere length. We will use BMI as a surrogate marker for excess body weight, recognizing this is an imperfect measure of adiposity.
+
+This is an intrinsically multidisciplinary project because it incorporates elements of hematology-oncology, pathology, endocrinology, radiology and population genetics. My mentors have been introduced by experts to these respective fields in order to enrich my studies. 
+
+***For the introduction, the first paragraph describes the problem addressed, its significance, and some background to motivate the problem. In the second paragraph, explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.*** 
+
+*Introduce literature on CHIP and obesity*
+*Introduce data on APOBEC signatures in cancer and obesity*
+*Introduce telomere length*
+*Introduce ??inflammatory gene signatures and obsesity related cancer*
+
+
+# 3 METHODS/RESULTS:
+The following sections will introduce the methods used for data acquisition and analyses along with the presentation and discussion of any relevant findings. 
+
+## 3.1 Data Source  
+
+The MMRFCompass database (MMRF in short hereafter) is a study designed to prospectively profile newly diagnosed, treatment naive MM (NDMM) from more than 1000 patients with longitudinal clinical follow up. Tumor specimens collected at diagnosis and relapse are interrogated by whole-exome, modified low pass whole-genome, and or RNA sequencing. The longitudinal component required clinical follow-up of each patient with collection of clinical parameters four times annually over a period of 10 years. Furthermore, each patient participating in the study underwent an IMID and/or Proteasome inhibitor-based treatment regimen at diagnosis determined by the treating hematologist.
+
+***Include a bit more from more from elderly genetics***
+
+# 3.2 Data loading and wrangling
+
+All libraries and color theme as loaded as follows. XXX spreadsheets containing data extracted between 2018-2020 by Dr. Eileen Boyle (participant in the MMRF, direct download not available to me at the time) were loaded and modified according to the following code. They are all available as .csv on github. Data from 758 of 1273 participants contained height and weight at the time of diagnosis and this subset of patients are primarily used in these analyses given the scope of this report. Demographic distribution does not significantly differ from the overall cohort (data not shown, previously published in Boyle et. al Leukemia 2021).  
+
+Of the samples analyzed, 980 underwent germline WGS - all were analyzed for clonal hematopoiesis and 911 were analyzed for leukocyte telomere length. There were 848 matching tumor specimens available - 809 underwent tumor WGS (747 analyzed for complex rearrangements and 807 analyzed for tumor telemere length), 848 underwent tumor WES (included analyses for mutrations, translocations and CNA) and 683 underwent bulk RNA sequencing. 
+
+Of the 758 participants reporting BMI at the time of diagnosis, the availability of genetic information is as follows: ***later report here***.
+
+```{r, eval = TRUE}
+library(survival)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(tibble)
+library(readr)
+library(survminer)
+library(RColorBrewer)
+mycolors=brewer.pal(8,"Set2")
+library(cowplot)
+library(modelsummary)
+library(viridis)
+
+MMRFfull <- read.csv("~/Documents/BMIN 5030/Final Project/Raw Files/Razzo_MMRF raw csv.csv", header = T, fill = TRUE, row.name = NULL)
+MMRFfull <- rename(MMRFfull, Patient_ID = Patient)
+
+MMRFclean <- read.csv("~/Documents/BMIN 5030/Final Project/Raw Files/Razzo_MMRF clean csv.csv", header = T, fill = TRUE, row.name = NULL)
+MMRFclean <- rename(MMRFclean, Sex = D_Gender, Race = D_Race, AgeDx = D_Age, BMIDx = BMI, ISSDx = D_ISS) %>%
+  mutate(BMI_cat_4 = factor(BMI_cat_4, levels = c(0,1,2,3), labels = c("<18.5", "18.5-25", "25-30", ">30"))) %>%
+  mutate(BMI_cat_6 = factor(BMI_cat_6, levels = c(0,1,2,3,4,5), labels = c("<18.5", "18.5-25", "25-30", "30-35", "35-40", ">40"))) %>%
+  mutate(FU_status = factor(FU_status, levels = c(0,1), labels = c("Not censored", "Censored"))) %>%
+  mutate(OS_status = factor(OS_status, levels = c(0,1), labels = c("Alive", "Dead"))) %>%
+  mutate(ISSDx = factor(ISSDx, level = c(1,2,3)))
+
+MMRFclean$Translocation_Summary <- as.factor(MMRFclean$Translocation_Summary)
+MMRFclean$HRD <- as.factor(MMRFclean$HRD)
+MMRFclean$Sex <- as.factor(MMRFclean$Sex)
+MMRFclean$RNA_high_risk <- as.factor(MMRFclean$RNA_high_risk)
+
+MMRFadd <- read.csv("~/Documents/BMIN 5030/Final Project/BMIN503_Final_Project/MMRF clinical add on.csv", header = T, fill = TRUE, row.name = NULL)
+MMRFadd <- rename(MMRFadd, Patient_ID = Patient)
+MMRFcleanadd <- right_join(MMRFclean, MMRFadd, by = "Patient_ID")
+MMRFcleanadd <- rename(MMRFcleanadd, HxTransplant = TRT_1_bmtx_n) 
+MMRFcleanadd <- MMRFcleanadd %>% mutate(HxTransplant = factor(HxTransplant, levels = c(0,1), labels = c("No", "Yes")))
+MMRFcleanadd$ECOG <- as.factor(MMRFcleanadd$ECOG)
+  
+MMRFcleanbmionly <- MMRFcleanadd %>%
+  filter(!is.na(BMIDx))
+
+MMRFapobec <-read.csv("~/Documents/BMIN 5030/Final Project/BMIN503_Final_Project/MMRF apobec values.csv", header = T, fill = TRUE, row.name = NULL)
+```
+
+```{r, eval = TRUE}
+###PENDING, NEXT WEEK
+#Report here breakdown of the data by subsetting only those that contain BMI information
+
+```
+
+# 3.3 Descriptive Analyses of the population:
+
+Not only is there an EBW association with active multiple myeloma but excess cases of its precancerous counterpart, monoclonal gammopathy of undertermined significant (MGUS), are also observed in the obese population. As such, we sought to describe whether the distribution of BMI in this dataset differs from the of the population in the US over a period similar to that when MMRF participants were diagnosed and measured (2012-2018).
+
+In comparison to BRFSS... We recognize discrepancies in age and sex distributions may largely contributed toward these differences, so a match case distribution was attempted and depicted below in the next figure. Although gross differences (ie. country of origin and residence - MMRF is an international database) are still possible, we believe these data suggest the pro-oncogenic activity of obesity on plasma cell dyscrasias.
+
+Next, patient baseline characteristics are then summarized in the following table and will be further described in the next session. 
+
+```{r, eval = TRUE}
+
+###BMI distribution, comparison of BRFSS data across years these data were fed into (2012-2018) -
+#PENDING EXTRACTION OF BRFSS DATA - TRY FOR THIS WEEK ALTHOUGH THIS WILL LIKELY BE DIFFICULT
+
+ggplot(data = MMRFclean, aes(x = BMIDx)) + 
+  geom_histogram(aes(y= ..density..), fill = "white", alpha = 0.7, binwidth = 0.8)+
+  geom_density() +
+  labs(title="BMI distribution in MMRF and BRFSS datasets", x ="BMI distribution at diagnosis", y = "Density") +
+  theme_minimal ()
+
+####Can this be matched for age and for sex?
+
+#Baseline Patient Characteristics, BMI 4 categories
+patientcharacteristics <- MMRFclean %>% gtsummary::tbl_summary()
+MMRFclean %>% 
+  dplyr::select(c(Sex, Race, AgeDx, BMI_cat_4, ISSDx, IMWG_Risk, Translocation_Summary)) %>%
+  gtsummary::tbl_summary(by = BMI_cat_4) %>%
+  gtsummary::add_p()
+ 
+```
+
+# 4 Results
+
+## 4.1 Demographic and clinical data according to BMI
+
+The scatter plot shows a small but statistically significant decline in BMI with older age at diagnosis. Later analyses will need to take this relationship into account, because age has been shown to have significant prognostic implications as previously published by our group (ref). Although there was a trend toward increased mean BMI in males, this was not a statistically significant trend. Similarly, there were no significant variations in BMI distribution according to race. Mean BMI was also not significantly different according to ISS stage at diagnosis.
+
+
+```{r, eval = TRUE}
+ggplot1<- ggplot(MMRFclean, aes(x = AgeDx, y = BMIDx)) +
+    geom_point(color = "darkseagreen3") + 
+    geom_smooth(method = "lm", color = "green4") +
+    labs(x = "Age at diagnosis", y = "BMI at diagnosis") +
+    stat_cor(method = "pearson", label.x = 60, label.y = 60) +
+    theme_minimal ()
+
+#KRUSKAL-WALLIS, BMI DISTRIBUTION BY SEX
+#NA.RM NOT WORKING
+
+KWsex<- kruskal.test(Sex~BMIDx, MMRFclean)
+mylabel1 <- bquote(p == .(format(KWsex$p.value, digits = 5)))
+mylabel2 <- bquote(Chi2 == .(format(KWsex$statistic, digits = 2)))
+
+ggplot2 <- ggplot(data = MMRFclean, aes(x = BMIDx, color = Sex, na.rm = TRUE)) + 
+  geom_histogram(aes(y= ..density.., color=Sex), na.rm=TRUE, Male = "blue", Female = "red", fill = "white", alpha = 0.7, binwidth=1)+
+  geom_density(Male = "blue", Female = "red", na.rm=TRUE) +
+  theme_minimal() +
+  labs(x = "Biological sex", y = "BMI distribution") +
+  annotate("text", x=50, y=0.26, label=mylabel2) +
+  annotate("text", x=50, y=0.22, label=mylabel1)
+
+ggplot3 <- ggplot(data = MMRFclean, aes(x = factor(Race), y = BMIDx)) +
+  geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+  stat_summary(fun.data=mean_sdl, mult=1, 
+                 geom="pointrange", color="red") +
+  theme_minimal() +
+  stat_compare_means (label.x = 2.2, label.y = 61) +
+  labs(x = "Race", y = "BMI distribution")
+  
+ggplot4 <- ggplot(data = MMRFclean, aes(x = factor(ISSDx), y = BMIDx)) +
+  geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+  stat_summary(fun.data=mean_sdl, 
+                 geom="pointrange", color="red") +
+  theme_minimal() +
+  stat_compare_means (label.x = 2.8, label.y = 61) +
+  labs(x = "ISS Stage at Diagnosis", y = "BMI distribution")
+
+#ECOG status distribution - proportion stacked barplot - NEED TO ADD PERCENT, BUT TOO MUCH WORK AH. New df created because na.rm still not working.
+BMIECOGdf <- MMRFcleanbmionly[1:758, c("BMI_cat_4","ECOG")] 
+BMIECOGdf <- BMIECOGdf %>% filter(!is.na(ECOG))
+                              
+ggplot6 <- ggplot(BMIECOGdf, aes(fill=ECOG, y=1, x=BMI_cat_4)) + 
+  geom_bar(position="fill", stat="identity") +
+  labs(x = "BMI WHO category", y = "Proportion of patients") +
+  theme_minimal()
+
+#Transplant distribution - proportion stacked barplot
+BMItranspdf <- MMRFcleanbmionly[1:758, c("HxTransplant","BMI_cat_4")] 
+BMItranspdf <- BMItranspdf %>% filter(!is.na(HxTransplant))
+                              
+ggplot7 <- ggplot(BMItranspdf, aes(fill=HxTransplant, y=1, x=BMI_cat_4)) + 
+  geom_bar(position="fill", stat="identity") +
+  labs(x = "BMI WHO category", y = "Proportion of patients") +
+  theme_minimal()
+
+plot_grid(ggplot1, ggplot2, ggplot3, ggplot4, ncol = 2)
+plot_grid(ggplot6, ggplot7, ncol = 2, nrow =2)
+  
+```
+
+## 4.3 Characterization of BMI at diagnosis with respect to MM related cytogenetic changes and RNA risk category
+
+Figure 
+In regards to the weight distribution of the most common MM related translocations, most did not segregate with BMI. Although t(8;14) did appear to have statistically significant distribution with respect to weight, it is a rare translocation often associated with later clonal evolution so unlikely to be a clinically significant finding in regards to newly diagnosed genetic drivers (ref - Tomas LML abstract).
+
+Tumor RNA seq data was available for 683 samples, BMI data was available in *** of them, according to (). 
+
+Finally, the BMI distribution is exactly the same across individuals with and without high risk RNA risk profiling (defined as GEP70 score > ≥45.2). 
+
+```{r, eval = TRUE}
+
+#Translocation Summary - NA, t(4;14), t(11;14), t(14;20), t(4;14), t(6;14), t(8;14) - by showing this separately, might be able to write this as a fourloop
+ggplot(data = MMRFclean, aes(x = factor(Translocation_Summary), y = BMIDx)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+    stat_summary(fun.data=mean_sdl, mult=1, 
+                 geom="pointrange", color="red") +
+    geom_jitter(shape=16, position=position_jitter(0.2))
+
+lm4<- lm(BMIDx ~ Translocation_Summary, data = MMRFclean)
+modelsummary(list(lm4), coef_omit = "Intercept",
+             statistic = c("p = {p.value}"),
+             estimate = "{estimate} [{conf.low}, {conf.high}]") 
+
+#Need to import from MMRFfull:
+##del(17p) - TP53_Loss
+##gain1q => CKS1B_Gain"
+##del(1p) - RPL5_Loss
+
+
+#High risk GEP70 does not occur more frequently in patients with excess body weight
+KWhighriskRNA <- kruskal.test(RNA_high_risk~BMIDx, MMRFclean)
+mylabel3 <- bquote(p == .(format(KWhighriskRNA$p.value, digits = 5)))
+mylabel4 <- bquote(Chi2 == .(format(KWhighriskRNA$statistic, digits = 2)))
+
+ggplot5 <- ggplot(data = MMRFclean, aes(x = factor(RNA_high_risk), y = BMIDx), na.rm = TRUE) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "High risk GEP70 (≥45.2)", y = "BMI distribution") +
+  annotate("text", x=3, y=60, label=mylabel4) +
+  annotate("text", x=3, y=54, label=mylabel3) +
+  stat_compare_means()
+ggplot5
+
+#cowplot summaries
+
+```
+
+## 4.4 Outcome Summary Statistics
+
+The following survival curves demonstrate factors that do and do not contribute toward death in MMRF compass patient population. In alcomer patients, there were no significant differences in overall survival in patients with and without excess body weight. We did redemonstrate decreased survival times with more advanced age at diagnosis (as has previously published by our group -- ref). There were also significant outcome differences in this population based on biological sex. Overall, when these data were corrected for differences in age and in sex distribution, findings were ***pending***. 
+
+These data were validated by redemonstrating shorter survival in patients with higher ISS at diagnosis and high risk GEP70 score.
+
+```{r, eval = TRUE}
+
+splots1 <- list()
+
+#Survival by BMI cat 4 - 
+MMRFclean$OS_status_num <- as.numeric(MMRFclean$OS_status)
+km_fit_BMIcensor <- survfit(Surv(OS_time, OS_status_num) ~ BMI_cat_4, data=MMRFclean)
+splots1[[1]] <- ggsurvplot(km_fit_BMIcensor,
+           conf.int=FALSE,
+           pval=TRUE,
+           risk.table=FALSE,
+           legend.labs=c("<18.5", "18.5-25","25-30",">30"), 
+           legend.title="BMI WHO category", 
+           palette=c("#66C2A5", "#8DA0CB","#A6D854", "#E5C494"),
+           risk.table.height=0.1)
+
+#Survival by Age Ranges - PENDING, will use same as Age paper
+
+
+#Survival by Sex - PENDING
+km_fit_BMIsex <- survfit(Surv(OS_time, OS_status_num) ~ Sex, data=MMRFclean)
+splots1[[2]] <- ggsurvplot(km_fit_BMIsex,
+           conf.int=TRUE,
+           pval=TRUE,
+           risk.table=FALSE,
+           legend.labs=c("Female", "Male"), 
+           legend.title="Biological sex", 
+           palette=c("#66C2A5", "#8DA0CB","#A6D854", "#E5C494"),
+           risk.table.height=0.1)
+
+#Survival adjusted by age and by sex - PENDING
+
+#KNOWN PROGNOSTIC FEATURES
+#ISS
+km_fit_BMIISS <- survfit(Surv(OS_time, OS_status_num) ~ ISSDx, data=MMRFclean)
+splots1[[3]] <- ggsurvplot(km_fit_BMIISS,
+           conf.int=TRUE,
+           pval=TRUE,
+           risk.table=FALSE,
+           legend.labs=c("1", "2", "3"), 
+           legend.title="ISS Stage at diagnosis", 
+           palette=c("#66C2A5", "#8DA0CB","#A6D854", "#E5C494"),
+           risk.table.height=0.1)
+
+#t(4;14) - make a yes/no column with this information
+
+#HRD - although I don't actually recall what this represents!
+km_fit_BMIRNA <- survfit(Surv(OS_time, OS_status_num) ~ RNA_high_risk, data=MMRFclean)
+splots1[[4]] <- ggsurvplot(km_fit_BMIRNA,
+           conf.int=TRUE,
+           pval=TRUE,
+           risk.table=FALSE,
+           legend.labs=c("False", "True"), 
+           legend.title="High risk GEP70", 
+           palette=c("#66C2A5", "#8DA0CB","#A6D854", "#E5C494"),
+           risk.table.height=0.1)
+
+
+arrange_ggsurvplots(splots1, print = TRUE,
+  ncol = 2, nrow = 2)
+
+```
+
+# 5. Additional genetic features and relationship with BMI distribution in this population
+
+## 5.1 NMF for Apobec signatures
+
+Mutational signatures were called using non-negative matrix factorization (NMF) with counts per sample calculated for the six possible SNV types and the 16 possible 3-base sequence contexts, creating a table with 96 columns. The R package “NMF” was used for all calculations (CRAN - Package NMF). The number of signatures was determined by running 50 iterations of the algorithm for 2-7 signatures. A number of signatures was chosen that maximized the cophenetic distance and dispersion values. One thousand (1,000) iterations of the algorithm were run for that number of signatures. Cosine similarity was used to determine the Sanger signatures that were closest to the detected signatures.
+*Am I able to run this? Perhaps only if I have time next week*
+
+*Paragraph 2: results*
+
+```{r, eval = TRUE}
+
+
+```
+
+
+## 5.2 CHIP
+*Describe methods*
+
+
+```{r, eval = TRUE}
+
+
+
+```
+
+## 5.3 TLT and TTL
+*Describe methods*
+
+```{r, eval = TRUE}
+
+#TTL and LTL and BMI
+
+```
+
+## 5.4 FSGEA for genes related to ***metabolomics*** other ***obesity related cancer pathways***
+
+
+```{r, eval = TRUE}
+#Would layout as boxplot by group next 
+
+
+
+```
+
+# 6 Clinical and genetic features of NDMM occuring in patients with excess body weight
+
+## 6.1 Percent of deaths attributed to the following clinical and genetic factors in obese vs all patients
+
+This section will then demonstrate whether there are any significant tumor and leukocyte-based genetic drivers of mortality 
+```{r, eval = TRUE}
+
+
+```
+
+
+## 6.2 Multivariate analysis
+```{r, eval = TRUE}
+
+
+
+```
+
+
+***Other Ideas and feedback***
+
+From the older age paper:
++Percentage of deaths attributable to each factor
++Waterfall plot summarizing the CH mutations detected. Left panel showeing the VAF distribution of these mutations. 
++Boxplot suggesting patients iwth CH are older than the ones without CH
++Signature analysis of mutations suggesting they related  
+
++Any PAF graphs? PAF perhaps including - 
+
++CHIP data? Correct for age?
+
++Chromothripsis and chromoplexy don't quite make sense to include?
+
++Compare with BRFSS data? BMI distribution - perhaps would use mean year of diagnosis in this population -- would be able to extract based on what learned in class
+
+
+# 6 DISCUSSION:
+
+***ORIGINALLY FROM EILEEN***
+We identified 1143 patients. 1122 had BMI information. The median BMI was 27.3 (13.6-61.6). 2% (n=22) were underweight, 30% (n=340) were within normal range, 38% (n=425) were overweight, and 30% (n=335) were obese. When sub setting the obese population according to WHO: 60% (n=202), were I 28% (n=95) were II, 11% (n=38) were III, and 6% (n=21) were stage IV. 
+We assessed CH on WGS germline data. We noted that patients with CH had significantly smaller BMIs (27.4 (15.2-41.1) vs 26.4 (19.9-35.7) chi-squared = 4.534, df = 1, p-value = 0.03). 
+
+(Is this not GSEA?) We performed an nNMF in order to identify the APOBEC mutational signature. These was no correlation between BMI and APOBEC mutational signature using BMI as a continuous variable (F=3, p=0.08) or segmented in groups (X2: 2.1, DF=3, p=0.5), Figure XXX. 
+	
+Telomere length has been associated with Aging and chronic aggressions. In myeloma, Tumour Telomere length has been associated with chromothrypsis, age, and an adverse outcome. In order to access the role of obesity, we matched BMI and 887 LTL and 779 TTL derived from WGS. As continuous variables, there were no correlations between BMI and both LTL and TTL. As discrete categories were concerned, there was a significant correlation between BMI and LTL (for group Chi 12, DF 3, p=0.006) and WHO classification (13.6 DF5, p=0.01). Interestingly, patients with a higher BMI had longer LTL (need to correct this data by age though!). Of note, there was no linear correlation between Age and BMI in this dataset (F-statistic: 3.225 on 1 and 958 DF,  p-value: 0.07 ). ***(However in the 758 patients with BMI data there does appear to be a correlation)*** 
+	In terms of outcome, there were no difference in PFS according to BMI. 
+
+
+# 7 CONCLUSIONS
+
+# 8 REFERENCES
+(1)
+(2)
+(3)
+(4)
+(5)
+(6)
+
+
