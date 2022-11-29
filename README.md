@@ -16,7 +16,7 @@ All datasets used in my analyses are freely available from the CDC and can be ac
 * [VSRR Provision Drug Overdose Death by Substance](https://data.cdc.gov/NCHS/VSRR-Provisional-Drug-Overdose-Death-Counts/xkb8-kh2a/)
 * [PLACES Data on County-Level Health Indicators](https://chronicdata.cdc.gov/500-Cities-Places/PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb/data)
 
-This repository also contains:
+This repository contains the following files:
 
 * **BMIN5030_FinalProject_Miller.Rmd** : RMarkdown file to run the analyses and generate the report
 * **BMIN5030_FinalProject_Miller.html** : HTML file of report
