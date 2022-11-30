@@ -69,6 +69,7 @@ library(modelsummary)
 library(viridis)
 library(tidytidbits)
 library(survivalAnalysis)
+library(purrr)
 
 MMRFfull <- read.csv("~/Documents/BMIN 5030/Final Project/Raw Files/Razzo_MMRF raw csv.csv", header = T, fill = TRUE, row.name = NULL)
 MMRFfull <- rename(MMRFfull, Patient_ID = Patient)
@@ -95,12 +96,9 @@ MMRFcleanadd$ECOG <- as.factor(MMRFcleanadd$ECOG)
   
 MMRFcleanbmionly <- MMRFcleanadd %>%
   filter(!is.na(BMIDx))
-
-#HELP!
-##del(17p) - TP53_Loss
-##gain1q => CKS1B_Gain"
-##del(1p) - RPL5_Loss
-
+MMRFcleanbmionly$age_group <- cut(MMRFclean$AgeDx,
+                       breaks=c(0, 54, 64, 74, 110),
+                       labels=c("<55", "55-64", "65-74", ">74"))
 MMRFfullcgsumm <- MMRFfull[1:1273, c("Patient_ID","TP53_Loss","CKS1B_Gain")]
 MMRFcleanbmionly <- inner_join(MMRFcleanbmionly, MMRFfullcgsumm, by = "Patient_ID")
 MMRFcleanbmionly$CKS1B_Gain_binary <- case_when(MMRFcleanbmionly$CKS1B_Gain == -2 ~ 'No',
@@ -114,9 +112,26 @@ MMRFcleanbmionly$TP53_Loss_binary <- case_when(MMRFcleanbmionly$TP53_Loss == -2 
                                           MMRFcleanbmionly$TP53_Loss == 2 ~ 'No',
                                           MMRFcleanbmionly$TP53_Loss == 3 ~ 'No',
                                           MMRFcleanbmionly$TP53_Loss == 4 ~ 'No')                                          
+MMRFcleanbmionly$t414_binary <- case_when(MMRFcleanbmionly$Translocation_Summary == "t(4;14)" ~ 't(4;14)',
+                                          TRUE ~ 'No') 
+MMRFcleanbmionly$t1416_binary <- case_when(MMRFcleanbmionly$Translocation_Summary == "t(14;16)" ~ 't(14;16)',
+                                          TRUE ~ 'No') 
+MMRFcleanbmionly$EBW_binary <- case_when(MMRFcleanbmionly$BMIDx >= 30 ~ '>30',
+                                         TRUE ~ '<30')
+
+MMRFcleanbmionly$CKS1B_Gain_binary <- as.factor(MMRFcleanbmionly$CKS1B_Gain_binary)
+MMRFcleanbmionly$CKS1B_Gain_binary <- factor(MMRFcleanbmionly$CKS1B_Gain_binary, levels = c("No", "1q gain"))
+MMRFcleanbmionly$TP53_Loss_binary <- as.factor(MMRFcleanbmionly$TP53_Loss_binary)
+MMRFcleanbmionly$TP53_Loss_binary <- factor(MMRFcleanbmionly$TP53_Loss_binary, levels = c("No", "17p del"))
+MMRFcleanbmionly$t414_binary <- as.factor(MMRFcleanbmionly$t414_binary)
+MMRFcleanbmionly$t1416_binary <- as.factor(MMRFcleanbmionly$t1416_binary)
+MMRFcleanbmionly$EBW_binary <- as.factor(MMRFcleanbmionly$EBW_binary)
 
 
 MMRFapobec <-read.csv("~/Documents/BMIN 5030/Final Project/BMIN503_Final_Project/MMRF apobec values.csv", header = T, fill = TRUE, row.name = NULL)
+MMRFapobec <- rename(MMRFapobec, Patient_ID = X)
+head(MMRFapobec)
+head(MMRFcleanbmionly)
 ```
 
 ```{r, eval = TRUE}
@@ -137,6 +152,21 @@ Next, patient baseline characteristics are then summarized in the following tabl
 
 ###BMI distribution, comparison of BRFSS data across years these data were fed into (2012-2018) -
 #PENDING EXTRACTION OF BRFSS DATA - TRY FOR THIS WEEK ALTHOUGH THIS WILL LIKELY BE DIFFICULT
+
+#Number of Census Race Categories Chosen	MRACE	MRACEORG, MRACEASC	_CNRACE
+#Number of Census Race Categories Chosen, Collapsed	MRACE	MRACEORG, MRACEASC, _CNRACE	_CNRACEC
+#18-24 and then 5-year age groupings to 80+.	AGE	 	_AGEG5YR
+#18-64 and 65+ age groupings.	AGE	 	_AGE65YR
+#18-64 and 65+ 10 year age groupings.	AGE	_IMPAGE	_AGE_G
+#Calculated Body Mass Index	SEX, WEIGHT2, HEIGHT3	HTIN4, HTM4, WTKG3	_BMI5 -- _LLCPWT (adjusted weight)
+#Four level weight variable (normal, overweight, obese) based on Body Mass Index	SEX, WEIGHT2, HEIGHT3	HTIN4, HTM4, WTKG3, _BMI5	_BMI5CAT
+#BRFSS uses this scale to adjust weights - I guess would still be same for BMI as it is linear for weight?
+#age.weights = c("18-24" = 0.118414, "25-29" = 0.09212, "30-34" = 0.087897,
+#	"35-39" = 0.085178, "40-44" = 0.078063, "45-49" = 0.079928, 
+#	"50-54" = 0.08024, "55-59" = 0.085726, "60-64" = 0.080608, 
+#	"65-69" = 0.068397, "70-74" = 0.05497, "75-79" = 0.037824, 
+#	"80+" = 0.050635, "No Response" = 0)
+#barplot(age.weights)
 
 ggplot(data = MMRFclean, aes(x = BMIDx)) + 
   geom_histogram(aes(y= ..density..), fill = "white", alpha = 0.7, binwidth = 0.8)+
@@ -247,6 +277,29 @@ modelsummary(list(lm4), coef_omit = "Intercept",
              statistic = c("p = {p.value}"),
              estimate = "{estimate} [{conf.low}, {conf.high}]") 
 
+#1q gain
+KWhighrisk17pdel <- kruskal.test(TP53_Loss_binary~BMIDx, MMRFcleanbmionly)
+mylabel7 <- bquote(p == .(format(KWhighrisk17pdel$p.value, digits = 5)))
+mylabel8 <- bquote(Chi2 == .(format(KWhighrisk17pdel$statistic, digits = 2)))
+  
+ggplot9 <- ggplot(data = MMRFcleanbmionly, aes(x = factor(TP53_Loss_binary), y = BMIDx), na.rm = TRUE) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "17p del", y = "BMI distribution") +
+  annotate("text", x=3, y=60, label=mylabel8) +
+  annotate("text", x=3, y=54, label=mylabel7)
+
+#17p del
+KWhighrisk1q <- kruskal.test(CKS1B_Gain_binary~BMIDx, MMRFcleanbmionly)
+mylabel5 <- bquote(p == .(format(KWhighrisk1q$p.value, digits = 5)))
+mylabel6 <- bquote(Chi2 == .(format(KWhighrisk1q$statistic, digits = 2)))
+  
+ggplot8 <- ggplot(data = MMRFcleanbmionly, aes(x = factor(CKS1B_Gain_binary), y = BMIDx), na.rm = TRUE) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "1q gain", y = "BMI distribution") +
+  annotate("text", x=3, y=60, label=mylabel6) +
+  annotate("text", x=3, y=54, label=mylabel5) 
 
 #High risk GEP70 does not occur more frequently in patients with excess body weight
 KWhighriskRNA <- kruskal.test(RNA_high_risk~BMIDx, MMRFclean)
@@ -258,19 +311,19 @@ ggplot5 <- ggplot(data = MMRFclean, aes(x = factor(RNA_high_risk), y = BMIDx), n
   theme_minimal() +
   labs(x = "High risk GEP70 (≥45.2)", y = "BMI distribution") +
   annotate("text", x=3, y=60, label=mylabel4) +
-  annotate("text", x=3, y=54, label=mylabel3) +
-  stat_compare_means()
-ggplot5
+  annotate("text", x=3, y=54, label=mylabel3) 
 
-#cowplot summaries
+plot_grid(ggplot9, ggplot8, ggplot5, ncol = 2)
 
 ```
 
 ## 4.4 Outcome Summary Statistics
 
-The following survival curves demonstrate factors that do and do not contribute toward death in MMRF compass patient population. In alcomer patients, there were no significant differences in overall survival in patients with and without excess body weight. We did redemonstrate decreased survival times with more advanced age at diagnosis (as has previously published by our group -- ref). There were also significant outcome differences in this population based on biological sex. Overall, when these data were corrected for differences in age and in sex distribution, findings were ***pending***. 
+In order to first validate our cohort containing BMI data, I first demonstrated that genetic and clinical data used in NDMM staging (ISS, R-ISS and R2-ISS staging/prognostic systems) I first repeated...
 
-These data were validated by redemonstrating shorter survival in patients with higher ISS at diagnosis and high risk GEP70 score.
+I then explored our clinical data as it relates to survival outcomes...
+
+Though there were no survival differences in outcomes with BMI stratified in the 4 WHO defined categories, I also sought to determine the Cox proportional hazard ratio of BMI in univariate and multivariate analyses given the possible confounding of age and sex. While other clinical and genetic characteristics did not segregate with BMI and are therefore not felt to confound outcomes within BMI cohorts, they were included in some of the multivariate analyses in order to weigh the prognostic features. 
 
 ### Figure X. DATA VALIDATION WITH CLINICALLY ESTABLISHED PROGNOSTIC FEATURES
 ```{r, eval = TRUE}
@@ -299,8 +352,6 @@ splots1[[2]] <- ggsurvplot(km_fit_BMIRNA,
            risk.table.height=0.1)
 
 #t(4;14)
-MMRFcleanbmionly$t414_binary <- case_when(MMRFcleanbmionly$Translocation_Summary == "t(4;14)" ~ 't(4;14)',
-                                          TRUE ~ 'No') 
 km_fit_BMI414 <- survfit(Surv(OS_time, OS_status_num) ~ t414_binary, data=MMRFcleanbmionly)
 splots1[[3]] <- ggsurvplot(km_fit_BMI414,
            conf.int=TRUE,
@@ -317,7 +368,7 @@ splots1[[4]] <- ggsurvplot(km_fit_BMI1q,
            conf.int=TRUE,
            pval=TRUE,
            risk.table=FALSE,
-           legend.labs=c("No", "1q gain"), 
+           legend.labs=c("1q gain","No"), 
            legend.title="1q gain status", 
            palette=c("#66C2A5", "#8DA0CB"),
            risk.table.height=0.1)
@@ -328,13 +379,14 @@ ggsurvplot(km_fit_BMI17p,
            conf.int=TRUE,
            pval=TRUE,
            risk.table=FALSE,
-           legend.labs=c("No", "17p del"), 
+           legend.labs=c("17p del","No"), 
            legend.title="17p del status", 
            palette=c("#66C2A5", "#8DA0CB"),
            risk.table.height=0.1)
 
 arrange_ggsurvplots(splots1, print = TRUE,
   ncol = 2, nrow = 2)
+
 
 #OBS: Other high risk translocations omitted due to infrequency 
 ```
@@ -356,10 +408,6 @@ splots2[[1]] <- ggsurvplot(km_fit_BMIcensor,
            risk.table.height=0.1)
 
 #Survival by Age Ranges - will use same as Age paper - PENDING
-MMRFcleanbmionly$age_group <- cut(MMRFclean$AgeDx,
-                       breaks=c(0, 54, 64, 74, 110),
-                       labels=c("<55", "55-64", "65-74", ">74"))
-
 km_fit_BMIage <- survfit(Surv(OS_time, OS_status_num) ~ age_group, data=MMRFcleanbmionly)
 splots2[[2]] <- ggsurvplot(km_fit_BMIage,
            conf.int=TRUE,
@@ -382,8 +430,8 @@ splots2[[3]] <- ggsurvplot(km_fit_BMIsex,
            risk.table.height=0.1)
 
 #Survival by ECOG PS
-km_fit_BMIsex <- survfit(Surv(OS_time, OS_status_num) ~ ECOG, data=MMRFcleanbmionly)
-splots2[[4]] <- ggsurvplot(km_fit_BMIsex,
+km_fit_BMIECOG <- survfit(Surv(OS_time, OS_status_num) ~ ECOG, data=MMRFcleanbmionly)
+splots2[[4]] <- ggsurvplot(km_fit_BMIECOG,
            conf.int=TRUE,
            pval=TRUE,
            risk.table=FALSE,
@@ -395,14 +443,45 @@ splots2[[4]] <- ggsurvplot(km_fit_BMIsex,
 arrange_ggsurvplots(splots2, print = TRUE,
   ncol = 2, nrow = 2)
 
+km_fit_BMIEBW_binary <- survfit(Surv(OS_time, OS_status_num) ~ EBW_binary, data=MMRFcleanbmionly)
+ggsurvplot(km_fit_BMIEBW_binary,
+           conf.int=TRUE,
+           pval=TRUE,
+           risk.table=FALSE,
+           legend.labs=c(">30", "<30"), 
+           legend.title="Presence of EBW", 
+           palette=c("#66C2A5", "#8DA0CB"),
+           risk.table.height=0.1)
+
 ```
 
-### Figure X. MULTIVARIATE SURVIVAL ANALYSIS IN ESTABLISHED CLINICAL AND GENETIC FEATURES
+### Figure X. UNIVARIATE AND MULTIVARIATE SURVIVAL ANALYSIS IN ESTABLISHED CLINICAL AND GENETIC FEATURES
 ```{r, eval = TRUE}
 
-#~~~~ Need to figure out how to summarize this in a feature selection graph ~~~~
+# UNIVARIATE ANALYSES: 
+unisurv1<- coxph(Surv(OS_time, OS_status) ~ ISSDx, data = MMRFcleanbmionly)
+summary(unisurv1)
 
-#Survival by performance status
+covariate_names <- c(`BMIDx`="BMI at diagnosis",
+                     `AgeDx`="Age at diagnosis",
+                     `Sex`="Sex",
+                     `ISSDx`="ISS",
+                     `t1416_binary`="t(14;16)",
+                     `t414_binary`="t(4;14)",
+                     `RNA_high_risk`="High risk GEP70")
+
+
+map(vars(BMIDx, AgeDx, Sex, ISS, t1416_binary, t414_binary, RNA_high_risk), function(by)
+{analyse_multivariate(MMRFcleanbmionly,
+                       vars(OS_time, OS_status),
+                       covariates = list(by), # covariates expects a list
+                       covariate_name_dict = covariate_names)
+}) %>%
+  forest_plot(factor_labeller = covariate_names,
+              endpoint_labeller = c(time="OS"),
+              orderer = ~order(HR),
+              labels_displayed = c("endpoint", "factor", "n"),
+              ggtheme = ggplot2::theme_bw(base_size = 10))
 
 ##MULTIVARIATE SURVIVAL ANALYSES using BMI, age, sex and race, performance status - and select subsetted survival curves according to findings from multivariate analyses
 
@@ -411,6 +490,7 @@ survmulti1 <- analyse_multivariate(MMRFcleanbmionly, vars(OS_time, OS_status_num
 print(survmulti1$summaryAsFrame)
 
 #I think you are going to need an obese vs non-obese group to see if you can maintain the significant HR
+
 
 #BMI in 4 WHO categories, age continuous
 
@@ -424,12 +504,25 @@ survmulti5 <- analyse_multivariate(MMRFcleanbmionly, vars(OS_time, OS_status_num
 print(survmulti5$summaryAsFrame)
 
 #With survmulti1 with ISS, R+R2-ISS cytogenetic features (t(4;14), 1q gain, t(14;16), 17p del), and high risk GEP70
+survmulti6 <- analyse_multivariate(MMRFcleanbmionly, vars(OS_time, OS_status_num), covariates = vars(BMIDx, AgeDx, Sex, Race, ISSDx, RNA_high_risk, t414_binary, t1416_binary, CKS1B_Gain_binary, CKS1B_Gain_binary))
+print(survmulti6$summaryAsFrame)
 
-forest_plot(result,
+covariate_names <- c(`BMIDx`="BMI at diagnosis",
+                     `AgeDx`="Age at diagnosis",
+                     `Sex`="Sex",
+                     `Race`="Race",
+                     `ISSDx`="ISS",
+                     `RNA_high_risk` = "High GEP70",
+                      `t414_binary`="t(4;14)",
+                     `t1416_binary`="t(14;16)",
+                     `CKS1B_Gain_binary`="1q gain",
+                     `CKS1B_Gain_binary`="17p del")
+
+forest_plot(survmulti6,
             factor_labeller = covariate_names,
             endpoint_labeller = c(time="OS"),
             orderer = ~order(HR),
-            labels_displayed = c("endpoint", "factor", "n"),
+            labels_displayed = c("factor.value", "HR", "Lower_CI", "Upper_CI","p"),
             ggtheme = ggplot2::theme_bw(base_size = 10),
             relative_widths = c(1, 1.5, 1),
             HR_x_breaks = c(0.25, 0.5, 0.75, 1, 1.5, 2))
@@ -437,7 +530,7 @@ forest_plot(result,
 ```
 
 ```{r, eval = TRUE}
-#SELECT POPULATION BREAKDOWN BASED ON 
+#SELECT POPULATION BREAKDOWN BASED ON MULTIVARIATE ANALYSES
 
 ```
 
@@ -445,12 +538,38 @@ forest_plot(result,
 
 ## 5.1 NMF for Apobec signatures
 
+What is APOBEC: "The APOBEC3 (apolipoprotein B mRNA editing enzyme catalytic polypeptide 3) family of cytidine deaminases is responsible for two mutational signatures (SBS2 and SBS13) found in cancer genomes. APOBEC3 enzymes are activated in response to viral infection, and have been associated with increased mutation burden and TP53 mutation. (Jakobsdottir BMC Biology 2022)"
+
 Mutational signatures were called using non-negative matrix factorization (NMF) with counts per sample calculated for the six possible SNV types and the 16 possible 3-base sequence contexts, creating a table with 96 columns. The R package “NMF” was used for all calculations (CRAN - Package NMF). The number of signatures was determined by running 50 iterations of the algorithm for 2-7 signatures. A number of signatures was chosen that maximized the cophenetic distance and dispersion values. One thousand (1,000) iterations of the algorithm were run for that number of signatures. Cosine similarity was used to determine the Sanger signatures that were closest to the detected signatures.
 *Am I able to run this? Perhaps only if I have time next week*
 
 *Paragraph 2: results*
 
 ```{r, eval = TRUE}
+
+#MMRFapobec (B) signatures with respect to BMI distribution
+
+KWNMF2 <- kruskal.test(NMF2~BMIDx, MMRFcleanbmionly)
+KWNMF2lab1 <- bquote(Chi2 == .(format(KWNMF2$statistic, digits = 2)))
+KWNMF2lab2 <- bquote(p == .(format(KWNMF2$p.value, digits = 5)))
+
+ggplot(data = MMRFcleanbmionly, aes(x = factor(NMF2), y = BMIDx), na.rm = TRUE) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "APOBEC signature", y = "BMI distribution") +
+  annotate("text", x=2, y=60, label=KWNMF2lab1) +
+  annotate("text", x=2, y=54, label=KWNMF2lab2) 
+
+#Both as continuous variables
+ggplot(MMRFclean, aes(x = AgeDx, y = BMIDx)) +
+    geom_point(color = "darkseagreen3") + 
+    geom_smooth(method = "lm", color = "green4") +
+    labs(x = "Age at diagnosis", y = "BMI at diagnosis") +
+    stat_cor(method = "pearson", label.x = 60, label.y = 2) +
+    theme_minimal ()
+
+#Multivariate analysis - GLM for whether age and sex and t(8;14) are masking any of the telomere measurements as those have shown to have some relationship with BMI?
+#Then secondarily, include in a multivariate survival analysis?
 
 
 ```
@@ -461,7 +580,31 @@ Mutational signatures were called using non-negative matrix factorization (NMF) 
 
 
 ```{r, eval = TRUE}
+#prior graphs
 
+KWCHIP <- kruskal.test(CHIP~BMIDx, MMRFcleanbmionly)
+KWCHIPlab1 <- bquote(Chi2 == .(format(KWCHIP$statistic, digits = 2)))
+KWCHIPlab2 <- bquote(p == .(format(KWCHIP$p.value, digits = 5)))
+
+ggplot(data = MMRFcleanbmionly, aes(x = factor(CHIP), y = BMIDx), na.rm = TRUE) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "Presence of CHIP", y = "BMI distribution")+
+  annotate("text", x=2, y=60, label=KWCHIPlab1) +
+  annotate("text", x=2, y=54, label=KWCHIPlab2)
+
+#Both as continuous variables
+#PENDING FIGURING OUT ANNOTATION ~~~  
+ggplot(MMRFclean, aes(x = AgeDx, y = BMIDx)) +
+    geom_point(color = "darkseagreen3") + 
+    geom_smooth(method = "lm", color = "green4") +
+    labs(x = "Age at diagnosis", y = "BMI at diagnosis") +
+    stat_cor(method = "pearson", label.x = 60, label.y = 2) +
+    theme_minimal ()
+
+
+#Multivariate analysis - GLM for whether age and sex and t(8;14) are masking any of the telomere measurements as those have shown to have some relationship with BMI?
+#Then secondarily, include in a multivariate survival analysis?
 
 
 ```
@@ -471,7 +614,42 @@ Mutational signatures were called using non-negative matrix factorization (NMF) 
 
 ```{r, eval = TRUE}
 
-#TTL and LTL and BMI
+#TTL, BMI discrete
+MMRFcleanbmionly$TTL <- as.numeric(MMRFcleanbmionly$TTL)
+TL1 <- ggplot(data = MMRFcleanbmionly, aes(x = factor(BMI_cat_4), y = TTL)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+    stat_summary(fun.data=mean_sdl, mult=1, 
+                 geom="pointrange", color="red") 
+
+#TTL, BMI continuous
+TL2 <- ggplot(MMRFcleanbmionly, aes(x = BMIDx, y = TTL)) +
+    geom_point(color = "darkseagreen3") + 
+    geom_smooth(method = "lm", color = "green4") +
+    labs(x = "BMI at diagnosis", y = "Tumor telomere length") +
+    stat_cor(method = "pearson", label.x = 40, label.y = 40) +
+    theme_minimal ()
+
+#LTL, BMI discrete - fix axes
+MMRFcleanbmionly$LTL <- as.numeric(MMRFcleanbmionly$LTL)
+TL3 <- ggplot(data = MMRFcleanbmionly, aes(x = factor(BMI_cat_4), y = LTL)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+    stat_summary(fun.data=mean_sdl, mult=1, 
+                 geom="pointrange", color="red") +
+    geom_jitter(shape=16, position=position_jitter(0.2))
+
+#LTL, BMI continuous - fix axes
+TL4 <- ggplot(MMRFcleanbmionly, aes(x = BMIDx, y = LTL)) +
+    geom_point(color = "darkseagreen3") + 
+    geom_smooth(method = "lm", color = "green4") +
+    labs(x = "BMI at diagnosis", y = "Tumor telomere length") +
+    stat_cor(method = "pearson", label.x = 40, label.y = 20) +
+    theme_minimal ()
+
+plot_grid(TL1, TL2, TL3, TL4, ncol = 2)
+
+#Multivariate analysis - GLM for whether age and sex and t(8;14) are masking any of the telomere measurements as those have shown to have some relationship with BMI?
+#Then secondarily, include in a multivariate survival analysis?
+
 
 ```
 
@@ -479,8 +657,9 @@ Mutational signatures were called using non-negative matrix factorization (NMF) 
 
 
 ```{r, eval = TRUE}
-#Would layout as boxplot by group next 
 
+#Will attempt with the following geo pathways:
+###
 
 
 ```
@@ -492,6 +671,7 @@ Mutational signatures were called using non-negative matrix factorization (NMF) 
 This section will then demonstrate whether there are any significant tumor and leukocyte-based genetic drivers of mortality 
 ```{r, eval = TRUE}
 
+#PAF script?
 
 ```
 
@@ -524,12 +704,13 @@ From the older age paper:
 # 6 DISCUSSION:
 
 ***ORIGINALLY FROM EILEEN***
-We identified 1143 patients. 1122 had BMI information. The median BMI was 27.3 (13.6-61.6). 2% (n=22) were underweight, 30% (n=340) were within normal range, 38% (n=425) were overweight, and 30% (n=335) were obese. When sub setting the obese population according to WHO: 60% (n=202), were I 28% (n=95) were II, 11% (n=38) were III, and 6% (n=21) were stage IV. 
-We assessed CH on WGS germline data. We noted that patients with CH had significantly smaller BMIs (27.4 (15.2-41.1) vs 26.4 (19.9-35.7) chi-squared = 4.534, df = 1, p-value = 0.03). 
+We identified 1143 patients. 1122 had BMI information. The median BMI was 27.3 (13.6-61.6). 2% (n=22) were underweight, 30% (n=340) were within normal range, 38% (n=425) were overweight, and 30% (n=335) were obese. When sub setting the obese population according to WHO: 60% (n=202), were I 28% (n=95) were II, 11% (n=38) were III, and 6% (n=21) were stage IV.
 
-(Is this not GSEA?) We performed an nNMF in order to identify the APOBEC mutational signature. These was no correlation between BMI and APOBEC mutational signature using BMI as a continuous variable (F=3, p=0.08) or segmented in groups (X2: 2.1, DF=3, p=0.5), Figure XXX. 
+We assessed CH on WGS germline data. We noted that patients with CH had significantly smaller BMIs (27.4 (15.2-41.1) vs 26.4 (19.9-35.7) chi-squared = 4.534, df = 1, p-value = 0.03). *I think this statistic is incorrect*
+
+(Is this not GSEA?) We performed an nNMF in order to identify the APOBEC mutational signature. These was no correlation between BMI and APOBEC mutational signature using BMI as a *continuous variable (F=3, p=0.08)* or *segmented in groups (X2: 2.1, DF=3, p=0.5)*, Figure XXX. 
 	
-Telomere length has been associated with Aging and chronic aggressions. In myeloma, Tumour Telomere length has been associated with chromothrypsis, age, and an adverse outcome. In order to access the role of obesity, we matched BMI and 887 LTL and 779 TTL derived from WGS. As continuous variables, there were no correlations between BMI and both LTL and TTL. As discrete categories were concerned, there was a significant correlation between BMI and LTL (for group Chi 12, DF 3, p=0.006) and WHO classification (13.6 DF5, p=0.01). Interestingly, patients with a higher BMI had longer LTL (need to correct this data by age though!). Of note, there was no linear correlation between Age and BMI in this dataset (F-statistic: 3.225 on 1 and 958 DF,  p-value: 0.07 ). ***(However in the 758 patients with BMI data there does appear to be a correlation)*** 
+Telomere length has been associated with Aging and chronic aggressions. In myeloma, Tumour Telomere length has been associated with chromothrypsis, age, and an adverse outcome. In order to access the role of obesity, we matched BMI and 887 LTL and 779 TTL derived from WGS. As continuous variables, there were no correlations between BMI and both LTL and TTL. As discrete categories were concerned, there was a significant correlation between *BMI and LTL (for group Chi 12, DF 3, p=0.006)* and WHO classification (13.6 DF5, p=0.01). Interestingly, patients with a higher BMI had longer LTL *(need to correct this data by age though!)*. Of note, there was no linear correlation between Age and BMI in this dataset (F-statistic: 3.225 on 1 and 958 DF,  p-value: 0.07 ). ***(However in the 758 patients with BMI data there does appear to be a correlation)*** 
 	In terms of outcome, there were no difference in PFS according to BMI. 
 
 
