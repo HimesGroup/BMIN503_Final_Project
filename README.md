@@ -24,4 +24,10 @@ Data is initially prepared using SNPTEST, a tool to analyze SNP association in G
 The data used is ADC10 which is from the dataset of ADC1-10. This NIA ADC cohort includes subjects evaluated by the clinical and neuropathology core. Data collection is coordinated by the National Alzheimer's Coordinating Center (NAAC). NAAC coordinates collection of phenotypes from ADCs, cleans all data, coordinates implementation of Alzheimer's definitions cases and controls, and collection of samples. The cohort contains 3,311 autopsy-confirmed cases and 2,889 clinically-confirmed disease cases, and 247 cognitively normal elders (CNEs) with complete neuropathology data > 60 years old at death, and 3,687 living CNEs
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+**Currently only Chr19 is shown (where APOE is located)**
+
+Manhattan plot indicates significant hits of SNPS with a P-value of 1*10-8 with a very strong signal on Chr19 at around 45Mb
+
+![Manhattan Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Multraits-Manhattan.pvalue.jpg)
+![QQ Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/QQplot.pvalue.jpg)
+
