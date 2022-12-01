@@ -1,3 +1,9 @@
+#Table of contents
+The .rmd for the final project is:
+There are 4 .csv files with the raw data used for my project - MMRF Compass is not publically available and was provided to me by my mentors who participate in the trial/consortium
+The final .html is not as up to date as the .rmd
+
+
 # BMIN503/EPID600 Final Project
 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
