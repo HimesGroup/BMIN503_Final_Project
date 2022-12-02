@@ -5,7 +5,7 @@ This repository contains:
 
 -gesualdiJ_503_Final.Rmd
     -R Markdown file containing code, plots, and descriptions of the processes outlined below (Methods and Results)
-    -This file is still incomplete. All of the code for the methods section (eg accessing, cleaning, normalization to prepare for Exploratory and DGE analysis) is completed but needs further comments     / descriptions. The code and associated figures for the results section is not ready. 
+    -This file is still incomplete. All of the code for the methods section (eg accessing, cleaning, normalization to prepare for Exploratory and DGE analysis) is completed but needs further comments     / descriptions and work on the Blurton dataset. The code and associated figures for the results section is not ready. 
 
 -4 Datasets accessed via the National Center for Biotechnology Information's Gene Expression Omnibus (GEO) Data Repository
     -GSE89189_RAW(1).tar: Abud, IPSC Microglia monocultured or cultured with neurons (archs4)
