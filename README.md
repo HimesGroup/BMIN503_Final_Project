@@ -1,16 +1,17 @@
 # BMIN503/EPID600 Final Project
 
 **Alzheimer's Disease GWAS Analysis**
-I am going to look at Alzheimer’s GWAS data for Chr1-22 and generate a Manhatten Plot and Q-Q plot to visualize statistically significant associations. I will then functionally annotate and map these variants using the FUMA platform. 
+I am going to look at Alzheimer’s GWAS data for Chr1-22 and generate a Manhattan Plot and a Q-Q plot to visualize statistically significant associations. I will then functionally annotate and map these variants using the FUMA platform. 
 
 This repository contains:
 
-BMIN503_Final_Project/R_script/ManhattanPlot_QQ_Plot_Chr19_Rscript:    Rscript to load Chromosome 19 GWAS SNPTEST output and generate plots
-BMIN503_Final_Project/
+BMIN503_Final_Project/R_script/ManhattanPlot_QQ_Plot_Chr19_Rscript:   Rscript to load Chromosome 19 GWAS SNPTEST output and generate plots
+BMIN503_Final_Project/SNPTEST_Output/:                                Directory containing Chr1-22 SNPTEST GWAS Summary Outputs
+BMIN503_Final_Project/Output_files/:                                  Directory containing Manhattan Plot and QQ plot
 
-relevant files to analyze GWAS Data for Chr1-22. 
 
-The GWAS summary outputs can be found in the GWAS_output directory.
+
+.
 The Rscript used to generate the Manhattan Plots can be found in the R_Script directory
 
 
