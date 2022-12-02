@@ -1,0 +1,412 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "James Gesualdi"
+output: 
+  html_document:
+    theme: paper 
+    highlight: tango
+---
+
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+
+### Overview
+
+My project will be a limited meta-analysis of existing bulk RNAseq data sets detailing the differentiation of induced-pluripotent stem cells (IPSCs) into microglia, a key population of resident immune cells in the central nervous system (CNS). IPSC-based modeling is the future of microglia biology in vitro, thus there are many competing standards - eg different IPSC-derived microglia produced by different groups. My analysis will compare the transcriptomes of these competing microglia to a "Gold Standard" or reference transcriptomic dataset generated using microglia isolated from post-mortem biopsies from human donors. 
+
+Project Repository: https://github.com/gesualdiJ/BMIN503_Final_Project
+
+### Introduction 
+
+Microglia have long been challenging to model in-vitro using conventional approaches such as immortalized cell lines or primary culture because their morphology, function, and (more recently appreciated) transcriptome rapidly deteriorate when cultured in isolation. To address this issue, numerous groups have developed microglial cell lines derived from IPSCs through supplementation of cultures with various factors normally present in the micro-encironment of the CNS. The goal of this project is to interrogte the merit of several published IPSC-derived microglia lines along with some more recently developed applications of these cells involving chimeric animal model systems. 
+
+Addressing this problem involves suject matter knowledge of both immunology and neuroscience, as well as various bioinformatic techniques. This analysis will include only a subset of published microglial lines, prioritizing those models that myself and Drs Schaletzki and Su considered influential. The reference transcriptomes - one from adult donors and one generated from analysis of pediatric tissue - add rigor to this project because they represent the closest that we can realistically hope to get to the in vivo gene expression of microglia. The microglia that were analyzed to generate these reference transcriptomes were isolated immediately after surgical resection from patients, therefore there has been minimal time for these cells to lose their in vivo character. Finally, this analysis will be useful to microglia biologists because while many transcriptomic data sets exist, there have been few if any comprehensive meta-analyses of these data and still fewer attempts to harmonize their insights. This project aims to make progress in that direction. 
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+
+#install and load packages----
+
+```{r, eval = TRUE, results = 'hide', message = FALSE, warning = FALSE}
+
+install.packages("BiocManager")
+BiocManager::install(c("GEOquery", 
+                       "oligo", 
+                       "limma", 
+                       "hgu133plus2.db", 
+                       "pd.hg.u133.plus.2", 
+                       "viridis", 
+                       "fgsea", 
+                       "edgeR",
+                       "gplots"))
+install.packages("tidyverse")
+install.packages("reshape2")
+install.packages("edgeR")
+install.packages("readxl")
+install.packages("ggplot2")
+install.packages("fgsea")
+install.packages("stringr")
+install.packages("readr")
+BiocManager::install("ensembldb") 
+BiocManager::install("AnnotationHub") 
+BiocManager::install("rhdf5") 
+
+library(BiocManager)
+library(tidyverse)
+library(reshape2)
+library(rhdf5)
+library(edgeR)
+library(readxl)
+library(GEOquery)
+library(oligo)
+library(limma)
+library(viridis)
+library(pd.hg.u133.plus.2)
+library(hgu133plus2.db)
+library(ggplot2)
+library(gplots)
+library(fgsea)
+library(stringr)
+library(readr)
+library(ensembldb)
+library(AnnotationHub)
+```
+
+
+```{r, eval = TRUE, message = FALSE}
+
+#read in datasets and clean as necessary
+
+#Gosselin Data, Fetal Ex-Vivo iMg (raw reads, needs cleaning (removing all non Ex-Vivo microglia conditions) and filtering (removing non-expressed genes) and normalizing (TPM))----
+#Final cleaned dataset contains 24 total ex-vivo microglia samples from 24 children (eg from surgically resected tissue)
+
+
+microglia_fetal_ExVivo_Gosselin <- read_xlsx("Human_RNA-seq_data_Gosselin_Fetal_ExVivo.xlsx", sheet = 1, skip = 1) #File provided by collaborator
+microglia_fetal_ExVivo_Gosselin <- dplyr::rename(microglia_fetal_ExVivo_Gosselin, Gene_ID = ...1)
+microglia_fetal_ExVivo_Gosselin <- microglia_fetal_ExVivo_Gosselin[!duplicated(microglia_fetal_ExVivo_Gosselin$Gene_ID), ]  #remove any duplicated genes symbols (2)
+microglia_fetal_ExVivo_Gosselin <- column_to_rownames(microglia_fetal_ExVivo_Gosselin, var = "Gene_ID") #Move gene labels from column to rowname to allow for math operations on values
+
+microglia_fetal_ExVivo_Gosselin <- microglia_fetal_ExVivo_Gosselin %>%    
+  dplyr::select(!contains("InVitro") & !contains("Monocytes") & !contains("Lysate"))  #Removes 40 columns of monocyte/in vitro/lysate data
+sample_Labels_Gosselin <- colnames(microglia_fetal_ExVivo_Gosselin)
+
+
+DGEList_Gosselin <- DGEList(microglia_fetal_ExVivo_Gosselin) #Convert to DGE list to facilitate normalization and count visualization
+Gosselin_cpm <- cpm(DGEList_Gosselin$counts)                #Get counts per million for count visualization and filtering of unexpressed genes
+table(rowSums(DGEList_Gosselin$counts==0)==24)              #Shows number of non-expressed genes across all samples, indicates roughly how many should be filtered out 
+
+
+Gosselin_log2_cpm <- as_tibble(cpm(DGEList_Gosselin$counts, log = TRUE) , rownames = "GeneID") #Create and reshape (melt) tibble of log transformed raw counts to visualized unfiltered / unnormalized data
+Gosselin_log2_cpm_melt <- melt(Gosselin_log2_cpm)
+
+ggplot(Gosselin_log2_cpm_melt, aes(x=variable, y=value, fill=variable)) +     #visualize overall expression to show excessive influence of unexpressed / lowly expressed genes
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+filtrate_gosselin <- rowSums(Gosselin_cpm > 1) >= 6  #create logical vector that evaluates to TRUE when at least 6 of 24 samples express a given gene 
+table(filtrate_gosselin)
+DGEList_Gosselin_filtered <- DGEList_Gosselin[filtrate_gosselin, ] #subset DGE list so that only genes expressed in at least 6 samples remain
+Gosselin_log2_cpm_filtered <- as_tibble(cpm(DGEList_Gosselin_filtered, log = TRUE), rownames = "GeneID") #get counts per million with log2 transformation, reshape and visualize
+
+Gosselin_log2_cpm_filtered_melt <- melt(Gosselin_log2_cpm_filtered)
+ggplot(Gosselin_log2_cpm_filtered_melt, aes(x=variable, y=value, fill=variable)) +     
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+DGEList_Gosselin_filtered_norm <- calcNormFactors(DGEList_Gosselin_filtered, method = "TMM") #TPM normalization
+Gosselin_log2_cpm_filtered_norm <- as_tibble(cpm(DGEList_Gosselin_filtered_norm, log = TRUE), rownames = "GeneID") #Format maintaining GeneID column if needed for join function
+ExVivo_Juvenile_MG_Reference_Gosselin <- column_to_rownames(Gosselin_log2_cpm_filtered_norm, var = "GeneID") #Final format of juvenile (J) microglia reference data
+
+labels_Gosselin <- rep(NA, 24)  #clean up lengthy sample labels for this dataset. haters will suggest rewriting with vapply. I will never learn vapply!
+i <- 1
+
+while (i <= 24){
+  labels_Gosselin[i] = paste0(paste0("J", substring(sample_Labels_Gosselin[i], 16, 32)), as.character(i))
+  i = i + 1
+}
+colnames(ExVivo_Juvenile_MG_Reference_Gosselin) <- labels_Gosselin
+
+
+#Eggen Data, Adult Ex-Vivo iMg from surgical resection, 39 total samples----
+
+ah <- AnnotationHub()
+ahDb <- query(ah, pattern = c("Homo Sapiens", "EnsDb"))   ## Query for available H.Sapiens EnsDb databases, using for mapping probe id's to gene names
+EndDB_Hs <- ahDb[["AH104864"]]
+EnsDB_Hs <- EndDB_Hs  
+EnsDB_Hs_DF <- genes(EnsDB_Hs, return.type = "data.frame") %>%
+  dplyr::select(gene_id, gene_name)
+EnsDB_Hs_DF <- dplyr::rename(EnsDB_Hs_DF, Tx_ID = gene_id)
+
+microglia_adult_ExVivo_Eggen <- read_tsv("GSE99074_HumanMicrogliaBrainCounts.txt")       #read in data, will need to add gene names using EnsDB information
+microglia_adult_ExVivo_Eggen <- dplyr::rename(microglia_adult_ExVivo_Eggen, Tx_ID = ...1)
+
+EnsDB_Hs_DF <- dplyr::filter(EnsDB_Hs_DF, EnsDB_Hs_DF$gene_id %in% microglia_adult_ExVivo_Eggen$Tx_ID)  #subset list of matched tx_id's and gene names to only include tx's present in dataset
+microglia_adult_ExVivo_Eggen <- inner_join(microglia_adult_ExVivo_Eggen, EnsDB_Hs_DF, by = "Tx_ID")
+microglia_adult_ExVivo_Eggen <- relocate(microglia_adult_ExVivo_Eggen, gene_name, .before = spm09)
+microglia_adult_ExVivo_Eggen <- microglia_adult_ExVivo_Eggen[ , 1:67]
+microglia_adult_ExVivo_Eggen <- dplyr::rename(microglia_adult_ExVivo_Eggen, GeneID = gene_name)
+table(microglia_adult_ExVivo_Eggen$GeneID == "") #5116 transcripts ID's for which there is no corresponding gene name, must remove using dplyr::filter
+microglia_adult_ExVivo_Eggen <- dplyr::filter(microglia_adult_ExVivo_Eggen, GeneID != "")
+microglia_adult_ExVivo_Eggen <- microglia_adult_ExVivo_Eggen[ , 2:67]
+microglia_adult_ExVivo_Eggen <- microglia_adult_ExVivo_Eggen[1:40]
+microglia_adult_ExVivo_Eggen <- microglia_adult_ExVivo_Eggen[!duplicated(microglia_adult_ExVivo_Eggen$GeneID), ]
+microglia_adult_ExVivo_Eggen <- column_to_rownames(microglia_adult_ExVivo_Eggen, var = "GeneID")
+
+#Create DGElist, find counts per million, visualize distribution of data, and filter out unexpressed probes
+DGEList_Eggen <- DGEList(microglia_adult_ExVivo_Eggen)      #Convert to DGE list to facilitate normalization and count visualization
+Eggen_cpm <- cpm(DGEList_Eggen)                #Get counts per million for count visualization and filtering of unexpressed genes
+table(rowSums(DGEList_Eggen$counts==0)==20)              #Shows number of non-expressed genes across all samples, indicates roughly how many should be filtered out 
+
+
+Eggen_log2_cpm <- as_tibble(cpm(DGEList_Eggen, log = TRUE) , rownames = "GeneID") #Create and reshape (melt) tibble of log transformed raw counts to visualized unfiltered / unnormalized data
+Eggen_log2_cpm_melt <- melt(Eggen_log2_cpm)
+
+ggplot(Eggen_log2_cpm_melt, aes(x=variable, y=value, fill=variable)) +     #visualize overall expression to show excessive influence of unexpressed / lowly expressed genes
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+
+filtrate_eggen <- rowSums(Eggen_cpm > 1) >= 20  #create logical vector that evaluates to TRUE when at least 20 of 39 samples express a given gene 
+table(filtrate_eggen)
+DGEList_Eggen_filtered <- DGEList_Eggen[filtrate_eggen, ] #subset DGE list so that only genes expressed in at least 24 samples remain, remove 8110 unexpressed genes
+Eggen_log2_cpm_filtered <- as_tibble(cpm(DGEList_Eggen_filtered, log = TRUE), rownames = "GeneID") #get counts per million with log2 transformation, reshape and visualize
+
+Eggen_log2_cpm_filtered_melt <- melt(Eggen_log2_cpm_filtered)
+ggplot(Eggen_log2_cpm_filtered_melt, aes(x=variable, y=value, fill=variable)) +     #instead of plotting this whole thing (cumbersone), randomly select 10 and plot
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+DGEList_Eggen_filtered_norm <- calcNormFactors(DGEList_Eggen_filtered, method = "TMM") #TPM normalization
+Eggen_log2_cpm_filtered_norm <- as_tibble(cpm(DGEList_Eggen_filtered_norm, log = TRUE), rownames = "GeneID") #Format maintaining GeneID column if needed for join function
+ExVivo_Adult_MG_Reference_Eggen <- column_to_rownames(Eggen_log2_cpm_filtered_norm, var = "GeneID") #Final format of Adult (a) microglia reference data
+
+labels_Eggen <- rep(NA, ncol(ExVivo_Adult_MG_Reference_Eggen))  #clean up non-intuitive sample labels. haters will suggest rewriting with vapply. I will never learn vapply!
+j <- 1
+
+while (j <= length(labels_Eggen)){
+  labels_Eggen[j] = paste0("A_Microllia_ExVivo", as.character(j))
+  j = j + 1
+}
+colnames(ExVivo_Adult_MG_Reference_Eggen) <- labels_Eggen
+
+
+#KJS Lab internal data (already cleaned and normalized, expression values are log2(TPM)) ----
+KJS_iMG_MDM <- read_xlsx("KJS_iMG_MDM_TMM_Normalized.xlsx") #this file was generated during previous in-house data analysis
+sample_Labels_KJS <- colnames(KJS_iMG_MDM)
+sample_Labels_KJS <- sample_Labels_KJS[2:7]
+
+
+#Abud 2017 data (regular IPSC)----
+
+archs4.human <- "/Users/jamesgesualdi/Desktop/BMIN_5030/BMIN503_Final_Project_Local/human_matrix_v11.h5"  #bring in downloaded ArchS4 database containing all GEO accessible transcriptomic data
+h5ls(archs4.human)
+all.samples.human <- h5read(archs4.human, name="meta/samples/geo_accession")
+
+#Query the ArchS4 database for the samples I need from the Abud study, based on descriptions in the paper and on the GEO Entry
+Abud_Samples <- c("GSM2360252",	#10318X2
+                  "GSM2360253",	#7028X2
+                  "GSM2360254",	#x2-1
+                  "GSM2360255",	#x2-2
+                  "GSM2360256",	#x2-3
+                  "GSM2360257",	#x2-4
+                  "GSM2360283",	#HC-1
+                  "GSM2360284",	#HC-2
+                  "GSM2360285",	#HC-3
+                  "GSM2360286",	#HC-4
+                  "GSM2360287",	#HC-5
+                  "GSM2360288",	#HC-6
+                  "GSM2445478",	#n200 -2
+                  "GSM2445479",	#n200 -3
+                  "GSM2445480"	#n200 -4
+)	
+
+Abud_Sample_Locations <- which(all.samples.human %in% Abud_Samples)
+genes <- h5read(archs4.human, "meta/genes/genes")
+
+
+Expression_Abud <- t(h5read(archs4.human, "data/expression", 
+                     index=list(Abud_Sample_Locations, 1:length(genes))))
+H5close()
+rownames(Expression_Abud) <- genes
+colnames(Expression_Abud) <- all.samples.human[Abud_Sample_Locations]
+
+#Below, I access some meta-data from the study to verify that the appropriate data was extracted from ArchS4, and clean up colnames to more informative labels
+
+Sample_source_name_ch1 <- h5read(archs4.human, "meta/samples/source_name_ch1")     # extract source name
+Sample_title <- h5read(archs4.human, name= "meta/samples/title")                   # extract sample title
+Sample_characteristics <- h5read(archs4.human, name="meta/samples/characteristics_ch1")   # extract sample characteristics
+
+studyDesign_Abud <- tibble(Sample_title_Abud = Sample_title_Abud[Abud_Sample_Locations], 
+                      Sample_source_name_ch1_Abud = Sample_source_name_ch1_Abud[Abud_Sample_Locations],
+                      Sample_characteristics_Abud = Sample_characteristics_Abud[Abud_Sample_Locations])
+
+colnames(Expression_Abud) <- studyDesign_Abud$Sample_title_Abud
+
+
+
+#move on to filtering and normalization of Abud data
+DGEList_Abud <- DGEList(Expression_Abud)      #Convert to DGE list to facilitate normalization and count visualization
+Abud_cpm <- cpm(DGEList_Abud)                #Get counts per million for count visualization and filtering of unexpressed genes
+table(rowSums(DGEList_Abud$counts==0)==15)              #Shows number of non-expressed genes across all samples, indicates roughly how many should be filtered out 
+
+Abud_log2_cpm <- as_tibble(cpm(DGEList_Abud, log = TRUE) , rownames = "GeneID") #Create and reshape (melt) tibble of log transformed raw counts to visualized unfiltered / unnormalized data
+Abud_log2_cpm_melt <- melt(Abud_log2_cpm)
+
+ggplot(Abud_log2_cpm_melt, aes(x=variable, y=value, fill=variable)) +     #visualize overall expression to show excessive influence of unexpressed / lowly expressed genes
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+filtrate_abud <- rowSums(Abud_cpm > 1) >= 4  #create logical vector that evaluates to TRUE when at least 4 of 15 samples express a given gene 
+table(filtrate_abud)
+DGEList_Abud_filtered <- DGEList_Abud[filtrate_abud, ] #subset DGE list so that only genes expressed in at least 3 samples remain, remove 24,138 unexpressed genes
+Abud_log2_cpm_filtered <- as_tibble(cpm(DGEList_Abud_filtered, log = TRUE), rownames = "GeneID") #get counts per million with log2 transformation, reshape and visualize
+
+Abud_log2_cpm_filtered_melt <- melt(Abud_log2_cpm_filtered)
+ggplot(Abud_log2_cpm_filtered_melt, aes(x=variable, y=value, fill=variable)) +   
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+DGEList_Abud_filtered_norm <- calcNormFactors(DGEList_Abud_filtered, method = "TMM") #TPM normalization
+DGEList_Abud_filtered_norm <- as_tibble(cpm(DGEList_Abud_filtered_norm, log = TRUE), rownames = "GeneID") #Format maintaining GeneID column if needed for join function
+IPSC_Microglia_Abud <- column_to_rownames(DGEList_Abud_filtered_norm, var = "GeneID") %>%                 #Final format of Abud IPSC Microglia Data
+  select(order(colnames(IPSC_Microglia_Abud)))
+
+
+labels_Abud <- c(rep("IPSC_Microglia_Abud", 2), rep("IPSC_Microglia_Abud_rHcN", 6), rep("IPSC_Microglia_Abud", 7))  #clean up non-intuitive sample labels
+labels_Abud_Numbers <- c("1", "2", "1", "2", "3", "4", "5", "6", "3", "4", "5", "6", "7", "8", "9")
+for(l in 1:length(labels_Abud)){
+  labels_Abud[l] <- paste0(labels_Abud[l], labels_Abud_Numbers[l])
+}
+colnames(IPSC_Microglia_Abud) <- labels_Abud
+
+#Blurton jones 2019 data (transplant) ----
+
+
+
+
+
+
+#Svoboda 2019 data, transplant ----
+
+
+
+Svoboda_Samples <- c("GSM4133389", #iMP1
+                    "GSM4133390",	#iMP2
+                    "GSM4133391",	#iMP3
+                    "GSM4133392",	#iMP4
+                    "GSM4133393",	#iMP5
+                    "GSM4133394",	#iMP6
+                    "GSM4133395",	#In vivo iMG 10dpi rep 1
+                    "GSM4133396",	#In vivo iMG 10dpi rep 2
+                    "GSM4133397",	#In vivo iMG 10dpi rep 3
+                    "GSM4133398",	#In vivo iMG 10dpi rep 4
+                    "GSM4133399",	#In vivo iMG 10dpi rep 5
+                    "GSM4133400",	#In vivo iMG 10dpi rep 6
+                    "GSM4133401",	#In vivo iMG 60dpi rep 1
+                    "GSM4133402",	#In vivo iMG 60dpi rep 2
+                    "GSM4133403",	#In vivo iMG 60dpi rep 3
+                    "GSM4133404",	#In vivo iMG 60dpi rep 4
+                    "GSM4133405",	#In vivo iMG 60dpi rep 5
+                    "GSM4133406",	#In vivo iMG 60dpi rep 6
+                    "GSM4133407",	#In vitro iMG 10dpi rep 1
+                    "GSM4133408",	#In vitro iMG 10dpi rep 2
+                    "GSM4133409",	#In vitro iMG 10dpi rep 3
+                    "GSM4133410",	#In vitro iMG 10dpi rep 4
+                    "GSM4133411",	#In vitro iMG 10dpi rep 5
+                    "GSM4133412",	#In vitro iMG 10dpi rep 6
+                    "GSM4133413", #In vitro iMG 60dpi rep 1
+                    "GSM4133414", #In vitro iMG 60dpi rep 2
+                    "GSM4133415",	#In vitro iMG 60dpi rep 3
+                    "GSM4133416",	#In vitro iMG 60dpi rep 4
+                    "GSM4133417",	#In vitro iMG 60dpi rep 5
+                    "GSM4133418",	#In vitro iMG 60dpi rep 6
+                    "GSM4133419",	#In Vivo 2 [M543]
+                    "GSM4133420",	#In Vivo 1 [M544]
+                    "GSM4133421",	#In Vivo 4 [M1]
+                    "GSM4133422",	#In Vivo 3 [M2]
+                    "GSM4133423",	#In Vitro 1 [IV1]
+                    "GSM4133424"	#In Vitro 2 [IV2]
+)
+
+Svoboda_Sample_Locations <- which(all.samples.human %in% Svoboda_Samples)
+Expression_Svoboda <- t(h5read(archs4.human, "data/expression", 
+                            index=list(Svoboda_Sample_Locations, 1:length(genes))))
+H5close()
+rownames(Expression_Svoboda) <- genes
+colnames(Expression_Svoboda) <- all.samples.human[Svoboda_Sample_Locations]
+
+#Below, I access some meta-data from the study to verify that the appropriate data was extracted from ArchS4, and clean up colnames to more informative labels
+
+studyDesign_Svoboda <- tibble(Sample_title_Svoboda = Sample_title[Svoboda_Sample_Locations], 
+                           Sample_source_name_ch1_Svoboda = Sample_source_name_ch1[Svoboda_Sample_Locations],
+                           Sample_characteristics_Svoboda = Sample_characteristics[Svoboda_Sample_Locations])
+
+colnames(Expression_Svoboda) <- studyDesign_Svoboda$Sample_title_Svoboda
+
+```
+
+### Results
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+```{r, eval = TRUE, message = FALSE}
+
+```
+
+
