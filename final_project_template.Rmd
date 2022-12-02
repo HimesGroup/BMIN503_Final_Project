@@ -30,8 +30,7 @@ library(magrittr)
 library(pROC)
 NOTEEVENTS <- read.csv("~/Downloads/NOTEEVENTS.csv", comment.char="#")
 PATIENTS <- read.csv("~/Downloads/PATIENTS.csv")
-DIAGNOSES_ICD_3 <-  read.csv("~/Downloads/DIAGNOSES_ICD_3.csv", header=TRUE)
-DIAGNOSES_ICD <- DIAGNOSES_ICD_3
+DIAGNOSES_ICD <- read.csv("~/Downloads/DIAGNOSES_ICD_3.csv", header=TRUE)
 ADMISSIONS <- read.csv("~/Downloads/ADMISSIONS.csv", header=TRUE)
 ```
 
@@ -42,9 +41,10 @@ head(PATIENTS)
 head(DIAGNOSES_ICD)
 head(NOTEEVENTS)
 
-length(unique(DIAGNOSES_ICD$SUBJECT_ID)) #46,520 unique subject IDs
-length(unique(PATIENTS$SUBJECT_ID)) #46,520 unique subject IDs
-length(unique(NOTEEVENTS$SUBJECT_ID)) #46146 unique subject IDs
+unique-a <-length(unique(ADMISSIONS$SUBJECT_ID)) #46,520 unique subject IDs
+unique_d <-length(unique(DIAGNOSES_ICD$SUBJECT_ID)) #46,520 unique subject IDs
+unique_p <-length(unique(PATIENTS$SUBJECT_ID)) #46,520 unique subject IDs
+unique_ns <-length(unique(NOTEEVENTS$SUBJECT_ID)) #46146 unique subject IDs
 
 #Duplicates in subject ID for patient dataset. 
 library(dplyr)
@@ -52,124 +52,181 @@ PATIENTS %>%
 group_by(SUBJECT_ID) %>% 
   filter(n()>1) #There is no duplicate. 
 
-#For our project, we are interested in unstructured text data. As such, we will drop observations without discharge summaries. 
-
 #First let's look at the various types of notes in category 
-unique(NOTEEVENTS$CATEGORY) 
-unique(NOTEEVENTS$DESCRIPTION)
-sum(NOTEEVENTS$CATEGORY == "Discharge summary")
-
-#Now, creating new subset of data with only discharge summaries. 
-NOTEEVENTS %>% group_by(CATEGORY) %>% filter (CATEGORY == 'Discharge summary')
-NOTEEVENTS_DC <- filter(NOTEEVENTS, CATEGORY == 'Discharge summary')
-length(unique(NOTEEVENTS_DC$SUBJECT_ID)) #41,127 unique subject IDs
-Subject_ID_Dup <- data.frame(table(NOTEEVENTS_DC$SUBJECT_ID))
-```
-
-
-#Joining the tables by the variable SUBJECT_ID which is unique. 
-```{r eval = TRUE}
-#Joining tables containing patients' discharge summaries (NOTEEVENTS_DC) with table containing patients' basic demographics (PATIENTS). Performing a left join. 
-library(dplyr)
-library(plyr) 
-NOTEEVENTS_DC_PATIENTS <- dplyr::left_join(NOTEEVENTS_DC, PATIENTS, by = "SUBJECT_ID")
-dim(NOTEEVENTS_DC_PATIENTS)
-tail(NOTEEVENTS_DC_PATIENTS)
-length(unique(NOTEEVENTS_DC_PATIENTS$SUBJECT_ID)) #41,127 unique subject IDs
-
-#Joining the newly created table (NOTEEVENTS_DC_PATIENT) with ICD9 codes table. 
-NOTEEVENTS_DC_PATIENTS_ICD <- dplyr::left_join(NOTEEVENTS_DC_PATIENTS, DIAGNOSES_ICD, by = "SUBJECT_ID")
-length(unique(NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID)) #41127 unique subject IDs
-
-#The new table 'NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID' contains observations with discharge summaries, patients' demographics and ICD codes (keep in mind that one patient often have more than one ICD code as that it is dependent on billing priority). 
-
-#Joining the table 'NOTEEVENTS_DC_PATIENTS_ICD$SUBJECT_ID' with admissions data which contain admission date. 
-NOTEEVENTS_DC_PATIENTS_ICD_ADM <- dplyr::left_join(NOTEEVENTS_DC_PATIENTS_ICD, ADMISSIONS, by = "SUBJECT_ID")
-length(unique(NOTEEVENTS_DC_PATIENTS_ICD_ADM$SUBJECT_ID)) #41,127 unique subject IDs
-summary(ADMISSIONS$SUBJECT_ID)
-
-
-#Herein will, we will drop variables that are not needed for our project.
-MIMICIII = select(NOTEEVENTS_DC_PATIENTS_ICD_ADM, -ROW_ID.x, -ROW_ID.x.x, -HADM_ID.x, -HADM_ID.y, -ROW_ID.y.y, -HADM_ID, -DEATHTIME, -ADMISSION_LOCATION, -DISCHARGE_LOCATION, -LANGUAGE, -RELIGION, -MARITAL_STATUS, -EDREGTIME, -EDOUTTIME, -HOSPITAL_EXPIRE_FLAG, -HAS_CHARTEVENTS_DATA, -CHARTDATE, -CHARTTIME, -STORETIME, -ISERROR, -ROW_ID.y, -EXPIRE_FLAG, -ADMITTIME, -ADMISSION_TYPE, -DOD_HOSP, -DOD_SSN)
-
-#Removing discharge summaries with "addendum" description as they are not needed.
-unique(MIMICIII$DESCRIPTION)
-MIMICIII <- filter(MIMICIII, DESCRIPTION != 'Addendum')
-which(is.na(MIMICIII$DESCRIPTION))
-
+unique_c <-unique(NOTEEVENTS$CATEGORY) 
+unique_nd <-unique(NOTEEVENTS$DESCRIPTION)
+NoteSum <-sum(NOTEEVENTS$CATEGORY == "Discharge summary")
 ```
 
 ##Results
-#Creating a basic demographic tables
+#Creating a basic demographic datasets
 ```{r eval = TRUE}
-#Creating a new binary column called HF Status indicative of heart failure (HF) or non-HF (noHF)
-MIMICIII <- MIMICIII %>%
-  mutate(HF_Status = ifelse(ICD9_CODE == 42840 | ICD9_CODE == 42841 | ICD9_CODE == 42842, "HF", "noHF"))
-MIMICIII [MIMICIII$ICD9_CODE == 4254, ]
+library(dplyr)
+library(plyr)
+#Joining datasets PATIENTS with ADMISSIONS which contain demographics including ethnicity, insurance, etc. 
+Demographic<- dplyr::inner_join(PATIENTS, ADMISSIONS, by = "SUBJECT_ID")
+Demographic <-select(Demographic, SUBJECT_ID, GENDER, ADMISSION_TYPE, ETHNICITY, MARITAL_STATUS, INSURANCE) 
 
-
-#Pulling pertinent dataset to create demographic table. 
-Demographic <- select(MIMICIII, GENDER, ETHNICITY, INSURANCE, ICD9_CODE, SUBJECT_ID, HF_Status)
-Demographic_1 <- select(MIMICIII,GENDER, ETHNICITY, INSURANCE, HF_Status ) 
-
-#Table 1. Basic demographic of the cohort
-library (gtsummary)
-Demographic_1  %>% gtsummary::tbl_summary()
-
-#Table 2. Basic demographic of the cohort by gender
-Demographic_1 %>% gtsummary::tbl_summary(by = GENDER)
-unique(Demographic_1$ETHNICITY)
-
+#Removing duplicate rows by subject_ID. This was done after querying the data to visualize what constitutes duplicated rows and what data is contained within those rows. 
+Demographic <- Demographic[!duplicated(Demographic$SUBJECT_ID), ]
 ```
 
-#Visualizing the data
+#Creating a basic demographic tables
+```{r eval = TRUE}
+#Table 1. Basic demographic of the cohort
+library (gtsummary)
+Demographic  %>% gtsummary::tbl_summary()
+
+#Table 2. Basic demographic of the cohort by gender
+Demographic %>% gtsummary::tbl_summary(by = GENDER)
+
+#Table 3. Basic demographic of the cohort by insurance status 
+Demographic %>% gtsummary::tbl_summary(by = INSURANCE)
+```
+
+#Visualizing our cohort dataset
 ```{r eval = TRUE}
 #Visualizing the data
 library(ggplot2)
 
 #Figure 1.Visualizing Insurance status in cohort
-ggplot(data = Demographic_1, aes(x = INSURANCE)) +
+ggplot(data = Demographic, aes(x = INSURANCE)) +
     geom_bar()
 
 #Figure 2. Visualizing Insurance status across age in cohort 
-ggplot(data = Demographic_1, aes(x =  INSURANCE, fill = GENDER)) +
+ggplot(data = Demographic, aes(x =INSURANCE, fill = GENDER)) +
     geom_bar(position = "dodge")
     geom_bar()
 
-#Figure 3. Visualizing Heart failure status across age in cohort
-ggplot(data = Demographic_1, aes(x =  HF_Status, fill = GENDER)) +
+#Figure 3. Visualizing marital status across age in cohort
+ggplot(data = Demographic, aes(x =  MARITAL_STATUS, fill = GENDER)) +
     geom_bar(position = "dodge")
     geom_bar()
     
 #Figure 4. Visualizing Ethnicity breakdown in cohort
-ggplot(data = Demographic_1, aes(x = ETHNICITY)) + 
+ggplot(data = Demographic, aes(x = ETHNICITY)) + 
     geom_bar()
 
 #Figure 5. Visualizing various demographics in one chart
-ggplot(data = Demographic_1, aes(x = ETHNICITY, fill = (GENDER))) + 
+ggplot(data = Demographic, aes(x = ETHNICITY, fill = (GENDER))) + 
     geom_bar(position = "dodge") +
-    facet_grid(. ~ HF_Status) + #Split by another variable
+    facet_grid(. ~INSURANCE) + #Split by another variable
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-#Creating case and control cohorts. 
+#Creating a new heart failure status variable. 
 ```{r eval = TRUE}
-#Control cohort
-#Creating a new dataset containing the control cohort (i.e., patients without diagnosed heart failure based on ICD9 codes)
-MIMICIII_control <- MIMICIII[(MIMICIII$ICD9_CODE != "42840") & (MIMICIII$ICD9_CODE != "42841") & (MIMICIII$ICD9_CODE != "42842"), ]
-class(MIMICIII$ICD9_CODE)
-unique(MIMICIII_control$ICD9_CODE)
-unique(MIMICIII_control$HF_Status)
+#Creating a new binary column called HF Status indicative of heart failure (HF) or non-HF (noHF)
+DIAGNOSES_ICD<- DIAGNOSES_ICD %>%
+  mutate(HF_Status = ifelse(ICD9_CODE == 42840 | ICD9_CODE == 42841 | ICD9_CODE == 42842, "HF", "noHF"))
 
-#Case cohort
-#Of note, this case cohort has the similar subject IDs as the case cohort that was pulled from Bigquery Google. 
-MIMICIII_case <- filter(MIMICIII, ICD9_CODE == "42840" | ICD9_CODE == "42841" | ICD9_CODE == "42842") 
+#Pulling ICD codes from Diagnoses table for case/cohort definition.
+HF_ICD9 <- filter(DIAGNOSES_ICD, HF_Status == "HF")
 
-#Now finding overlapping/common subject IDs that are listed in both control and case cohorts but with a different ICD9_code. The following code removed overlapping/common subject IDs.   
-HF_cs <-unique(MIMICIII_case$SUBJECT_ID)
-MIMICIII_control <- dplyr::anti_join(MIMICIII_control, MIMICIII_case, by="SUBJECT_ID")
+#Pulling ICD codes from Diagnoses table for case/cohort definition.
+nHF_ICD9 <- filter(DIAGNOSES_ICD, HF_Status == "noHF")
+
+#Figure 4. Heart failure vs non-heart failure cohort. 
+table(DIAGNOSES_ICD$HF_Status)
 ```
 
+
+#Creating the heart failure case cohort (NOTEEVENTS_ICD9_HF)
+#Joining tables NOTEEVENTS data to ICD codes
+```{r eval = TRUE}
+#Dropping row_id as it is not needed. 
+library(dplyr)
+library(plyr) 
+HF_ICD9 <- select(HF_ICD9, select = -ROW_ID)
+nHF_ICD9 <- select(nHF_ICD9, select = -ROW_ID)
+
+#Defining case cohort
+#Joining by unique hospital admission ID aka HADM_ID. That is we are joining a specific ICD9 code of an encounter to that same encounter in the NOTEEVENTS
+NOTEEVENTS_ICD9_HF <- dplyr::inner_join(NOTEEVENTS, HF_ICD9, by = "HADM_ID")
+
+#Selecting for encounters with discharge summary and echo reports.  
+NOTEEVENTS_ICD9_HF<- filter(NOTEEVENTS_ICD9_HF, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo' )
+
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9_HF <- dplyr::select(NOTEEVENTS_ICD9_HF, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9_HF<- filter(NOTEEVENTS_ICD9_HF, DESCRIPTION != 'Addendum')
+```
+
+#Joining table to create our our overall cohort (both case and control)
+```{r eval = TRUE}
+#Herein, we want to create a dataset including the patient ID, note type (discharge summary, echoreport), unique note ID, HADM_ID, column text, HF_case (1 or 0, 1 for case, 0 for cohort), column text. 
+
+#Joining notevents with icd9 codes
+DIAGNOSES_ICD_n <- select(DIAGNOSES_ICD, -ROW_ID)
+NOTEEVENTS_ICD9 <- dplyr::inner_join(NOTEEVENTS, DIAGNOSES_ICD_n, by = "HADM_ID")
+
+#Removing obs or noted encounters without associated discharge summaries or echo reports
+NOTEEVENTS_ICD9 <- filter(NOTEEVENTS_ICD9, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo') #large datset as one patient or one admission will have 7-8 different ICD9 codes for billing. 
+
+#Turning the HF_status into a factor (0= noHF, 1 = HF)
+NOTEEVENTS_ICD9$HF_Status <- ifelse(NOTEEVENTS_ICD9$HF_Status == "HF", 1,0)
+  
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9 <- dplyr::select(NOTEEVENTS_ICD9, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9 <- filter(NOTEEVENTS_ICD9, DESCRIPTION != 'Addendum') #removing discharge with addendum as not needed.
+```
+
+#Creating the heart failure control cohort (NOTEEVENTS_ICD9_nHF)
+```{r eval = TRUE}
+#Joining by unique hospital admission ID aka HADM_ID. That is we are joining a specific ICD9 code of an encounter to that same encounter in the NOTEEVENTS
+NOTEEVENTS_ICD9_nHF <- dplyr::inner_join(NOTEEVENTS, nHF_ICD9, by = "HADM_ID")
+
+#Selecting for encounters with discharge summary and echo reports.  
+NOTEEVENTS_ICD9_nHF<- filter(NOTEEVENTS_ICD9_nHF, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo' )
+
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9_nHF <- dplyr::select(NOTEEVENTS_ICD9_nHF, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9_nHF <- filter(NOTEEVENTS_ICD9_nHF, DESCRIPTION != 'Addendum')
+```
+
+
+#create a text file to be used in Python and cTakes for NLP text analysis.
+```{r eval = TRUE}
+
+#Selecting for specific variables needed for the text file analysis.
+HF_Sub <- dplyr::select(NOTEEVENTS_ICD9_HF, SUBJECT_ID.x, HADM_ID, ROW_ID, CATEGORY, HF_Status, TEXT)
+nHF_Sub <- dplyr::select(NOTEEVENTS_ICD9_nHF, SUBJECT_ID.x, HADM_ID, ROW_ID, CATEGORY, HF_Status, TEXT)
+
+#Will create two subcohorts with 100 patients each for the text file analysis (100 pts in case subcohort, 100 pts in control subcohort). 
+HF_Sub <- NOTEEVENTS_ICD9_HF [ 1:25, ]
+nHF_Sub <-NOTEEVENTS_ICD9_nHF [1:50, ]
+
+#Now creating separate text files for case cohort and saving them "HF case" folder  
+for (row in 1:nrow(HF_Sub)) {
+    A <- HF_Sub[row, "SUBJECT_ID.x"]
+    B  <- HF_Sub[row, "HADM_ID"] 
+    C  <- HF_Sub[row, "ROW_ID"] 
+    D <- HF_Sub[row, "CATEGORY"]
+    E <- HF_Sub[row, "HF_Status"]
+    G <- HF_Sub [row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_case/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+
+
+#Now creating separate text files for case cohort and saving them "HF control" folder  
+for (row in 1:nrow(nHF_Sub)) {
+    A <- nHF_Sub[row, "SUBJECT_ID.x"]
+    B  <- nHF_Sub[row, "HADM_ID"] 
+    C  <- nHF_Sub[row, "ROW_ID"] 
+    D <- nHF_Sub[row, "CATEGORY"]
+    E <- nHF_Sub[row, "HF_Status"]
+    G <- nHF_Sub [row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_control/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+```
+
+```{r eval = TRUE}
 #Apply open-source NLP tools to encode variables for your study 
 ```{r eval = TRUE}
 #We will be applying applying open-source NLP tools to encode variables for the study. For this study, we are using cTakes. More on cTakes can be found at doi: 10.1136/jamia.2009.001560. PMID: 20819853; PMCID: PMC2995668.
