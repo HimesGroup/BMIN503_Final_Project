@@ -304,12 +304,112 @@ colnames(IPSC_Microglia_Abud) <- labels_Abud
 
 #Blurton jones 2019 data (transplant) ----
 
+Blurton_Samples <- c("GSM3908536",	#MBJ_iMGL_SAL_1
+  "GSM3908537",	#MBJ_iMGL_SAL_2
+  "GSM3908538",	#MBJ_iMGL_SAL_3
+  "GSM3908539",	#MBJ_iMGL_LPS_1
+  "GSM3908540",	#MBJ_iMGL_LPS_2
+  "GSM3908541",	#MBJ_iMGL_LPS_3
+  "GSM3908542",	#MBJ_xMG_GFP_1
+  "GSM3908543",	#MBJ_xMG_GFP_2
+  "GSM3908544",	#MBJ_xMG_GFP_3
+  "GSM3908545",	#MBJ_xMG_GFP_LPS_1
+  "GSM3908546",	#MBJ_xMG_GFP_LPS_2
+  "GSM3908547",	#MBJ_xMG_GFP_LPS_3
+  "GSM3908548",	#MBJ_xMG_GFP_LPS_4
+  "GSM3908549",	#MBJ_xMG_GFP_LPS_5
+  "GSM3908550",	#MBJ_xMG_CDI_1
+  "GSM3908551",	#MBJ_xMG_CDI_2
+  "GSM3908552",	#MBJ_xMG_CDI_3
+  "GSM3908553",	#MBJ_xMG_CDI_4
+  "GSM3908554",	#MBJ_xMG_CDI_5
+  "GSM3908555",	#MBJ_xMG_CDI_6
+  "GSM3908556",	#MBJ_xMG_10C_1
+  "GSM3908557",	#MBJ_xMG_10C_2
+  "GSM3908558",	#MBJ_xMG_10C_3
+  "GSM3908559",	#MBJ_xMG_10C_4
+  "GSM3908560",	#MBJ_ExVivo_1
+  "GSM3908561",	#MBJ_ExVivo_2
+  "GSM3908562",	#MBJ_iMGL_GFP_1
+  "GSM3908563",	#MBJ_iMGL_GFP_2
+  "GSM3908564",	#MBJ_iMGL_GFP_3
+  "GSM3908565",	#MBJ_iMGL_GFP_4
+  "GSM3908566",	#MBJ_iMGL_GFP_5
+  "GSM3908567"	#MBJ_iMGL_GFP_6
+)
+
+Svoboda_Sample_Locations <- which(all.samples.human %in% Svoboda_Samples)
+Expression_Svoboda <- t(h5read(archs4.human, "data/expression", 
+                               index=list(Svoboda_Sample_Locations, 1:length(genes))))
+H5close()
+rownames(Expression_Svoboda) <- genes
+colnames(Expression_Svoboda) <- all.samples.human[Svoboda_Sample_Locations]
+
+#Below, I access some meta-data from the study to verify that the appropriate data was extracted from ArchS4, and clean up colnames to more informative labels
+
+studyDesign_Svoboda <- tibble(Sample_title_Svoboda = Sample_title[Svoboda_Sample_Locations], 
+                              Sample_source_name_ch1_Svoboda = Sample_source_name_ch1[Svoboda_Sample_Locations],
+                              Sample_characteristics_Svoboda = Sample_characteristics[Svoboda_Sample_Locations])
+
+colnames(Expression_Svoboda) <- studyDesign_Svoboda$Sample_title_Svoboda
+Expression_Svoboda <- Expression_Svoboda[ , 9:26]
+
+#move on to filtering and normalization of Svoboda data
+DGEList_Svoboda <- DGEList(Expression_Svoboda)      #Convert to DGE list to facilitate normalization and count visualization
+Expression_Svoboda_cpm <- cpm(DGEList_Svoboda)                #Get counts per million for count visualization and filtering of unexpressed genes
+table(rowSums(DGEList_Svoboda$counts==0)==18)              #Shows number of non-expressed genes across all samples, indicates roughly how many should be filtered out 
+
+Svoboda_log2_cpm <- as_tibble(cpm(DGEList_Svoboda, log = TRUE) , rownames = "GeneID") #Create and reshape (melt) tibble of log transformed raw counts to visualized unfiltered / unnormalized data
+Svoboda_log2_cpm_melt <- melt(Svoboda_log2_cpm)
+
+ggplot(Svoboda_log2_cpm_melt, aes(x=variable, y=value, fill=variable)) +     #visualize overall expression to show excessive influence of unexpressed / lowly expressed genes
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="unfiltered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+filtrate_Svoboda<- rowSums(Expression_Svoboda_cpm > 1) >= 6  #create logical vector that evaluates to TRUE when at least 6 of 18 samples express a given gene 
+table(filtrate_Svoboda)
+DGEList_Svoboda_filtered <- DGEList_Svoboda[filtrate_Svoboda, ] #subset DGE list so that only genes expressed in at least 6 samples remain, remove 21805 unexpressed genes
+Svoboda_log2_cpm_filtered <- as_tibble(cpm(DGEList_Svoboda_filtered, log = TRUE), rownames = "GeneID") #get counts per million with log2 transformation, reshape and visualize
+Svoboda_log2_cpm_filtered_melt <- melt(Svoboda_log2_cpm_filtered)
+
+ggplot(Svoboda_log2_cpm_filtered_melt, aes(x=variable, y=value, fill=variable)) +   
+  geom_violin(trim = FALSE, show.legend = FALSE) +
+  stat_summary(fun.y = "median", 
+               geom = "point", 
+               shape = 124, 
+               size = 6, 
+               color = "black", 
+               show.legend = FALSE) +
+  labs(y="log2 expression",
+       title="Log2 Counts per Million (CPM)",
+       subtitle="filtered, non-normalized",
+       caption=paste0("produced on ", Sys.time()))
+
+DGEList_Svoboda_filtered_norm <- calcNormFactors(DGEList_Svoboda_filtered, method = "TMM") #TPM normalization
+DGEList_Svoboda_filtered_norm <- as_tibble(cpm(DGEList_Svoboda_filtered_norm, log = TRUE), rownames = "GeneID") #Format maintaining GeneID column if needed for join function
+IPSC_Microglia_Svoboda <- column_to_rownames(DGEList_Svoboda_filtered_norm, var = "GeneID")                  #Final format of Svoboda IPSC Microglia Data
+
+labels_Svoboda <- c(rep(NA, ncol(IPSC_Microglia_Svoboda)))      #Add "Svoboda_" to sample lables to facilitate later analysis and visualization. Potentially will return later to shorten
+for(m in 1:length(labels_Svoboda)){
+  labels_Svoboda[m] <- paste0("Svoboda_", colnames(IPSC_Microglia_Svoboda[m]))
+}
+colnames(IPSC_Microglia_Svoboda) <- labels_Svoboda
 
 
 
 
+#Svoboda 2019 data, transplant ---- 
 
-#Svoboda 2019 data, transplant ---- #Ends up with 18 total samples of IPSC microglia (6 in transplant for 60 days, 6 in transplant for 10 days, and 6 differentiated in vitro)
+#Ends up with 18 total samples of IPSC microglia (6 in transplant for 60 days, 6 in transplant for 10 days, and 6 differentiated)
 
 Svoboda_Samples <- c("GSM4133389", #iMP1
                     "GSM4133390",	#iMP2
