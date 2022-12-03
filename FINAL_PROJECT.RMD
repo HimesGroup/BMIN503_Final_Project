@@ -61,7 +61,7 @@ head(thoracic_data)
 dim(thoracic_data)
 
 thoracic_data_subset_all <- thoracic_data %>% 
-  dplyr::select(WL_ID_CODE, TXED, WL_ORG, DAYSWAIT_CHRON, ACTIVATE_DATE, TX_DATE, GENDER, PERM_STATE, TXLNG, TX_YEAR, DIAG, INIT_AGE, TCR_DGN, ) %>% dplyr::mutate(TXED = (factor(TXED, levels = c(0, 1), labels = c("no", "yes"))), GENDER = factor(GENDER), PERM_STATE = factor(PERM_STATE))
+  dplyr::select(WL_ID_CODE, TXED, WL_ORG, DAYSWAIT_CHRON, ACTIVATE_DATE, TX_DATE, GENDER, PERM_STATE, TXLNG, TX_YEAR, DIAG, INIT_AGE, TCR_DGN, ETHCAT) %>% dplyr::mutate(TXED = (factor(TXED, levels = c(0, 1), labels = c("no", "yes"))), GENDER = factor(GENDER), PERM_STATE = factor(PERM_STATE))
 thoracic_data_subset_all
 
 thoracic_data_subset_all %>%
@@ -69,13 +69,16 @@ thoracic_data_subset_all %>%
 
 # Filter patients from 2015 to 2021 who were "activated" for lung transplant
 thoracic_data_subset_lung_activation <- thoracic_data %>% 
-  dplyr::select(WL_ID_CODE, TXED, WL_ORG, DAYSWAIT_CHRON, ACTIVATE_DATE, TX_DATE, GENDER, PERM_STATE, TXLNG, TX_YEAR, DIAG, TCR_DGN) %>% dplyr::mutate(TXED = (factor(TXED, levels = c(0, 1), labels = c("no", "yes"))), GENDER = factor(GENDER), PERM_STATE = factor(PERM_STATE)) %>% dplyr::filter(ACTIVATE_DATE >= "2015-01-01" & ACTIVATE_DATE < "2022-01-01") %>% dplyr::filter(WL_ORG == "LU")
+  dplyr::select(WL_ID_CODE, TXED, WL_ORG, DAYSWAIT_CHRON, ACTIVATE_DATE, TX_DATE, GENDER, PERM_STATE, TXLNG, TX_YEAR, INIT_AGE, TCR_DGN, ETHCAT) %>% dplyr::mutate(TXED = (factor(TXED, levels = c(0, 1), labels = c("no", "yes"))), GENDER = factor(GENDER), PERM_STATE = factor(PERM_STATE), TCR_DGN = (factor(TCR_DGN)), ETHCAT = (factor(ETHCAT, levels = c(1, 2, 4, 5, 6, 7, 9, 998), labels =c("White", "Black", "Hispanic", "Asian", "American Indian", "Native Hawaiian", "Multiracial", "Unknown")))) %>% dplyr::filter(ACTIVATE_DATE >= "2015-01-01" & ACTIVATE_DATE < "2022-01-01") %>% dplyr::filter(WL_ORG == "LU")
+
+
 head(thoracic_data_subset_lung_activation)
 ```
 
 ```{R eval = TRUE}
 # Table 1 of patients who were transplanted and their characteristics
-thoracic_data_subset_lung_activation %>% dplyr::select(TXED, DAYSWAIT_CHRON, GENDER, ACTIVATE_DATE, TX_DATE, PERM_STATE) %>%
+
+thoracic_data_subset_lung_activation %>% dplyr::select(TXED, DAYSWAIT_CHRON, GENDER, INIT_AGE, ETHCAT) %>% 
   tbl_summary(by = TXED) %>% add_p() %>% add_overall()
 ```
 
@@ -89,7 +92,11 @@ thoracic_data_subset_lung
 ```{R eval = TRUE}
 # Rough visualization of weekly transplant activation data
 ggplot(thoracic_data_subset_lung, aes(TX_DATE, fill = TXED)) + 
-      geom_histogram(binwidth = 30)
+  geom_histogram(binwidth = 30) + 
+  labs(title = "Monthly Lung Transplants Performed (2015-2021)") +
+  labs(x = "Year") +
+  labs(y = "Number of Lung Transplants")
+  
 ```
 
 ```{R eval = TRUE}
@@ -165,10 +172,14 @@ time.points <- seq.Date(as.Date("2015-01-05"), by=1, length.out=2803)
 number <- ts(lungtx$n)
 data <- zoo(number, time.points)
 pre.period=as.Date(c("2016-01-05", "2020-02-29"))
-post.period=as.Date(c("2020-03-01", "2021-12-31"))
+post.period=as.Date(c("2020-03-01", "2020-12-31"))
 impact <- CausalImpact(data, pre.period, post.period)
 impact
 plot(impact)
+```
+
+```{R eval = TRUE}
+summary(impact, "report")
 ```
 > Appears to have a cumulative decrease in transplant since the pandemic began. 
 
@@ -186,14 +197,17 @@ covid_cases <- covid %>%
   arrange(date)
 
 library(ggplot2)
-ggplot(data=covid_cases, aes(x=date, y=new_cases)) + 
-  geom_point()
+covid.cases <- ggplot(data=covid_cases, aes(x=date, y=new_cases)) + 
+  geom_point(size=0.25)
   
-ggplot(data=covid_cases, aes(x=date, y=hosp_patients)) + 
-  geom_point()
+covid.hosp <- ggplot(data=covid_cases, aes(x=date, y=hosp_patients)) + 
+  geom_point(size=0.25)
 
-ggplot(data=covid_cases, aes(x=date, y=icu_patients)) + 
-  geom_point()
+covid.icu <- ggplot(data=covid_cases, aes(x=date, y=icu_patients)) + 
+  geom_point(size=0.25)
+
+library(cowplot)
+plot_grid(covid.cases, covid.hosp, covid.icu)
 
 covid_cases.ym <- covid_cases %>% mutate(
     date = ymd(date),
@@ -219,9 +233,22 @@ ggplot(lungtx_covid_join_daily, aes(x = new_cases, y = Number.Transplants)) +
 
 ```{r eval = TRUE}
 #Monthly Data
-ggplot(lungtx_covid_join, aes(x = total_new_cases, y = total_transplants)) +
+
+transplant.totalcases <- ggplot(lungtx_covid_join, aes(x = total_cases2, y = total_transplants, )) +
   geom_point(color = "darkseagreen3") +
   geom_smooth(method="lm")
+transplant.newcases <- ggplot(lungtx_covid_join, aes(x = total_new_cases, y = total_transplants,)) +
+  geom_point(color = "darkseagreen3") +
+  geom_smooth(method="lm")
+transplant.totalhosp <- ggplot(lungtx_covid_join, aes(x = total_hosp, y = total_transplants)) +
+  geom_point(color = "darkseagreen3") +
+  geom_smooth(method="lm")
+transplant.icu <- ggplot(lungtx_covid_join, aes(x = total_icu, y = total_transplants)) +
+  geom_point(color = "darkseagreen3") +
+  geom_smooth(method="lm")
+
+plot_grid(transplant.totalcases, transplant.newcases, transplant.totalhosp, transplant.icu)
+
 ```
 ```{r eval = TRUE}
 ggplot(lungtx_covid_join_daily, aes(x = hosp_patients, y = Number.Transplants)) +
@@ -230,9 +257,7 @@ ggplot(lungtx_covid_join_daily, aes(x = hosp_patients, y = Number.Transplants)) 
 ```
 
 ```{r eval = TRUE}
-ggplot(lungtx_covid_join, aes(x = total_hosp, y = total_transplants)) +
-  geom_point(color = "darkseagreen3") +
-  geom_smooth(method="lm")
+
 ```
 ```{r eval = TRUE}
 ggplot(lungtx_covid_join_daily, aes(x = icu_patients, y = Number.Transplants)) +
@@ -241,9 +266,7 @@ ggplot(lungtx_covid_join_daily, aes(x = icu_patients, y = Number.Transplants)) +
 ```
 
 ```{r eval = TRUE}
-ggplot(lungtx_covid_join, aes(x = total_icu, y = total_transplants)) +
-  geom_point(color = "darkseagreen3") +
-  geom_smooth(method="lm")
+
 ```
 
 
@@ -297,10 +320,12 @@ summary(lungtx_covid_lm)
 ```{r eval = TRUE}
 lungtx_covid_lm <- lm(total_transplants ~ total_icu, data = lungtx_covid_join_complete)
 summary(lungtx_covid_lm)
+
+
 ```
 
 ```{r eval = TRUE}
-lungtx_covid_lm <- lm(total_transplants ~ total_hosp + total_icu, data = lungtx_covid_join_complete)
+lungtx_covid_lm <- lm(total_transplants ~ total_new_cases + total_hosp + total_icu, data = lungtx_covid_join_complete)
 summary(lungtx_covid_lm)
 ```
 
