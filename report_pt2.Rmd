@@ -1,0 +1,210 @@
+---
+title: "Using Logistic Regression to Surface Gamesmenship By SNF Aministrators"
+author: "David Roberts"
+output: 
+  html_document:
+    theme: paper
+    highlight: tango
+    toc: true
+    toc-title: Contents
+    toc-location: left
+    number-sections: true
+    number-depth: 2
+---
+
+# Part 2
+# TODO
+- Explain recent CMS efforts to reduce ability to game
+- Add box plots to staffing ratio jumps.
+- Include table summarizing controls
+- Summarize missing data in yoy dataset, and reasons why
+- Soften the conclusions on the yoy dataset. Case definition is problematic
+
+
+## Introduction
+In this part, I investigate claims in a [2021 NyTimes article](https://www.nytimes.com/2021/03/13/business/nursing-homes-ratings-medicare-covid.html) that some SNF's have padded their public star ratings by exploiting a nuance in staffing ratio calculations. Studies illustrate that quality ratings are influential in consumer choice, with each additional star correlating to higher profit margins (cite). Therefore, nursing home administrators have a strong incentive to maximize their scores, which has predictably resulted in shenanigans. Notably, one state inspector plead guilty to receiving $500k in bribes for information regarding when an inspection would occur (cite, nytimes). Tellingly, ~800 of 15k nursing homes logged their highest staffing ratios on the day of their "random" inspection (cite, nytimes).
+
+Specifically, nursing staff "with administrative duties" may be counted alongside direct care nursing staff in calculating staffing ratios. As an example, per the CMS data payroll submission manual, an "LPN with administrative duties" is defined as:
+"""
+...other nurses whose principal duties are spent conducting administrative functions. For example, the LPN Charge Nurse 
+is conducting educational/in-service, or other duties which are not considered to be direct care giving.
+"""
+
+Such a nurse may be engaged in both patient care and administrative tasks, depending on their "principal duties".The category is unfortunately ambiguous.
+
+## Methods
+To assess whether nursing homes use "admin duties" to pad their quality scores, I used publicly available, daily  [payroll-based staffing  journals](https://data.cms.gov/quality-of-care/payroll-based-journal-daily-nurse-staffing) submitted to CMS. I then construct an "administrative intensity" metric as the percentage of total nursing hours which are reported "with admin duties". Finally, using a case / control design, I use logistic regression to model if a large year-over-year change in admin intensity is predictive of year-over-year staffing rate increases.
+
+*Case Definition*
+I define a case as a nursing home with a year-over-year (YOY) change in staffing star rating from <4 to >= 4. This reflects my assumption that shenanigan-prone facilities might play games with CMS's overall star rating methodology. Specifically, in the time period studied (2017-2021), a facility with >= 4 staffing rating received a +1 star increase to their overall star rating. As an example, the facility described in the Nytimes article, Sun Terrace in FL (CCN = 105319), increased their staffing star rating from 2->5 between 2017 and 2018, which yielded an extra star in their overall star rating. This increase coincided with a 18 pct point increase in admin intensity, from 6% to 24%.
+
+*Control Definition*
+Controls are all yoy observations which:
+  1. Do not fit the case definition
+  2. Have complete year over year observations for both daily payroll based admin intensity and publically reported staffing ratios. Note, when a facility misses or incorrectly reports staffing data, their staffing rating drops to 1. I have omitted these observations because it implies that CMS rejected the data I would use to calculate administrative intensity. 
+  
+*Hypothesis*
+
+
+
+```{r}
+load(here("data", "interim", "snf_provider_info.Rda"))
+pbj <- read.csv(here("data", "interim", "pbj_facility_level.csv"))
+```
+
+Create YOY staffing ratios and quality star changes using existing dataset and add the case definition.
+
+```{r}
+staffing_next_yr <- select(q4_snf_data, c("federal_provider_number", "staffing_rating", "collection_yr", "adjusted_rn_staffing_hours_per_resident_per_day", "adjusted_total_nurse_staffing_hours_per_resident_per_day", "ownership_type", "average_number_of_residents_per_day", "chow", "continuing_care_retirement_community","average_number_of_residents_per_day",
+"overall_rating", "health_inspection_rating", "qm_rating"))
+staffing_next_yr$collection_yr = staffing_next_yr$collection_yr - 1
+
+# left join assigns x and y to shared column names
+# x suffix = y1
+# y suffix = y2
+snf_level_data <- q4_snf_data %>%
+  left_join(staffing_next_yr, by=c("federal_provider_number", "collection_yr"))
+staffing_yoy <- select(snf_level_data,
+    c("federal_provider_number", "staffing_rating.x", "collection_yr",
+       "staffing_rating.y","adjusted_rn_staffing_hours_per_resident_per_day.x", "adjusted_total_nurse_staffing_hours_per_resident_per_day.x",
+      "adjusted_rn_staffing_hours_per_resident_per_day.y", "adjusted_total_nurse_staffing_hours_per_resident_per_day.y",
+      "ownership_type.x", "ownership_type.y", "average_number_of_residents_per_day.x",
+      "average_number_of_residents_per_day.y",
+      "chow.y", "continuing_care_retirement_community.y",
+      "average_number_of_residents_per_day.x", "average_number_of_residents_per_day.y",
+      "overall_rating.x", "overall_rating.y", 
+      "health_inspection_rating.x", "health_inspection_rating.y", 
+      "qm_rating.x", "qm_rating.y")) %>%
+  
+  # remove cases where no staffing rating is reported...
+  filter(is.na(staffing_rating.y) == FALSE & is.na(staffing_rating.x) == FALSE) %>%
+  
+  # add YOY columsn
+  mutate(overall_star_change=overall_rating.y - overall_rating.x) %>%
+  mutate(inspect_star_change=health_inspection_rating.y - health_inspection_rating.x) %>%
+  mutate(qm_star_change=qm_rating.y - qm_rating.x) %>%
+  mutate(staff_star_change=staffing_rating.y - staffing_rating.x) %>%
+  mutate(rn_hr_prpd_change=adjusted_rn_staffing_hours_per_resident_per_day.y - adjusted_rn_staffing_hours_per_resident_per_day.x) %>%
+  mutate(total_hr_prpd_change=adjusted_total_nurse_staffing_hours_per_resident_per_day.y - adjusted_total_nurse_staffing_hours_per_resident_per_day.x) %>%
+  
+  # add case control definition
+  mutate(status=as.factor(
+           ifelse(staff_star_change > 0 & staffing_rating.x < 4 & staffing_rating.y >=4,
+          "Case", "Control")))
+```
+
+Assess missingness... 
+
+```{r}
+staffing_yoy %>% count(status, staff_star_change)
+filter(staffing_yoy, is.na(rn_hr_prpd_change)) %>% count(status, staff_star_change)
+
+# Dropped \~3k observations with at least one reported staffign ratios missing. 
+staffing_yoy.complete <- filter(staffing_yoy, !(is.na(rn_hr_prpd_change) | is.na(total_hr_prpd_change)))
+```
+
+Create corresponding PBJ (Payroll Based Journal) dataframe, also Peanut Butter and Jelly
+
+```{r}
+pbj.q4 <- pbj %>%
+  mutate(year = as.integer(substr(CY_Qtr, 1, 4))) %>%
+  mutate(quarter = as.integer(substr(CY_Qtr, 6, 6))) %>%
+  filter(quarter==4) # align with staffing metrics in nursing home compare dataset.
+
+pbj.q4.yoy <- pbj.q4 %>%
+  mutate(year = year + 1) %>%
+  left_join(pbj.q4, by=c("PROVNUM", "year")) %>%
+  filter(!is.na(quarter.y)) %>%
+  
+  # calculate YOY admin intensity change
+  mutate(admin_change_pct_pt = (AdminIntensity.y - AdminIntensity.x) * 100)
+```
+
+Merge staffing YOY and payroll based journal datasets
+
+55939 obs in pbj.q4.merged
+55473 obs in staffing_yoy 
+54807 obs in final dataframe
+
+```{r}
+library(stringr)
+staffing_yoy.complete$year = staffing_yoy.complete$collection_yr + 1
+pbj.q4.yoy <- rename(pbj.q4.yoy, federal_provider_number = PROVNUM )
+final.df <- staffing_yoy.complete %>%
+  inner_join(pbj.q4.yoy, by=c("year", "federal_provider_number"))
+final.df <- subset(final.df, select=-c(
+  collection_yr,
+  CY_Qtr.x,
+  CY_Qtr.y,
+  quarter.x,
+  quarter.y
+))
+
+# Create final data frame for logistic regression model
+final.df$year_factor <- as.factor(final.df$year)
+final.df$status <- factor(final.df$status, levels=c("Control", "Case")) # easier to interpret
+final.df <- final.df %>%
+  mutate(for_profit = ifelse(str_detect(ownership_type.y, 'For profit'), TRUE, FALSE)) %>%
+  mutate(top_5_percentile_admin_change = ifelse(admin_change_pct_pt >= quantile(admin_change_pct_pt, .95), TRUE, FALSE)) %>%
+  mutate(staffing_rating_seq=paste(staffing_rating.x, staffing_rating.y))
+```
+
+Visualize
+
+```{r}
+plt <- ggplot(final.df, aes(x=year_factor, y=admin_change_pct_pt)) + geom_violin()
+plt
+```
+
+Analysis: Large staffing star changes, +3 and +4 do appear more likely to be cases.
+
+TODO add hard line at 0...
+Prune to + and - 50 pct points. Add staff star change as a facet...
+Can I visualize to see the relationship with other quality scores?
+```{r}
+plt <- ggplot(final.df, aes(x=admin_change_pct_pt, y=staff_star_change, color=status)) + geom_point()
+plt
+```
+
+```{r}
+plt <- ggplot(final.df, aes(x=as.factor(staffing_rating.x), y=admin_change_pct_pt)) + geom_violin()
+plt
+```
+
+```{r}
+select(final.df, 
+      c(staffing_rating.x, staff_star_change, status, year_factor),
+      c(admin_change_pct_pt)
+      ) %>% tbl_summary(by=year_factor)
+```
+
+```{r}
+select(final.df, 
+      staffing_rating_seq, year_factor) %>% tbl_summary(by=year_factor)
+```
+
+
+### Results
+The model results suggest there is a relationship between a top 5th percentile change in admin intensity and a jump in staffing ratings, increasing the odds ratio by a factor of 1.64. This statistic requires *very careful interpretation* considering how case / controls were created. Unlike the NYTimes investigators, I did not perform due diligence at the facility level to separate helpful beneficial staffing improvements from "funny business". *Cases include everyone who made staffing ratio improvements*, and I assume the _vast majority_ occurred for the right reasons.
+
+I have included controls:
+* Year level fixed effects to address failed independence assumption using panel data. Multiple observations of the same facility are obviously not independent.
+* For profit status (year 2)
+* Starting avg number of residents. This tends to stay relatively static.
+* Starting total nurse staffing hours
+* Change of ownership during assessed time period
+
+```{r}
+model <- glm(status ~ top_5_percentile_admin_change + for_profit + average_number_of_residents_per_day.x + adjusted_total_nurse_staffing_hours_per_resident_per_day.x + chow.y + year_factor, family=binomial, final.df)
+summary(model)
+```
+
+I like to think of the coefficient on admin intensity "spikes" as a Rorschach test surfacing the interpreter's bias regarding "administration".
+
+To steel-man both sides, an admin-proponent might argue that administration holds direct care staff accountable to higher quality, makes their work more efficient, and also participates in direct care when necessary. Therefore, increased admin intensity does not harm, and may support the patient care function. *Plus, if patients receive less attention, this should be visible in other quality scores going down!*
+
+But... An admin-skeptic might argue that admin time is principally focused on curating data related to public-facing quality scores. Except for claim-based measures, quality scores are largely derived from documentation. If admin duties primarily comprise parsing / cleaning up documentation, admin hours might enhance quality scores, without affecting, or at the expense of direct patient care. 
+
+The truth probably lies in between. Anecdotally, one SNF expert informed me that facilities find ways to congregate residents around the nursing station, such that nurses with admin duties can multi-task.
+
+Whatever your posture, I suggest seeking alternative sources in addition to CMS star ratings if making decisions regarding your loved ones!
