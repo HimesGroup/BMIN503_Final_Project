@@ -1,5 +1,5 @@
 # BMIN503/EPID600 Final Project - Diagnostic Accuracy Metrics of QTc in a Clustered Study Design
-Ivor Asztalos \n
+Ivor Asztalos <br>
 December 6, 2022
 
 This repository contains all the necessary files to calculate the diagnostic metrics for a diagnostic accuracy study of QTc measurment by four pediatric electrophysiologists. This repository contains: 
