@@ -1,20 +1,11 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project - Diagnostic Accuracy Metrics of QTc in a Clustered Study Design
+Ivor Asztalos
+December 6, 2022
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains all the necessary files to calculate the diagnostic metrics for a diagnostic accuracy study of QTc measurment by four pediatric electrophysiologists. This repository contains: 
 
-
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+1. Qtc Measurements_raw data.csv - The raw data, a csv file containing the QTc measurement from 4 pediatric electrophysiologists and the final chart measurement on 200 pediatric ECGs. 
+2. Final Project_IAsztalos.Rmd - an R markdown file of the code itself. This script handles importation, cleaning, and analysis. 
+3. Final Project_IAsztalos.htlm - the knitted html output of the R markdown.
+4. Equations for clustered diagnostic accuracy studies_gh.docx - a word document detailing some of the derivation of and the final equations for the diagnostic accuracy metrics and their variances as embedded equations. 
+5. README.md - This readme file. 
