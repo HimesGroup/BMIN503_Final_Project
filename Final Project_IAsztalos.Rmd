@@ -1,14 +1,13 @@
 ---
-title: "Final Project - Diagnostic Accuracy Metrics in Clustered Study Designs of
-  ECG measurements"
+title: "Final Project - Diagnostic Accuracy Metrics of QTc in a Clustered Study Design"
 author: "Ivor Asztalos"
 date: "2022-11-18"
-output: 
+output:
   html_document:
-  toc: false
-  depth: 3
-  theme: paper
-  highlight: tango
+    toc: false
+    depth: 3
+    theme: cerulean
+    highlight: pygments
 ---
 
 ```{r set-options, echo=FALSE, cache=FALSE}
@@ -19,62 +18,96 @@ options(width = 400)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
-
-### Overview
-The real world application which prompted this research project was the desire to calculate diagnostic accuracy metrics (Sensitivity (Se), specificity (Sp), Positive Predictive Value (PPV), and Negative Predictive Value (NPV)) for a group of pediatric electrophysiologists determining a pathologically prolonged QTc interval on pediatric electrocardiograms (ECG). This is part of a larger project in which we've trained a deep n neural network to measure QTcs automatically. 
-The GitHub repo for this project is:
-https://github.com/ivor-asztalos/BMIN503_Final_Project
-
-### Introduction 
+## Overview
 Sensitivity (Se), specificity (Sp), Positive Predictive Value (PPV), and Negative Predictive Value (NPV) are commonly reported and commonly used diagnostic accuracy metrics for clinical tests. Because of their ubiquity multiple R packages exist which can calculate these metrics for properly formatted data. However, none of these packages can accommodate a clustered study design. This is unfortunate as diagnostic accuracy studies frequently use clustered study designs, most frequently with repeat measurements on the same patient. The purpose of this project is to write a program which can correctly calculate Se, Sp, PPV, and NPV for a diagnostic accuracy study which uses repeat measurements assessed by multiple raters.
 
-This project is inherently multidisciplinary in that it utilizes clinical cardiac data but requires a thorough understanding of epidemiology, biostatistics, and programming. A separate advantage is that this program will work on any dichotomized data irrespective of the sample size and number of raters (although it does assume no missing data). I have collaborated with Dr. Tsui on the quantitative portion of this project and Dr. Vetter on the clinical portion of this project. 
+This script is also written in a way such that with very slight modification, it can be used to calculate these four diagnostic metrics on any dichotomized data set irrespective of the sample size and number of raters. However, this code as written requires no missing observations.
 
-### Methods
-Study Population: 
-Four pediatric electrophysiologists measured the Bazett corrected QTc on the same 200 15-lead pediatric ECGs randomly selected from all ECGs read by a pediatric electrophyisologist at The Children's Hospital of Philadelphia in 2021. The gold standard will be the QTc as finalized in the patient's chart (to be extracted the GE MUSE ECG database). QTcs will be converted to a dichotomous variable with a cutoff of >=460 ms. The Se, Sp, PPV, and NPV and their respective 95% confidence intervals calculated per the methods described in Kwat et al and delienated in the equations document. 
+The real world application which prompted this research project was the desire to calculate diagnostic accuracy metrics for a group of pediatric electrophysiologists determining a pathologically prolonged QTc interval on pediatric electrocardiograms (ECG).
 
-```{r}
+The GitHub repo for this project is: https://github.com/ivor-asztalos/BMIN503_Final_Project
+
+## Introduction 
+Pediatricians in multiple inpatient and outpatient contexts order a large number of electrocardiograms (ECGs) per year. Indeed, the most commonly performed cardiac diagnostic test is an ECG. However, many non pediatric cardiologists struggle with interpreting pediatric ECGs. Unfortunately the automatic read provided by ECG machines are insufficiently accurate to rely upon as a final read. Within the context of a larger project our group set out to create a more accurate automatic ECG interpreter. As the lowest hanging fruit for that project we first elected to train the automatic interpreter to measure the QTc.
+
+The QT interval is the time from the onset of the Q wave of the QRS complex to the offset of the T wave. This period corresponds to the time during which the ventricles are depolarizing and repolarizing. For children who frequently have heart rates that would be tachycardic for adults, the QT interval is corrected for heart rate.This Bazett corrected QTc is calculated as the QT interval divided by the square root of the RR interal (which is the inverse of the heart rate). The QTc is an important measurement on essentially all ECGs as various factors can prolong it (e.g. genetic diseases such as Long QT syndrome or many medications) and a prolonged QTc is the primary risk factor in developing Torsade de Pointes a potentially fatal arrhythmia. Unfortunately measuring the QTc is not straightforward and its measurement is a challenge both for pediatricians for automatic interpreters currently in clinical use.
+
+We trained a convolutional resnet to measure QTc’s automatically. To compare the performance of that deep neural network (DNN) to the current clinical standard of pediatric electrophysiologists, we needed to calculate the performance of the physicians. To do that we collected a prospective set of pediatric ECGs which multiple pediatric electrophysiologists measured the QTc on. To assess the diagnostic accuracy of the electrophysiologists as a whole we needed to address clustering at the level of the repeat measurements.
+
+While the creation of the script was motivated by this real world application–as stated above–one advantage of it is that it can be used for any future dataset of labelled and dichotomized diagnostic predictions. This project is inherently multidisciplinary in that it utilizes clinical cardiac data but requires a thorough understanding of epidemiology, biostatistics, and programming. I have collaborated with Dr. Tsui on the quantitative portion of this project and Dr. Vetter on the clinical portion of this project.
+
+## Methods
+### Study Design:
+This is a diagnostic accuracy study.
+
+### Study Population: 
+200 pediatric ECGs were randomly sampled from all ECGs performed at The Children’s Hospital of Philadelphia from the year 2021. This is the first time period not included in either the training or test sets for the DNN.
+
+### Prediction and Gold Standard labels:
+Four pediatric electrophysiologists measured the Bazett corrected QTc on each of the 200 15-lead pediatric ECGs. The gold standard is the QTc as finalized in the patient’s chart. QTcs are converted to a dichotomous variable with a cutoff of >=460 ms, a widely recognized cutoff to signify the QTc is pathologically prolonged.
+
+### Outcomes:
+The Se, Sp, PPV, and NPV and their respective 95% confidence intervals are calculated per the methods described in Kwat et al and delineated in the equations document.
+
+## Script
+```{r, results= 'hide', error=F, warning=F, message=F}
 # Load necessary libraries and data set
 library(tidyr)
 library(dplyr)
+library(pROC)
+library(caret)
+library(epiR)
 
 # Load in data
-# x <- url("https://github.com/ivor-asztalos/BMIN503_Final_Project/blob/master/QTc%20Measurements_raw%20data.csv")
-# raw_data <- read.table(x, header = TRUE)
-
-raw_data <- read.csv("C:/Users/asztalosi/OneDrive - Children's Hospital of Philadelphia/MBMI/BMIN 503 - Data Science/Final Project/QTc Measurements_raw data.csv")
+x <- url("https://raw.githubusercontent.com/ivor-asztalos/BMIN503_Final_Project/master/QTc%20Measurements_raw%20data.csv")
+raw_data <- read.table(x, header = TRUE, sep = ",")
 
 ```
 
-If data is not binary, dichotomize it:
+The raw data needs to be converted to standard column names and dichotomized for the script to work.
 ```{r}
-### Dichotomize variables
+### Rename columns to standard language
 raw_data <- rename(raw_data, gs = Truth, ep1 = Behere, ep2 = Iyer, ep3 = Nash, ep4 = Vetter)
+
+### Dichotomize variables using the cutoff of >= 460 ms for the QTc
 df <- raw_data # Dichotomized dataframe
 df[["dgs"]] <- ifelse(df[["gs"]] >=460, 1, 0)
 for (i in 1:4){
   df[[paste("dep", i, sep="")]] <- ifelse(df[[paste("ep", i, sep="")]] >=460, 1, 0)
 }
-df <- df[,c(1,7:11)]
+df <- df[,c(1, 7:11)]
 ```
 
-Perform analysis of binary data. This will require creating both a long and a wide version of the data set as all diagnostic accuracy metric calculations require summing across all raters across all measurements and performing operations on only sums of repeat measurements before summing those products. 
+Generate ROC curves for individual electrophysiologits. Of note these ROC curves aren’t terribly meaningful. Namely because while QTc is a continuous variable, it is somewhat disingenous to use a different cutoff to dichotomize the EP measurements than the cutoff used to dichotomimze the gold standard (>= 460 ms).
+```{r}
+for (i in 1:4){
+  roc_i <- paste("roc_", i, sep="")
+  roc_i <- roc(df$dgs, df[[paste("dep",i,sep="")]])
+  print(roc_i)
+  plot.roc(df$dgs, df[[paste("dep",i,sep="")]])
+} 
+```
+
+Although these ROC curves do indicate that rater 1 is quite a bit less accurate than the other three.
+
+## Calculate Diagnostic Accuracy Metrics
+There are four diagnostic accuracy metrics to be calculated. Each will have a point estimate and a 95% Confidence Interval (CI) around that estimate. The equations for both are detailed in the word document. This code tries to hone as closely to that nomenclature as possible within the confines of a non-latex based text editor unless otherwise noted in the comments. For example, x_ij is x sub i j from the equations.
+
+All of the equations require calculating sums of sums. Importantly these sums can be summed across one of three different sets: 1) across only the 200 samples, 2) across only the 4 raters, or 3) across all 800 observations across all samples across all raters. This will require creating both a long and a wide version of the data set.
+
 ```{r}
 # Create a long version of raw data set
 dfl <- reshape(df, idvar="id", varying=list(3:6), v.names="test", direction="long")
 dfl <- rename(dfl, reader = time)
-N <- dim(dfl)[1]
-J <- dim(df)[2]-2
+N <- dim(dfl)[1] # total number of observations, equivalent to D in equations
+J <- dim(df)[2]-2 # number of raters, equivalent to m in equations
 
 # For sensitivity
 dfl <- mutate(dfl, tp = test*dgs) # true positives (x_ij)(d_ij)
 true_poss <- sum(dfl$tp) # sum of true positives across all readers
 prolongs <- sum(dfl$dgs) # sum of all disease (prolonged QTc) across all readers
 sen_hat <- true_poss/prolongs # estimate of sensitivity
-dfl <- mutate(dfl, deve_sen = (test-sen_hat)*(dgs)) # deviances from estimate of sensitivity ((xij)-Se_k)*(d_ij)
+dfl <- mutate(dfl, deve_sen = (test-sen_hat)*(dgs)) # deviances (aka residuals) from estimate of sensitivity ((xij)-Se_k)*(d_ij)
 
 # For specificity
 dfl <- mutate(dfl, tn = (1-test)*(1-dgs)) # true negatives (1-x_ij)(1-d_ij)
@@ -94,15 +127,15 @@ ppv_b_hat <- test_poss/N # proportion of test positives across all measurements 
 npv_a_hat <- true_negs/N # proportion of true negatives across all measurements across all readers
 npv_b_hat <- test_negs/N # proportion of test negatives across all measurements across all readers
 # Calculate errors (deviances) of ppv and npv from their respective estimates for each measurement
-dfl <- mutate(dfl, ppv_e = tp - ppv_a_hat-ppv_hat*(test-ppv_b_hat))
-dfl <- mutate(dfl, npv_e = tn - npv_a_hat-npv_hat*((1-test)-npv_b_hat))
+dfl <- mutate(dfl, ppv_e = tp - ppv_a_hat-ppv_hat*(test-ppv_b_hat)) # varepsilon sub i, i.e. residuals from ppv for each sample i for PPV
+dfl <- mutate(dfl, npv_e = tn - npv_a_hat-npv_hat*((1-test)-npv_b_hat)) # varepsilon sub i, i.e. residuals from ppv for each sample i for NPV
 
-# Generate wide dataframe
+# Generate wide dataframe linking on id variable
 dfw <- reshape(select(dfl, c("id", "reader", "deve_sen", "deve_spe", "ppv_e", "npv_e")), direction = "wide", idvar = "id", timevar = "reader")
-n <- dim(dfw)[1]
+n <- dim(dfw)[1] 
 
 # Calculate sum of squares, variance, standard errors, and confidence intervals for sensitivity and specificity
-ss_sen <- 0 # Sum of squares of residuals for sensitivity
+ss_sen <- 0 # Sum of squares of residuals for sensitivity will require nested for loops, one loop through raters within each sample i, and an outer for loop to loop through each sample i 
 sum_deve_sen_j <-0
 for (i in 1:n){
   for (j in 1:J){
@@ -124,13 +157,14 @@ for (i in 1:n){
   sum_deve_spe_j <- 0
 }  
 
-var_sen <- n/(prolongs^2) * ss_sen
-var_spe <- n/(non_prolongs^2) * ss_spe
-std_sen <- var_sen^0.5
-std_spe <- var_spe^0.5
-ste_sen <- std_sen/(n^0.5)
-ste_spe <- std_spe/(n^0.5)
-lower_ci_sen = sen_hat - 1.96*ste_sen
+# Calculate variance, standard deviation, standard error and confidence intervals for sensitivity and specificity using central limit theorem
+var_sen <- n/(prolongs^2) * ss_sen # variance of sensitivity
+var_spe <- n/(non_prolongs^2) * ss_spe # variance of specificity
+std_sen <- var_sen^0.5 # standard deviation of sensitivity
+std_spe <- var_spe^0.5 # standard deviation of specificity
+ste_sen <- std_sen/(n^0.5) # standard error of sensitivity
+ste_spe <- std_spe/(n^0.5) # standard error of specificity
+lower_ci_sen = sen_hat - 1.96*ste_sen # 95% Confidence intervals
 upper_ci_sen = sen_hat + 1.96*ste_sen
 lower_ci_spe = spe_hat - 1.96*ste_spe
 upper_ci_spe = spe_hat + 1.96*ste_spe
@@ -147,6 +181,8 @@ for (i in 1:n){
   ss_ppv <- ss_ppv + ppv_e_i_sq
   sum_ppv_e_j <- 0
 } 
+
+# Calculate variance, standard deviation, standard error and confidence intervals for PPV
 var_ppv <- n/(N^2)*ss_ppv
 std_ppv <- var_ppv^0.5
 ste_ppv <- std_ppv/(n^0.5)
@@ -166,17 +202,39 @@ for (i in 1:n){
   ss_npv <- ss_npv + npv_e_i_sq
   sum_npv_e_j <- 0
 } 
+
+# Calculate variance, standard deviation, standard error and confidence intervals for PPV
 var_npv <- n/(N^2)*ss_npv
 std_npv <- var_npv^0.5
 ste_npv <- std_npv/(n^0.5)
 lower_ci_npv = npv_hat - 1.96*ste_npv
 upper_ci_npv = npv_hat + 1.96*ste_npv
-
 ```
 
+## Results
+Before considering the pooled estimates of the diagnostic metrics across all raters, let us review performance of each rater individually.
 
-### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+```{r}
+dfcm <- df[c(2:6)]
+dfcm <- mutate(dfcm, D = ifelse(dgs==0,2,1))
+for (i in 1:4){
+  col <- paste("EP", i, sep="")
+  col_e <- paste("dep", i, sep="")
+  dfcm[[col]] <- ifelse(dfcm[[col_e]]==0,2,1)
+}
+
+for (i in 1:4){
+  col <- paste("EP", i, sep="")
+  mtx <- confusionMatrix(table(dfcm[[col]], dfcm$D))$table
+  dx <- epi.tests(mtx, conf.level = 0.95)
+  print(col)
+  print(dx)
+}
+```
+
+From the results we can see that 11 of the 200 or 6% of the QTc’s are in fact prolonged. Rater 1’s performance is quite a bit worse from a sensitivity standpoint than everyone else. Given the relatively low prevalence of disease, the NPVs are all quite high. The PPVs are generally low, but sufficient for a screening test. As seen on the ROC curves, rater 4 captures all true positives.
+
+Having calculated the point estimates and confidence intervals for sensitivity, specificity, PPV, and NPV have been calculated, they can now be printed:
 
 ```{r}
 # Results:
@@ -185,3 +243,15 @@ cat("Specificity (95% CI): ", spe_hat, " (", lower_ci_spe, ", ", upper_ci_spe, "
 cat("PPV (95% CI): ", ppv_hat, " (", lower_ci_ppv, ", ", upper_ci_ppv, ")", "\n", sep="")
 cat("NPV (95% CI): ", npv_hat, " (", lower_ci_npv, ", ", upper_ci_npv, ")", "\n", sep="")
 ```
+
+That’s it–4 numbers and 4 ranges. Given that there are no missing ratings, the point estimates are the arithmetic averages of the 4 individual EPs’ values. The Sp is relatively good. If the QTc is in fact normal, the EPs almost always agree. The NPV is also very good. When the EPs say the QTc is normal, it almost always is. This however is largely a reflection of the fact that the prevalence is low. The Se is not as good. Almost 20% of known positives are not identified by the EPs. The PPV is also relatively low as discussed above.
+
+If we look at the values of these 4 metrics using a naive analysis which doesn’t take clustering into consideration, we can make some additional insights:
+```{r}
+cat('Sensitivity (95% CI): 81.82% (67.29-91.81%)
+Specificity (95% CI): 96.82% (95.31-97.96%)
+        PPV (95% CI): 60.00% (46.54-72.44%)
+        NPV (95% CI): 98.92% (97.88-99.53%)')
+```
+
+Because the point estimates are simply the average of the individuals’ performance, the point estimates do not change. However, not accounting for clustering will lead to an incorrect estimate of the variance and thus confidence interval, usually one that it will be artificially narrow, and thus potentially biasing you away from the null and towards a Type I error. In keeping with that, the majority of the naïve 95% confidence intervals are narrower than the clustered confidence intervals. When the values are very close to 100%, those differences are minimal. But in the case of PPV the 95% CI is too narrow by a clinically meaningful 12%. Of note, in this particular instance the naïve estimate for the sensitivity is actually wider than the clustered estimate. This is likely a reflection of the fact that the first rater was substantially worse than the others, and particularly poor at identifying true positives (low sensitivity). The clustered analysis recognizes that while he is a poor rater, he is consistently so, and also consistently different from the other 3, which is why the sensitivity in the clustered analysis takes less of a hit in the clustered estimate.
