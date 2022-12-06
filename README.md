@@ -8,8 +8,4 @@ This repository contains all the necessary files to calculate the diagnostic met
 2. Final Project_IAsztalos.Rmd - an R markdown file of the code itself. This script handles importation, cleaning, and analysis. 
 3. Final Project_IAsztalos.html - the knitted html output of the R markdown.
 4. Equations for clustered diagnostic accuracy studies_gh.docx - a word document detailing some of the derivation of and the final equations for the diagnostic accuracy metrics and their variances as embedded equations. 
-<<<<<<< HEAD
 5. README.md - This readme file.
-=======
-5. README.md - This readme file. 
->>>>>>> f97945055d49b1b8bfb58d239ad4ec6702729035
