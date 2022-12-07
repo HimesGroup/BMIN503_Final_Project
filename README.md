@@ -11,24 +11,20 @@ The LVEF is obtained followoing assessment with an echocardiogram. While it is d
 
 
 Aim and significance:
-The primary aim for this project is to leverage the unstructured text from medical notes using NLP to assist in HF diagnosis. Specifically, we are seeking to determine the FEASIBILITY of extracting pertinent components of the unstructured text of medical note (e.g. discharge summary) using natural language processing (NLP) methods to assist in making a heart failure diagnosis. Secondarily, we aim to compare the predictic power of the unstructured text to conventional factors in making a heart failure diagnosis. 
+The primary aim for this project is to leverage the unstructured text from medical notes using NLP to assist in HF diagnosis. Specifically, we are seeking to determine the FEASIBILITY of extracting the left ventricular function ejection fractin (LVEF) from unstructured text of medical note (e.g. discharge summary) using natural language processing (NLP) methods. Secondarily, we aim to compare the predictic power (i.e., accuracy, precision, and recall) of the NLP logic. 
 
 Method:
 Step 1: Getting access to the MIMIC-III dataset which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. It comes in form of many variables in various data tables.  
-Step 2: Querying and cleaing the data. Merge pertinent datasets together. Provide basic demographics of the MIMIC-III dataset.
+Step 2: Querying and cleaing the data. Merge pertinent datasets together. Provide a descriptive analysis including basic demographics of the MIMIC-III dataset.
 Step 3: Defying case and cohort of for the population based on ICD 9 codes. Case definition for heart failure with reduced ejection fraction (HFrEF) was adapted from https://phekb.org/ and modified. 
-Step 4: Querying notes associated with HFrEF encoded encounters and then apply open-source NLP tools (cTakes) to encode pertinent variables of interest. We then developped and applied logic to features that are indicative to HFrEF definition from notes to predict case label. 
-Step 5: Lastly, we evaluated how well the predictive power of rule logic for phenotyping HFrEF (extrinsic evaluation) and areas for improvement based on errors in NLP and rules (intrinsic evaluation). 
+Step 4: Querying notes associated with HFrEF encoded encounters. Developping and then applying open-source NLP tools to encode and retrieve LVEF.  
+Step 5: Lastly, we evaluated how well the predictive power of rule logic using accuracy, precision, and recall.
 
 Result:
-We are continuing to work on the result section and should have the results posted soon. Please see final_project_template.rmd file. There has some significant issues with pushing changes to Github. However, as demonstrated, it is FEASIBLE to use NLP to assist in making HFrEF diagnosis. We are continuing to work on the predictive component of the project. 
+As shown by our resulst session, it is feasible to use NLP to retrieve pertinent diagnostic components (herein is the LVEF). As shown, descriptive analysis including basic demographics of the case and control cohort (tables, barplots, etc.) are provided in the html files. More importantly, our NLP rule logic has an accuracy of 0.79, precision of 0.86, recall of 0.97, and a F-1 score of 0.91. 
 
 Limitation
-There are several limitations including case and control ICD9-based definition, patient population selection, open-source NLP tools. Particularly, ICD9 codes can underestimate or overestimate a specific disease condition within a population as it is primarily used for billing and not for diagnostic purposes. It often does not reflect a true representation of a specific condition. As for patient population selection, we used a ICU cohort which is inherently a different population. 
-
-
-
-Cleaned the dataset by using baseline and completed case to carry on analysis. The barplot is used to check outcome variable, the GLM, random forest tree and SVM are used as predicted models. ROC curve is used to evaluate the model's performance. The Gini score and p-value are used to create most significant predictors list for further GLM model comparison.
+There are several limitations including case and control ICD9-based definition, patient population selection, data formats. Particularly, ICD9 codes can underestimate or overestimate a specific disease condition within a population as it is primarily used for billing and not for diagnostic purposes. It often does not reflect a true representation of a specific condition. As for patient population selection, we used a ICU cohort which is inherently a different population than patients that are on the stepdown and are seeing outpatient. Lastly, while our NLP rule logic can further improved on, it's accuracy, precision and recall are very reassuring.  
 
 
 ============================================
