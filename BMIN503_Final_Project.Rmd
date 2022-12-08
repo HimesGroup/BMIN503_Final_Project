@@ -1,0 +1,409 @@
+---
+title: "Improving Heart Failure Outcomes, BMIN503/EPID600 Project Template"
+author: "Godefroy Chery"
+output: 
+  html_document: 
+    theme: paper 
+    highlight: tango
+---
+
+
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
+
+### Overview 
+For this project, we are seeking to determine the feasibility of rule logic language processing tool to extract the left ventricular ejection fraction (LVEF) from unstructured text data (from medical notes such as discharge summaries) to assist in diagnosing heart failure with reduced ejection fraction (HFrEF). The LVEF is an essential diagnostic component in rendering a heart failure with reduced ejection fraction (HFrEF) diagnosis. It is also used as a prognostic indicator of cardiovascular outcomes and a monitoring tool to assess response to therapeutic interventions. We are using the Medical Information Mart for Intensive Care (MIMIC)-III dataset for this project. Lastly, we will assess how well this tool works by computing its precision, recall and accuracy. 
+
+
+### Introduction 
+Heart failure is the primary reason for preventable hospital stays in the elderly population in the US. Unfortunately, it is also associated with significant mortality and morbidity with a projected cost of ~70 billion dollars by 2030. While the reason for the associated morbidity and mortality is multifactorial, failure to adhere to guideline-directed trial-proven medical regimen and underdiagnosis of heart failure both play significant contributory roles leading to poor cardiovascular outcomes including higher mortality. 
+
+Herein, we are seeking to improve both the early recognition and the time to diagnosis to heart failure with reduced ejection fraction (HFrEF) diagnosis by leveraging unstructured data in the electronic health record (EHR). Specifically, we are seeking to extract the left ventricular ejection fraction (LVEF) which is a critical diagnostic AND prognostic indicator of heart failure status and cardiovascular outcomes from clinical notes (e.g., outside hospital discharge summary notes). Moreover,it is used to guide therapeutic management including the implementation of guideline-directed medical regimen (GDMT).
+
+The LVEF is obtained following assessment of the cardiac function with an echocardiogram. While it can be documented in table format from the echocardiogram report, more often than not, it is documented in free-text clinical notes or reports. This is particularly true for patients that are coming from other hospitals where it is not feasible to transfer echocardiogram DICOM images to the receiving hospital, further impeding appropriate and timely patient care.
+
+
+### Methods
+For this project, we are using MIMIC-III which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. This is a vast dataset with many variables and limited access. It comes in form of various datasets which were then cleaned. 
+
+Method: Step 1: Getting access to the MIMIC-III dataset which is a large, freely-available database comprising deidentified health-related data associated with over forty thousand patients who stayed in critical care units of the Beth Israel Deaconess Medical Center between 2001 and 2012. It comes in form of many variables in various data tables.
+
+Step 2: Querying and cleaing the data. Merge pertinent datasets together. Provide a descriptive analysis including basic demographics of the MIMIC-III dataset. 
+
+Step 3: Defying case and cohort of for the population based on ICD 9 codes. Case definition for heart failure with reduced ejection fraction (HFrEF) was adapted from https://phekb.org/ and modified. 
+
+Step 4: Querying notes associated with HFrEF encoded encounters. Developping and then applying open-source NLP tools to encode and retrieve LVEF.
+
+Step 5: Lastly, we evaluated how well the predictive power of rule logic using accuracy, precision, and recall.
+
+#Retrieving datatables
+```{r eval = TRUE}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(pROC)
+NOTEEVENTS <- read.csv("~/Downloads/NOTEEVENTS.csv", comment.char="#")
+PATIENTS <- read.csv("~/Downloads/PATIENTS.csv")
+DIAGNOSES_ICD <- read.csv("~/Downloads/DIAGNOSES_ICD_3.csv", header=TRUE)
+ADMISSIONS <- read.csv("~/Downloads/ADMISSIONS.csv", header=TRUE)
+```
+
+#Query the data, QI and cleaning
+```{r eval = TRUE}
+#Quering the dataset
+head(PATIENTS)
+head(DIAGNOSES_ICD)
+
+
+#uniquea <-length(unique(ADMISSIONS$SUBJECT_ID)) #46,520 unique subject IDs
+#uniqued <-length(unique(DIAGNOSES_ICD$SUBJECT_ID)) #46,520 unique subject IDs
+#uniquep <-length(unique(PATIENTS$SUBJECT_ID)) #46,520 unique subject IDs
+#uniquens <-length(unique(NOTEEVENTS$SUBJECT_ID)) #46146 unique subject IDs
+
+#Duplicates in subject ID for patient dataset. 
+library(dplyr)
+PATIENTS %>% 
+group_by(SUBJECT_ID) %>% 
+  filter(n()>1) #There is no duplicate. 
+
+#First let's look at the various types of notes in category 
+#unique_c <-unique(NOTEEVENTS$CATEGORY) 
+#unique_nd <-unique(NOTEEVENTS$DESCRIPTION)
+#NoteSum <-sum(NOTEEVENTS$CATEGORY == "Discharge summary")
+```
+
+##Results
+#Creating a basic demographic datasets
+```{r eval = TRUE}
+library(dplyr)
+library(plyr)
+#Joining datasets PATIENTS with ADMISSIONS which contain demographics including ethnicity, insurance, etc. 
+Demographic<- dplyr::inner_join(PATIENTS, ADMISSIONS, by = "SUBJECT_ID")
+Demographic <-select(Demographic, SUBJECT_ID, GENDER, ADMISSION_TYPE, ETHNICITY, MARITAL_STATUS, INSURANCE) 
+
+#Removing duplicate rows by subject_ID. This was done after querying the data to visualize what constitutes duplicated rows and what data is contained within those rows. 
+Demographic <- Demographic[!duplicated(Demographic$SUBJECT_ID), ]
+```
+
+#Creating a basic demographic tables
+```{r eval = TRUE}
+#Table 1. Basic demographic of the cohort
+library (gtsummary)
+Demographic  %>% gtsummary::tbl_summary()
+
+#Table 2. Basic demographic of the cohort by gender
+Demographic %>% gtsummary::tbl_summary(by = GENDER)
+
+#Table 3. Basic demographic of the cohort by insurance status 
+Demographic %>% gtsummary::tbl_summary(by = INSURANCE)
+```
+
+#Visualizing our cohort dataset
+```{r eval = TRUE}
+#Visualizing the data
+library(ggplot2)
+
+#Figure 1.Visualizing Insurance status in cohort
+ggplot(data = Demographic, aes(x = INSURANCE)) +
+    geom_bar()
+
+#Figure 2. Visualizing Insurance status across age in cohort 
+ggplot(data = Demographic, aes(x =INSURANCE, fill = GENDER)) +
+    geom_bar(position = "dodge")
+    geom_bar()
+    
+#Figure 3. Visualizing marital status across age in cohort
+ggplot(data = Demographic, aes(x =  MARITAL_STATUS, fill = GENDER)) +
+    geom_bar(position = "dodge")
+    geom_bar()
+    
+#Figure 4. Visualizing Ethnicity breakdown in cohort
+ggplot(data = Demographic, aes(x = ETHNICITY)) + 
+    geom_bar()
+
+#Figure 5. Visualizing admission types by insurance providers. Very interesting the breakdown of admission types by insurers. 
+ggplot(data = Demographic, aes(x = ADMISSION_TYPE, fill = (GENDER))) + 
+    geom_bar(position = "dodge") +
+    facet_grid(. ~INSURANCE) + #Split by another variable
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Creating a new heart failure status variable. 
+```{r eval = TRUE}
+#Creating a new binary column called HF Status indicative of heart failure (HF) or non-HF (noHF)
+DIAGNOSES_ICD<- DIAGNOSES_ICD %>%
+  mutate(HF_Status = ifelse(ICD9_CODE == 42840 | ICD9_CODE == 42841 | ICD9_CODE == 42842, "HF", "noHF"))
+
+#Pulling ICD codes from Diagnoses table for case/cohort definition.
+HF_ICD9 <- filter(DIAGNOSES_ICD, HF_Status == "HF")
+
+#Pulling ICD codes from Diagnoses table for case/cohort definition.
+nHF_ICD9 <- filter(DIAGNOSES_ICD, HF_Status == "noHF")
+
+#Table 4. Heart failure vs non-heart failure cohort. 
+print(table(DIAGNOSES_ICD$HF_Status))
+
+```
+
+
+#Creating the heart failure case cohort (NOTEEVENTS_ICD9_HF)
+#Joining tables NOTEEVENTS data to ICD codes
+```{r eval = TRUE}
+#Dropping row_id as it is not needed. 
+library(dplyr)
+library(plyr) 
+HF_ICD9 <- select(HF_ICD9, select = -ROW_ID)
+nHF_ICD9 <- select(nHF_ICD9, select = -ROW_ID)
+
+#Defining case cohort
+#Joining by unique hospital admission ID aka HADM_ID. That is we are joining a specific ICD9 code of an encounter to that same encounter in the NOTEEVENTS
+NOTEEVENTS_ICD9_HF <- dplyr::inner_join(NOTEEVENTS, HF_ICD9, by = "HADM_ID")
+
+#Selecting for encounters with discharge summary and echo reports.  
+NOTEEVENTS_ICD9_HF<- filter(NOTEEVENTS_ICD9_HF, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo' )
+
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9_HF <- dplyr::select(NOTEEVENTS_ICD9_HF, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9_HF<- filter(NOTEEVENTS_ICD9_HF, DESCRIPTION != 'Addendum')
+
+#Characteristics of heart failure cohort
+HF_demo <- dplyr::inner_join (Demographic, HF_ICD9, by = "SUBJECT_ID") 
+
+#Figure 6. Visualizing the heart failure cohort 
+ggplot(data = HF_demo, aes(x =INSURANCE, fill = GENDER)) +
+    geom_bar(position = "dodge")
+    geom_bar()
+```
+
+
+#Doing more analysis to visualize the data
+```{r eval = TRUE}
+#Characteristics of heart failure cohort
+nHF_demo <- dplyr::inner_join (Demographic, nHF_ICD9, by = "SUBJECT_ID") 
+
+#Figure 7. Visualizing the non heart failure cohort 
+ggplot(data = nHF_demo, aes(x =INSURANCE, fill = GENDER)) +
+    geom_bar(position = "dodge")
+    geom_bar()
+```
+
+
+#Logistic regression model with heart failure status (HF status) as the outcome. 
+#Assess for significant bivariate relationships using the Pearson's Chi-square test.
+```{r eval = TRUE}
+#Joining demographic data with heart failure status. 
+Demo_HF_status <- dplyr::inner_join(DIAGNOSES_ICD, Demographic, by = "SUBJECT_ID")
+
+#Conversting HF_Status to factory
+class(Demo_HF_status$HF_Status)
+Demo_HF_status$HF_Status <- as.factor(Demo_HF_status$HF_Status)
+class(Demo_HF_status$HF_Status)
+
+#Logistic regression using HF_status (having heart failure = HF, no heart failure= nHF) and insurance. 
+summary((glm(HF_Status ~ INSURANCE, data = Demo_HF_status, family = binomial())))
+chisq.test(table(Demo_HF_status$HF_Status, Demo_HF_status$INSURANCE))
+#There is a statistically significant association between the Medicare and heart failure status. However, there is not a plausible causative explanation for such finding. I think this is merely an association. 
+
+
+#Logistic regression using HF_status and gender. 
+summary((glm(HF_Status ~ GENDER, data = Demo_HF_status, family = binomial())))
+
+#Logistic regression using HF_status and admission type to the ICU. 
+summary((glm(HF_Status ~ ADMISSION_TYPE, data = Demo_HF_status, family = binomial())))
+chisq.test(table(Demo_HF_status$HF_Status, Demo_HF_status$ADMISSION_TYPE))
+#Herein, "Emergency" and "NewBorn" types of admission are statistically associated with heart failure status. Again, I am not fully convinced that there is a plausible causative explanation for such findings. We will not explore those associations further. 
+```
+
+
+#Joining table to create our our overall cohort (both case and control)
+```{r eval = TRUE}
+#Herein, we want to create a dataset including the patient ID, note type (discharge summary, echoreport), unique note ID, HADM_ID, column text, HF_case (1 or 0, 1 for case, 0 for cohort), column text. 
+
+#Joining notevents with icd9 codes
+DIAGNOSES_ICD_n <- select(DIAGNOSES_ICD, -ROW_ID)
+NOTEEVENTS_ICD9 <- dplyr::inner_join(NOTEEVENTS, DIAGNOSES_ICD_n, by = "HADM_ID")
+
+#Removing obs or noted encounters without associated discharge summaries or echo reports
+NOTEEVENTS_ICD9 <- filter(NOTEEVENTS_ICD9, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo') #large datset as one patient or one admission will have 7-8 different ICD9 codes for billing. 
+
+#Turning the HF_status into a factor (0= noHF, 1 = HF)
+NOTEEVENTS_ICD9$HF_Status <- ifelse(NOTEEVENTS_ICD9$HF_Status == "HF", 1,0)
+table(NOTEEVENTS_ICD9$HF_Status)
+  
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9 <- dplyr::select(NOTEEVENTS_ICD9, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9 <- filter(NOTEEVENTS_ICD9, DESCRIPTION != 'Addendum') #removing discharge with addendum as not needed.
+```
+
+#Creating the heart failure control cohort (NOTEEVENTS_ICD9_nHF)
+```{r eval = TRUE}
+#Joining by unique hospital admission ID aka HADM_ID. That is we are joining a specific ICD9 code of an encounter to that same encounter in the NOTEEVENTS
+NOTEEVENTS_ICD9_nHF <- dplyr::inner_join(NOTEEVENTS, nHF_ICD9, by = "HADM_ID")
+
+#Selecting for encounters with discharge summary and echo reports.  
+NOTEEVENTS_ICD9_nHF<- filter(NOTEEVENTS_ICD9_nHF, CATEGORY == 'Discharge summary'| CATEGORY == 'Echo' )
+
+#Dropping a few more variables (charttime, storetime and iserror) which are not needed
+NOTEEVENTS_ICD9_nHF <- dplyr::select(NOTEEVENTS_ICD9_nHF, -CHARTTIME, -STORETIME, -ISERROR)
+NOTEEVENTS_ICD9_nHF <- filter(NOTEEVENTS_ICD9_nHF, DESCRIPTION != 'Addendum')
+
+```
+
+
+#Further subdiving the cohorts into subcohorts containing echos and discharge summaries cases. 
+```{r eval = TRUE}
+#Selecting for specific variables needed for the text file analysis.
+HF_Sub <- dplyr::select(NOTEEVENTS_ICD9_HF, SUBJECT_ID.x, HADM_ID, ROW_ID, CATEGORY, HF_Status, TEXT)
+nHF_Sub <- dplyr::select(NOTEEVENTS_ICD9_nHF, SUBJECT_ID.x, HADM_ID, ROW_ID, CATEGORY, HF_Status, TEXT)
+
+#Creating a heart failure subcohort containing just 'discharge' notes in the text column
+HF_Sub_disch <- filter(HF_Sub, CATEGORY == 'Discharge summary')
+nHF_Sub_disch <- filter(nHF_Sub, CATEGORY == 'Discharge summary')
+
+#Create a second heart failure subcohort with just 'echo" notes in the text column. 
+HF_Sub_echo <-filter(HF_Sub, CATEGORY == 'Echo')
+nHF_Sub_echo <-filter(nHF_Sub, CATEGORY == 'Echo')
+
+
+#Will create two subcohorts with 50 patients each for the text file analysis in each subgroups. 
+HF_Sub_disch_c <- HF_Sub_disch [1:50, ]
+HF_Sub_echo_c <- HF_Sub_echo[1:75, ]
+  
+nHF_Sub_echo_c <-nHF_Sub_echo [1:50, ]
+nHF_Sub_disch_c <-nHF_Sub_disch [1:75, ]
+```
+
+
+#create a text file to be used in Python for NLP text analysis.
+```{r eval = TRUE}
+
+#Text files for heart failure case cohort_echo
+for (row in 1:nrow(HF_Sub_echo_c)) {
+    A <- HF_Sub_echo_c[row, "SUBJECT_ID.x"]
+    B <- HF_Sub_echo_c[row, "HADM_ID"] 
+    C <- HF_Sub_echo_c[row, "ROW_ID"] 
+    D <- HF_Sub_echo_c[row, "CATEGORY"]
+    E <- HF_Sub_echo_c[row, "HF_Status"]
+    G <- HF_Sub_echo_c[row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_case_echo/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+
+#Text files for heart failure case cohort_discharge
+for (row in 1:nrow(HF_Sub_disch_c)) {
+    A <- HF_Sub_disch_c[row, "SUBJECT_ID.x"]
+    B <- HF_Sub_disch_c[row, "HADM_ID"] 
+    C <- HF_Sub_disch_c[row, "ROW_ID"] 
+    D <- HF_Sub_disch_c[row, "CATEGORY"]
+    E <- HF_Sub_disch_c[row, "HF_Status"]
+    G <- HF_Sub_disch_c[row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_case_disch/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+
+#Now creating separate text files for the control with echo
+for (row in 1:nrow(nHF_Sub_echo_c)) {
+    A <- nHF_Sub_echo_c[row, "SUBJECT_ID.x"]
+    B <- nHF_Sub_echo_c[row, "HADM_ID"] 
+    C <- nHF_Sub_echo_c[row, "ROW_ID"] 
+    D <- nHF_Sub_echo_c[row, "CATEGORY"]
+    E <- nHF_Sub_echo_c[row, "HF_Status"]
+    G <- nHF_Sub_echo_c[row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_control_echo/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+
+#Now creating separate text files for the control with discharge summaries
+for (row in 1:nrow(nHF_Sub_disch_c)) {
+    A <- nHF_Sub_disch_c[row, "SUBJECT_ID.x"]
+    B <- nHF_Sub_disch_c[row, "HADM_ID"] 
+    C <- nHF_Sub_disch_c[row, "ROW_ID"] 
+    D <- nHF_Sub_disch_c[row, "CATEGORY"]
+    E <- nHF_Sub_disch_c[row, "HF_Status"]
+    G <- nHF_Sub_disch_c[row, "TEXT"]
+    Filename <-paste(A,B,C,D,E,".txt", sep = "_") 
+
+    write.table(G, file = file.path("/Users/godefroychery/BMIN503_Final_Project/HF_control_disch/", Filename), sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+}
+```
+
+#Explaination of codes
+#Applying NLP using Python codes to encode for/extract left ventricular ejection fraction (LVEF) for the cohorts. 
+```{r eval = TRUE}
+#Upon further investigation of the "text" column, one notices that the LVEF value is often listed in a paragraph with a heading for left ventricle systolic function or within a table format listing the LVEF. At times, it is located within the body of the paragraph. As such, we adopted recently published work from Wagholikar et al. ( https://doi.org/10.1007/s10916-018-1066-7), edited and modified it for our project. Please see our codes in python for further details.
+
+#For our project, the logic remains consistent in that it will retrieve the left ventricular ejection fraction by searching a tab for 1) a tabular pattern, 2) a section for the left ventricle with numerical and range patterns, and 3) qualitative expressions in decreasing order of precedence. Please see our codes in python for further details.
+
+```
+
+
+#Results
+#Tables containing results (LVEF extraction) from subcohorts
+```{r eval = TRUE}
+#Import tables with LVEF extracting 
+HF_case_disch_EF_extractions_NLP<- read.csv("~/Downloads/HF_case_disch_EF_extractions_NLP.txt")
+HF_case_echo_EF_extractions_NLP <- read.csv("~/Downloads/HF_case_echo_EF_extractions_NLP.txt")
+HF_control_disch_EF_extractions_NLP <-read.csv("~/Downloads/HF_control_disch_EF_extractions_NLP.txt", sep=";")
+HF_control_echo_EF_extractions_NLP <-read.csv("~/Downloads/HF_control_echo_EF_extractions_NLP.txt")
+
+
+#Table containing extracted LVEF from discharge summary (unstructured text) of case cohort. 
+HF_case_disch_LVEF <- HF_case_disch_EF_extractions_NLP
+
+#Table containing extracted LVEF from echo reports (unstructured text) of case cohort.
+HF_case_echo_LVEF <- HF_case_echo_EF_extractions_NLP
+
+#Table containing extracted LVEF from discharge summary (unstructured text) of control cohort.
+HF_control_disch_LVEF <- HF_control_disch_EF_extractions_NLP
+
+#Table containing extracted LVEF from echo reports (unstructured text) of control cohort.
+HF_control_echo_LVEF <- HF_control_echo_EF_extractions_NLP
+```
+
+#Results
+#Confusion Matrix of the main cohort
+#Evaluation and validation of the rule logic of our project by comparing the extracted predicted output with a manually annotation by an expert. 
+```{r eval = TRUE}
+#Importing a confusion table of the entire cohort 
+HF_main_cohort_confusion_table<- read.csv("~/Downloads/HF_main_cohort_confusion_table.csv") 
+HF_control_confusion_table <- read.csv("~/Downloads/HF_control_confusion_table.csv") 
+HF_case_confusion_table <-read.csv("~/Downloads/HF_case_confusion_table.csv") 
+
+
+#Calculating Precision, Recall, Accuracy and F-1 score.
+#Accuracy = TP+TN / TP+TN+FP+FN = (78+20) / (78+20+13+2) = 0.79
+#Precision = TP / TP+FP = 78 (78+13) = 0.86
+#Recall = TP /TP+FN = 78 / (78+2) =0.97
+#F-1 score = F1 = 2 * (precision * recall) / (precision + recall) = 0.91
+
+
+#Control cohort
+#Precision, recall
+#Precision = TP / TP+FP = 6/ (6+ 3) = 0.66
+#Recall = TP /TP+FN = 6/ (6+0) = 1
+
+
+#Case cohort
+#Precision, Recall
+#Precision = TP / TP+FP = 72 / (72+10) = 0.87
+#Recall = TP /TP+FN = 72 / (72+2) = 0.97
+```
+
+
+#Conclusion
+Using our rule logic NLP tool, it is feasible to extract the left ventricular ejection fraction (LVEF) from unstructured data such as free-text medical notes such as physician notes, clinic notes, discharge summaries, clinical reports. It has great accuracy (0.79), precision (0.86), recall (0.97) and F-1 score (0.91). This tool can be integrated into existing platforms to assist with time to HF diagnosis and early recognition of HFrEF. 
+
+Lastly, we have found statistically significant associations between type of insurance (Medicare) and admission types to the ICU (emergency, newborn) with heart failure status. However, there are not plausible causative explanations for such findings and thus, have made the decision not to conduct further exploratory analyses of those associations. 
+
+#Limitations 
+There are several limitations including case and control ICD9-based definition, patient population selection, data formats. Particularly, ICD9 codes can underestimate or overestimate a specific disease condition within a population as it is primarily used for billing and not for diagnostic purposes. It often does not reflect a true representation of a specific disease phenotype. As for patient population selection, we used a ICU cohort which is inherently a different population than patients that are on the stepdown units and/or are being followed outpatient. Lastly, while our NLP rule logic is fairly accurate, it can certainly further improved on and expanded on.
+
+
