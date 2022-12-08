@@ -1,6 +1,8 @@
-# BMIN503/EPID600 Final Project: Improving time to heart failure diagnosis using EHR data (structured and unstructured) 
+# BMIN503/EPID600 Final Project: Improving time to heart failure diagnosis using EHR data (unstructured) 
 
-This repository contains component files for the final project including the rmd, html and overview below. Of note, this project is ongoing and thus work is still being done including components of the methods and results. 
+Authors: 
+Godefroy Chery, MD, MHS
+Danielle L. Mowery, Ph.D., MS, FAMIA
 
 
 Introduction: 
