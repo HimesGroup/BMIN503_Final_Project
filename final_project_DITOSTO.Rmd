@@ -2,9 +2,14 @@
 title: "BMIN503/EPID600 Project: Examining the association between fertility treatment and live birth"
 author: "Julia DiTosto"
 output: 
-  prettydoc::html_pretty: 
-    theme: hpstr 
-    highlight: tango
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: true
+        smooth_scroll: true
+    depth: 3 
+    theme: flatly
+    highlight: pygments
 ---
 
 ```{r global options, include = FALSE}
@@ -12,20 +17,22 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ``` 
 
 ### Overview
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+The aims of this analysis are threefold and have been extensively discussed with Penn Epidemiology faculty members Ellen Caniglia, ScD, and Sunni Mumford, PhD. Both faculty advised on the topic idea and research question, and Sunni Mumford provided access to the data. First, using data from the Folic Acid and Zinc Supplement Trial [(FAZST)](https://clinicaltrials.gov/ct2/show/NCT01857310) we aim to examine odds of live birth by type of fertility treatment among females attempting to conceive. Second, we aim to use supervised machine learning techniques to generate a prediction model of pregnancy that results in live birth by fertility treatments. Covariates used in the model will be identified using a directed acyclic graph (DAG). Finally, as an exploratory analysis, we aim to use a time-to-event analysis to examine time to pregnancy that results in a live birth by type of fertility treatment among females attempting to conceive. 
 
-> The aims of this analysis are threefold and have been extensively discussed with Penn Epidemiology faculty members Ellen Caniglia, ScD, and Sunni Mumford, PhD. Both faculty advised on the topic idea and research question, and Sunni Mumford provided access to the data. First, using data from the Folic Acid and Zinc Supplement Trial (FAZST; https://clinicaltrials.gov/ct2/show/NCT01857310) we aim to examine odds of livebirth by type of fertility treatment among females attempting to conceive. Second, we aim to use supervised machine learning techniques to generate a prediction model of pregnancy that results in livebirth by fertility treatments. Covariates used in the model will be identified using a directed acyclic graph (DAG). Finally, as an exploratory analysis, we aim to use a time-to-event analysis to examine time to pregnancy that results in a livebirth by type of fertility treatment among females attempting to conceive. 
-
-> The final project GitHub respository can be accessed here: https://github.com/jditosto/BMIN503_Final_Project
+Click [here](https://github.com/jditosto/BMIN503_Final_Project) to access the final project GitHub respository. 
 
 ### Introduction 
-Describe the problem addressed, its significance, and some background to motivate the problem.
+Between 7-17% of couples seek fertility treatment annually in the United States (US). With scientific and medical advances in reproductive endocrinology and infertility, there are multiple fertility treatment options available, including ovulation induction (OI), intrauterine insemination (IUI), and in vitro fertilization (IVF). Deciding upon which treatment to use is individualized and depends on shared decision making between the patient and provider. Individuals may try multiple different types of treatments during their fertility treatment, often starting with the least invasive treatments and move to more invasive if unsuccessful. However, it is estimated that nearly 65% of individuals seeking fertility treatment do have not have a live birth within one year of seeking treatment, which is the outcome of most interest to individuals seeking pregnancy. 
 
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+Better understanding both the probability of live birth and time to pregnancy that results in a live birth given specific fertility treatments is of critical interest to patients and providers. This analysis will use high quality data from a multi-site, large randomized-controlled trial. Epidemiologic methods will be combined with supervised machine learning to generate a prediction model of pregnancy that results in a live birth by fertility treatment. 
 
-> Between 7-17% of couples seek fertility treatment annually in the United States (US). With scientific and medical advances in reproductive endocrinology and infertility, there are multiple fertility treatment options available, including ovulation induction (OI), intrauterine insemination (IUI), and in vitro fertilization (IVF). Deciding upon which treatment to use is individualized and depends on shared decision making between the patient and provider. Individuals may try multiple different types of treatments during their fertility treatment, often starting with the least invasive treatments and move to more invasive if unsuccessful. However, it is estimated that nearly 65% of individuals seeking fertility treatment do have not have a livebirth within one year of seeking treatment, which is the outcome of most interest to individuals seeking pregnancy. 
+Aims of analysis:
 
-> Better understanding both the probability of live birth and time to pregnancy that results in a livebirth given specific fertility treatments is of critical interest to patients and providers. This analysis will use high quality data from a multi-site, large randomized-controlled trial. Epidemiologic methods will be combined with supervised machine learning to generate a prediction model of pregnancy that results in a livebirth by fertility treatment. 
+1. Evaluate whether type of fertility treatment is associated with odds of live birth. 
+
+2. Compare the predictive accuracy of logistic regression with random-forest models using K-fold cross validation to model live birth by fertility treatment.
+
+3. As an exploratory analysis, examine whether fertility treatment is associated with time to pregnancy that results in a live birth. 
 
 ### Methods
 
@@ -48,12 +55,17 @@ library(dagitty)
 library(table1)
 ```
 
-Load original data set and do a quick clean:
+This project uses data from the [FAZST trial](https://clinicaltrials.gov/ct2/show/NCT01857310), which was a multi-center, double-blinded, block-randomized, placebo-controlled trial to assess the impact of folic acid and zinc supplementation on live birth rates in males among couples seeking infertility treatment. Couples with females aged 18-45 years and males aged >= 18 years were eligible for participation if they were not planning on using donor sperm or a gestational surrogate, were not pregnant at enrollment, and if the male did not have diagnosed obstructive azoospermia (absence of spermatozoa in the ejaculate despite normal spermatogenesis). Eligible male participants were randomized in a 1:1 ratio to receive 5-mg folic acid and 30-mg elemental zinc or placebo daily for 6 months by study center and planned infertility treatment stratum. Couples were followed for 9 months or through the end of pregnancy, if conception occurred. The participants, trial staff, and investigators were blinded throughout the trial. The findings from the main trial are published [here](https://pubmed.ncbi.nlm.nih.gov/31910279/). In brief, the intervention was not found to impact risk of live birth. [Analyses](https://pubmed.ncbi.nlm.nih.gov/34656303/) on sperm parameters and DNA methylation also demonstrated no effect. 
+
+Load original data set:
 ```{r eval = TRUE, message = FALSE}  
 # Load the original dataset
 original_data <- read_sas("~/Desktop/Fall 2022/EPID6000/Final project/vitd_metab_rev.sas7bdat", 
     NULL) 
+```
 
+Next, we need to do some data cleaning. Specifically, selecting which variables to include, recoding variables to the correct types, fixing missing values, and adding labels to categorical variables. 
+```{r eval = TRUE, message = FALSE}  
 fertility_data <- original_data %>%
   select(c(COUPLEID, site, STRATA, randomization_date, Treatment, Followup_Days, Status, tx_status,
            Total_Preg_Num, Date_Final_Status, LMP_source, LMP_final, LMP_ppt_date, preg_ppt, date_ppt,
@@ -63,7 +75,7 @@ fertility_data <- original_data %>%
            Marital_status_f, Annual_Household_Income_f,
            Health_Insur_f, Fertility_Insur_f, race_m, Race_f,
            Highest_Degree_f, BMI_m, BMI_f, Age_f, Age_m, employment_f, employment_m,
-           F3FERTDX, F3FERTDX, live_birth, early_loss, stillbirth, neonatal_death)) %>%
+           F3FERTDX, live_birth, early_loss, stillbirth, neonatal_death)) %>%
   ungroup(.) %>%
   mutate(site = factor(site)) %>% #Recode variables to factors
   mutate(STRATA = factor(STRATA)) %>%
@@ -84,8 +96,22 @@ fertility_data <- original_data %>%
   )) ) %>%
   mutate(employment_f = factor(employment_f, levels = c(0,1,2,3), 
                              labels = c("Unemployed", "Part-time employment", "Full-time employment", "Student"))) %>%
-  mutate(Race_f = factor(Race_f)) %>%
-  mutate(Highest_Degree_f = factor(Highest_Degree_f)) %>%
+  mutate(Race_f = as.factor(case_when(
+    Race_f == "Asian" ~ "Asian",
+    Race_f == "Black or African American" ~ "Black or African American",
+    Race_f == "Do not wish to provide" ~ "Other race/ethnic groups",
+    Race_f == "Hispanic/Latino" ~ "Hispanic/Latino",
+    Race_f == "Other race/ethnic groups" ~ "Other race/ethnic groups",
+    Race_f == "White" ~ "White"
+    ))) %>%
+  mutate(Highest_Degree_f = as.factor(case_when(
+    Highest_Degree_f == "Bachelor's degree" ~ "Bachelor's degree", 
+    Highest_Degree_f == "Did not wish to provide" ~ "Do not wish to provide",
+    Highest_Degree_f == "High school or less" ~ "High school or less",
+    Highest_Degree_f == "Master's degree or higher" ~ "Master's degree or higher",
+    Highest_Degree_f == "Some college" ~ "Some college"
+  ))) %>%
+    mutate(F3FERTDX = ifelse(is.na(F3FERTDX), 0, F3FERTDX)) %>%
   mutate(F3FERTDX = factor(F3FERTDX, levels = c(0,1),
                            labels = c("No", "Yes"))) %>%
   mutate(live_birth = factor(live_birth, levels = c(0,1))) %>%
@@ -99,7 +125,7 @@ fertility_data <- original_data %>%
 remove(original_data) #Remove original data set from environment
 ```
 
-The exposure of interest is fertility treatment. We are categorizing fertility treatment based on the most aggressive treatment used. For instance, an individual who started on OI but switched to IVF will be grouped in the IVF group. There will be 4 groups: no fertility treatment, OI, IUI, and IVF. 
+The exposure of interest is fertility treatment. We are categorizing fertility treatment based on the most aggressive treatment used. For instance, an individual who started on OI but switched to IVF will be grouped in the IVF group. There will be 4 groups: no fertility treatment, OI, IUI, and IVF. However, the original data set had many more categories, so we will condense the groups to increase the generalizability and interpretability of the findings. 
 ```{r eval = TRUE, message = FALSE}  
 #View distribution of tx_status
 table(fertility_data$tx_status)
@@ -114,51 +140,63 @@ fertility_data <- fertility_data %>%
   mutate(tx_cat = factor(tx_cat, levels = c(0,1,2,3), labels = c("No fertility treatment", "IVF", "IUI", "OI")))
 ```
 
-Since we are conducting a time-to-event analysis for an exploratory outcome, we need to create a time variable, which is defined as the time from randomization until date of pregnancy confirmation that resulted in a livebirth or the time from randomization until censoring  (i.e., end of follow-up). If a participant did not have a livebirth, they will be censored at the end of their follow up. Date of pregnancy confirmation can be recorded in multiple different ways. The most reliable is from an hCG urine test at the doctors office (date_hcg), however, not every participant who got pregnant reported these data. The other methods are at home positive pregnancy test (date_ppt) or date of last menstrual period (LMP_final; least reliable). If a participant is not missing the date_hcg, then we will use that date; if it is missing, then we will use date_ppt, and if that is missing, LMP_final will be used.
+Since we are conducting a time-to-event analysis as an exploratory outcome, we need to create a time variable, which is defined as the time from randomization until date of pregnancy confirmation that resulted in a live birth or the time from randomization until censoring  (i.e., end of follow-up). If a participant did not have a live birth, they will be censored at the end of their follow up. Date of pregnancy confirmation can be recorded in multiple different ways. The most reliable is from an hCG urine test at the doctors office (date_hcg), however, not every participant who got pregnant reported these data. The other methods are at home positive pregnancy test (date_ppt) or date of last menstrual period (LMP_final; least reliable). If a participant is not missing the date_hcg, then we will use that date; if it is missing, then we will use date_ppt, and if that is missing, LMP_final will be used.
+
+Before doing this, I want to check how many observations are missing. 
 ```{r eval = TRUE, message = FALSE}  
 #Check missing data
 sum(is.na(fertility_data$date_hcg[which(fertility_data$live_birth == 1)]))
 sum(is.na(fertility_data$date_ppt[which(fertility_data$live_birth == 1)]))
 sum(is.na(fertility_data$LMP_final[which(fertility_data$live_birth == 1)]))
 fertility_data$LMP_char <- as.character(fertility_data$LMP_final) #Convert to class so it matches the other variables
+```
 
-#I found a data entry error with some observations for "date_ppt" being inputted as "---" so manually fixing to categorize as NAs -- any advice on how to do this with less code?
+I found a data entry error with some observations for "date_ppt" being inputted as "--[numbers]-" so I am manually fixing these observations to recode as NA. 
+```{r eval = TRUE, message = FALSE}  
 fertility_data$date_ppt[which(fertility_data$COUPLEID == "10006" | fertility_data$COUPLEID == "10065" | fertility_data$COUPLEID == "10118" | fertility_data$COUPLEID == "10145" | fertility_data$COUPLEID == "10240" | fertility_data$COUPLEID == "10278" | fertility_data$COUPLEID == "10306" | fertility_data$COUPLEID == "10351" | fertility_data$COUPLEID == "10382" | fertility_data$COUPLEID == "10386" | fertility_data$COUPLEID == "10415" | fertility_data$COUPLEID == "10419" | fertility_data$COUPLEID == "10462" | fertility_data$COUPLEID == "10591" | fertility_data$COUPLEID == "10640" | fertility_data$COUPLEID == "10650" | fertility_data$COUPLEID == "10666" | fertility_data$COUPLEID == "10671" | fertility_data$COUPLEID == "10709" | fertility_data$COUPLEID == "10723" | fertility_data$COUPLEID == "10752" | fertility_data$COUPLEID == "10791" | fertility_data$COUPLEID == "10827" | fertility_data$COUPLEID == "10830" | fertility_data$COUPLEID == "10850" | fertility_data$COUPLEID == "10851" | fertility_data$COUPLEID == "10852" | fertility_data$COUPLEID == "10855" | fertility_data$COUPLEID == "10929" | fertility_data$COUPLEID == "10930" | fertility_data$COUPLEID == "10982" | fertility_data$COUPLEID == "10983" | fertility_data$COUPLEID == "10984" | fertility_data$COUPLEID == "10990" | fertility_data$COUPLEID == "10994" | fertility_data$COUPLEID == "11000" | fertility_data$COUPLEID == "11006" | fertility_data$COUPLEID == "11042" | fertility_data$COUPLEID == "11058" | fertility_data$COUPLEID == "11150" | fertility_data$COUPLEID == "11170" | fertility_data$COUPLEID == "11288" | fertility_data$COUPLEID == "11317" | fertility_data$COUPLEID == "11365" | fertility_data$COUPLEID == "11399" | fertility_data$COUPLEID == "11438" | fertility_data$COUPLEID == "11457" | fertility_data$COUPLEID == "11464" | fertility_data$COUPLEID == "20193" | fertility_data$COUPLEID == "20207" | fertility_data$COUPLEID == "20214" | fertility_data$COUPLEID == "20222" | fertility_data$COUPLEID == "30010" | fertility_data$COUPLEID == "30055" | fertility_data$COUPLEID == "30070" | fertility_data$COUPLEID == "30164" | fertility_data$COUPLEID == "30171" | fertility_data$COUPLEID == "30183" | fertility_data$COUPLEID == "30187" | fertility_data$COUPLEID == "30188" | fertility_data$COUPLEID == "30196" | fertility_data$COUPLEID == "30220" | fertility_data$COUPLEID == "30248" | fertility_data$COUPLEID == "40047" | fertility_data$COUPLEID == "50010" | fertility_data$COUPLEID == "50023" | fertility_data$COUPLEID == "50056" | fertility_data$COUPLEID == "50063" | fertility_data$COUPLEID == "50092" | fertility_data$COUPLEID == "50096" | fertility_data$COUPLEID == "50101" | fertility_data$COUPLEID == "50113" | fertility_data$COUPLEID == "50117" | fertility_data$COUPLEID == "50134" | fertility_data$COUPLEID == "50151" | fertility_data$COUPLEID == "50181" | fertility_data$COUPLEID == "50198" | fertility_data$COUPLEID == "50201" | fertility_data$COUPLEID == "50205" | fertility_data$COUPLEID == "50207" | fertility_data$COUPLEID == "50211" | fertility_data$COUPLEID == "50216" | fertility_data$COUPLEID == "50250" | fertility_data$COUPLEID == "60019" | fertility_data$COUPLEID == "70047")] <- NA
+```
 
+Now, we can do the ifelse statement to create a new variable of "pregnancy_date." After, we can check the number of observations that are missing to see how many had no recorded pregnancy date. These individuals will be excluded from the exploratory time-to-event analysis. 
+```{r eval = TRUE, message = FALSE}  
 #Use date_hcg if available, if not, then use (in the following order of preference) date_ppt, LMP_final
 fertility_data$pregnancy_date <- as.Date(with(fertility_data, ifelse(!is.na(date_hcg), date_hcg,
                                                    ifelse(!is.na(date_ppt), date_ppt,
                                                           ifelse(!is.na(LMP_char), LMP_char, NA)))))
 
-sum(is.na(fertility_data$pregnancy_date[which(fertility_data$live_birth == 1)])) #4 participants are missing any date of pregnancy -- they will be censored at time = 0 for the time-to-event analysis
+sum(is.na(fertility_data$pregnancy_date[which(fertility_data$live_birth == 1)])) 
 ```
+Four are missing any date of pregnancy. They will be included in the primary analysis, but excluded from the time-to-event analysis (or essentially censored at time 0).
 
-A few participants in this trial had pregnanies that resulted in a stillbirth. Those individuals will be censored at the confirmation of those pregnancies, both because they are not the outcome of interest and due to the impossibility that these individuals would have had another pregnancy within the study period. 
+A few participants in this trial had pregnancies that resulted in a stillbirth. Those individuals will be censored at the confirmation of those pregnancies, both because they are not the outcome of interest and due to the unlikelihood that these individuals would have had another pregnancy within the study period. 
 ```{r eval = TRUE, message = FALSE}
 fertility_data %>%
   filter(stillbirth == 1) %>%
   select(c(COUPLEID, stillbirth, live_birth, date_hcg))
 ```
 
-Next, we need to calculate the "time" variable for our analysis of interest. For this, we use an ifelse statement -- for those who had a livebirth, time is calculated by pregnancy_date - randomization_date, but for those who did not, the Followup_Days variable is used. 
+Next, we need to calculate the "time" variable for our analysis of interest. For this, we use an ifelse statement -- for those who had a live birth or stillbirth, time is calculated by pregnancy_date - randomization_date, but for those who did not, the Followup_Days variable is used. 
 ```{r eval = TRUE, message = FALSE}  
-#Create time variable -- time to pregnancy if had a livebirth; time of followup if no livebirth (censor)
+#Create time variable -- time to pregnancy if had a live birth; time of followup if no live birth (censor)
 fertility_data <- fertility_data %>%
   mutate(time = ifelse(live_birth == 1 | stillbirth == 1, 
                              as.numeric(pregnancy_date - randomization_date), 
                              Followup_Days)) %>%
-  filter(time >= 0) #Exclude those with negative time after talking to PI b/c participants are ineligible for follow-up if they were pregnant at their randomization date
+  filter(time >= 0) 
+#Exclude those with negative time after talking to PI b/c participants are ineligible if they were pregnant at enrollment so this must be a data entry error
+```
 
-ggplot(fertility_data,aes(x=time)) + #Visualize time variable by livebirth status
+To make sure this worked, and to view the distribution of the time variable, we can run a histogram. 
+```{r eval = TRUE, message = FALSE}  
+ggplot(fertility_data,aes(x=time)) + #Visualize time variable by live birth status
   geom_histogram(color = "#000001", bins = 20) +
   facet_grid(~live_birth) +
   xlab("Time to pregnancy or censorship") +
   ylab("Number of participants") +
-  ggtitle("0 = No Livebirth                                           1 = Livebirth") +
+  ggtitle("0 = No Live birth                                           1 = Live birth") +
   theme_bw() 
 ```
 
-Before moving to the regression models, we will use our knowledge of the existing literature to create a DAG to model our exposure (tx_cat) and outcome (live_birth). Our DAG will guide decisions related to what variables to include in our models. 
+Before moving to the regression models, we will use our knowledge of the existing literature to create a [DAG](https://cran.r-project.org/web/packages/ggdag/vignettes/intro-to-dags.html) to model our exposure (tx_cat) and outcome (live_birth). Our DAG will guide decisions related to what variables to include in our models. 
 ```{r eval = TRUE, message = FALSE}  
 dag <- dagitty("dag {
   tx_cat -> live_birth
@@ -178,8 +216,9 @@ coordinates( dag ) <- list(
   y=c("tx_cat"=2, "live_birth"=2, "BMI_f"=1, "BMI_m"=3, "Age_f"=1.3, "Age_m"=3.3, "Infertility_diagnosis"=1.6)
 )
 plot( dag )
-
 ```
+
+The DAG demonstrates that infertility diagnosis, male and female BMI, and male and female age may be confounders in the relationship between type of fertility treatment and live birth. Therefore, these variables will be included as covariates in the adjusted regression models. 
 
 ### Results
 
@@ -193,31 +232,44 @@ fertility_data %>%
               label = list(STRATA ~ "Location of enrollment", Marital_status_f ~ "Relationship status", Annual_Household_Income_f ~ "Annual household income", Health_Insur_f ~ "Health insurance", Fertility_Insur_f ~ "Fertility insurance", Race_f ~ "Race and ethnicity", Highest_Degree_f ~ "Education", BMI_f ~ "BMI (female partner)", BMI_m ~ "BMI (male partner)", Age_f ~ "Age (female partner)", Age_m ~ "Age (male partner)", employment_f ~ "Employment status", F3FERTDX ~ "Infertility diagnosis"), missing_text = "Missing") %>%
   italicize_labels() %>%
   add_p() 
+```
 
+
+Baseline characteristics, including location of enrollment, annual household income, fertility insurance, female education, female BMI, male and female age, female employment status, and infertility diagnosis, are significantly different across the four treatment groups. Bivariate analyses for the relationship status and health insurance variables were unable to be conducted due to small sample sizes; however, the overwhelming majority of participants were married and had health insurance at enrollment. 
+
+Next, we can look at the sample sizes and proportions of participants for each fertility treatment. 
+```{r eval = TRUE, message = FALSE}  
 fertility_data %>%
     group_by(tx_cat) %>%
     summarise(count = n()) %>%
     mutate(prop = count/sum(count))
 ```
 
-Before we start running regression models, I want to view the exposure and outcome of interest using descriptive plots. 
+The most common fertility treatment group was IUI, followed by no fertility treatment, IVF, and OI. 
+
+
+Before we start running regression models, I want to view the exposure and outcome of interest using descriptive plots. Bar charts are probably the easiest to visualize, so I created two that only varry by the position = "..." argument. 
 ```{r eval = TRUE, message = FALSE}  
 ggplot(data = fertility_data, aes(x = tx_cat, fill = live_birth)) +
   geom_bar() + 
   xlab("Fertility treatment") + ylab("Number of participants (N)") +
-  labs(fill = "Livebirth") + 
+  labs(fill = "Live birth") + 
   theme_bw()
 
 ggplot(data = fertility_data, aes(x = tx_cat, fill = live_birth)) +
   geom_bar(position = "fill") + 
   xlab("Fertility treatment") + ylab("Proportion of participants") +
-  labs(fill = "Livebirth") + 
+  labs(fill = "Live birth") + 
   theme_bw()
 ```
 
-Based on the plots, it looks like there is a difference in livebirth by fertility treatment. First, I will run chi-square to see if there is a difference, and then I will run a logistic regression, presenting both the unadjusted and adjusted results. 
+Based on the plots, it looks like there is a difference in live birth by fertility treatment, specifically with participants in the IVF group having the highest proportion with a live birth and the lowest among the no fertility treatment group. To test this statistically, I will first run chi-square to see if there is a difference, and then I will run a logistic regression, presenting both the unadjusted and adjusted results. As a reminder, the covariates included in the adjusted models are based on the DAG presented in the Methods section. 
 ```{r eval = TRUE, message = FALSE} 
 chisq.test(table(fertility_data$live_birth, fertility_data$tx_cat))
+```
+The outcome of live birth significantly differs by fertility treatment group (p<0.001).
+
+```{r eval = TRUE, message = FALSE} 
 unadjusted <- glm(live_birth ~ tx_cat, data = fertility_data, family = "binomial") %>%
   tbl_regression(exponentiate = TRUE,
                  label = list(
@@ -242,44 +294,89 @@ tbl_merge(
   
 ```
 
+Since "no fertility treatment" is the least aggressive treatment among the groups, it will serve as our reference group, meaning that the other groups will each be compared to the "no fertility treatment group." Since the unadjusted and adjusted results aren't too different, I will only interpret the adjusted results. 
 
-Now that we have estimated the relationship using a simple logistic regression, we will use supervised machine learning techniques, specifically the random forest model, 
++ Individuals in the IVF group have 4.17-times the odds of having a live birth compared to individuals in the no fertility treatment group (95% CI 3.14-5.57, p<0.001).
+
++ Individuals in the IUI group have 1.37-times the odds of having a live birth compared to individuals in the no fertility treatment group (95% CI 1.07-1.75, p=0.013).
+
++ Individuals in the OI group have 2.12-times the odds of having a live birth compared to individuals in the no fertility treatment group (95% CI 1.58-2.83, p<0.001).
+
+Now that we have estimated the relationship using a simple logistic regression, we will use supervised machine learning techniques, specifically the [random forest model](http://www.r2d3.us/visual-intro-to-machine-learning-part-1/), to generate a prediction model of live birth given fertility treatment and important covariates. We want to compare to see whether the logistic regression we did above or the random forest model does a better job of predicting the outcome of live birth in our study population. A random forest model creates decision trees using bootstrap samples in the data to predict an outcome (in this case, live birth). For this project, we will create 100 decision trees. However, in order to do this, we need to have a complete cases. There are a few missing data for BMI (N=11), so I will subset the data to only include those with complete data.
 ```{r eval = TRUE, message = FALSE}  
-fertility.rf <- randomForest(live_birth ~ tx_cat + Age_f + Age_m, data = fertility_data,
-                             ntree = 100, importance = TRUE)
-fertility.rf
-fertility.rf.pred <- predict(fertility.rf, fertility_data, type = "prob")
-rf.pred.livebirth <- fertility.rf.pred[ , 2]
+complete_data <- fertility_data %>%
+  select(c(live_birth, tx_cat, Age_f, Age_m, BMI_f, BMI_m, F3FERTDX)) %>%
+  filter(complete.cases(.))
+```
 
+First, I will rerun the logistic regression using the complete dataset, and then I will save the predicted values. 
+```{r eval = TRUE, message = FALSE}  
+fertility.glm <- glm(live_birth ~ tx_cat + Age_f + Age_m + BMI_f + BMI_m + F3FERTDX, data = complete_data, family = binomial(logit)) 
+glm.pred <- predict(fertility.glm, complete_data, type = "response") 
+```
+
+I will do the same for the random forest model. 
+```{r eval = TRUE, message = FALSE}  
+fertility.rf <- randomForest(live_birth ~ tx_cat + Age_f + Age_m + BMI_f + BMI_m + F3FERTDX, data = complete_data,
+                             ntree = 100, 
+                             importance = TRUE)
+fertility.rf
+fertility.rf.pred <- predict(fertility.rf, complete_data, type = "prob") #save predicted values
+rf.pred.livebirth <- fertility.rf.pred[ , 2]
+```
+The OOB estimate of error rate is 35.58% for the random forest model, which refers to the prediction error of the random forest model and can be a good test to estimate the performance of the model. 
+
+To compare the models, we can use K-fold cross validation, which is a method to split the data into K (in this case K=10) randomly selected sub-samples and use one portion for testing and K-1 (in this case 9) for model training. 
+```{r eval = TRUE, message = FALSE}  
 #K-Fold Cross Validation
-N = nrow(fertility_data)
+N = nrow(complete_data)
 K = 10
 set.seed(1234)
 s = sample(1:K, size = N, replace = T)
+pred.outputs.glm <- vector(mode = "numeric", length = N)
 pred.outputs.rf <- vector(mode = "numeric", length = N)
 obs.outputs <- vector(mode = "numeric", length = N)
 offset <- 0
 for(i in 1:K){
-    train <- filter(fertility_data, s != i)
-    test <- filter(fertility_data, s == i)
+    train <- filter(complete_data, s != i)
+    test <- filter(complete_data, s == i)
     obs.outputs[1:length(s[s == i]) + offset] <- test$live_birth
 
+    #GLM train/test
+    glm <- glm(live_birth ~ tx_cat + Age_f + Age_m + BMI_f + BMI_m + F3FERTDX, data = train, family = binomial(logit)) 
+    glm.pred.curr <- predict(glm, test, type = "response") 
+    pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.pred.curr 
+    
     #RF train/test
-    rf <- randomForest(live_birth ~ tx_cat + Age_f + Age_m, data = fertility_data, ntree = 50)
+    rf <- randomForest(live_birth ~ tx_cat + Age_f + Age_m + BMI_f + BMI_m + F3FERTDX, data = train, ntree = 100)
     rf.pred.curr <- predict(rf, newdata = test, type = "prob") 
     pred.outputs.rf[1:length(s[s == i]) + offset] <- rf.pred.curr[ , 2]
     
     offset <- offset + length(s[s == i])
 }
-
-roc(obs.outputs, pred.outputs.rf, ci = TRUE)
-
-plot.roc(fertility_data$live_birth, rf.pred.livebirth)
-plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "blue", add = TRUE)
-legend("bottomright", legend = c("Training", "Random-Forest"), col = c("black", "blue"), lwd = 1)
 ```
 
-As an exploratory analysis, we will examine time to pregnancy that resulted in a livebirth by fertility treatment. Fist, we will visualize the relationship to see if there are differences by using a Kaplan-Meier plot. 
+We can look at the outputs from each ROC, specifically the area under the curve (AUC).
+```{r eval = TRUE, message = FALSE}  
+roc(complete_data$live_birth, glm.pred, ci = TRUE)
+roc(obs.outputs, pred.outputs.glm, ci = TRUE)
+roc(complete_data$live_birth, rf.pred.livebirth, ci = TRUE)
+roc(obs.outputs, pred.outputs.rf, ci = TRUE)
+```
+
+To visualize this, we can plot the ROC curves for each output. 
+```{r eval = TRUE, message = FALSE}  
+plot.roc(complete_data$live_birth, glm.pred, ci = TRUE, col = "blue") #LR - training
+plot.roc(obs.outputs, pred.outputs.glm, ci = TRUE, col = "purple", add = TRUE) #LR - CV
+plot.roc(complete_data$live_birth, rf.pred.livebirth, ci = TRUE, col = "red", add = TRUE) #RF - training
+plot.roc(obs.outputs, pred.outputs.rf, ci = TRUE, col = "orange", add = TRUE)
+legend("bottomright", legend = c("LR Training", "LR Cross-Validation", "RF Training", "RF Cross-Validation"), col = c("blue", "purple", "red", "orange"), lwd = 2)
+```
+
+Based on this graph, the models have similar predictive ability (besides random forest cross-validation which will generate a perfect prediction), but the AUCs are all less than 0.8, which suggests poor predictive ability. 
+
+
+As an exploratory analysis, we will examine time to pregnancy that resulted in a live birth by fertility treatment. Fist, we will visualize the relationship to see if there are differences by using a Kaplan-Meier plot. 
 ```{r eval = TRUE, message = FALSE}  
 fertility_data$live_birth_num <- as.numeric(fertility_data$live_birth)
 fit <- survfit(Surv(time, live_birth_num) ~ 1,
@@ -315,6 +412,14 @@ test.ph
 ggcoxzph(test.ph)
 ```
 
+After graphing the Schoenfield residuals, it confirms that the model violates the proportional hazards assumption. Unfortunately, the data does not have the capacity to add a time interaction, so I am unable to model this further using Cox proportional hazards models. 
+
+
 ### Conclusions
 
+In conclusion, compared to no fertility treatment, couples who use OI, IUI, and IVF have an increased odds of having a live birth, with the largest difference seen among couples using IVF. Using the current dataset, logistic regression models and random forest models have poor predictive accuracy to model the relationship between type of fertility treatment, important covariates, and the outcome of live birth. More complex prediction models may be necessary to use type of fertility treatment to predict live birth. Time to pregnancy that results in a live birth does not vary by type of fertility treatment, however, future research should aim to model type of fertility treatment as a time-varying predictor. 
+
+The results of this analysis should be interpreted in context of the strengths and limitations. The analysis used a high-quality dataset from a large RCT that had few missing data. The follow-up period of at least 9 months allowed for sufficient time to identify the outcome. Additionally, we had data on both the male and female partners in the couples, whereas most fertility research focuses on one or the other without including the couples-based approach. 
+
+Moving on to limitations, we were unable to assess type of fertility treatment as a time-varying predictor, which may be important considering that couples may try multiple types of treatments across the follow up. Additionally, most participants were White, non-Hispanic, of high socioeconomic status and high education, thus, limiting the generalizability of the findings. 
 
