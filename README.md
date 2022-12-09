@@ -1,16 +1,14 @@
 # BMIN503/EPID600 Final Project
 
-Update 11-17-22:
+Update 12-9-22:
 
 This project uses data from a national online survey of community-based women to determine if baseline physical activity level is associated with performance of pelvic floor muscle exercises. 
 
-Still need to finish discussing results for the final draft.
-
 The following files are present in the repository:
 
-ZG_PFPT_PA.Rmd 
+ZG_PFPT_PA.Rmd (R markdown file of code)
 
-ZG_PFPT_PA.html
+ZG_PFPT_PA.html (HTML file which includes figure/table output)
 
 
 --------------
