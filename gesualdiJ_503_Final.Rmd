@@ -9,7 +9,6 @@ output:
 
 
 ***
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, but this is not required.
 
 ### Overview
 
@@ -25,7 +24,13 @@ Addressing this problem involves suject matter knowledge of both immunology and 
 
 
 ### Methods
-Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+aasdfasdf
+
+### Results
+asdfasdf
+
+### Conclusions
+asdfasdf
 
 
 #install and load packages----
@@ -54,11 +59,19 @@ install.packages("purrr")
 install.packages("plotly")
 install.packages("gt")
 install.packages("magrittr")
+install.packages("geosphere")
 BiocManager::install("ensembldb") 
 BiocManager::install("AnnotationHub") 
 BiocManager::install("rhdf5") 
 BiocManager::install("mixOmics") 
 BiocManager::install('EnhancedVolcano')
+BiocManager::install("factoextra")
+BiocManager::install("GSVA")
+BiocManager::install("gprofiler2")
+BiocManager::install("GSEABase")
+BiocManager::install("clusterProfiler")
+BiocManager::install("enrichplot")
+
 
 ```
 
@@ -88,28 +101,24 @@ library(mixOmics)
 library(gt)
 library(EnhancedVolcano)
 library(magrittr)
+library(factoextra)
+library(GSVA)
+library(gprofiler2)
+library(GSEABase)
+library(clusterProfiler)
+library(enrichplot)
+library(geosphere)
 ```
 
+The Gosselin reference dataset below will contain 24 samples, all Ex Vivo microglia samples isolated following surgical resections from pediatric patients. The number of observations (Expressed genes) for this dataset is 14,528. These data are published and available on GEO but here I will read in the raw counts, sample labels, and gene names directly from a .xlsx file that was provided to me by a colleague who worked on this study. Therefore, we can read the counts into a dataframe and begin cleaning, filtering, and normalizing the data without having to access any transcriptomic repositories or databases as we will do for the later datasets. This makes the processing for this data set much simpler but the code below is less generalizeable as a result. The following datasets will make use of either EnsembleDB or ArchS4 and are therefore more informative for irectly accessing published data without any personal connections
 
-```{r, eval = TRUE, message = FALSE}
+```{r, eval = TRUE, message = FALSE, warning = FALSE}
 
 #Gosselin Data, Fetal Ex-Vivo Microglia (Reference) ----
 
-#This Reference dataset contains 24  ex-vivo microglia samples from 
-#pediatric patients isolated following surgical resection
-#The number of observations (expressed genes) for this dataset is 14,528
 #The processed data frames containing these data are stored in tbl's 
 #"ExVivo_Juvenile_MG_Reference_Gosselin" (no GeneID column, gene names are row names) 
 #or "Gosselin_log2_cpm_filtered_norm" (maintains GeneID as a separate column)
-
-#These data are published but the .xlsx file containing the raw counts, 
-#sample labels, and gene names were sent to me by a collaborator
-#Therefore, I can just read the counts into a data frame and begin cleaning, 
-#filtering, and normalizing without having to access any 
-#Transcriptomic repositories or databases. That makes the processing for this data 
-#set simpler but less generalizeable. The following 
-#Datasets make use of either EnsembleDB or ArchS4 and are 
-#therefore more informative for directly accessing published data without any personal connections. 
 
 #Read in raw counts
 microglia_fetal_ExVivo_Gosselin <- read_xlsx("Human_RNA-seq_data_Gosselin_Fetal_ExVivo.xlsx", sheet = 1, skip = 1) 
@@ -134,7 +143,9 @@ table(rowSums(DGEList_Gosselin$counts==0)==24)
 
 #Create and reshape (melt) tibble of log transformed raw counts to visualized unfiltered / unnormalized data
 #reshape2::melt() is a method that transforms tbl.df's from a wide or user friendly format
-# to a 'tall' or processing friendly format. see below 
+# to a 'tall' or processing friendly format. It reshapes the data frame to have three columns:
+#GeneID (gene name), Variable (the sampel name), and Value (the raw read count for that gene by that sample)
+#this reshaping allows us to easily visualize the entire distribution of counts for each sample in the ggplot below
 Gosselin_log2_cpm <- as_tibble(cpm(DGEList_Gosselin$counts, log = TRUE) , rownames = "GeneID") 
 Gosselin_log2_cpm_melt <- melt(Gosselin_log2_cpm)
 head(Gosselin_log2_cpm_melt)
@@ -199,32 +210,15 @@ either very lowly expressed or not expressed at all across all samples in the da
 bulk sequencing reads an extremely high number of probes. It is standard procedure to filter these unexpressed
 probes out, leading to the more uniform distribution observed in the second violin plot. 
 
+The Eggen reference dataset below will contain 39 total samples, all Ex Vivo microglia surgically resected from adult patients. The number of observations (Expressed genes) for this dataset is 14,397. This dataset was accessed by directly downloading the .tsv file containing the raw counts from Gene Expression Omnibus (GEO). However, these data contained only transcript IDs instead of gene names like all the other datasets. Therefore, I use AnnotationHub() to access the Ensemble Data Base in order to map transcript IDs to the appropriate gene names. This is comparable to the use of hgu133plus2.db in Practicum 9, but is optimized for use with more contemporary bulk RNA sequencing analysis rather than microarray data. This is an alternative approach to the use of the ArchS4 database, which I employ for the following 3 datasets. This Emsemble Data Base method was included chiefly to showcase alternative approaches to access GEP data without downloading and reading in the large (16 GB) ArchS4 database. Therefore, this approach is more beginner friendly and allows the user to avoid working with the somewhat cumbersome HDF5 files that ArchS4 uses to organize data. 
+
 ```{r, eval = TRUE, message = FALSE}
 
 #Eggen Data, Adult Ex-Vivo Microglia (Reference)----
 
-##This processed Reference dataset will contain 39 total samples 
-#(all Ex Vivo microglia surgically resected from adult patients)
-#The number of observations (expressed genes) for this dataset is 14,397
 #The processed data frames containing these data are stored in tbl's 
 #"ExVivo_Adult_MG_Reference_Eggen" (no GeneID column, gene names are row names) 
 #or "Eggen_log2_cpm_filtered_norm" (maintains GeneID as a separate column)
-
-#This dataset was accessed by directly downloading the tsv containing the 
-#raw counts from GEO. However, these data contained only
-#transcript IDs instead of gene names like the other datasets. Therefore, 
-#I needed to use AnnotationHub() to access the Ensemble Data base
-#in order to map the transcript IDs to the appropriate gene names. 
-#This is comparable to the use of hgu133plus2.db in Practicum 9,
-#But is optimized for Bulk RNA sequencing data rather than MicroArrays, 
-#which are somewhat out of date (no shade)
-
-#This is an alternative approach to using the ArchS4 database, which I employ for 
-#the next 3 datasets. This Method was mainly included to showcase alternate approaches 
-#to access GEO data without downloading and reading in the  large (16 GB!) Archs4 database
-#This is also a more beginner friendly approach that allows the user to avoid working with 
-#the somewhat cumbersome HDF5 files that ArchS4 uses to organize data
-
 
 ah <- AnnotationHub()
 ahDb <- query(ah, pattern = c("Homo Sapiens", "EnsDb"))  
@@ -343,26 +337,17 @@ for(n in 2: ncol(KJS_iMG_MDM)){
 }
 colnames(KJS_iMG_MDM) <- labels_KJS
 
+```
+
+The Abud dataset below will contain 15 total samples, 9 in vitro differentiated IPSC microglia cultured independently and 6 cultured with rat hippocampal neurons (labeled rHcN). The total number of observations (expressed genes) in this dataset is 12,968. This dataset as well as the two following after will be accessed and cleaned using the Archs4 database, which contains all of the samples ever uploaded to the Gene Expression Omnibus (GEO) Repository. It includes - among other information - raw counts for samples as well as descriptions of experimental groupings and overall study design. This is the most efficient way to access and clean data from GEO and saves you the trouble of fishing for methodological details in the text of the paper.  
+
+```{r, eval = TRUE, message = FALSE}
 
 #Abud 2017 data (IPSC-Microglia +/- coculture with Rat Hippocampal neurons)----
 
-#This processed dataset will contain 15 total samples (9 monocultured IPSC-iMg, 
-#6 iMg cocultured with rat hippocampal neurons. Cocultured iMg are notated 'rHcN')
-#The number of observations (expressed genes) for this dataset is 12,968
 #The processed data frames containing these data are stored in tbl's "IPSC_Microglia_Abud" 
 #(no GeneID column, gene names are row names) 
 #or "DGEList_Abud_filtered_norm" (maintains GeneID as a separate column)
-
-#This dataset, as well as those from the Svoboda and Blurton-Jones Publications 
-#were accessed and cleaned using the Archs4 database which contains
-#All of the samples ever uploaded to the Gene Expression Omnibus Repository 
-#and includes - among other information -  raw counts for samples as
-#Well as descriptions of different samples and overall study design. 
-
-#This is the most efficient way to access and clean data from GEO, 
-#as the available metadata typically provides a work around for 
-#digging into the supplementary information of a given publication 
-#to find sample information
 
 #bring in downloaded ArchS4 database containing all GEO accessible transcriptomic data
 archs4.human <- "/Users/jamesgesualdi/Desktop/BMIN_5030/BMIN503_Final_Project_Local/human_matrix_v11.h5"  
@@ -484,6 +469,8 @@ DGEList_Abud_filtered_norm <- rownames_to_column(IPSC_Microglia_Abud, var = "Gen
 
 ```
 
+The Blurton-Jones dataset below will contain 16 total samples, 10 xenotransplanted microglia and 6 in vitro differentiated IPSC microglia. The total number of observations (expressed genes) in this dataset is 13,421. 
+
 ```{r, eval = TRUE, message = FALSE}
 
 #Blurton jones 2019 data (IPSC-Microglia +/- Transplant ("Xenograft") into chimeric mice) ----
@@ -604,13 +591,12 @@ IPSC_Microglia_Blurton <- column_to_rownames(DGEList_Blurton_filtered_norm, var 
 
 ```
 
+The Svoboda dataset below will eventually contain 18 total samples: 6 microglia xenotransplanted for 10 days, 6 xenotransplanted for 60 days, and 6 in vitro differentiated IPSC microglia. The total number of observations (expressed genes) in this dataset is 13,433. 
+
 ```{r, eval = TRUE, message = FALSE}
 
 #Svoboda 2019 data, (IPSC-Microglia +/- Transplant ("Xenograft") into chimeric mice) ---- 
 
-#This processed dataset will contain 18 total samples of IPSC microglia 
-#(6 in transplant for 60 days, 6 in transplant for 10 days, and 6 differentiated in vitro (10 days))
-#The number of observations (expressed genes) for this dataset is 13,433
 #The processed data frames containing these data are stored in tbl's 
 #"IPSC_Microglia_Svoboda" (no GeneID column, gene names are row names) 
 #or "DGEList_Svoboda_filtered_norm" (maintains GeneID as a separate column)
@@ -734,19 +720,13 @@ colnames(DGEList_Svoboda_filtered_norm[2:ncol(DGEList_Svoboda_filtered_norm)]) <
 
 ```
 
+Now that all the datasets have been appropriately processed, I am going to join them together. We will accomplish this by adding each dataset to a list and then using purr::reduce() to apply left_join() to all elements of the list. This will create a tibble of all 118 samples with a total of 14,528 observations (genes). The number of observations comes from the Gosselin reference dataset, which had the largets number of samples (14,528). 
+
+This joining approach does introduce NA data into the aggregate tibble, since there are some genes that are not shared among all 6 constituent datasets. Removing any genes for which any samples ended up with an NA value leads to a removal of 4269 genes, leading to a final number of observations of 10,259 in the aggregate dataset. This loss of information is a key limitation of this meta-analysis approach and would need to be improved upon substantially for a publication-quality analysis. 
+
 ```{r, eval = TRUE, message = FALSE}
 
 #Data Aggregation ----
-
-#Here, I will add all 6 of the pre-processed datasets into a list, then use purrr::reduce() 
-#to apply left_join() to all the elements of this list This will create a tibble of all 118 samples 
-#with a total of 14,528 observations (expressed genes). The number of observations comes from the Gosselin 
-#reference dataset, which had the largest number of samples (14,528). 
-
-#However, this introduces NA data into the aggregate dataset, since other component
-#tibbles may have been missing some of those genes. Removing any genes for which any 
-#samples have NA vaues leads to a removal of 4269 genes, leading 
-#to a final number of observations of 10,259 in the aggregate dataset. 
 
 #For subsequent exploratory and DGE analysis, the generated tbl.df Aggregation_Set_Math will be used
 #This tibble will also be written out to a .tsv for sharing offline/etc
@@ -769,7 +749,7 @@ dim(Aggregation_Set_Math)
 #For each dataset, condition (eg ExVivo, InVitro, Transplanted, etc),
 #And cell type (microglia or macrophage, latter included as a sort of negative control)
 #Other categorical variables (EG HIV infectable? yes or no, etc) could be added to this study design file
-#to check other relationships between the datasets. Expand on this concept later
+#to check other relationships between the datasets. 
 
 labels_Aggregate <- colnames(Aggregation_Set_Math)
 studies_Aggregate <- c(rep("Gosselin_2017", 24), rep("Eggen_2017", 39), rep("Ryan_2020", 6), 
@@ -798,23 +778,39 @@ head(Study_Design_Aggregate)
 ```
 
 ### Results
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+Our first results will be several principal component analysis plots or PCA plots. PCA is a common unsupervised machine learning approach for exploratory analysis of transcriptomic data. It allows us to easily visualize the degree of similarity or difference between various sample groups through dimensionality reduction. 
 
 ```{r, eval = TRUE, message = FALSE}
 
 #Exploratory Analysis (PCA)----
 
-#Perform Principal Component Analysis (PCA) on the entire aggregated dataset.
-#This is a common unsupervised ML approach for exploratory analysis
-#of transcriptomic data. It allows us to visualize the degree of similarity / difference
-#between various samples through dimensionality reduction. 
-
 pca_res_aggregate <- prcomp(t(Aggregation_Set_Math), scale. = F, retx = T)
+ls(pca_res_aggregate)
 
+#The rotations indicate how much each individual gene contributes to each principal component
+#Sometimes referred to in formulas as "loadings"
+str(pca_res_aggregate$rotation)
+head(pca_res_aggregate$rotation[1:5, 1:4])
 
-pc_var_aggregate <- pca_res_aggregate$sdev^2  #Vector of Eigenvalues
-pc_per_aggregate <- round(pc_var_aggregate/sum(pc_var_aggregate)*100, 1) #Percentages of variance per principal component, for plot labels
-pca_res_df_aggregate <- as_tibble(pca_res_aggregate$x)  #Loadings, influence of each PCA on each sample, main data for plots
+#Store proportion of variance from each principal component (118 total) 
+#in a Vector of Eigenvalues
+pc_var_aggregate <- pca_res_aggregate$sdev^2  
+
+#Calculate percentages of variance (eg sdev^2) per principal component, for PCA plot labels
+pc_per_aggregate <- round(pc_var_aggregate/sum(pc_var_aggregate)*100, 1) 
+
+#Read the coordinates, the value of each PCA for each sample (all 118 samples), and store in a data frame.
+#main data for typical PCA plots of individual samples
+head(pca_res_aggregate$x[1:5, 1:10])
+pca_res_df_aggregate <- as_tibble(pca_res_aggregate$x)  
+
+#Before creating the PCA plot of the samples, use fviz_eig to show the variation 
+#due to each principal component. This is called a scree plot
+#The form of this scree plot suggests tha tprincipal components 1, 2, and 3 are worth investigating / retaining
+
+fviz_eig(pca_res_aggregate)
+
 
 #Plot Principal Components 1 and 2
 pca_plot_aggregate_1_2 <- ggplot(pca_res_df_aggregate, aes(x = PC2, y = PC1, 
@@ -839,18 +835,6 @@ pca_plot_aggregate_1_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC1, col
   theme_bw()
 ggplotly(pca_plot_aggregate_1_3)
 
-#Plot Principal Components 1 and 3 again, this time using celltype_Aggregate to distinguish Microglia and MDM in Ryan 2020 dataset
-#This is a quick and dirty (and less easily interprable) work around 
-pca_plot_aggregate_1_3_fill_MDM <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC1, color = condition_Aggregate, shape = studies_Aggregate,
-                                                           fill = celltype_Aggregate)) +
-  geom_point(size = 3, alpha = .5) + 
-  xlab(paste0("PC3 (", pc_per_aggregate[3], "%", ")")) +
-  ylab(paste0("PC1 (", pc_per_aggregate[1], "%", ")")) +
-  labs(title = "PCA Plot") + 
-  stat_ellipse(aes(color =  condition_Aggregate), #Add Elipse to help differentiate groups
-               linewidth = 0.9, level = 0.95) +
-  theme_bw()
-ggplotly(pca_plot_aggregate_1_3_fill_MDM)
 
 #Plot Principal Components 2 and 3
 pca_plot_aggregate_2_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC2, color = condition_Aggregate, shape = studies_Aggregate)) +
@@ -863,37 +847,67 @@ pca_plot_aggregate_2_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC2, col
   theme_bw()
 ggplotly(pca_plot_aggregate_2_3)
 
-#Use PCA coordinates ()
-#PCA Euclidean distances to the primary microglia samples were calculated 
-#between all pairs of points in each group, using PC1 and PC2 on the top 500 genes. 
-#Take a stab at this by 1: making thr rownames of pca_res_df_aggregate be our 118 sample names
-#2: Use only PC1 and PC2, just subset pca_res_df_aggregate
-#3: Then use the distance matrix command below? unsure
+#A goal of this analysis was to visualize and quantify the distance
+#between different samples on the PCA plots. This ended up being somewhat challenging
+#So the approach below is a simplified attempt to quantify the distance of 
+#the various sample groups from the reference datasets by using simple centroids (eg arithmetic means of coordinates)
+#of each group of samples based on their coordinates for principal components 1 and 2 and a simple
+#novel distance function (called 'euclidean', introduced below)
 
-distance_matrix <- dist(t(pca_res_df_aggregate), diag = TRUE)
+pc1_pc2_ExVivo <- pca_res_aggregate$x[1:63, 1:2]
+centroid_ExVivo <- c(mean(pc1_pc2_ExVivo[ , 1]), mean(pc1_pc2_ExVivo[ , 2]))
+
+pc1_pc2_KJS_iMg <- pca_res_aggregate$x[67:69, 1:2]
+centroid_KJS <- c(mean(pc1_pc2_KJS_iMg[ , 1]), mean(pc1_pc2_KJS_iMg[ , 2]))
+
+pc1_pc2_Abud_iMg <- pca_res_aggregate$x[76:84, 1:2]
+centroid_Abud <- c(mean(pc1_pc2_Abud_iMg[ , 1]), mean(pc1_pc2_Abud_iMg[ , 2]))
+
+pc1_pc2_BlurtonJones_XMg <- pca_res_aggregate$x[85:94, 1:2]
+centroid_BJ_XMg <- c(mean(pc1_pc2_BlurtonJones_XMg[ , 1]), mean(pc1_pc2_BlurtonJones_XMg[ , 2]))
+
+pc1_pc2_BlurtonJones_iMg <- pca_res_aggregate$x[95:100, 1:2]
+centroid_BJ_iMg <- c(mean(pc1_pc2_BlurtonJones_iMg[ , 1]), mean(pc1_pc2_BlurtonJones_iMg[ , 2]))
+
+pc1_pc2_Svoboda_xMg <- pca_res_aggregate$x[107:112, 1:2]
+centroid_Svoboda_xMg <- c(mean(pc1_pc2_Svoboda_xMg[ , 1]), mean(pc1_pc2_Svoboda_xMg[ , 2]))
+  
+pc1_pc2_Svoboda_iMg <- pca_res_aggregate$x[113:118, 1:2]
+centroid_Svoboda_iMg <- c(mean(pc1_pc2_Svoboda_iMg[ , 1]), mean(pc1_pc2_Svoboda_iMg[ , 2]))
+
+euclidean <- function(a, b) sqrt(sum((a - b)^2))
+
+Dist_to_Ref <- data.frame(Samples = c("KJS iMG", "Abud_iMg", "BJ_XMg", "BJ_iMg", "Svoboda_XMg", "Svoboda_iMg"),
+                          Distance = rep(NA, 6))
+Dist_to_Ref$Distance[1] <- euclidean(centroid_ExVivo, centroid_KJS)
+Dist_to_Ref$Distance[2] <- euclidean(centroid_ExVivo, centroid_Abud)
+Dist_to_Ref$Distance[3] <- euclidean(centroid_ExVivo, centroid_BJ_XMg)
+Dist_to_Ref$Distance[4] <- euclidean(centroid_ExVivo, centroid_BJ_iMg)
+Dist_to_Ref$Distance[5] <- euclidean(centroid_ExVivo, centroid_Svoboda_xMg)
+Dist_to_Ref$Distance[6] <- euclidean(centroid_ExVivo, centroid_Svoboda_iMg)
+
+Dist_to_Ref
 
 ```
 
-```{r, eval = TRUE, message = FALSE}
+The differential gene expression alayisis below includes the following pairwise comparisons:
+
+- Adult ExVivo Microglia (Eggen 2017) vs Juvenile ExVivo Microglia (Gosselin 2017)
+  - Differentially expressed genes may illustrate differences between adult and juvenile microglia. This comparison will likely identify minimal differentially            expressed genes compared to the three comparisons below 
+  
+- InVitro IPSC-Microglia (Blurton-Jones 2017) vs InVitro IPSC-Microglia (Ryan 2020)
+  - IPSC-Microglia from the Blurton-Jones study cluster closer to the reference datasets, DGE may be useful to show why
+  
+- Xenografted IPSC-Microglia (Blurton-Jones 2017) vs Xenografted IPSC-Microglia (Svoboda 2017)
+  - It is difficult to tell from the PCA but it looks like the Blurton-Jones xenografted cells slightly outperform those from the Svoboda study. DGE should show us        some of what makes the former microglia more ”life-like”
+  
+- Xenografted IPSC-Microglia (Svoboda 2017) vs InVitro IPSC-Microglia (Ryan 2020)
+  - Surprisingly, xenografted Microglia from the Svoboda study and InVitro IPSC-Microglia from the Ryan study were of comparable distance from the reference data sets      in the PCA plots, therefore worth further investigation. Additionally, due to the overt difference in the culture protocols for the cells that produced these two      datasets, this comparison should yield a relatively higher number of differentially expressed genes. 
+    
+
+```{r, eval = TRUE, message = FALSE, warning = FALSE}
 
 #Differential Gene Expression Analysis----
-
-#Pairwise comparisons included in this section as of 12/2022:
-
-#Adult ExVivo Microglia (Eggen 2017) vs Juvenile ExVivo Microglia (Gosselin 2017)
-#Find differences between juvenile and adult microglia
-
-#InVitro IPSC-Microglia (Blurton-Jones 2017) vs InVitro IPSC-Microglia (Ryan 2020)
-#IPSC-Microglia from the Blurton-Jones study cluster closer to the reference datasets, 
-#DGE may be useful to show why
-
-#Xenografted IPSC-Microglia (Blurton-Jones 2017) vs Xenografted IPSC-Microglia (Svoboda 2017)
-#It is difficult to tell from the PCA but it looks like the Blurton-Jones xenografted cells slightly 
-#outperform those from the Svoboda study. DGE should show us some of what makes the former microglia more ”life-like”
-
-#Xenografted IPSC-Microglia (Svoboda 2017) vs InVitro IPSC-Microglia (Ryan 2020)
-#Surprisingly, xenografted Microglia from the Svoboda study and InVitro IPSC-Microglia from the Ryan 
-#study were of comparable distance from the reference data sets in the PCA plots, therefore worth further investigation
 
 #Create a matrix of sample information and factor wrap to facilitate pairwise comparisons
 matrix_DGE <- c(rep("J_Microglia_ExVivo", 24), rep("A_Microglia_ExVivo", 39), rep("Ryan_MDM_InVitro", 3), 
@@ -910,28 +924,34 @@ design_matrix <-  model.matrix(~0 + matrix_DGE)
 colnames(design_matrix) <- levels(matrix_DGE)
 
 #Use limma::voom() to model the mean:variance relationship in our dataset. Necessary 
-#for providing weights in downstream linear modeling (lmfit())
-#Requires non-negative values, so will need to un log2 transform our aggregate dataset
+#for providing weights in downstream linear modeling. We will then fit a linear model to 
+#to the entire set of gene expression data, eg to each individual gene / probe using lmFit()
+
+#The output linear model will then be used to evaluate contrasts for the appropriate pairwise comparisons,
+#generate statistics for individual genes using eBayes(), and summarize the significant differentially expressed 
+#genes using a top table. 
+
+#Voom() Requires non-negative values, so will need to un log2 transform our aggregate dataset
 #Aggregation_Set_Math_no_log still has filtered / normalized data but now the 
-#Units are just transcripts per million (TPM) instead of log2(TPM) which is 
-#typically reported
+#Units are just transcripts per million (TPM) instead of log2(TPM) which is the typically reported metric
 
 Aggregation_Set_Math_no_log <- 2^Aggregation_Set_Math
 V_Aggregation_Set_Math <- voom(Aggregation_Set_Math_no_log, design_matrix, plot = TRUE)
 
-#Fir a linear model to the now weighted dataset
+#Fit a linear model to the now weighted dataset
 fit <- lmFit(V_Aggregation_Set_Math, design_matrix)
 
 #Extract the expression data back out from the EList created by voom
 #and redo log transformation. Contains some NA, may have to remove later if necessary
 V_Aggregation_Set_Math_tbl <- (as_tibble(log2(V_Aggregation_Set_Math$E), rownames = "GeneID"))
 
+
 #Use our design matrix file to begin creating contrasts
 #corresponding to our pairwise comparisons of interest
 #Extracts the linear model created above, get's statistics on it
 #using eBayes(), and then summarizes top differentially expressed genes / DEGs in a topTable
 #Beginning with a comparison of the two reference data sets (Eggen and Gosselin)
-contrast.matrix_Juv_Adlt <- makeContrasts(Juv_v_Adlt = A_Microglia_ExVivo - J_Microglia_ExVivo, levels = design_matrix)    #looper here 
+contrast.matrix_Juv_Adlt <- makeContrasts(Juv_v_Adlt = A_Microglia_ExVivo - J_Microglia_ExVivo, levels = design_matrix)    
 fits_Juv_Adlt <- contrasts.fit(fit, contrast.matrix_Juv_Adlt)
 ebFit_Juv_Adlt <- eBayes(fits_Juv_Adlt)
 top_hits_Juv_Adlt <- topTable(ebFit_Juv_Adlt, adjust = "BH", coef = 1, number = 1500, sort.by = "logFC")
@@ -944,7 +964,7 @@ EnhancedVolcano(top_hits_Juv_Adlt, lab = gene_names_top_1, x = 'logFC',
                 pCutoff = 10e-6,
                 FCcutoff = 2.0,
                 pointSize = 3.0,
-                labSize = 6.0,
+                labSize = 4.0,
                 shape = c(1, 4, 23, 25),
                 colAlpha = 1)
 
@@ -968,19 +988,16 @@ top_hits_Abud_Ryan <- topTable(ebFit_Abud_Ryan, adjust = "BH", coef = 1, number 
 top_hits_Abud_Ryan <- as_tibble(top_hits_Abud_Ryan, rownames = "GeneID")
 gene_names_top_2 <- top_hits_Abud_Ryan$GeneID
 
-#Now Use top table to create an enhanced volcano plot and visualize differentially expressed genes
 EnhancedVolcano(top_hits_Abud_Ryan, lab = gene_names_top_2, x = 'logFC',
                 y = 'adj.P.Val', title = "Abud vs Ryan InVitro MG",
                 pCutoff = 10e-6,
                 FCcutoff = 2.0,
                 pointSize = 3.0,
-                labSize = 6.0,
+                labSize = 4.0,
                 shape = c(1, 4, 23, 25),
                 colAlpha = 1)
 
-#now determine numbers of significant differentially expressed genes, summarize results
-#And store all differentially expressed genes for this comparison (in either direction)
-#In a data frame, and write those results to a tsv for future sharing or GSEA
+
 results_Abud_Ryan <- decideTests(ebFit_Abud_Ryan, method="global", adjust.method="BH", p.value = 0.01, lfc = 2)
 head(results_Abud_Ryan)
 summary(results_Abud_Ryan)
@@ -998,7 +1015,6 @@ top_hits_BJ_Svoboda <- topTable(ebFit_BJ_Svoboda, adjust = "BH", coef = 1, numbe
 top_hits_BJ_Svoboda <- as_tibble(top_hits_BJ_Svoboda, rownames = "GeneID")
 gene_names_top_3 <- top_hits_BJ_Svoboda$GeneID
 
-#Now Use top table to create an enhanced volcano plot and visualize differentially expressed genes
 EnhancedVolcano(top_hits_BJ_Svoboda, lab = gene_names_top_3, x = 'logFC',
                 y = 'adj.P.Val', title = "Blurton-Jones vs Svoboda Xenotransplanted MG",
                 pCutoff = 10e-6,
@@ -1008,9 +1024,6 @@ EnhancedVolcano(top_hits_BJ_Svoboda, lab = gene_names_top_3, x = 'logFC',
                 shape = c(1, 4, 23, 25),
                 colAlpha = 1)
 
-#now determine numbers of significant differentially expressed genes, summarize results
-#And store all differentially expressed genes for this comparison (in either direction)
-#In a data frame, and write those results to a tsv for future sharing or GSEA
 results_BJ_Svoboda <- decideTests(ebFit_BJ_Svoboda, method="global", adjust.method="BH", p.value = 0.01, lfc = 2)
 head(results_BJ_Svoboda)
 summary(results_BJ_Svoboda)
@@ -1028,7 +1041,6 @@ top_hits_Svoboda_Ryan <- topTable(ebFit_Svoboda_Ryan, adjust = "BH", coef = 1, n
 top_hits_Svoboda_Ryan <- as_tibble(top_hits_Svoboda_Ryan, rownames = "GeneID")
 gene_names_top_4 <- top_hits_Svoboda_Ryan$GeneID
 
-#Now Use top table to create an enhanced volcano plot and visualize differentially expressed genes
 EnhancedVolcano(top_hits_Svoboda_Ryan, lab = gene_names_top_4, x = 'logFC',
                 y = 'adj.P.Val', title = "Svoboda Xenotransplanted MG vs Ryan InVitro IPSC-MG",
                 pCutoff = 10e-6,
@@ -1038,9 +1050,6 @@ EnhancedVolcano(top_hits_Svoboda_Ryan, lab = gene_names_top_4, x = 'logFC',
                 shape = c(1, 4, 23, 25),
                 colAlpha = 0.5)
 
-#now determine numbers of significant differentially expressed genes, summarize results
-#And store all differentially expressed genes for this comparison (in either direction)
-#In a data frame, and write those results to a tsv for future sharing or GSEA
 results_Svoboda_Ryan <- decideTests(ebFit_Svoboda_Ryan, method="global", adjust.method="BH", p.value = 0.01, lfc = 2)
 head(results_Svoboda_Ryan)
 summary(results_Svoboda_Ryan)
@@ -1051,4 +1060,71 @@ write_tsv(ddx_genes_Svoboda_Ryan, "ddx_Genes_Svoboda_v_Ryan.tsv") #write to .tsv
 
 ```
 
+Below I will perform a simplified gene set expression analysis (GSEA) using only the pairwise comparison between the Ryan and Svoboda datasets, as in the volcano plot above. I selected this comparison because these datasets had the most differentially expressed genes out of any of our sets of comparisons. This non-exhaustive analysis is included just to show the process of generating GSEA data for this sort of input. 
+```{r, eval = TRUE, message = FALSE, warning = FALSE}
+
+#GSEA Analysis using Pairwise comparisons from DGE Analysis ----
+
+#read in annotations for popular gene sets
+c2cp <- read.gmt("c2.all.v7.1.symbols.gmt")
+c5cp <- read.gmt("c5.all.v7.1.symbols.gmt")
+cHcp <- read.gmt("c7.all.v7.1.symbols.gmt")
+
+#arrange the top hits from this pairwise comparison in order by logFC
+#Eg genes most highly upregulated by Ryan samples compared to 
+#Svoboda samples are sorted to the top
+
+top_hits_Svoboda_Ryan <- top_hits_Svoboda_Ryan %>%
+  arrange(desc(logFC))
+
+#get a list of the gene names in order of highest logFC for use in GSEA
+Gene_list_Svoboda_Ryan <- top_hits_Svoboda_Ryan$logFC
+names(Gene_list_Svoboda_Ryan) <- top_hits_Svoboda_Ryan$GeneID
+
+#use our ranked list to perform GSEA, store our results in a tibble
+Ryan_iMG_v_Svoboda_xMg_GSEA_res <- GSEA(Gene_list_Svoboda_Ryan, TERM2GENE = c2cp, verbose = FALSE)
+Ryan_iMG_v_Svoboda_xMg_GSEA_res_df <- as_tibble(Ryan_iMG_v_Svoboda_xMg_GSEA_res)
+dim(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df)
+head(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df)
+
+#generate an interactive datatable to more easily visualize the results
+
+datatable(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df[ , c(1, 3, 4:7)], 
+          extensions = c("KeyTable", "FixedHeader"),
+          caption = "Signatures enriched in Ryan iMg (NES > 0) or Svoboda XMg (NES < 0)",
+          options = list(keys = TRUE, searchHighlight = TRUE, pageLength = 10, lengthMenu = c("10", "25", "50"))) %>%
+  formatRound(columns=c(2:7), digits=8)
+
+#Plot some of the most highly enriched (either in Ryan or Svoboda) pathways by Normalized Enrichment score,
+#plot also automatically includes aesthetics for count (number of genes in our data that are found in a given pathway),
+#and adjusted p value
+
+dotplot(Ryan_iMG_v_Svoboda_xMg_GSEA_res, x = "NES", showCategory = 15) + ggtitle("Dot Plot for Ryan iMg vs Svoboda xMg GSEA")
+
+#plot key enrichments
+
+#Several cancer pathways are enriched in the Ryan iMicroglia
+#For cultured cells, this can suggest that changes associated with 
+#an artificially long life on a plate are occuring. This might suggest
+#that these microglia are moving further away from naturel behavior and 
+#are becoming quasi-immortalized like cancer cells 
+gseaplot2(Ryan_iMG_v_Svoboda_xMg_GSEA_res,
+          geneSetID = 22,
+          pvalue_table = FALSE,
+          title = Ryan_iMG_v_Svoboda_xMg_GSEA_res$Description[22])
+
+#Interferon gamma response is up in the xenografted microglia
+#Other interferon related pathways are similarly enriched in the Svoboda
+#microglia. These signatures are typically associated with anti-viral activity
+#and could inticate that these microglia were behaving as expected in the xenograft 
+#environment
+gseaplot2(Ryan_iMG_v_Svoboda_xMg_GSEA_res,
+          geneSetID = 5,
+          pvalue_table = FALSE,
+          title = Ryan_iMG_v_Svoboda_xMg_GSEA_res$Description[5])
+
+
+```
 ### Conclusions 
+
+asdfasdf

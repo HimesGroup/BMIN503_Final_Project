@@ -24,11 +24,20 @@ install.packages("purrr")
 install.packages("plotly")
 install.packages("gt")
 install.packages("magrittr")
+install.packages("geosphere")
 BiocManager::install("ensembldb") 
 BiocManager::install("AnnotationHub") 
 BiocManager::install("rhdf5") 
 BiocManager::install("mixOmics") 
 BiocManager::install('EnhancedVolcano')
+BiocManager::install("factoextra")
+BiocManager::install("GSVA")
+BiocManager::install("gprofiler2")
+BiocManager::install("GSEABase")
+BiocManager::install("clusterProfiler")
+BiocManager::install("enrichplot")
+install.packages("DT")
+
 
 library(BiocManager)
 library(tidyverse)
@@ -55,6 +64,14 @@ library(mixOmics)
 library(gt)
 library(EnhancedVolcano)
 library(magrittr)
+library(factoextra)
+library(GSVA)
+library(gprofiler2)
+library(GSEABase)
+library(clusterProfiler)
+library(enrichplot)
+library(geosphere)
+library(DT)
 
 #Gosselin Data, Fetal Ex-Vivo Microglia (Reference) ----
 
@@ -741,11 +758,31 @@ head(Study_Design_Aggregate)
 #between various samples through dimensionality reduction. 
 
 pca_res_aggregate <- prcomp(t(Aggregation_Set_Math), scale. = F, retx = T)
+ls(pca_res_aggregate)
 
+#The rotations indicate how much each individual gene contributes to each principal component
+#Sometimes referred to in formulas as "loadings"
+str(pca_res_aggregate$rotation)
+head(pca_res_aggregate$rotation[1:5, 1:4])
 
-pc_var_aggregate <- pca_res_aggregate$sdev^2  #Vector of Eigenvalues
-pc_per_aggregate <- round(pc_var_aggregate/sum(pc_var_aggregate)*100, 1) #Percentages of variance per principal component, for plot labels
-pca_res_df_aggregate <- as_tibble(pca_res_aggregate$x)  #Loadings, influence of each PCA on each sample, main data for plots
+#Store proportion of variance from each principal component (118 total) 
+#in a Vector of Eigenvalues
+pc_var_aggregate <- pca_res_aggregate$sdev^2  
+
+#Calculate percentages of variance (eg sdev^2) per principal component, for PCA plot labels
+pc_per_aggregate <- round(pc_var_aggregate/sum(pc_var_aggregate)*100, 1) 
+
+#Read the coordinates, the value of each PCA for each sample (all 118 samples), and store in a data frame.
+#main data for typical PCA plots of individual samples
+head(pca_res_aggregate$x[1:5, 1:10])
+pca_res_df_aggregate <- as_tibble(pca_res_aggregate$x)  
+
+#Before creating the PCA plot of the samples, use fviz_eig to show the variation 
+#due to each principal component. This is called a scree plot
+#The form of this scree plot suggests tha tprincipal components 1, 2, and 3 are worth investigating / retaining
+
+fviz_eig(pca_res_aggregate)
+
 
 #Plot Principal Components 1 and 2
 pca_plot_aggregate_1_2 <- ggplot(pca_res_df_aggregate, aes(x = PC2, y = PC1, 
@@ -770,18 +807,6 @@ pca_plot_aggregate_1_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC1, col
   theme_bw()
 ggplotly(pca_plot_aggregate_1_3)
 
-#Plot Principal Components 1 and 3 again, this time using celltype_Aggregate to distinguish Microglia and MDM in Ryan 2020 dataset
-#This is a quick and dirty (and less easily interprable) work around 
-pca_plot_aggregate_1_3_fill_MDM <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC1, color = condition_Aggregate, shape = studies_Aggregate,
-                                                           fill = celltype_Aggregate)) +
-  geom_point(size = 3, alpha = .5) + 
-  xlab(paste0("PC3 (", pc_per_aggregate[3], "%", ")")) +
-  ylab(paste0("PC1 (", pc_per_aggregate[1], "%", ")")) +
-  labs(title = "PCA Plot") + 
-  stat_ellipse(aes(color =  condition_Aggregate), #Add Elipse to help differentiate groups
-               linewidth = 0.9, level = 0.95) +
-  theme_bw()
-ggplotly(pca_plot_aggregate_1_3_fill_MDM)
 
 #Plot Principal Components 2 and 3
 pca_plot_aggregate_2_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC2, color = condition_Aggregate, shape = studies_Aggregate)) +
@@ -794,15 +819,46 @@ pca_plot_aggregate_2_3 <- ggplot(pca_res_df_aggregate, aes(x = PC3, y = PC2, col
   theme_bw()
 ggplotly(pca_plot_aggregate_2_3)
 
-#Use PCA coordinates ()
-#PCA Euclidean distances to the primary microglia samples were calculated 
-#between all pairs of points in each group, using PC1 and PC2 on the top 500 genes. 
-#Take a stab at this by 1: making thr rownames of pca_res_df_aggregate be our 118 sample names
-#2: Use only PC1 and PC2, just subset pca_res_df_aggregate
-#3: Then use the distance matrix command below? unsure
+#A goal of this analysis was to visualize and quantify the distance
+#between different samples on the PCA plots. This ended up being somewhat challenging
+#So the approach below is a simplified attempt to quantify the distance of 
+#the various sample groups from the reference datasets by using simple centroids (eg arithmetic means of coordinates)
+#of each group of samples based on their coordinates for principal components 1 and 2 and a simple
+#novel distance function (called 'euclidean', introduced below)
 
+pc1_pc2_ExVivo <- pca_res_aggregate$x[1:63, 1:2]
+centroid_ExVivo <- c(mean(pc1_pc2_ExVivo[ , 1]), mean(pc1_pc2_ExVivo[ , 2]))
 
-distance_matrix <- dist(t(pca_res_df_aggregate), diag = TRUE)
+pc1_pc2_KJS_iMg <- pca_res_aggregate$x[67:69, 1:2]
+centroid_KJS <- c(mean(pc1_pc2_KJS_iMg[ , 1]), mean(pc1_pc2_KJS_iMg[ , 2]))
+
+pc1_pc2_Abud_iMg <- pca_res_aggregate$x[76:84, 1:2]
+centroid_Abud <- c(mean(pc1_pc2_Abud_iMg[ , 1]), mean(pc1_pc2_Abud_iMg[ , 2]))
+
+pc1_pc2_BlurtonJones_XMg <- pca_res_aggregate$x[85:94, 1:2]
+centroid_BJ_XMg <- c(mean(pc1_pc2_BlurtonJones_XMg[ , 1]), mean(pc1_pc2_BlurtonJones_XMg[ , 2]))
+
+pc1_pc2_BlurtonJones_iMg <- pca_res_aggregate$x[95:100, 1:2]
+centroid_BJ_iMg <- c(mean(pc1_pc2_BlurtonJones_iMg[ , 1]), mean(pc1_pc2_BlurtonJones_iMg[ , 2]))
+
+pc1_pc2_Svoboda_xMg <- pca_res_aggregate$x[107:112, 1:2]
+centroid_Svoboda_xMg <- c(mean(pc1_pc2_Svoboda_xMg[ , 1]), mean(pc1_pc2_Svoboda_xMg[ , 2]))
+  
+pc1_pc2_Svoboda_iMg <- pca_res_aggregate$x[113:118, 1:2]
+centroid_Svoboda_iMg <- c(mean(pc1_pc2_Svoboda_iMg[ , 1]), mean(pc1_pc2_Svoboda_iMg[ , 2]))
+
+euclidean <- function(a, b) sqrt(sum((a - b)^2))
+
+Dist_to_Ref <- data.frame(Samples = c("KJS iMG", "Abud_iMg", "BJ_XMg", "BJ_iMg", "Svoboda_XMg", "Svoboda_iMg"),
+                          Distance = rep(NA, 6))
+Dist_to_Ref$Distance[1] <- euclidean(centroid_ExVivo, centroid_KJS)
+Dist_to_Ref$Distance[2] <- euclidean(centroid_ExVivo, centroid_Abud)
+Dist_to_Ref$Distance[3] <- euclidean(centroid_ExVivo, centroid_BJ_XMg)
+Dist_to_Ref$Distance[4] <- euclidean(centroid_ExVivo, centroid_BJ_iMg)
+Dist_to_Ref$Distance[5] <- euclidean(centroid_ExVivo, centroid_Svoboda_xMg)
+Dist_to_Ref$Distance[6] <- euclidean(centroid_ExVivo, centroid_Svoboda_iMg)
+
+Dist_to_Ref
 
 #Differential Gene Expression Analysis----
 
@@ -979,4 +1035,65 @@ write_tsv(ddx_genes_Svoboda_Ryan, "ddx_Genes_Svoboda_v_Ryan.tsv") #write to .tsv
 
 #GSEA Analysis using Pairwise comparisons from DGE Analysis ----
 
-#asdfasdf
+#This will be a simplified GSEA just to show the process
+#We will use only the final pairwise comparison, between the Ryan and Svoboda datasets
+#Since this comparison yielded the most differentially expressed genes
+
+#read in annotations for popular gene sets
+c2cp <- read.gmt("c2.all.v7.1.symbols.gmt")
+c5cp <- read.gmt("c5.all.v7.1.symbols.gmt")
+cHcp <- read.gmt("c7.all.v7.1.symbols.gmt")
+
+#arrange the top hits from this pairwise comparison in order by logFC
+#Eg genes most highly upregulated by Ryan samples compared to 
+#Svoboda samples are sorted to the top
+
+top_hits_Svoboda_Ryan <- top_hits_Svoboda_Ryan %>%
+  arrange(desc(logFC))
+
+#get a list of the gene names in order of highest logFC for use in GSEA
+Gene_list_Svoboda_Ryan <- top_hits_Svoboda_Ryan$logFC
+names(Gene_list_Svoboda_Ryan) <- top_hits_Svoboda_Ryan$GeneID
+
+#use our ranked list to perform GSEA, store our results in a tibble
+Ryan_iMG_v_Svoboda_xMg_GSEA_res <- GSEA(Gene_list_Svoboda_Ryan, TERM2GENE = c2cp, verbose = FALSE)
+Ryan_iMG_v_Svoboda_xMg_GSEA_res_df <- as_tibble(Ryan_iMG_v_Svoboda_xMg_GSEA_res)
+dim(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df)
+head(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df)
+
+#generate an interactive datatable to more easily visualize the results
+
+datatable(Ryan_iMG_v_Svoboda_xMg_GSEA_res_df[ , c(1, 3, 4:7)], 
+          extensions = c("KeyTable", "FixedHeader"),
+          caption = "Signatures enriched in Ryan iMg (NES > 0) or Svoboda XMg (NES < 0)",
+          options = list(keys = TRUE, searchHighlight = TRUE, pageLength = 10, lengthMenu = c("10", "25", "50"))) %>%
+  formatRound(columns=c(2:7), digits=8)
+
+#Plot some of the most highly enriched (either in Ryan or Svoboda) pathways by Normalized Enrichment score,
+#plot also automatically includes aesthetics for count (number of genes in our data that are found in a given pathway),
+#and adjusted p value
+
+dotplot(Ryan_iMG_v_Svoboda_xMg_GSEA_res, x = "NES", showCategory = 15) + ggtitle("Dot Plot for Ryan iMg vs Svoboda xMg GSEA")
+
+#plot key enrichments
+
+#Several cancer pathways are enriched in the Ryan iMicroglia
+#For cultured cells, this can suggest that changes associated with 
+#an artificially long life on a plate are occuring. This might suggest
+#that these microglia are moving further away from naturel behavior and 
+#are becoming quasi-immortalized like cancer cells 
+gseaplot2(Ryan_iMG_v_Svoboda_xMg_GSEA_res,
+          geneSetID = 22,
+          pvalue_table = FALSE,
+          title = Ryan_iMG_v_Svoboda_xMg_GSEA_res$Description[22])
+
+#Interferon gamma response is up in the xenografted microglia
+#Other interferon related pathways are similarly enriched in the Svoboda
+#microglia. These signatures are typically associated with anti-viral activity
+#and could inticate that these microglia were behaving as expected in the xenograft 
+#environment
+gseaplot2(Ryan_iMG_v_Svoboda_xMg_GSEA_res,
+          geneSetID = 5,
+          pvalue_table = FALSE,
+          title = Ryan_iMG_v_Svoboda_xMg_GSEA_res$Description[5])
+
