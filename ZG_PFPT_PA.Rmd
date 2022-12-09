@@ -3,6 +3,8 @@ title: "Physical Activity Level and Performance of Pelvic Floor Muscle Exercises
 author: "Zoe Gan"
 output: 
   html_document:
+    toc: true
+    toc_float: true
     theme: paper 
     highlight: tango
 ---
@@ -40,11 +42,11 @@ Descriptive statistics were used to compare the following characteristics betwee
 #install.packages("labelled")
 #install.packages("gtsummary")
 #install.packages("webshot2")
+#install.packages("MASS")
 ```
 #### Loading Packages
 ```{r}
 library(tidyverse) 
-library(dplyr)
 library(ggplot2)
 library(viridis)
 library(modelsummary)
@@ -53,13 +55,15 @@ library(tableone)
 library(labelled)
 library(gtsummary)
 library(webshot2)
+library(dplyr)
 ```
-#### Reading in Data
+#### Reading in data
 ```{r}
 bladderhealth.df <- read.csv("PennBladderHealthStu_DATA_2022-09-23_1043.csv")
 
 #Remove email addresses
 bladderhealth.df <- select(bladderhealth.df, -email) #1755 observations
+
 ```
 #### Cleaning data
 
@@ -78,23 +82,14 @@ bladderhealth.df <- bladderhealth.df %>%
 
 ##### Plan to evaluate the following variables to see if they predict doing PFM exercises (univariate and multivariable models):
 
-age (demo_age)
-bmi (bmi, NEED TO CREATE)
-gender (demo_gender)
-education level (demo_edu)
-race (demo_race)
-ethnicity (demo_hisp)
-smoking hx (demo_cig)
-insurance (demo_insurance)
-general health (health_gen)
-vaginal deliveries (repro_children)
-sexually active (sex_active)
-LURN-SI 29 score (lurnsi29, NEED TO CREATE)
-physical activity level (ipaq, NEED TO CREATE)
+age (demo_age), bmi (bmi, NEED TO CREATE), gender (demo_gender), education level (demo_edu), race (demo_race), ethnicity (demo_hisp), smoking hx (demo_cig), insurance (demo_insurance), general health (health_gen), vaginal deliveries (repro_children), sexually active (sex_active), LURN-SI 29 score (lurnsi29, NEED TO CREATE), physical activity level (ipaq, NEED TO CREATE)
 
 3 variables need to be created: bmi, lurnsi29, and ipaq. Will create ipaq variable first for comparing questionnaire item answers between physical activity categories, then create bmi and lurnsi29 variables for the linear regression analyses.
 
 ##### Format data to calculate IPAQ score (ipaq)
+
+Will first evaluate all time variables. These are individual variables for minutes, hours, and days for each level of activity (low, moderate, and high) that will be used to calculate IPAQ score and subsequently determine IPAQ category (low, moderate, and high physical activity level). Before using these for the IPAQ score calculation, need to ensure they are the proper class and don't have inaccurate outlying values (for example, >7 days of physical activity entered per week). IPAQ scoring guidelines also recommend a 15 hour per day cutoff for physical activity (and recoding such values to minutes instead, as they are assumed to have been erroneously entered in the "hours" category) and recoding any activity minute entries <10 minutes to 0 minutes and >180 minutes to 180 minutes (except for sitting time). Therefore, data cleaning is required before using the time variables for IPAQ score calculation.
+
 ```{r}
 
 #Check class of time variables
@@ -102,8 +97,8 @@ class(bladderhealth.df$pa_66a_days)
 
 #Convert time variables from character to numeric
 cols <- c("pa_66a_days", "pa_66b_hours", "pa_66b_minutes", "pa_67a_days", "pa_67b_hours", "pa_67b_minutes", "pa_68a_days", "pa_68b_hours", "pa_68b_minutes", "pa_69_hours", "pa_69_minutes")
-bladderhealth.df[cols] <- sapply(bladderhealth.df[cols], as.numeric)
-#Warning that NAs introduced by coercion. This is ok for our purposes.
+suppressWarnings(bladderhealth.df[cols] <- sapply(bladderhealth.df[cols], as.numeric))
+#Initially received a warning that NAs were introduced by coercion. This is ok for our purposes, so the warning has been suppressed.
 
 #Confirm all time variables are now numeric. 
 sapply(bladderhealth.df[cols], class)
@@ -186,7 +181,7 @@ bladderhealth_clean.df <- bladderhealth_clean.df %>%
 timecols <- c("minutes_day_66", "minutes_day_67", "minutes_day_68", "minutes_day_69")
 sapply(bladderhealth_clean.df[timecols], range) #Confirmed no activity variables have time over 960 min/day (would otherwise have to drop subjects with outlying values per IPAQ data cleaning recs). 
 
-#Calculate total MET-min/week for each subject.
+#Calculate total MET-min/week (metabolic equivalents, as part of IPAQ scoring) for each subject.
 bladderhealth_clean.df <- bladderhealth_clean.df %>% 
   mutate(MET_min_week = 8*pa_66a_days*minutes_day_66 + 4*pa_67a_days*minutes_day_67 + 3.3*pa_68a_days*minutes_day_68)
 
@@ -297,7 +292,8 @@ table(bladderhealth_clean.df$repro_children) #answers include "no", "none", and 
 ##### Create new data frame for linear regression analyses 
 Put all the code together to clean up height & weight.
 ```{r}
-bladderhealth_mv.df <- bladderhealth_clean.df %>% 
+suppressWarnings({
+  bladderhealth_mv.df <- bladderhealth_clean.df %>% 
 mutate(demo_height = ifelse(demo_height_cm == "1.68", 21, demo_height)) %>%
   mutate(demo_height_cm = ifelse(demo_height_cm == "1.68", NA, demo_height_cm)) %>%
   mutate(demo_height = ifelse(demo_height_cm == "62", 17, demo_height)) %>%
@@ -321,6 +317,7 @@ mutate(demo_height = ifelse(demo_height == "6", 52, ifelse(demo_height == "8", 5
   mutate(demo_weight_kg = as.numeric(demo_weight_kg)) %>%
   mutate(demo_weight = ifelse(is.na(demo_weight) & (!is.na(demo_weight_kg)), demo_weight_kg*2.2, demo_weight)) %>%
   mutate(demo_weight_kg = ifelse(!is.na(demo_weight_kg), NA, demo_weight_kg))
+  }) #Initial warning that NAs induced by coercion. This is ok for our purposes, so warnings have been suppressed.
 
 #Recheck height & weight variables
 table(bladderhealth_mv.df$demo_height) #range 52-78 inches, appears reasonable
@@ -593,27 +590,20 @@ While the top reason given for not doing Kegels or PFM exercises more was "other
 Create Table 1 comparing baseline characteristics between binary outcome groups (women who are not doing Kegels, vs. women doing Kegels several times a month or more).
 
 ```{r}                         
-#Create a variable list to use for Table 1, including both LURN SI-29 score (all urinary symptoms) and CASUS score (incontinence symptoms only). Then create lists for categorical and numeric variables.
-listVarsT1 <- c("age", "bmi", "edu", "race", "hisp", "cig_hx", "insurance", "health_gen", "sex_hx", "vag_del", "lurnsi29cat", "casus_total_cat", "ipaq")
-catVarsT1 <- c("edu", "race", "hisp", "cig_hx", "insurance", "health_gen", "sex_hx", "vag_del", "lurnsi29cat", "casus_total_cat", "ipaq")
 
-#Create a prelim table 1 for overall cohort characteristics. 
-table1pre <- CreateTableOne(vars = listVarsT1, data = bladderhealth_mv.df, factorVars = catVarsT1)
-print(table1pre, varLabels = TRUE)
+listVars_tbl_summ <- c("age", "bmi", "edu", "race", "hisp", "cig_hx", "insurance", "health_gen", "sex_hx", "vag_del", "lurnsi29cat", "casus_total_cat", "ipaq", "kegel_89_binary")
+bladderhealth_mv.df %>% 
+  select(listVars_tbl_summ) %>%
+  tbl_summary(by = kegel_89_binary) %>%
+  italicize_labels() %>%
+  add_p() %>%
+  bold_p()
 
-#Assess missingness and normality of variables.
-summary(table1pre) 
-#All variables missing <20 values. Age is not highly skewed (skew 0.3 < 1), while BMI is skewed (skew 1.4 > 1); will use mean/SD for age and median/IQR for BMI.
-nonnormVars <- "bmi"
-
-#Stratify Table 1 by binary outcome groups (doing Kegels several times a month or more, vs not). This package uses Chi-square test for comparisons between categorical variables and one-way ANOVA for continuous variables.
-table1 <- CreateTableOne(listVarsT1, bladderhealth_mv.df, catVarsT1, strata = c("kegel_89_binary"))
-print(table1, varLabels = TRUE)
 ```
 
-Compared to women who are not doing Kegels, women doing Kegels several times a month or more are significantly older (P = 0.042), have more of a smoking history (i.e. smoked more than 100 cigarettes throughout their lifetime, P = 0.003), are less insured (P = 0.005), have a history of sexual activity (P = 0.040), have worse urinary symptoms based on LURN SI-29 scores (P = 0.020), and have higher physical activity level based on IPAQ score (P = 0.003). 
+Compared to women who are not doing Kegels, women doing Kegels several times a month or more are significantly older (P = 0.028), have more of a smoking history (i.e. smoked more than 100 cigarettes throughout their lifetime, P = 0.002), are less insured (P = 0.003), have a history of sexual activity (P = 0.025), have worse urinary symptoms based on LURN SI-29 scores (P = 0.020), and have higher physical activity level based on IPAQ score (P = 0.003). 
 
-#### Univariate logistic regression 
+#### Univariable logistic regression 
 
 Determine which variables are associated with women doing Kegels several times a month or more.
 ```{r}
@@ -629,26 +619,34 @@ univar <- bladderhealth_mv.df %>%
   ) %>%
   add_nevent() %>%    # add number of events of the outcome
   bold_p() %>%        # bold p-values under a given threshold (default 0.05)
-  bold_labels()
+  bold_labels() %>%
+  modify_caption("Univariable Logistic Regression")
+                 
 univar
 
 ```
 
-On univariate regression, variables significantly associated with performing Kegels at least several times a month or more are older age, lifetime smoking history of 100 cigarettes or more, being uninsured, having a history of sexual activity, higher LURN SI-29 score category (i.e. more severe urinary symptoms), and higher IPAQ activity category (i.e. more physically active).
+On univariable regression, variables significantly associated with performing Kegels at least several times a month or more are older age, lifetime smoking history of 100 cigarettes or more, being uninsured, having a history of sexual activity, higher LURN SI-29 score category (i.e. more severe urinary symptoms), and higher IPAQ activity category (i.e. more physically active).
                                         
 #### Multivariable logistic regression
 
 Determine which variables are associated with women doing Kegels several times a month or more.
 ```{r}
   
+#Drop missing values
+bladderhealth_mv2.df <- bladderhealth_mv.df %>% drop_na(all_of(listVars_tbl_summ)) #1713 to 1669 observations
+
+#Run multivariable regression
 kegel89.fit <- glm(kegel_89_binary ~ age + bmi + edu + race + hisp + cig_hx + insurance + health_gen + sex_hx + vag_del + lurnsi29cat + ipaq,
-                  data = bladderhealth_mv.df, 
+                  data = bladderhealth_mv2.df, 
                   family = binomial())
 summary(kegel89.fit) 
+
 
 ```
 
 On multivariable regression, variables significantly associated with performing PFM exercises at least several times a month or more are high IPAQ activity category and lack of insurance coverage. 
+
 
 ##### Repeat regression for casus_total_cat (incontinence symptoms only) instead of lurnsi29cat (all urinary symptoms)
 ```{r}
@@ -664,10 +662,12 @@ mv <- tbl_regression(kegel89.fit,
                      exponentiate = TRUE, 
                      pvalue_fun = ~style_pvalue(.x, digits = 2)) %>%
   bold_p() %>%        # bold p-values under a given threshold (default 0.05)
-  bold_labels()
+  bold_labels() %>%
+  modify_caption("Multivariable Logistic Regression")
 
 #Combine multivariable and univariate analyses into a single table
-univar_mv <- tbl_merge(tbls = list(univar, mv), tab_spanner = c("**Univariate**", "**Multivariable**"))
+univar_mv <- tbl_merge(tbls = list(univar, mv), tab_spanner = c("**Univariable**", "**Multivariable**")) %>%
+   modify_caption("Logistic Regression for Performance of Pelvic Floor Muscle Exercises")
 univar_mv
 
 #Save table
@@ -676,18 +676,9 @@ univar_mv %>% as_gt() %>% gt::gtsave(filename = "PA PFM logistic regression.png"
 #### Given the surprising finding that insured women are less likely to do PFM exercises, perform exploratory analyses.
 ```{r}
 
-#Does the proportion of women learning about Kegels from a doctor, nurse, or therapist (kegel_92___4) differ between insured and uninsured?
-table(bladderhealth_mv.df$kegel_92___4, bladderhealth_mv.df$insurance)
-prop.table(table(bladderhealth_mv.df$kegel_92___4, bladderhealth_mv.df$insurance), 2) 
-#Yes, 36.4% of insured vs. 26.7% of uninsured.
+#Explore the relationship between insurance and other variables that significantly predicted Kegel frequency on univariate analysis (older age, lifetime smoking history of 100 cigarettes or more, being uninsured, having a history of sexual activity, higher LURN SI-29 score category, higher IPAQ activity category).
 
-#Explore relationship between insurance and other variables that significantly predicted Kegel frequency on univariate analysis. 
-
-#Are the insured women younger and therefore less likely to do Kegels?
-bladderhealth_mv2.df <- bladderhealth_mv.df %>% filter(!is.na(insurance))
-#Visually compare age distributions between insured and uninsured.
-ggplot(bladderhealth_mv2.df, aes(x = age)) + geom_histogram(binwidth = 1) + facet_wrap(~insurance) 
-#Insured women appear to be relatively more concentrated in their 30s compared to uninsured. Distributions do not appear normal.
+#Are uninsured women older and therefore more likely to do Kegels?
 #Compare median (IQR) age between insured and uninsured.
 bladderhealth_mv_insured.df <- bladderhealth_mv.df %>% filter(insurance == "Insured") 
 summary(bladderhealth_mv_insured.df$age) 
@@ -695,30 +686,35 @@ summary(bladderhealth_mv_insured.df$age)
 bladderhealth_mv_uninsured.df <- bladderhealth_mv.df %>% filter(insurance == "Uninsured") 
 summary(bladderhealth_mv_uninsured.df$age) 
 #For uninsured, median age 37, IQR 28-52.
-#Insured women are actually older.
+#No, uninsured women are younger.
 
-#Are uninsured women more likely to be physically active, smoke, have a history of sexual activity, or have severe urinary symptoms?
+#Are uninsured women more likely to be  more physically active, smoke, have a history of sexual activity, or have severe urinary symptoms?
 table(bladderhealth_mv.df$ipaq, bladderhealth_mv.df$insurance)
 prop.table(table(bladderhealth_mv.df$ipaq, bladderhealth_mv.df$insurance), 2) 
-#Uninsured women more likely to be in low activity group (55.9%, vs. 46.5% of insured women).
+chisq.test(bladderhealth_mv.df$ipaq, bladderhealth_mv.df$insurance, correct=FALSE)
+#Uninsured women more likely to be in low activity group (55.9%, vs. 46.5% of insured women), but this difference is not significant.
 table(bladderhealth_mv.df$cig_hx, bladderhealth_mv.df$insurance)
 prop.table(table(bladderhealth_mv.df$cig_hx, bladderhealth_mv.df$insurance), 2) 
-#Uninsured women more likely to smoke >100 cigarettes in their lifetime (39.1%, vs. 28.8% of insured women).
+chisq.test(bladderhealth_mv.df$cig_hx, bladderhealth_mv.df$insurance, correct=FALSE)
+#Uninsured women more likely to smoke >100 cigarettes in their lifetime (39.1%, vs. 28.8% of insured women). This difference is significant (P = 0.006474)
 table(bladderhealth_mv.df$sex_hx, bladderhealth_mv.df$insurance)
 prop.table(table(bladderhealth_mv.df$sex_hx, bladderhealth_mv.df$insurance), 2) 
 #No obvious differences in sexual history between uninsured (3.7% never had sex) or insured (4.1% never had sex).
 table(bladderhealth_mv.df$lurnsi29cat, bladderhealth_mv.df$insurance)
 prop.table(table(bladderhealth_mv.df$lurnsi29cat, bladderhealth_mv.df$insurance), 2) 
-#Uninsured women have more severe urinary symptoms; 38.5% in high symptom group vs. only only 31.4% for insured women).
+chisq.test(bladderhealth_mv.df$lurnsi29cat, bladderhealth_mv.df$insurance, correct=FALSE)
+#Uninsured women have more severe urinary symptoms; 38.5% in high symptom group vs. only only 31.4% for insured women). However, difference not significant.
 
 ```
 
-Uninsured women are more likely to have lower activity levels, smoke, and have severe urinary symptoms. While having more severe urinary symptoms may lead to them doing Kegels more often, in theory the multivariable regression should account for this. Will plan to discuss this more in final version of results section.
+Uninsured women are more likely to have lower activity levels, a smoking history of >100 cigarettes, and worse urinary symptoms. 
 
 ### Conclusions
 
-***To be written***
-End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+In a cross-sectional study of community-based adult women, we found that higher physical activity level is associated with performing PFM exercises. Given that self-reported laziness was more likely to be reported as a reason for not doing PFM exercises in the low and moderate physical activity groups compared to the high activity group, interventions linking to motivational tactics and physical activity could be explored to improve PFM exercise participation. Lack of insurance could potentially be related to increased frequency of performing PFM exercises due to patients opting to do these exercises at home rather than more costly treatment options such as medication or surgery. However, those factors were not accounted for in the current dataset, so the relationship between insurance coverage and performance of PFM exercises needs to be further explored. 
+
+Limitations of this study include the cross-sectional nature which precludes the assessment of causation, the challenges of interpreting multiple effect measures from a single logistic regression model, the possibility of unmeasured confounders, and the community-based population which may differ from the population that typically presents to clinic for bothersome symptoms and receives a formal recommendation to perform PFM exercises. Strengths of this study include the use of the IPAQ as a comprehensive assessesment of physical activity by accounting for walking and other daily activities outside of simply dedicated exercise, as well as the inclusion of women who perform PFM exercises for a variety of reasons, which provides insight into factors influencing PFM performance in a broad population. Future work could explore the temporal relationship between physical activity and PFM exercises and consider factors underlying motivation in women who could benefit from these exercises. 
+
 
 ### References
 1. Tibaek S, Dehlendorff C. Do Women with Pelvic Floor Dysfunction Referred by Gynaecologists and Urologists at Hospitals Complete a Pelvic Floor Muscle Training Programme? A Retrospective Study, 1992-2008. Int Urogynecol J (2013) 24(8):1361-9. Epub 2013/01/08. doi: 10.1007/s00192-012-2018-2. 
