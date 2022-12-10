@@ -1,3 +1,5 @@
 # BMIN503/EPID600 Final Project
 
-This is a test
+The final project code is in Final-Project_Sealy. 
+
+The html was too large and needed to be made a zip file. 
