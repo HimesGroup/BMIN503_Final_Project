@@ -17,7 +17,7 @@ The contents of this include:
 1. Final project RMD: This file will contain all code for the project, as well as text in markdown format
 2. Final project html: This file contains all text and code for the project, including introduction methods, result and discussion
 3. Readme: this file describes the contents of the other files.
-4. My CSV file contains indentifying data, and is not uploaded to github
+
 
 
 
