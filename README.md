@@ -18,3 +18,10 @@ DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+
+The contents of this particular branch include:
+
+Final project RMD: This file will contain all code for the project, as well as text in markdown format
+Final project html: This file contains all text and code for the project, including introduction methods, result and discussion
+Readme: this file describes the contents of the other files.
+My CSV file contains indentifying data, and is not uploaded to github
