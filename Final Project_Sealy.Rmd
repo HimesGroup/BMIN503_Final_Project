@@ -1,0 +1,1452 @@
+---
+title: "Gentrification and Birth Outcome Trends within Philadelphia and the US"
+author: "Naria Sealy"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: true 
+    toc_depth: 3
+    number_sections: true 
+    theme: cerulean
+    highlight: breezedark
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r supp, include=FALSE}
+options(warn=-1)
+```
+
+------------------------------------------------------------------------
+
+# Overview
+
+The goal of this project is to investigate the association between gentrification and adverse birth outcomes of preterm birth and low birth weight at two levels of granularity: the planning district level within Philadelphia and the county level across the United States. I will use OpenPhilly natality and sociodemographic data for Philadelphia. As for the United States aggregates, I will be using CDC Wonder and 5 year ACS estimates. Upon meeting with Dr. Sunni Mumford, we confirmed birth outcomes are a good incident measure to analyze ecologically, we also determined looking at birth rates would also be a good descriptive statistic to present. Dr. John Holmes provided best practices and instructions for presenting geographic data with interactive maps.
+
+Github repo : <https://github.com/nariasealy/BMIN503_Final_Project>
+
+# Introduction
+
+Since the 1960s, gentrification has been a heavily debated topic. The term describes the change within a community from low value to high value. Unique to gentrification is the displacement of those in lower socioeconomic classes by those in higher socioeconomic classes. Within epidemiology, studies have frequently investigated neighborhood characteristics on health, such as walkability and green space. However, gentrification has not been explored as thoroughly. In fact, a standard measure for gentrification has yet to be decided. Gentrification can result in increased stress, economic and housing insecurity, and a reduction of community support systems. These products all have the potential to be factors that affect gentrification and may have adverse effects on human health (Gibbons, 2019). Beyond the field's gaps in knowledge about gentrification as an exposure, there are even larger gaps in knowledge when inquiring about its effect specifically on adverse birth outcomes. Only one article was returned during a search of PubMed using the terms “preterm birth” OR “low birth weight” AND “gentrification.” This study was limited in the number of years included in their analysis--just two from 2008 to 2010 (Huynh & Maroko, 2014). Despite this limitation, an association between gentrification and preterm birth was observed when stratified by race/ethnicity. Additionally significant, the Environmental Protection Agency (EPA) reports an increase in preterm births and low birth weight between 2007 to 2019 (US EPA, 2015).The World Health Organization acknowledges the need for more research into the causes of preterm birth. Definitive causes are a short list: infections, multiple pregnancies, and chronic conditions. The main cause of low birth weight is preterm birth (Perin J,et al., 2022). It is important to investigate any cause for these increases that could be theorized. As a result, I hypothesize that an increase in gentrification is associated with an increase in preterm births and low birth weight.
+
+Gentrification is inherently an interdisciplinary topic as it is a measure of economic security, describes racial unrest, and is an anthropologic theory. The proposed problem increases the interdisciplinary nature of this exposure, questioning its impact on the health of those affected by it. This is also a public health and political issue, as quasi-experimental designs using policies could help better define the causal effects of this relationship. Furthermore, depending on the conclusions of those experiments, interventions could be initiated to change the course of society.
+
+# Methods
+
+### Data Source {.unnumbered}
+
+OpenDataPhilly was built by Azavea, an information systems (GIS) software firm. This resource explicit holds data exclusive to Philadelphia. OpenDataPhilly is public access, with data spanning many topics, including natality and sociodemographics. The natality data spans 2011 to 2019, containing aggregate measures of birth outcomes by the 18 planning districts. This was the data I used to determine the rates of preterm birth and low birth weight across Philadelphia. In addition, the sociodemographic data contains statistics such as "percent of adults without a bachelor's degree", "unemployment rate in population 16 and older", and "percent of population in poverty" - each used to create the measure of gentrification measures in the first analysis.
+
+For the investigation into birth outcomes across the United States, Centers for Disease Control and Prevention WONDER data from 2007 to 2019 was used and for the exposure. This natality data is provided at the county level for populations of over 100,000. It is gathered from birth certificates, made publicly available, and updated annually. American Community Survey is an annual survey conducted by the United States Census Bureau. It collects information on economics, sociodemographics and housing. Because annual estimates are only available for populations of 65,000 and more, using 5 year estimates not only increases accuracy but allows for visualization of trends across the U.S. Specifically, I used data from 2010 to 2019 to create a measure of gentrification.
+
+### Methodological Apparoach {.unnumbered}
+
+To create a measure of gentrification, I used the methods described in Hyuan & Marako, which involved calculating the percent change in the exposure variables. In the Hyuan & Marako article, they used median income, poverty and eduction to create a composite score. However, the data readily available to me resulted in the use of education, poverty, and unemployment to create my composite score. Notably, poverty was only available for 2014 and 2019, thus this analysis was restricted to measuring the change between those two years. A percent change was calculated for all three variables between the 2014 and 2019. Following that, z-scores were calculated for each and then summed for a final gentrification score. I visually assessed the z-scores and determined it was appropriate to use the boundaries of the interquartile range to group the z-scores into a gentrification variable that had three levels "low", "medium", and "high". With Q1 and below being "low", between Q1 and Q3 being "medium", and above Q3 being "high". I then calculated the percent change in preterm birth, crude birth rate, and low birthweight between 2014 and 2019. I performed a linear regression between gentrification and each of these three outcome measures. This data was also visualized in static maps.
+
+In the second analysis, While the method for calculating the gentrification score from the first analysis was replicated in the second, there were some differences. For instance, I used data from 2010 to 2019, and calculated the percent change for each year to be visualized in interactive maps. Additionally, due to the limitations of the data, I used income, rent and education measures to compute my gentrification score. I used a generalized linear mixed effects model to estimate the association between gentrification and average gestational age, average birth weight and birth rate.
+
+# Results
+
+-   Load packages that will be used
+
+```{r eval = TRUE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(naniar)
+library(modelsummary)
+library(sf)
+library(RColorBrewer)
+library(tidycensus)
+library(leaflet)
+library(viridis)
+library(ggsn)
+library(expss)
+library(broom)
+theme_set(theme_classic())
+library(table1)
+library(gtsummary)
+library(ggmap)
+library(lme4)
+library(nlme)
+```
+
+## Analysis 1
+
+-   Load data that will be used
+
+```{r eval = TRUE, message=FALSE}
+
+philly_nat <- read.table("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Vital_Natality_PD.csv", header = TRUE, sep = ",")
+
+philly_sd <- read.table("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Vital_Social_Determinants_PD.csv", header = TRUE, sep = ",")
+
+```
+
+-   Abstract the variables of interest\
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+# Each variable of interest will be its own column 
+#List of variables of interest: crude_birth_rate_per_1000, percent_low_birthweight_births, count_births, count_preterm_births, percent_preterm_births, count_low_birthweight_births
+
+test2 <-  philly_nat %>% 
+ filter(METRIC_NAME == "percent_preterm_births")
+
+head(test2)
+        
+test2 <- test2 %>% 
+  select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+  rename(percent_preterm_births=METRIC_VALUE)
+
+head(test2) #check the variable names
+dim(test2) #check the number of obs = 162 
+
+#repeat per variable of interest 
+
+test3 <-  philly_nat %>% 
+ filter(METRIC_NAME == "crude_birth_rate_per_1000") %>% 
+ select( GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(crude_birth_rate_per_1000=METRIC_VALUE)
+
+head(test3) 
+dim(test3) #162 
+
+#repeated for percent_low_birthweight_births
+
+test4 <-  philly_nat %>% 
+ filter(METRIC_NAME == "percent_low_birthweight_births") %>% 
+ select( GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_low_birthweight_births=METRIC_VALUE)
+
+head(test4) 
+dim(test4) #162
+
+#repeated for count_births
+
+test5 <-  philly_nat %>% 
+ filter(METRIC_NAME == "count_births") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(count_births=METRIC_VALUE)
+
+head(test5) 
+dim(test5) #162
+
+#repeated for count_preterm_births
+
+test6 <-  philly_nat %>% 
+ filter(METRIC_NAME == "count_preterm_births") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(count_preterm_births=METRIC_VALUE)
+
+head(test6) 
+dim(test6) #162
+
+#repeated for count_low_birthweight_births
+
+test7 <-  philly_nat %>% 
+ filter(METRIC_NAME == "count_low_birthweight_births") %>% 
+ select( GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(count_low_birthweight_births=METRIC_VALUE)
+
+head(test7) 
+dim(test7) #162
+
+```
+
+-   Merge the datasets created
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+test8 <- merge(test2, test3, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test8)
+dim(test8)
+
+test9 = test8 %>% 
+  inner_join(test4, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test9)
+dim(test9)
+
+test9 = test9 %>% 
+  inner_join(test5, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test9)
+dim(test9)
+
+test9 = test9 %>% 
+  inner_join(test6, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test9)
+dim(test9)
+
+test9 = test9 %>% 
+  inner_join(test7, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test9)
+dim(test9)
+
+```
+
+-   Rename variables and use summary statistics to identify any further cleaning necessary
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+#rename variables for ease of code 
+philly_nat1 <-  test9 %>% 
+  rename(district = GEOGRAPHY_NAME, shape_area = Shape__Area, shape_length = Shape__Length, year = YEAR)
+head(philly_nat1)
+
+checkk<- philly_nat1 %>% 
+  group_by(district) %>% 
+  summarise(meanlowbirth.p = mean(percent_low_birthweight_births,na.rm= TRUE), meancrudebirth.r = mean(crude_birth_rate_per_1000,na.rm = TRUE), meanpretermbirth.p = mean(percent_preterm_births, na.rm= TRUE), meanbirths.c = mean(count_births, na.rm= TRUE), meanpreterm.c = mean(count_preterm_births, na.rm= TRUE),meanlowbirth.c = mean(count_low_birthweight_births, na.rm= TRUE) ) 
+
+#lower south has a mean low birth weight (count and percent) that draws attention. further inspection is required 
+#lower south once again has a mean preterm birth (count and percent) that draws attention. further inspection is required 
+
+```
+
+-   Save the data for future analysis
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+write.table(philly_nat1, "/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Updated_Philly_Nat.txt", row.names = F, col.names = T, quote = F, sep = "\t")
+
+```
+
+-   Update sociodemographic data
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+head(philly_sd) 
+
+#variables of interest: percent_of_adult_population_without_bachelors_degree, unemployment_rate_in_population_16_and_older, percent_of_population_identifying_as_nh_white, percent_of_population_identifying_as_nh_black, percent_of_population_in_poverty, percent_of_population_identifying_as_hispanic, percent_of_population_identifying_as_nh_asian
+
+test10 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_adult_population_without_bachelors_degree") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_without_bachelors_degree=METRIC_VALUE)
+
+test11 <-  philly_sd %>% 
+ filter(METRIC_NAME == "unemployment_rate_in_population_16_and_older") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(unemployment_rate=METRIC_VALUE)
+head(test11)
+
+test12 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_population_identifying_as_nh_white") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_nh_white=METRIC_VALUE)
+head(test12)
+
+test13 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_population_identifying_as_nh_black") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_nh_black=METRIC_VALUE)
+head(test13)
+
+test14 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_population_identifying_as_nh_asian") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_nh_asian=METRIC_VALUE)
+head(test14)
+
+test15 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_population_identifying_as_hispanic") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_hispanic=METRIC_VALUE)
+head(test15)
+
+test16 <-  philly_sd %>% 
+ filter(METRIC_NAME == "percent_of_population_in_poverty") %>% 
+ select(GEOGRAPHY_NAME, METRIC_VALUE, Shape__Area, Shape__Length, YEAR) %>% 
+ rename(percent_poverty=METRIC_VALUE)
+head(test16)
+
+dim(test10) #36 - these values are from the 5 year estimates. as a result, they only have 2019 and 2014.
+
+```
+
+-   Ideally, each county and year to have all the data - so a total of 165 rows. However, poverty at the planning district level is only available for 2014 and 2019. As a result, moving forward the analysis of Philly by planning district will be between the years 2014 and 2019.
+
+-   Merge all new datasets
+
+```{r eval = TRUE, results='hide', message=FALSE}
+test17 <- merge(test10 , test11, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+
+test17 = test17 %>% 
+  inner_join(test12, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+
+test17 = test17 %>% 
+  inner_join(test13, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+
+test17 = test17 %>% 
+  inner_join(test14, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+
+test17 = test17 %>% 
+  inner_join(test15, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+
+test17 = test17 %>% 
+  inner_join(test16, by= c("GEOGRAPHY_NAME","Shape__Area", "Shape__Length", "YEAR"))
+head(test17)
+dim(test17)
+```
+
+-   Rename variables for ease of code
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+philly_sd1 <-  test17 %>% 
+  rename(district = GEOGRAPHY_NAME, shape_area = Shape__Area, shape_length = Shape__Length, year = YEAR)
+head(philly_sd1)
+```
+
+-   Save the data for future analysis
+
+```{r eval = TRUE, results='hide', message=FALSE}
+#rename variables for ease of code 
+
+write.table(philly_sd1, "/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Updated_Philly_SD.txt", row.names = F, col.names = T, quote = F, sep = "\t")
+
+```
+
+-   Calculate the change in the variables from 2014 to 2019
+
+```{r eval = TRUE, results='hide', message=FALSE}
+
+#first standardize all the variables 
+#begin with philly_sd1
+
+#to calculate the change, we need a wide dataset with each variable having 2019 and 2014 value 
+philly_sd2 <- read.table("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Updated_Philly_SD.txt", header = T, sep = "\t")
+head(philly_sd2)
+
+philly_sd3 <- reshape(philly_sd2, idvar = "district", timevar = "year", direction = "wide")
+head(philly_sd3)
+
+#using our wide dataset, we need to calculate the change in the variables 
+#percent year 2 - year 1 / year 1 = percentage change. 
+philly_sd4 <- philly_sd3 %>%
+mutate(without_bachelors_degree.pc = (percent_without_bachelors_degree.2019 - percent_without_bachelors_degree.2014)/percent_without_bachelors_degree.2014) %>% 
+mutate(unemployment_rate.pc = (unemployment_rate.2019 - unemployment_rate.2014)/unemployment_rate.2014) %>% 
+mutate(nh_white.pc = (percent_nh_white.2019 - percent_nh_white.2014)/percent_nh_white.2014) %>%  
+mutate(nh_black.pc = (percent_nh_black.2019 - percent_nh_black.2014)/percent_nh_black.2014) %>%  
+mutate(nh_asian.pc = (percent_nh_asian.2019 - percent_nh_asian.2014)/percent_nh_asian.2014) %>%  
+mutate(hispanic.pc = (percent_hispanic.2019 - percent_hispanic.2014)/percent_hispanic.2014) %>%  
+mutate(poverty.pc = (percent_poverty.2019 - percent_poverty.2014)/percent_poverty.2014) %>% 
+  select(district, shape_area.2014, shape_length.2014,percent_without_bachelors_degree.2014,unemployment_rate.2014, percent_nh_white.2014, percent_nh_black.2014,percent_nh_asian.2014, percent_hispanic.2014, percent_poverty.2014, percent_without_bachelors_degree.2019,unemployment_rate.2019, percent_nh_white.2019, percent_nh_black.2019,percent_nh_asian.2019, percent_hispanic.2019, percent_poverty.2019, without_bachelors_degree.pc, unemployment_rate.pc, nh_white.pc, nh_black.pc, nh_asian.pc, hispanic.pc, poverty.pc) %>% 
+  rename(shape_length = shape_length.2014, shape_area = shape_area.2014)
+
+head(philly_sd4)
+```
+
+### Figure 1. {.unnumbered}
+
+-   create a grid of histograms of the percent changes
+
+```{r eval = TRUE, message=FALSE}
+z1 <- ggplot(data = philly_sd4, aes(x = without_bachelors_degree.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic() 
+z2 <- ggplot(data = philly_sd4, aes(x = unemployment_rate.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic()
+z3 <- ggplot(data = philly_sd4, aes(x = poverty.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic()
+z4 <- ggplot(data = philly_sd4, aes(x = nh_white.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic()
+z5 <- ggplot(data = philly_sd4, aes(x = nh_black.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic()
+z6 <- ggplot(data = philly_sd4, aes(x = nh_asian.pc)) +  
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = ' ', x = "percent change") + theme_classic()
+z7 <- ggplot(data = philly_sd4, aes(x = hispanic.pc)) +
+        geom_histogram( color = "blue", fill = "blue", aplha = 0.7) + labs(title = '  ', x = "percent change") + theme_classic()
+
+plot_grid(z1, z2, z3, z4, z5, z6, z7, labels = c("No Bachelor's", "Unemployment", "Poverty", "White", "Black", "Asian", "Hispanic")) 
+
+```
+
+     Each plot displays the change in the relevant sociodemographic data available via OpenPhillyData. Because we are subtracting 2014 from 2019, any negative change we see is associated with a decrease in these variables. The percent of those with no bacehlors only saw decreases across the 17 planning districts (one planning district was lost due to missing data); this was the same for unemployment. Some planning districts had an increase in the poverty, though majority expereinced decreases. White, Black, Asain, and Hispanic populations experienced decreases and increases across Philadelphia. Hispanic populations had the largest increases, followed by Asain. 
+
+-   Create z scores
+
+```{r eval = TRUE, message=FALSE}
+
+#standardize bachelor degree 
+philly_sd4$without_bachelors_degree.z <- (philly_sd4$without_bachelors_degree.pc - mean(philly_sd4$without_bachelors_degree.pc))/ sd(philly_sd4$without_bachelors_degree.pc) 
+
+#standardize unemployment rate
+philly_sd4$unemployment_rate.z <- (philly_sd4$unemployment_rate.pc - mean(philly_sd4$unemployment_rate.pc))/ sd(philly_sd4$unemployment_rate.pc) 
+
+#standardize poverty 
+philly_sd4$poverty.z <- (philly_sd4$poverty.pc - mean(philly_sd4$poverty.pc))/ sd(philly_sd4$poverty.pc)
+
+#scale is sum of variables
+z_myscale_sum <- philly_sd4$without_bachelors_degree.z + philly_sd4$unemployment_rate.z + philly_sd4$poverty.z 
+
+#add variable to philly_sd4
+philly_sd4$z_scale_sum <- philly_sd4$without_bachelors_degree.z + philly_sd4$unemployment_rate.z  + philly_sd4$poverty.z
+
+#create a new data frame to plot the z scores
+mydata3 <- data.frame(philly_sd4$without_bachelors_degree.z, philly_sd4$unemployment_rate.z, philly_sd4$poverty.z, z_myscale_sum)
+```
+
+### Figure 2. {.unnumbered}
+
+-   Make stripchart of the z-scores
+
+```{r eval = TRUE, message=FALSE}
+
+#add labels to variables 
+philly_sd4 = expss::apply_labels(philly_sd4, unemployment_rate.z = "Unemployment rate z scores ",
+                      without_bachelors_degree.z = "No bachelors degree z scores",
+                      poverty.z = "Poverty z scores",
+                      z_myscale_sum = "Sum of all z scores")
+
+
+par(mar = c(5, 17, 2, 2)) # graph margins
+stripchart(mydata3, col = rainbow(7), pch=19, las = 2) # stripchart
+```
+
+### Figure 3. {.unnumbered}
+
+-   Make histogram of the z-scores
+
+```{r eval =TRUE, message=FALSE}
+
+#create a grid with histograms of the z scores
+z5 <- ggplot(data = philly_sd4, aes(x = without_bachelors_degree.z)) +
+        geom_histogram(color = "blue", fill = "blue", aplha = 0.7, binwidth = .40) +ylim(0,6) + labs(title = ' ', x = "z-score")
+z6 <- ggplot(data = philly_sd4, aes(x = unemployment_rate.z)) +
+        geom_histogram(color = "blue", fill = "blue", aplha = 0.7, binwidth = .40) +ylim(0,6) + labs(title = ' ', x = "z-score")
+z7 <- ggplot(data = philly_sd4, aes(x = poverty.z)) +
+        geom_histogram(color = "blue", fill = "blue", aplha = 0.7, binwidth = .40) +ylim(0,6) + labs(title = ' ', x = "z-score")
+z8 <- ggplot(data = mydata3, aes(x = z_myscale_sum)) +
+        geom_histogram(color = "blue", fill = "blue", aplha = 0.7, binwidth = .45) +ylim(0,6) + labs(title = ' ', x = "z-score")
+
+plot_grid(z5, z6, z7, z8, labels = c("No Bachelor's", "Unemployment", "Poverty", "Summation")) 
+
+```
+
+    Z-scores within the stripchart and histograms show reasonable distributions that can be advanced with for further analysis.  
+
+### Figure 4. {.unnumbered}
+
++Create categorical variables for gentrification
+
+```{r eval = TRUE , message=FALSE}
+
+#boxplot 
+ggplot(mydata3, aes(x = z_myscale_sum)) + geom_boxplot() + geom_dotplot(color = "black", fill = "blue") + labs(x = "Sum of z-scores") + theme_classic()
+
+```
+
+      Despite replicating the methods of a previously published article to allow for comparability across studies, there are still limitations that result from creating a categorical variable. One assumption being made is that all districts within a category are the same. Additionally, the data used in Hyuan and Maroko is different and may have a different distribution. To account for this, inspecting this data to determine appropriate clusters and categories is necessary. Because gentrification is the change in rates of these indicator variables, a z-score of 0 indicates the mean change. Review of the boxplot shows four clusters, however, the numbers might be too small to see any meaningful change, and as a result, a three level categorical variable is appropriate for this data. The assumption being made by this measure is that the mean change would be categorized as the "medium" gentrification and not a different amount. 
+      
+
+-   Use the interquartile range of the sum of the gentrification scores to create categorical gentrification score
+
+```{r eval = TRUE, message=FALSE}
+
+#IQR 
+summary(z_myscale_sum)
+
+#create a categorical variable based on z-score clusters 
+philly_sd4 <- philly_sd4 %>%
+  mutate(gentr.zscore = case_when(z_myscale_sum <= -1.0455170 ~ "low gentrification", z_myscale_sum > -1.0455170 & z_myscale_sum < 1.9094748 ~ "medium gentrification", z_myscale_sum >= 1.9094748 ~"high gentrification"))
+
+```
+
+-   Using natality data to create variables that show the change in outcomes
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+#read in updated natality data
+philly_nat2 <- read.table("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Updated_Philly_Nat.txt", header = T, sep = "\t")
+head(philly_nat2)
+
+#filter data to only include matching years
+philly_nat2 <- philly_nat2 %>% 
+  filter(year == 2019 | year == 2014)
+
+#reshape data
+philly_nat3 <- reshape(philly_nat2, idvar = "district", timevar = "year", direction = "wide")
+head(philly_nat3)
+
+#rename duplicate variables and drop duplicated ones 
+philly_nat3 <- philly_nat3 %>% 
+  rename(shape_area = shape_area.2014,shape_length = shape_length.2014) %>% 
+  select(-c(shape_area.2019,shape_length.2019))
+head(philly_nat3)
+
+#using our wide dataset, we need to calculate the change in the variables 
+#percent year 2 - year 1 / year 1 = percentage change. 
+philly_nat3  <- philly_nat3  %>%
+mutate(preterm_births.pc = (percent_preterm_births.2019 - percent_preterm_births.2014)/percent_preterm_births.2014) %>% 
+mutate(low_birthweight.pc= (percent_low_birthweight_births.2019 - percent_low_birthweight_births.2014)/percent_low_birthweight_births.2014) %>% 
+mutate(crude_birth_rate_per_1000.pc = (crude_birth_rate_per_1000.2019- crude_birth_rate_per_1000.2014)/crude_birth_rate_per_1000.2014)
+
+head(philly_nat3)
+```
+
+-   Merge outcome and exposure variables
+
+```{r eval= TRUE, message=FALSE, results='hide'}
+
+#merge data
+philly_an <- merge(philly_sd4, philly_nat3, by= c("district","shape_area", "shape_length"))
+head(philly_an)
+dim(philly_an)
+
+#following up on lower south. Unrealistic outcome numbers will be changed to missing 
+philly_an1 = philly_an %>%
+  naniar::replace_with_na_all(condition = ~.x == -99999.000000) %>% 
+   naniar::replace_with_na_all(condition = ~.x == -0.00000000)
+
+```
+
+-   Prepare the variables to be used in tables
+
+```{r eval=TRUE, message=FALSE, results='hide'}
+
+#change gentrification variable to factor  
+philly_an1$gentr.zscore <- as.factor(philly_an1$gentr.zscore)
+
+philly_an2 <- philly_an1 %>%
+    mutate(gentr.zscore = factor(gentr.zscore, levels = c("low gentrification", "medium gentrification", "high gentrification"), 
+                         labels = c("low gentrification", "medium gentrification", 
+                                    "high gentrification"))) %>% 
+  filter(!is.na(preterm_births.pc))
+
+
+label(philly_an2$gentr.zscore) <- "Gentrification"
+label(philly_an2$crude_birth_rate_per_1000.pc) <- "Change in crude birth rate"
+label(philly_an2$low_birthweight.pc) <- "Change in low birthweight"
+label(philly_an2$preterm_births.pc) <- "Change in preterm birth"
+
+
+my.render.cont <- function(x) {
+    with(stats.default(x), 
+         c("",
+           
+          "Mean (SD)" = sprintf("%s (%s)",
+                                round_pad(MEAN, 3),
+                                round_pad(SD, 3)),
+         
+          "Median (Min, Max)" = sprintf("%s (%s, %s)",
+                                       round_pad(MEDIAN, 3), 
+                                       round_pad(MIN, 3), 
+                                       round_pad(MAX, 3)))
+    )
+}
+
+```
+
+### Table 1. {.unnumbered}
+
+-   Table showing the outcomes overall
+
+```{r eval=TRUE, message=FALSE}
+table1(~ crude_birth_rate_per_1000.pc + low_birthweight.pc + preterm_births.pc, data = philly_an2, overall = "Total", render.continuous=my.render.cont, topclass="Rtable1-zebra")
+
+```
+
+      The mean change in crude birth rate from 2014 to 2019 across planning districts was a decrease of 0.075%. Not only was crude birth rate the only outcome of interest that decreased, but it was also the outcome of interest with the lowest change from 2014 to 2019. Low birthweight had the largest change, with a mean increase of 0.115%. Comparing the mean low birthweight to the median (0.125%) indicates there are some districts skewing the data towards the left, however this difference is not large enough to cause concern. 
+
+### Table 2. {.unnumbered}
+
+-   Table showing outcomes by gentrification level
+
+```{r eval = TRUE, message=FALSE}
+table1(~ crude_birth_rate_per_1000.pc + low_birthweight.pc + preterm_births.pc |gentr.zscore, data = philly_an2, overall = "Total", render.continuous=my.render.cont, topclass="Rtable1-zebra")
+
+```
+
+    "Medium" gentrification had the highest number of observations (10), followed by "high" (4), and finally "low" (3). The largest change in crude birth rate (-0.09%) occured in districts with medium gentrification. There were no clear patterns among change in crude birth rate note change in low birthweight by gentrification level. Though there is a potential pattern within high gentrification, as these districts had the largest increases in low birthweight (0.17%) and preterm birth (0.14%), and the lowest decrese in crude birth rate. 
+
+-   Load shapefile and merge
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+#use a static map to show the changes in variables 
+phillplan.sf <- st_read(
+  "/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/Planning_Districts/Planning_Districts.shp")
+class(phillplan.sf) 
+st_crs(phillplan.sf) <- st_crs(phillplan.sf) 
+head(phillplan.sf)
+
+#change the name of the variables for merging 
+phillplan.sf <- phillplan.sf %>% 
+  rename(district = DIST_NAME, shape_area = Shape__Are, shape_length = Shape__Len) %>%
+  select(-c(PlanningDi,DaytimePop))
+
+#join data with shapefiles 
+phillplan.sf1 <- inner_join(phillplan.sf, philly_an2, by = "district")
+head(phillplan.sf1) 
+```
+
+-   Create a static map for gentrification and outcome variables
+
+```{r eval = TRUE , message=FALSE}
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.8, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 22))      
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "PuRd"))
+
+#static map of gentrification and preterm birth 
+plan_min <- min(phillplan.sf1$preterm_births.pc, phillplan.sf1$low_birthweight.pc, phillplan.sf1$crude_birth_rate_per_1000.pc, na.rm = TRUE)#minimum percent changes
+plan_max <-  max(phillplan.sf1$preterm_births.pc, phillplan.sf1$low_birthweight.pc, phillplan.sf1$crude_birth_rate_per_1000.pc,na.rm = TRUE) #maximum percent changes 
+```
+
+### Figure 5. {.unnumbered}
+
+-   Preterm births
+
+```{r eval = TRUE , message=FALSE}
+
+ggplot() +
+  geom_sf(data = phillplan.sf1 , aes(fill = preterm_births.pc), lwd = 0) +
+    geom_point(data =phillplan.sf1 , aes(shape = gentr.zscore, color = gentr.zscore, size = gentr.zscore, geometry = geometry),stat = "sf_coordinates") + 
+  labs(shape = "Gentrification", color= "Gentrification", size ="Gentrification" )+
+  scale_color_manual(values=c("black", "#56B4E9", "#69b3a2")) +
+  scale_size_manual(values=c(3,3,3))+
+  my_theme() +
+    ggtitle("Change in Preterm Births (%)") + 
+      scale_fill_gradientn(name = "Preterm Birth Percent Change", colours = myPalette(50),
+                      limit = range(plan_min, plan_max)) 
+```
+
+### Figure 6. {.unnumbered}
+
+-   Low birthweight
+
+```{r eval = TRUE, message=FALSE}
+ggplot() +
+  geom_sf(data = phillplan.sf1 , aes(fill = low_birthweight.pc), lwd = 0) +
+    geom_point(data =phillplan.sf1 , aes(shape = gentr.zscore, color = gentr.zscore, size = gentr.zscore, geometry = geometry),stat = "sf_coordinates") + 
+  labs(shape = "Gentrification", color= "Gentrification", size ="Gentrification" )+
+  scale_color_manual(values=c("black", "#56B4E9", "#69b3a2")) +
+  scale_size_manual(values=c(3,3,3))+
+  my_theme() +
+    ggtitle("Change in Low Birthweight (%)") + 
+      scale_fill_gradientn(name = "Low Birthweight Percent Change", colours = myPalette(50),
+                      limit = range(plan_min, plan_max)) 
+
+```
+
+### Figure 7. {.unnumbered}
+
+-   Crude birth rate
+
+```{r eval=TRUE, message=FALSE}
+ggplot() +
+  geom_sf(data = phillplan.sf1 , aes(fill = crude_birth_rate_per_1000.pc), lwd = 0) +
+    geom_point(data =phillplan.sf1 , aes(shape = gentr.zscore, color = gentr.zscore, size = gentr.zscore, geometry = geometry),stat = "sf_coordinates") + 
+  labs(shape = "Gentrification", color= "Gentrification", size ="Gentrification" )+
+  scale_color_manual(values=c("black", "#56B4E9", "#69b3a2")) +
+  scale_size_manual(values=c(3,3,3))+
+  my_theme() +
+    ggtitle("Change in Crude Birth Rate (per 1000)") + 
+      scale_fill_gradientn(name = "Crude Birth Rate Change", colours = myPalette(50),
+                      limit = range(plan_min, plan_max)) 
+```
+
+    Within the maps of change in preterm birth, birth rate, and birthweight there are no distinct patterns as it relates to gentrification level. We do see that crude birth rate is decreasing compared to increasing preterm births and low birthweight. 
+
+-   Linear regressions
+
+```{r eval=TRUE, message=FALSE, results='hide'}
+#linear regression 
+philly_fit <- lm(preterm_births.pc ~ gentr.zscore, data = philly_an2)
+summary.lm(philly_fit) #Summary of results for preterm births 
+
+
+#tbl_regression save and then merge and it makes a table
+philly_bwfit <- lm(low_birthweight.pc ~ gentr.zscore, data = philly_an2)
+summary.lm(philly_bwfit) #Summary of results for low birthweight 
+
+
+philly_br8fit <- lm(crude_birth_rate_per_1000.pc ~ gentr.zscore, data = philly_an2)
+summary.lm(philly_br8fit) #summary of results for crude birth rate
+
+```
+
+### Table 3. {.unnumbered}
+
+-   Preterm Birth and Gentrification Regression
+
+```{r eval = TRUE}
+tbl_regression(philly_fit,
+                         pvalue_fun = ~style_pvalue(.x, digits = 2)) %>%
+                         bold_p(t = 0.10) %>%
+                         bold_labels() %>%
+                         italicize_levels() %>%
+                         modify_caption("Table 3. Preterm Birth and Gentrification")
+```
+
+    Using a linear regression model, I assessed the association between preterm birth and gentrification. Compared to low gentrification, districts with high gentrifcation had a 0.09 higher change in preterm birth. This nor medium gentrification were significantly associated with preterm birth. 
+    
+### Table 4. {-}
+
+-   Low Birthweight and Gentrification Regression
+
+```{r eval = TRUE}
+tbl_regression(philly_bwfit,
+                         pvalue_fun = ~style_pvalue(.x, digits = 2)) %>%
+                         bold_p(t = 0.10) %>%
+                         bold_labels() %>%
+                         italicize_levels() %>%
+                         modify_caption("Table 4. Low Birthweight and Gentrification")
+```
+
+    Using a linear regression model, I also assessed the association between low birthweight and gentrification. Compared to low gentrification, districts with medium gentrifcation had a 0.02 lower change in low birthweight. While, high gentrification, when compared to low, had a 0.06 higher change in low birthweight. However, neither of these associations were significant at alpha 0.05.
+    
+### Table 5. {-}
+
+-   Crude Birth Rate and Gentrification Regression
+
+```{r eval = TRUE}
+ 
+tbl_regression(philly_br8fit,
+                         pvalue_fun = ~style_pvalue(.x, digits = 2)) %>%
+                         bold_p(t = 0.10) %>%
+                         bold_labels() %>%
+                         italicize_levels() %>%
+                         modify_caption("Table 5. Birth Rate and Gentrification")
+```
+
+     I also used a linear regression model to investigate the association between birth rate and gentrification. Neither medium gentrification nor high gentrification were significantly associated with birth rates at alpha 0.05, with medium gentrification having a beta of -0.02 and high gentrification having a beta of 0.04. 
+     
+     Despite none of these models providing evidence of an association, there is an observable trend that high gentrification results in a higher change in the outcomes of interest.
+    
+
+## Analysis 2
+
+In the following section, I conduct my analysis of gentrification across the US, by county, between 2010 and 2019. To allow for comparison, the gentrification categories will be computed in the same way. 
+
+```{r eval = FALSE, include=FALSE}
+
+#get variables for the same estimates 
+var1 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2007)
+var2 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2008)
+var3 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2009)
+var4 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2010)
+var5 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2011)
+var6 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2012)
+var7 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2013)
+var8 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2014)
+var9 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2015)
+var10 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2016)
+var11 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2017)
+var12 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2018)
+var13 <- load_variables(dataset = "acs1/profile",  #specify ACS 1-year estimates 
+                       year = 2019)
+rm(var2, var3, var4, var5, var6, var7,var8, var9, var10, var11, var12, var13)
+
+#drop 2007 because all perc_bachelors missing 
+#drop 2008 because all perc_bachelors missing 
+#drop 2009 because all perc_bachelors missing 
+
+```
+
+-   Get 2010, 2011, 2012, 2013, and 2014 data
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+profileyears <- lst(2010, 2011, 2012, 2013, 2014) #years of data 
+
+my_varsprof <- c(mean_income = "DP03_0063", perc_bachelor = "DP02_0067P", gross_rent = "DP04_0134", perc_poverty = "DP03_0128P") 
+
+#eduction: 
+#10, 11, 12, 13, 14, 15, 16, 17,18 - DP02_0067P- Percent!!Estimate!!EDUCATIONAL ATTAINMENT!!Population 25 years and over!!Percent bachelor's degree or higher
+#19- DP02_0068P
+
+#gross rent
+#08,09,10,11,12,13,14 - DP04_0134
+#2015 - DP04_0136, 2016 - DP04_0136, 2017, 2018, 2019 
+
+#poverty 
+#10 - 2019- DP03_0128P
+
+acs_profile <- map_dfr(
+  profileyears,
+  ~ get_acs(
+      geography = "county",
+      variables = my_varsprof,
+      year = .x,
+      geometry = FALSE
+      ),
+  .id = "year" # when combining results, add id var (name of list item)
+  ) %>%
+  select(-moe) %>%  # shhhh
+  arrange(variable, NAME) 
+
+```
+
+-   Get 2015 data
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+profileyears1 <- lst(2015) #years of data 
+
+my_varsprof1 <- c(mean_income = "DP03_0063", perc_bachelor = "DP02_0067P", gross_rent = "DP04_0136", perc_poverty = "DP03_0128P") 
+
+acs_profile1 <- map_dfr(
+  profileyears1,
+  ~ get_acs(
+      geography = "county",
+      variables = my_varsprof1,
+      year = .x,
+      geometry = FALSE
+      ),
+  .id = "year" # when combining results, add id var (name of list item)
+  ) %>%
+  select(-moe) %>%  # shhhh
+  arrange(variable, NAME) 
+
+
+```
+
+-   Get 2016, 2017, 2018 data
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+profileyears2 <- lst(2016,2017,2018) #years of data 
+
+my_varsprof2 <- c(mean_income = "DP03_0063", perc_bachelor = "DP02_0067P", gross_rent = "DP04_0136", perc_poverty = "DP03_0128P") 
+
+acs_profile2 <- map_dfr(
+  profileyears2,
+  ~ get_acs(
+      geography = "county",
+      variables = my_varsprof2,
+      year = .x,
+      geometry = FALSE
+      ),
+  .id = "year" # when combining results, add id var (name of list item)
+  ) %>%
+  select(-moe) %>%  # shhhh
+  arrange(variable, NAME) 
+
+```
+
+-   Get 2019 data
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+profileyears3 <- lst(2019) #years of data 
+
+my_varsprof3 <- c(mean_income = "DP03_0063", perc_bachelor = "DP02_0068P", gross_rent = "DP04_0134", perc_poverty = "DP03_0128P") 
+
+acs_profile3 <- map_dfr(
+  profileyears3,
+  ~ get_acs(
+      geography = "county",
+      variables = my_varsprof3,
+      year = .x,
+      geometry = FALSE
+      ),
+  .id = "year" # when combining results, add id var (name of list item)
+  ) %>%
+  select(-moe) %>%  #shhhh
+  arrange(variable, NAME) 
+
+```
+
+-   Merge all the datasets
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+#rowbind
+acs_profile4 <- rbind(acs_profile, acs_profile1, acs_profile2, acs_profile3) 
+
+#sort data
+acs_profile4 <- acs_profile4[order(acs_profile4$GEOID, acs_profile4$year),]
+
+```
+
+-   Reshape data
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+#reshape data and calculate percent changes per each year 
+
+acs_long <- acs_profile4 %>% spread(variable, estimate)
+
+table(is.na(acs_long$perc_poverty))
+
+write_csv(acs_long, "/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/acs_long1.txt", col_names = T)
+
+#rm(acs_no07, philly_sd2, vars, var1)
+
+acs_long1 <- read.csv("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/acs_long1.txt", header = T)
+#head(acs_long1)
+acs_long1 <- acs_long1 %>%
+  select(-c(perc_poverty))
+
+acs_wide <- reshape(acs_long1, idvar = c("NAME", "GEOID"), timevar = "year", direction = "wide")
+#head(acs_wide)
+
+
+```
+
+-   Calculate the percent change for each year and variable
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+#mean_income = "DP03_0063", perc_bachelor = "DP02_0068P", gross_rent = "DP04_0134", perc_poverty = "DP03_0128P"
+
+acs_wide  <- acs_wide  %>%
+mutate(income.pc.2011 = ((mean_income.2011 - mean_income.2010)/mean_income.2010)*100) %>% 
+  mutate(income.pc.2012 = ((mean_income.2012 - mean_income.2011)/mean_income.2011)*100) %>% 
+  mutate(income.pc.2013 = ((mean_income.2013 - mean_income.2012)/mean_income.2012)*100) %>% 
+  mutate(income.pc.2014 = ((mean_income.2014 - mean_income.2013)/mean_income.2013)*100) %>% 
+  mutate(income.pc.2015 = ((mean_income.2015 - mean_income.2014)/mean_income.2014)*100) %>% 
+  mutate(income.pc.2016 = ((mean_income.2016 - mean_income.2015)/mean_income.2015)*100) %>%
+  mutate(income.pc.2017 = ((mean_income.2017 - mean_income.2016)/mean_income.2016)*100) %>% 
+  mutate(income.pc.2018 = ((mean_income.2018 - mean_income.2017)/mean_income.2017)*100) %>% 
+  mutate(income.pc.2019 = ((mean_income.2019 - mean_income.2018)/mean_income.2018)*100) %>%
+  
+mutate(rent.pc.2011 = ((gross_rent.2011 - gross_rent.2010)/gross_rent.2010)*100) %>% 
+  mutate(rent.pc.2012 = ((gross_rent.2012 - gross_rent.2011)/gross_rent.2011)*100) %>% 
+  mutate(rent.pc.2013 = ((gross_rent.2013 - gross_rent.2012)/gross_rent.2012)*100) %>% 
+  mutate(rent.pc.2014 = ((gross_rent.2014 - gross_rent.2013)/gross_rent.2013)*100) %>% 
+  mutate(rent.pc.2015 = ((gross_rent.2015 - gross_rent.2014)/gross_rent.2014)*100) %>% 
+  mutate(rent.pc.2016 = ((gross_rent.2016 - gross_rent.2015)/gross_rent.2015)*100) %>% 
+  mutate(rent.pc.2017 = ((gross_rent.2017 - gross_rent.2016)/gross_rent.2016)*100) %>% 
+  mutate(rent.pc.2018 = ((gross_rent.2018 - gross_rent.2017)/gross_rent.2017)*100) %>% 
+  mutate(rent.pc.2019 = ((gross_rent.2019 - gross_rent.2018)/gross_rent.2018)*100) %>% 
+
+mutate(bachelor.pc.2011 = (perc_bachelor.2011 - perc_bachelor.2010)/perc_bachelor.2010) %>% 
+  mutate(bachelor.pc.2012 = (perc_bachelor.2012 - perc_bachelor.2011)/perc_bachelor.2011) %>% 
+  mutate(bachelor.pc.2013 = (perc_bachelor.2013 - perc_bachelor.2012)/perc_bachelor.2012) %>% 
+  mutate(bachelor.pc.2014 = (perc_bachelor.2014 - perc_bachelor.2013)/perc_bachelor.2013) %>% 
+  mutate(bachelor.pc.2015 = (perc_bachelor.2015 - perc_bachelor.2014)/perc_bachelor.2014) %>% 
+  mutate(bachelor.pc.2016 = (perc_bachelor.2016 - perc_bachelor.2015)/perc_bachelor.2015) %>% 
+  mutate(bachelor.pc.2017 = (perc_bachelor.2017 - perc_bachelor.2016)/perc_bachelor.2016) %>% 
+  mutate(bachelor.pc.2018 = (perc_bachelor.2018 - perc_bachelor.2017)/perc_bachelor.2017) %>% 
+  mutate(bachelor.pc.2019 = (perc_bachelor.2019 - perc_bachelor.2018)/perc_bachelor.2018)
+  
+```
+
+-   Standardize variables
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+#standardize percent changes 
+
+acs_wide <- acs_wide  %>% 
+  mutate(income.z.2011 = (income.pc.2011 - mean(income.pc.2011, na.rm= TRUE))/ sd(income.pc.2011, na.rm= TRUE)) %>%
+    mutate(income.z.2012 = (income.pc.2012 - mean(income.pc.2012, na.rm= TRUE))/ sd(income.pc.2012 , na.rm= TRUE)) %>%
+    mutate(income.z.2013 =(income.pc.2013 - mean(income.pc.2013, na.rm= TRUE))/ sd(income.pc.2013, na.rm= TRUE) ) %>%
+    mutate(income.z.2014 = (income.pc.2014 - mean(income.pc.2014, na.rm= TRUE))/ sd(income.pc.2014, na.rm= TRUE) ) %>%
+    mutate(income.z.2015 = (income.pc.2015 - mean(income.pc.2015, na.rm= TRUE))/ sd(income.pc.2015, na.rm= TRUE) ) %>%
+    mutate(income.z.2016 = (income.pc.2016 - mean(income.pc.2016, na.rm= TRUE))/ sd(income.pc.2016, na.rm= TRUE) ) %>%
+    mutate(income.z.2017 = (income.pc.2017 - mean(income.pc.2017, na.rm= TRUE))/ sd(income.pc.2017, na.rm= TRUE) ) %>%
+    mutate(income.z.2018 = (income.pc.2018 - mean(income.pc.2018, na.rm= TRUE))/ sd(income.pc.2018, na.rm= TRUE) ) %>%
+    mutate(income.z.2019 = (income.pc.2019 - mean(income.pc.2019, na.rm= TRUE))/ sd(income.pc.2019, na.rm= TRUE) ) %>% 
+    
+  mutate(rent.z.2011=(rent.pc.2011 - mean(rent.pc.2011, na.rm= TRUE))/ sd(rent.pc.2011, na.rm= TRUE) ) %>%
+    mutate(rent.z.2012=(rent.pc.2012 - mean(rent.pc.2012, na.rm= TRUE))/ sd(rent.pc.2012, na.rm= TRUE) ) %>%
+    mutate(rent.z.2013=(rent.pc.2013 - mean(rent.pc.2013, na.rm= TRUE))/ sd(rent.pc.2013, na.rm= TRUE) ) %>%
+    mutate(rent.z.2014=(rent.pc.2014 - mean(rent.pc.2014, na.rm= TRUE))/ sd(rent.pc.2014, na.rm= TRUE) ) %>%
+    mutate(rent.z.2015=(rent.pc.2015 - mean(rent.pc.2015, na.rm= TRUE))/ sd(rent.pc.2015, na.rm= TRUE) ) %>%
+    mutate(rent.z.2016=(rent.pc.2016 - mean(rent.pc.2016, na.rm= TRUE))/ sd(rent.pc.2016, na.rm= TRUE) ) %>%
+    mutate(rent.z.2017=(rent.pc.2017 - mean(rent.pc.2017, na.rm= TRUE))/ sd(rent.pc.2017, na.rm= TRUE) ) %>%
+    mutate(rent.z.2018=(rent.pc.2018 - mean(rent.pc.2018, na.rm= TRUE))/ sd(rent.pc.2018, na.rm= TRUE) ) %>%
+    mutate(rent.z.2019=(rent.pc.2019 - mean(rent.pc.2019, na.rm= TRUE))/ sd(rent.pc.2019, na.rm= TRUE) ) %>%
+
+  mutate(bachelor.z.2011=(bachelor.pc.2011 - mean(bachelor.pc.2011, na.rm= TRUE))/ sd(bachelor.pc.2011, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2012=(bachelor.pc.2012 - mean(bachelor.pc.2012, na.rm= TRUE))/ sd(bachelor.pc.2012, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2013=(bachelor.pc.2013 - mean(bachelor.pc.2013, na.rm= TRUE))/ sd(bachelor.pc.2013, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2014=(bachelor.pc.2014 - mean(bachelor.pc.2014, na.rm= TRUE))/ sd(bachelor.pc.2014, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2015=(bachelor.pc.2015 - mean(bachelor.pc.2015, na.rm= TRUE))/ sd(bachelor.pc.2015, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2016=(bachelor.pc.2016 - mean(bachelor.pc.2016, na.rm= TRUE))/ sd(bachelor.pc.2016, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2017=(bachelor.pc.2017 - mean(bachelor.pc.2017, na.rm= TRUE))/ sd(bachelor.pc.2017, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2018=(bachelor.pc.2018 - mean(bachelor.pc.2018, na.rm= TRUE))/ sd(bachelor.pc.2018, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.2019=(bachelor.pc.2019 - mean(bachelor.pc.2019, na.rm= TRUE))/ sd(bachelor.pc.2019, na.rm= TRUE) )
+
+```
+
+-   Sum z-scores
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+#sum z-scores 
+#can do complete cases at a later step if necessary 
+
+acs_wide <- acs_wide  %>% 
+  mutate(sum_zscore.2011 = (income.z.2011 + rent.z.2011 + bachelor.z.2011), na.rm = TRUE) %>% 
+  mutate(sum_zscore.2012 = (income.z.2012 + rent.z.2012 + bachelor.z.2012), na.rm = TRUE) %>%   
+  mutate(sum_zscore.2013 = (income.z.2013 + rent.z.2013 + bachelor.z.2013), na.rm = TRUE) %>%  
+  mutate(sum_zscore.2014 = (income.z.2014 + rent.z.2014 + bachelor.z.2014), na.rm = TRUE) %>%  
+  mutate(sum_zscore.2015 = (income.z.2015 + rent.z.2015 + bachelor.z.2015), na.rm = TRUE) %>%
+  mutate(sum_zscore.2016 = (income.z.2016 + rent.z.2016 + bachelor.z.2016), na.rm = TRUE) %>% 
+  mutate(sum_zscore.2017 = (income.z.2017 + rent.z.2017 + bachelor.z.2017), na.rm = TRUE) %>% 
+  mutate(sum_zscore.2018 = (income.z.2018 + rent.z.2018 + bachelor.z.2018), na.rm = TRUE) %>% 
+  mutate(sum_zscore.2019 = (income.z.2019 + rent.z.2019 + bachelor.z.2019), na.rm = TRUE)  
+
+#make new dataframes
+mydata011 <- acs_wide %>% 
+  select(income.z.2011, rent.z.2011, bachelor.z.2011, sum_zscore.2011)
+
+mydata012 <- acs_wide %>% 
+  select(income.z.2012, rent.z.2012, bachelor.z.2012, sum_zscore.2012)
+
+mydata013 <- acs_wide %>% 
+  select(income.z.2013, rent.z.2013, bachelor.z.2013, sum_zscore.2013)
+
+mydata014 <- acs_wide %>% 
+  select(income.z.2014, rent.z.2014, bachelor.z.2014,sum_zscore.2014)
+
+mydata015 <- acs_wide %>% 
+  select(income.z.2015, rent.z.2015, bachelor.z.2015,sum_zscore.2015)
+
+mydata016 <- acs_wide %>% 
+  select(income.z.2016, rent.z.2016, bachelor.z.2016,sum_zscore.2016)
+
+mydata017 <- acs_wide %>% 
+  select(income.z.2017, rent.z.2017, bachelor.z.2017, sum_zscore.2017)
+
+mydata018 <- acs_wide %>% 
+  select(income.z.2018, rent.z.2018, bachelor.z.2018, sum_zscore.2018)
+
+mydata019 <- acs_wide %>% 
+  select(income.z.2019, rent.z.2019, bachelor.z.2019, sum_zscore.2019)
+
+```
+
+### Figure 8. {-}
+-   Look at the the variables graphically
+
+```{r eval = TRUE, message=FALSE}
+
+#2011
+par(mfrow = c(1, 2), mar = c(3, 9, 1, 1)) 
+set.seed(2)
+stripchart(mydata011, col = rainbow(5), pch=19, las = 2, method = "stack") # stripchart
+
+#2012 
+set.seed(2)
+stripchart(mydata012, col = rainbow(5), pch=19, las = 2, method = "stack") 
+par(mfrow = c(1, 1), mar = c(3, 9, 1, 1))
+
+#2013 
+par(mfrow = c(1, 2), mar = c(3, 9, 1, 1))
+set.seed(3)
+stripchart(mydata013, col = rainbow(5), pch=19, las = 2, method = "stack") 
+
+#2014 
+set.seed(3)
+stripchart(mydata014, col = rainbow(5), pch=19, las = 2, method = "stack") 
+par(mfrow = c(1, 1), mar = c(3, 9, 1, 1))
+
+#2015 
+par(mfrow = c(1, 2), mar = c(3, 9, 1, 1)) 
+set.seed(4)
+stripchart(mydata015, col = rainbow(5), pch=19, las = 2, method = "stack") 
+
+#2016 
+set.seed(4)
+stripchart(mydata016, col = rainbow(5), pch=19, las = 2, method = "stack") 
+par(mfrow = c(1, 1), mar = c(3, 9, 1, 1))
+
+#2017 
+par(mfrow = c(1, 2), mar = c(3, 9, 1, 1)) 
+set.seed(5)
+stripchart(mydata017, col = rainbow(5), pch=19, las = 2, method = "stack") 
+
+#2018 
+set.seed(5)
+stripchart(mydata018, col = rainbow(5), pch=19, las = 2, method = "stack") 
+par(mfrow = c(1, 1), mar = c(3, 9, 1, 1))
+
+#2019 
+par(mar = c(3, 9, 1, 1)) # graph margins
+stripchart(mydata019, col = rainbow(5), pch=19, las = 2, method = "stack") 
+
+
+```
+    
+-   Plot histograms
+```{r eval = FALSE, include=FALSE}
+#create a grid with histograms of the z scores  
+z5a <- ggplot(data = acs_wide, aes(x = sum_zscore.2011)) +
+        geom_histogram(binwidth = .45)+ylim(0,6)
+z6a <- ggplot(data = acs_wide, aes(x = sum_zscore.2012)) +
+        geom_histogram(binwidth = .45)+ylim(0,6)
+z7a <- ggplot(data = acs_wide, aes(x =sum_zscore.2013)) +
+        geom_histogram(binwidth = .45) +ylim(0,6)
+z8a <- ggplot(data = acs_wide, aes(x = sum_zscore.2014)) +
+        geom_histogram( binwidth = 0.10) +ylim(0,6)#change limits to 
+
+plot_grid(z5a, z6a, z7a, z8a, labels = "AUTO") 
+
+```
+
+### Figure 9. {-}
+-   Visualize and summarize data to make categorical variable
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+
+summary(acs_wide$sum_zscore.2011)
+box1 <- ggplot(acs_wide, aes(x = sum_zscore.2011)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2012)
+box2 <- ggplot(acs_wide, aes(x = sum_zscore.2012)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2013)
+box3 <- ggplot(acs_wide, aes(x = sum_zscore.2013)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2014)
+box4 <- ggplot(acs_wide, aes(x = sum_zscore.2014)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2015)
+box5 <- ggplot(acs_wide, aes(x = sum_zscore.2015)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2016)
+box6 <- ggplot(acs_wide, aes(x = sum_zscore.2016)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2017)
+box7 <- ggplot(acs_wide, aes(x = sum_zscore.2017)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2018)
+box8 <- ggplot(acs_wide, aes(x = sum_zscore.2018)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+summary(acs_wide$sum_zscore.2019)
+box9 <- ggplot(acs_wide, aes(x = sum_zscore.2019)) + geom_boxplot() +geom_dotplot(binwidth = 0.20, dotsize = 0.5)
+
+plot_grid(box1, box2, box3, box4, box5, box6, box7, box8, box9, labels = "AUTO") 
+```
+      
+          There appear to be a few potential outliers within 2015. However, overall, data appears to be appropriately distributed, with many observations falling near or at zero (0).
+
+-   Taking the smallest IQRs to create gentrification variable - cutoffs the same through years for comparibility
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+acs_wide <- acs_wide %>%
+  mutate(gentr.z.2011 = case_when(sum_zscore.2011 <= -0.83833 ~ "low gentrification", sum_zscore.2011 > -0.83833 & sum_zscore.2011 < 0.57888 ~ "medium gentrification", sum_zscore.2011 >= 0.57888 ~"high gentrification"))
+
+table(acs_wide$gentr.z.2011)
+
+acs_wide <- acs_wide %>%
+  mutate(gentr.z.2012 = case_when(sum_zscore.2012 <= -0.83833 ~ "low gentrification", sum_zscore.2012 > -0.83833 & sum_zscore.2012 < 0.57888 ~ "medium gentrification", sum_zscore.2012 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2013 = case_when(sum_zscore.2013 <= -0.83833 ~ "low gentrification", sum_zscore.2013 > -0.83833 & sum_zscore.2013 < 0.57888 ~ "medium gentrification", sum_zscore.2013 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2014 = case_when(sum_zscore.2014 <= -0.83833 ~ "low gentrification", sum_zscore.2014 > -0.83833 & sum_zscore.2014 < 0.57888 ~ "medium gentrification", sum_zscore.2014 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2015 = case_when(sum_zscore.2015 <= -0.83833 ~ "low gentrification", sum_zscore.2015 > -0.83833 & sum_zscore.2015 < 0.57888 ~ "medium gentrification", sum_zscore.2015 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2016 = case_when(sum_zscore.2016 <= -0.83833 ~ "low gentrification", sum_zscore.2016 > -0.83833 & sum_zscore.2016 < 0.57888 ~ "medium gentrification", sum_zscore.2016 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2017 = case_when(sum_zscore.2017 <= -0.83833 ~ "low gentrification", sum_zscore.2017 > -0.83833 & sum_zscore.2017 < 0.57888 ~ "medium gentrification", sum_zscore.2017 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2018 = case_when(sum_zscore.2018 <= -0.83833 ~ "low gentrification", sum_zscore.2018 > -0.83833 & sum_zscore.2018 < 0.57888 ~ "medium gentrification", sum_zscore.2018 >= 0.57888 ~"high gentrification")) %>% 
+  
+    mutate(gentr.z.2019 = case_when(sum_zscore.2019 <= -0.83833 ~ "low gentrification", sum_zscore.2019 > -0.83833 & sum_zscore.2019 < 0.57888~ "medium gentrification", sum_zscore.2019 >= 0.57888 ~"high gentrification")) 
+
+table(acs_wide$gentr.z.2019)
+
+```
+
+```{r eval = TRUE, message=FALSE}
+write.csv(acs_wide, "/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/acs_wide.txt",col.names = T)
+```
+
+```{r eval = TRUE, message=FALSE}
+acs_nat <- read.delim("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/CDC Wonder Natality.txt", header = T, sep = "\t")
+
+```
+
+>>> The percent of births that were low births was not available. As a result, the following analysis will be based on the average birth weight. The percent of births preterm was not available. As a result, the following analysis will be based the average gestational age.The new research question: how is gentrification associated with average gestational age, average birth weight and birth rate.
+
+-   Merge data together
+
+```{r eval = TRUE, message=FALSE, results='hide'}
+
+#read in data
+acs_gen<- read.delim("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/acs_wide.txt", header = T, sep = ",")
+
+#read in shape file
+acs.sf <- st_read("/Users/nsealy/Documents/Data-Science-Fall2022/final proj data/cb_2018_us_county_500k/cb_2018_us_county_500k.shp")
+class(acs.sf) 
+
+st_crs(acs.sf) <- st_crs(acs.sf) 
+
+#mutate geoid to add a zero in front 
+acs_gen <- acs_gen %>% 
+  mutate(GEOID = stringr:: str_pad(GEOID, 5, pad = "0")) %>%
+   arrange(GEOID)
+
+#merge data together
+acs_gen.sf <- merge(acs.sf, acs_gen, by ="GEOID", sort = TRUE)
+class(acs_gen.sf)
+```
+
+>>> Because birth data is highly restricted and I am using public access data, it's not possible to graph it by county.
+
+### Figure 10. {-}
+-   Graph of gentrification by county in the US for each year
+
+```{r eval = TRUE, message=FALSE}
+# interactive map
+pu_message <- paste0(acs_gen.sf$NAME.y)    
+newpalacs <- colorFactor(viridis(7), acs_gen.sf$gentr.z.2011) 
+
+leaflet(acs_gen.sf) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  setView(lng = -73.809354, lat = 40.737084, zoom = 3) %>%
+    addPolygons(stroke = FALSE,                        # remove polygon borders
+              fillColor = ~newpalacs(gentr.z.2011),
+              fillOpacity = 0.6, # increase opacity and resolution
+              group= "2011", popup = paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2011), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+
+          addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2012),
+              fillOpacity = 0.6, 
+              group= "2012", popup = paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2012), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+  addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2013),
+              fillOpacity = 0.6, 
+              group= "2013", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2013), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+    addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2014),
+              fillOpacity = 0.6, 
+              group= "2014", popup = paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2014), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+    addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2015),
+              fillOpacity = 0.6, 
+              group= "2015", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2015), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+      addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2016),
+              fillOpacity = 0.6, 
+              group= "2016", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2016), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+      
+        addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2017),
+              fillOpacity = 0.6, 
+              group= "2017", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2017), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+          addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2018),
+              fillOpacity = 0.6, 
+              group= "2018", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2018), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+          addPolygons(stroke = FALSE,             
+              fillColor = ~newpalacs(gentr.z.2019),
+              fillOpacity = 0.6, 
+              group= "2019", popup =  paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.2019), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+  
+    addLegend("bottomright", pal = newpalacs, values = ~gentr.z.2012, labels = "gentr ", title = "Gentrification") %>% 
+      
+  addLayersControl(baseGroups = c("2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019"),
+    options = layersControlOptions(collapsed = FALSE))
+```
+
+      Figure 10 shows the gentrification for each year. There are no clear trends beyond that the levels of gentrification do change year to year. That is, the rate of change in the indicator variables does not remain constant. 
+      
+-   Create dataframe showing total gentrification from 2010 to 2019
+
+```{r eval =TRUE, results='hide', message=FALSE}
+acs_gen1  <- acs_gen  %>%
+mutate(income.pc.total = ((mean_income.2019 - mean_income.2010)/mean_income.2010)*100) %>% 
+  mutate(rent.pc.total = ((gross_rent.2019 - gross_rent.2010)/gross_rent.2010)*100) %>% 
+  mutate(bachelor.pc.total = (perc_bachelor.2019 - perc_bachelor.2010)/perc_bachelor.2010) %>% 
+mutate(income.z.total = (income.pc.total - mean(income.pc.total, na.rm= TRUE))/ sd(income.pc.total, na.rm= TRUE)) %>% 
+    mutate(rent.z.total =(rent.pc.total - mean(rent.pc.total, na.rm= TRUE))/ sd(rent.pc.total, na.rm= TRUE) ) %>%
+    mutate(bachelor.z.total =(bachelor.pc.total - mean(bachelor.pc.total, na.rm= TRUE))/ sd(bachelor.pc.total, na.rm= TRUE) ) %>%
+    mutate(sum_zscore.total = (income.z.total + rent.z.total + bachelor.z.total), na.rm = TRUE)
+
+summary(acs_gen1$sum_zscore.total)
+
+acs_gen1 <- acs_gen1 %>%
+  mutate(gentr.z.total = case_when(sum_zscore.total<= -0.99035 ~ "low gentrification", sum_zscore.total > -0.99035 & sum_zscore.total < 0.66026 ~ "medium gentrification", sum_zscore.total >= 0.66026 ~"high gentrification"))
+
+table(acs_gen1$gentr.z.total)
+
+acs_gen1.sf <- merge(acs.sf, acs_gen1, by ="GEOID", sort = TRUE)
+class(acs_gen1.sf)
+
+```
+
+### Figure 11. {-}
+-   Create interactive map showing total gentrification from 2010 to 2019
+
+```{r eval=TRUE}
+# interactive map
+
+newpalacs <- colorFactor(viridis(7), acs_gen1.sf$gentr.z.total) 
+
+leaflet(acs_gen1.sf) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  setView(lng = -73.809354, lat = 40.737084, zoom = 3) %>%
+    addPolygons(stroke = FALSE,                        # remove polygon borders
+              fillColor = ~newpalacs(gentr.z.total),
+              fillOpacity = 0.6, # increase opacity and resolution
+              group= "2011", popup = paste0(acs_gen.sf$NAME.y, "<br>", acs_gen.sf$gentr.z.total), highlightOptions = highlightOptions(weight = 4, color = "white", bringToFront = TRUE)) %>%
+      addLegend("bottomright", pal = newpalacs, values = ~gentr.z.total, labels = "gentr ", title = "Gentrification") 
+```
+
+      Figure 10 shows the total gentrification from 2010 to 2019. 
+      
+-   Mutate Natality Data
+
+```{r eval = TRUE, message= FALSE, results='hide'}
+#prepare data for analysis 
+acs_nat <- acs_nat %>% 
+  na.omit(Year) %>% 
+  select(-c(Notes, X..of.Total.Births)) %>% 
+  filter(Year == 2011 | Year == 2012 | Year == 2013 | Year == 2014 | Year == 2015 | Year == 2016 | Year == 2017 | Year == 2018 | Year == 2019) %>% 
+  rename(GEOID = County.Code, NAME = County) %>% 
+  mutate(GEOID = stringr:: str_pad(GEOID, 5, pad = "0"))
+
+head(acs_nat)
+```
+
+### Table 6. {-}
+-   Table describing the rates of the outcomes
+
+```{r eval = TRUE, message=FALSE}
+
+label(acs_nat$Average.Birth.Weight) <- "Average Birthweight"
+label(acs_nat$Average.OE.Gestational.Age) <- "Average Gestational Age"
+label(acs_nat$Birth.Rate) <- "Birth Rate"
+
+table1( ~ Average.Birth.Weight + Birth.Rate + Average.OE.Gestational.Age, data = acs_nat, overall = "Total")
+```
+    
+    From 2010 to 2019, the mean average birthweight was 3280 grams. The mean average gestational age was 38.5, higher than preterm. The minimum average gestational age was 37.6, meaning no  county had an average gestational age that would constitute preterm birth, which is defined as 37 weeks gestation. The mean birth rate was 11.9. 
+    
+-   Reshape data exposure data to long
+
+```{r eval=TRUE, message = FALSE, results='hide'}
+
+#seperate datasets to have only sum_zscore or gentr.z
+
+acs_gen2 <-  acs_gen %>% 
+  select(GEOID, NAME, sum_zscore.2011, sum_zscore.2012, sum_zscore.2013, sum_zscore.2014, sum_zscore.2015, sum_zscore.2016, sum_zscore.2017, sum_zscore.2018, sum_zscore.2019)
+class(acs_gen2)
+
+acs_gen3 <-  acs_gen %>% 
+  select(GEOID, NAME, gentr.z.2011, gentr.z.2012, gentr.z.2013, gentr.z.2014, gentr.z.2015, gentr.z.2016, gentr.z.2017, gentr.z.2018, gentr.z.2019)
+class(acs_gen3)
+
+acs_gen2 <- acs_gen2 %>% 
+  distinct(GEOID, .keep_all = TRUE)
+
+acs_gen3 <- acs_gen3 %>% 
+  distinct(GEOID, .keep_all = TRUE)
+
+#reshape to long 
+somewhere  <- reshape(acs_gen2,idvar = "GEOID",
+        varying=3:11, 
+        timevar='Year',
+        times=c('2011', '2012',"2013", "2014", "2015", "2016", "2017", "2018", "2019"),
+        v.names=c('sum_zscore'), direction='long')
+
+somewhere1  <- reshape(acs_gen3,idvar = "GEOID",
+        varying=3:11, 
+        timevar='Year',
+        times=c('2011', '2012',"2013", "2014", "2015", "2016", "2017", "2018", "2019"),
+        v.names=c('gentr.z'), direction='long')
+
+#merge data back together 
+acs_gen4 <- merge(somewhere, somewhere1, by = c("GEOID","NAME","Year"))
+
+#merge natality data and gentrification data 
+acs_comp <- merge(acs_gen4, acs_nat, by = c("GEOID","Year"), sort = TRUE) 
+
+acs_comp <-  acs_comp %>% 
+  na.omit(gentr.z)
+
+head(acs_comp)
+```
+
+
+### Table 7. {-}
+
+I analysed the association between average birthweight, gestational age and birth rate and gentrification. This data was repeated as each county included in this analysis was measured each year between 2011 and 2019. To account for this repetition and the clustering that would occur within the data, I used linear mixed effects models. 
+
+* Linear mixed models
+  +  Average Birthweight
+
+```{r eval = TRUE, message=FALSE}
+us_gent = lme(Average.Birth.Weight ~ gentr.z, random = ~1 + gentr.z|GEOID, data = acs_comp) 
+summary(us_gent)
+
+us_int = lme(Average.Birth.Weight ~ gentr.z, random = ~ 1| GEOID, data = acs_comp) 
+summary(us_int)
+
+anova(us_gent, us_int) #smaller AIC in us_gent 
+```
+      
+      The test between the model with random slopes _us_gent_ and the model with fixed slopes _us_int_ shows that using random slopes is better for the modeling of this data as it has a lower AIC. There is no evidence of a significant association between gentrification and average birthweight. 
+
+### Table 8. {-}
+
++  Gestational Age
+```{r eval = TRUE, message=FALSE}
+us_gentage = lme(Average.OE.Gestational.Age ~ gentr.z, random = ~1|GEOID, data = acs_comp) 
+summary(us_gentage)
+#model with random slope unable to converge 
+```
+    
+    Due to the low variability in these number, the models with random slopes was unable to converge and as a result the model with fixed slopes was used. There is no evidence of a significant association between gentrification and gestational age. 
+
+### Table 9. {-}
++ Birth Rate
+```{r eval=TRUE, message=FALSE}
+us_gentrate = lme(Birth.Rate ~ gentr.z, random = ~1 |GEOID, data = acs_comp) 
+summary(us_gentrate)
+#model with random slope unable to converge 
+```
+    
+    Due to the low variability in these number, the models with random slopes was unable to converge and as a result the model with fixed slopes was used. There is  evidence of a  significant association between gentrification and birth rate. However, as this is an unadjusted model confounding may be impacting results. 
+
+
+# Conclusion
+This analysis showed trends of gentrification in Philadelphia by planning district and across the United States by county. Given the limitations of the data used, every model should be interpreted with high levels of caution as unmeasured confounding is impacting all generated estimates. This includes the only significant association observed, birth rate and gentrification across the US between 2010 and 2019. This study would have been improved by person-level data, and the ability to adjust for confounders such as age, race, occupation, parity. In addition, measures such as those used to compute the composite score of gentrification are impacted by societal changes and world events that would not have been accounted for within this analysis. The strengths of this project lies in the visualization of the data, allowing for trends to be observed and potential hypotheses to be generated. 
+
+
+# References 
+
+Gibbons, J. (2019). Are gentrifying neighborhoods more stressful? A multilevel analysis of self-rated stress. SSM - Population Health, 7, 100358. https://doi.org/10.1016/j.ssmph.2019.100358
+
+Huynh, M., & Maroko, A. R. (2014). Gentrification and Preterm Birth in New York City, 2008–2010. Journal of Urban Health, 91(1), 211–220. https://doi.org/10.1007/s11524-013-9823-x
+
+US EPA, O. (2015, May 29). Health—Adverse Birth Outcomes [Overviews and Factsheets]. https://www.epa.gov/americaschildrenenvironment/health-adverse-birth-outcomes
+
+Perin J, Mulick A, Yeung D, Villavicencio F, Lopez G, Strong KL, et al. Global, regional, and national causes of under-5 mortality in 2000-19: an updated systematic analysis with implications for the Sustainable Development Goals. Lancet Child Adolesc Health. 2022;6(2):106-15. doi:10.1016/S2352-4642(21)00311-4
+
