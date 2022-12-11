@@ -25,3 +25,4 @@ This repository contains the necessary files to perform a GWAS analysis. The rep
 
 ![Manhattan Plot Chr19](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Multraits-Manhattan.pvalue.jpg)
 ![QQ Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/QQplot.pvalue.jpg)
+![Fuma output figures](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Chr19_FUMA.png)
