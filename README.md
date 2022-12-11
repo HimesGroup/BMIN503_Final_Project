@@ -17,3 +17,10 @@ This repository contains the necessary files to perform a GWAS analysis. The rep
   5. Final_project.html: A knitted html output of the R markdown file
   
   6. README.md: A Readme file displaying the contents of the repository (This file)
+
+
+
+Results:
+
+![Manhattan Plot Chr19](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Multraits-Manhattan.pvalue.jpg)
+![QQ Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/QQplot.pvalue.jpg)
