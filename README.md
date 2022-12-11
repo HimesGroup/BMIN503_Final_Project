@@ -10,14 +10,13 @@ This repository contains the necessary files to perform a GWAS analysis. The rep
 
   2. README.md: A Readme file displaying the contents of the repository (This file)
   
-  
   3. Final_project.Rmd: A R markdown file containing the code for this project. 
   
   4. A Alzheimers_GWAS.pptx: A powerpoint file illustrating the overview of the project. **Contains SNPTEST commands which were used to generate the GWAS summary statistics**, as well as a workflow diagram.
   
   5. Final_project.html: A knitted html output of the R markdown file
   
-  6. Project_Output_files: A Directory containing the Plots (QQ plot, ManhattanPlot)
+  6. Project_Output_files: A Directory containing the Plots (QQ plot, ManhattanPlot, FUMA results, Top50SNPS table)
 
 
 
