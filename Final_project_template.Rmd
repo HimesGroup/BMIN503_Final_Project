@@ -30,6 +30,97 @@ Data is initially prepared using SNPTEST, a tool to analyze SNP association in G
 **Commands for SNPTEST Can be seen in greater detail in Alzheimers_GWAS.pptx**
 
 
+RCode:
+
+```{r, eval=TRUE}
+BiocManager::install('CMplot')
+BiocManager::install('SNPlocs.Hsapiens.dbSNP144.GRCh37')
+
+library("CMplot")
+library(SNPlocs.Hsapiens.dbSNP144.GRCh37)
+
+#For Annotation, Retrieve all annotated SNPS from SNPlocs.Hsapiens.dbSNP144.GRCh37 package:
+all_snps <- SNPlocs.Hsapiens.dbSNP144.GRCh37
+
+
+#Loop through annotated SNPS and assign to dataframe per chromosome
+final_snp_df = data.frame()
+
+for (i in 1:23){
+  # vector output
+  model <- snpsBySeqname(all_snps, as.character(i))
+  df <- data.frame(c(i),c(model@ranges@pos), c(model@elementMetadata@listData[["RefSNP_id"]]))
+  #print(paste0(model@ranges@pos)
+  
+  # add vector to a dataframe
+  #df <- data.frame(model)
+  final_snp_df <- rbind(final_snp_df,df)
+  
+  print(paste0("Done loading SNPS for chr: ", i))
+}
+
+
+#Rename columns
+colnames(final_snp_df) <- c('Chromosome','Position', 'RefSNP_id')
+#Combine chr + pos into new column to be used for merge with GWAS summary statistics data later:
+final_snp_df$rsid <- paste0(final_snp_df$Chromosome, ":", final_snp_df$Position)
+#Select only needed columns (Can remove Chromosome now):
+final_snp_df <- subset(final_snp_df, select = c("rsid", "RefSNP_id", "Position"))
+
+
+
+#Load in data of chr19-22
+data_chr19 <- read.table("/Users/tahai/Documents/GWAS/chr/chr19.output", header = TRUE)
+data_chr20 <- read.table("/Users/tahai/Documents/GWAS/chr/chr20.output", header = TRUE)
+data_chr21 <- read.table("/Users/tahai/Documents/GWAS/chr/chr21.output", header = TRUE)
+data_chr22 <- read.table("/Users/tahai/Documents/GWAS/chr/chr22.output", header = TRUE)
+
+
+#Combine chromosomes
+data_all <- rbind(data_chr1,data_chr2,data_chr3,data_chr4)
+
+
+#Rename/reorder columns:
+data_all <- data_all[, c("rsid", "alternate_ids", "position", "frequentist_add_pvalue")]
+colnames(data_all) <- c('rsid', 'Chromosome', 'Position', 'pvalue')
+
+#Clean data
+data_all <- na.omit(data_all) 
+
+#Merge SNP annotations and GWAS df by rsid:
+final_df <- merge(final_snp_df, data_all, by="rsid")
+
+
+
+#Extract specific columns of interest
+final_df <- final_df[, c("rsid", "Chromosome", "Position.x", "pvalue", "RefSNP_id")]
+
+#Assign significant SNPS and its corresponding Rsid_gene names
+SNPs <- final_df[final_df[,4] < (0.05 / nrow(final_df)), 1]
+GENES <- final_df[final_df[,4] < (0.05 / nrow(final_df)), 5]
+
+
+#Change column header names for input into CMplot format
+colnames(final_df) <- c('rsid', 'Chromosome', 'Position', 'pvalue')
+final_df <- final_df[, c("rsid", "Chromosome", "Position", "pvalue")]
+
+
+
+#Plots:
+
+CMplot(final_df,plot.type="q",box=FALSE,file="jpg",memo="",dpi=300,
+       conf.int=TRUE,conf.int.col=NULL,threshold.col="red",threshold.lty=2,
+       file.output=TRUE,verbose=TRUE,width=5,height=5)
+
+
+CMplot(final_df, plot.type="m",multracks=TRUE,threshold=c(1e-8,1e-6),threshold.lty=c(1,2), 
+       threshold.lwd=c(1,1), threshold.col=c("black","grey"), highlight.text=GENES, amplify=TRUE,bin.size=1e6,
+       chr.den.col=c("darkgreen", "yellow", "red"), signal.col=c("red","green","blue"),
+       signal.cex=1, file="jpg",memo="",dpi=300,file.output=TRUE,verbose=TRUE,
+       highlight=SNPs, highlight.text.cex=1.4)
+
+```
+
 
 
 ### Results
