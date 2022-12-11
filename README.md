@@ -1,19 +1,19 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project - Alzheimer's GWAS Analysis
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
-
-
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Taha Iqbal
 
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+This repository contains the necessary files to perform a GWAS analysis. The repository contains:
 
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+  1. SNPTEST_GWAS_output: A Directory containing GWAS Summary Statistics from SNPTEST for Chr1-22 for ADC10
+  
+  2. Output_files: A Directory containing the Plots (QQ plot, ManhattanPlot)
+  
+  3. Final_project.Rmd: A R markdown file containing the code for this project. 
+  
+  4. A Alzheimers_GWAS.pptx: A powerpoint file illustrating the overview of the project. **Contains SNPTEST commands which were used to generate the GWAS summary statistics**, as well as a workflow diagram.
+  
+  5. Final_project.html: A knitted html output of the R markdown file
+  
+  6. README.md: A Readme file displaying the contents of the repository (This file)
