@@ -17,12 +17,12 @@ This repository contains the necessary files to perform a GWAS analysis. The rep
   
   5. Final_project.html: A knitted html output of the R markdown file
   
-  6. Output_files: A Directory containing the Plots (QQ plot, ManhattanPlot)
+  6. Project_Output_files: A Directory containing the Plots (QQ plot, ManhattanPlot)
 
 
 
 **Figures from Output_files**:
 
-![Manhattan Plot Chr19](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Multraits-Manhattan.pvalue.jpg)
-![QQ Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/QQplot.pvalue.jpg)
-![Fuma output figures](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/output_files/Chr19_FUMA.png)
+![Manhattan Plot Chr19](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/Project_Output_files/Multraits-Manhattan.pvalue.jpg)
+![QQ Plot](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/Project_Output_files/QQplot.pvalue.jpg)
+![Fuma output figures](https://github.com/Tahai93/BMIN503_Final_Project/blob/master/Project_Output_files/Chr19_FUMA.png)
