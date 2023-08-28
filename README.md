@@ -12,7 +12,7 @@ This repository contains templates for your final written report and GitHub repo
 
 Follow the instructions [here][forking] if you are unsure what the above steps mean.
 
-DUE DATE FOR FINAL VERSION: 12/09/22 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
 
 <!-- Links -->
