@@ -2,31 +2,210 @@
 title: "Title for final project"
 subtitle: "BMIN503/EPID600 Final Project"
 author: "Fang (Amy) Liu"
-date: last-modified
+date: last-modified #"`r Sys.Date()`"
 date-format: "[Last Updated:] MMM DD, YYYY"
-format: html
-editor: source
 embed-resources: true
+execute: 
+  echo: true 
+  warning: false #hide all warnings in the output 
+  message: false
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools:
+      source: true #hide the source option
+      toggle: true #toggle for code visibility
+    code-copy: true #option to copy code
+    code-overflow: scroll
+    df-print: paged
+    code-block-bg: true
+    code-block-border-left: "#31BAE9"
+theme: flatly
 ---
 
 ------------------------------------------------------------------------
 
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, although this is not required.
+```{r loadpackages, include=FALSE}
+library(tidyverse)
+library(readr)
+library(DT)
+library(RColorBrewer) #for fun color palettes
+library(tigris) #to download boundary shapefiles from the US census bureau
+library(sf)
+```
 
-### Overview
+# Overview
 
 Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
 
-### Introduction
+# Introduction
 
 Describe the problem addressed, its significance, and some background to motivate the problem.
 
 Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
 
-### Methods
+# Methods
 
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
 
-### Results
+```{r}
+# load data dictionary 
+dictionary <- readxl::read_excel("~/Desktop/BMIN5030/final_project/data/data_dictionary.xlsx", skip = 1) %>% 
+  janitor::clean_names() %>% 
+  rename(variable = column_name) %>% 
+  select(variable, definition)
+
+dictionary
+
+# load infectious disease data 
+infectious_data <- readr::read_csv("~/Desktop/BMIN5030/final_project/data/infectious_diseases_by_county_year_and_sex.csv") %>% 
+  janitor::clean_names()
+
+head(infectious_data)
+str(infectious_data)
+```
+
+## Exploratory analysis 
+
+Identify which diseases are most common.
+
+```{r}
+# total number of cases (2001 - 2021)
+total_cases <- infectious_data %>% 
+  filter(county == "California") %>% #state level data
+  filter(sex == "Total") %>% 
+  group_by(disease) %>% 
+  summarize(total_cases = sum(cases)) %>% 
+  arrange(desc(total_cases)) %>% 
+  head(10)
+
+# Create a bar plot using ggplot2
+ggplot(total_cases, 
+       aes(#x = disease, 
+           x = fct_reorder(disease, total_cases),
+           y = total_cases)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Top 10 diseases by case count (2001- 2021)", x = "Disease", y = "Total Cases") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels for readability
+  coord_flip()  # Flip the plot horizontally
+
+```
+
+Look at the trend in Campylobacteriosis in the past 2 decade. 
+
+```{r}
+# how many cases of each disease per year 
+diseases <- infectious_data %>% 
+  filter(county == "California") %>% #state level data
+  filter(sex == "Total") %>% #across all cases 
+  mutate(rate = as.numeric(rate)) %>%  #convert rate to numeric
+  filter(cases > 0) %>% 
+  select(disease, year, cases) 
+
+# diseases %>% filter(disease == "Campylobacteriosis") %>% 
+#   #filter(year < 2019 & year > 2012) %>% 
+#   ggplot(aes(x = year, y = cases))+
+#   geom_line() +
+#   coord_cartesian(ylim = c(0, max(diseases$cases)))  # Set y-axis limits
+
+
+# Create a bar plot for Campylobacteriosis cases
+diseases %>% filter(disease == "Campylobacteriosis") %>% #Campylobacteriosis, Salmonellosis
+  #filter(year < 2020 & year > 2012) %>% 
+  ggplot(aes(x = year, y = cases)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  #geom_line() +
+  labs(title = "Campylobacteriosis Cases by Year", x = "Year", y = "Number of Cases") +
+  theme_bw()
+```
+
+## Spatial distribution of diseases 
+
+Average rate of Campylobacteriosis by county.
+
+```{r}
+avg_rates <- infectious_data %>% 
+  filter(disease == "Campylobacteriosis") %>% 
+  filter(county != "California") %>% #state level data
+  filter(sex == "Total") %>% 
+  mutate(rate2 = cases * 100000/population) %>% 
+  select(county, year, rate2) %>% 
+  #filter(county == "Alameda") %>% 
+  group_by(county) %>% 
+  summarize(avg_rate = mean(rate2)) %>% 
+  arrange(desc(avg_rate))
+
+avg_rates
+```
+
+The average annual rate of new campylobacteriosis cases during 2013-2019 was about
+22 cases per 100,000 people in California. 
+
+By County: The average rates were highest in San Francisco County (about 51 cases per
+100,000 people), Marin County (about 42 cases per 100,000 people), and Mendocino
+County (about 39 cases per 100,000 people).
+
+Create a map!!
+
+```{r}
+# load counties shapefile for CA
+ca_2021 <- tigris::counties(state = "CA", year = 2021)
+
+# join two datasets so we have the incidence data for each county 
+ca_2021_rates <- inner_join(ca_2021, avg_rates, 
+                             by = c("NAME" = "county"))
+
+# static plot
+ggplot() +
+  geom_sf(data = ca_2021_rates, aes(fill = avg_rate))
+
+# To save space, we can save theme commands as a function that we can "add" to calls to ggplot
+my_theme <- function() {
+  theme_minimal() +  # shorthand for white background color
+  theme(axis.line = element_blank(),  # further customization of theme components
+        axis.text = element_blank(),  # remove x and y axis text and labels
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  # make grid lines invisible
+        legend.key.size = unit(0.8, "cm"),           # increase size of legend
+        legend.text = element_text(size = 16),       # increase legend text size
+        legend.title = element_text(size = 16))      # increase legend title size
+}
+
+# customized plot
+myPalette <- colorRampPalette(brewer.pal(9, "PuBu"))  # RColorBrewer palette
+
+# plot a point on the map 
+places.df <- data.frame(places = c("San Francisco"), #, "Alpine"), 
+                 lat = c(37.7272391),
+                         #38.6217831), 
+                 lon = c(-123.0322294))
+                         #-119.7983522))
+
+my_locations_sf <- st_as_sf(places.df, coords = c("lon", "lat"), 
+                            crs = 4326)
+
+ggplot() +
+  geom_sf(data = ca_2021_rates, aes(fill = avg_rate)) +
+  geom_sf(data = my_locations_sf, color = "red") +
+  my_theme() + 
+  ggtitle("Campylobacteriosis Average Annual Incidence Rates \nby County, CA, 2001-2021") + 
+  scale_fill_gradientn(name = "Rate per \n100,000 Population",      
+                    colours = myPalette(100))   
+```
+
+
+# Results
 
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+# References
+
+[Epidemiologic Summaries of Selected Communicable Diseases in California](https://www.cdph.ca.gov/Programs/CID/DCDC/Pages/EpiSummariesofCDsCA.aspx)
+
+https://www.cdph.ca.gov/Programs/CID/DCDC/CDPH%20Document%20Library/CampylobacteriosisEpiSummary2013-2019.pdf
+
