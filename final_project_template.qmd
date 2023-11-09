@@ -22,7 +22,11 @@ css: style.css
 
 ------------------------------------------------------------------------
 
-Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, although this is not required.
+```{r}
+library(tidyverse)
+library(lubridate)
+library(urbnmapr)
+```
 
 ## Overview {#sec-overview}
 
@@ -40,7 +44,150 @@ Describe the data used and general methodological approach used to address the p
 
 ## Results {#sec-results}
 
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+### Data preparation
+
+::: panel-tabset
+
+#### COVID-19
+
+```{r}
+#---------- COVID cases and deaths
+df_case <- read_csv("Data/covid_confirmed_usafacts.csv")
+df_death <- read_csv("Data/covid_deaths_usafacts.csv")
+df_pop <- read_csv("Data/covid_county_population_usafacts.csv")
+
+#----- Case: aggregate at state level
+df_case <- df_case |>
+  rename(county_name = `County Name`) |>
+  gather(-c(countyFIPS, county_name, State, StateFIPS), 
+            key = "date", value = "new_cases") |>
+  mutate(date = ymd(date)) |> 
+  group_by(State, date) |>
+  summarise(new_cases = sum(new_cases, na.rm = T)) |>
+  ungroup()
+
+#----- Deaths: aggregate at state level
+df_death <- df_death |>
+  rename(county_name = `County Name`) |>
+  gather(-c(countyFIPS, county_name, State, StateFIPS), 
+         key = "date", value = "new_deaths") |>
+  mutate(date = ymd(date))|> 
+  group_by(State, date) |>
+  summarise(new_deaths = sum(new_deaths, na.rm = T)) |>
+  ungroup()
+
+#----- Population: aggregate at state level
+df_pop <- df_pop |> rename(county_name_pop = `County Name`) |>
+  group_by(State) |>
+  summarise(population = sum(population, na.rm = T)) |>
+  ungroup()
+
+#----- Merge new case, death, and population datasets
+df_oc <- df_case |> left_join(df_death, by = c("State", "date")) |>
+  left_join(df_pop, by = c("State"))
+
+# Get counties shapefile: to get full state name from abbriviation
+st_name_full <- urbnmapr::counties |>
+  mutate(fips.code = as.numeric(county_fips)) |>
+  group_by(state_abbv, state_name) |>
+  slice(1) |>
+  select(state_abbv, state_name)
+
+# Create full name for state
+df_oc <- df_oc |> rename(state_abbv = State) |>
+  left_join(st_name_full, by = "state_abbv")
+```
+
+#### Mobility data
+
+```{r}
+#---------- Google Mobility data
+df_mob <- read_csv("Data/Global_Mobility_Report.csv")
+
+df_mob <- df_mob |> filter(country_region == "United States") |> 
+  filter(sub_region_1 != "") |>
+  rename(
+    state_name = sub_region_1,
+    grocery_pharm = grocery_and_pharmacy_percent_change_from_baseline,
+    retail_recreation = retail_and_recreation_percent_change_from_baseline,
+    park = parks_percent_change_from_baseline,
+    transit = transit_stations_percent_change_from_baseline,
+    workplace = workplaces_percent_change_from_baseline,
+    residential = residential_percent_change_from_baseline,
+  ) |>
+  select(state_name, date, grocery_pharm, retail_recreation, park,
+         transit, residential)
+
+# Aggregate at state level
+df_mob <- df_mob |> group_by(state_name, date) |>
+  summarise(grocery_pharm = mean(grocery_pharm, na.rm = T),
+            retail_recreation = mean(retail_recreation, na.rm = T),
+            retail_recreation = mean(retail_recreation, na.rm = T),
+            park = mean(park, na.rm = T),
+            transit = mean(transit, na.rm = T),
+            residential = mean(residential, na.rm = T))
+```
+
+#### Vaccination
+
+```{r}
+#---------- Testing, vaccination
+# Data from Our World in Data
+df_owid <- read_csv("Data/owid-covid-data.csv") |>
+  filter(location == "United States")
+
+df_owid <- df_owid |>
+  select(date, reproduction_rate, new_tests_smoothed_per_thousand, tests_per_case,
+         total_vaccinations_per_hundred, people_fully_vaccinated_per_hundred,
+         stringency_index) |>
+  rename(
+    test_thousand = new_tests_smoothed_per_thousand,
+    vacc_any = total_vaccinations_per_hundred,
+    vacc_fully = people_fully_vaccinated_per_hundred,
+  )
+```
+
+#### Testing policy
+
+```{r}
+#---------- Testing policy
+# Data from Our World in Data
+df_test_pol <- read_csv("Data/covid-19-testing-policy.csv") |>
+  filter(Entity == "United States") |>
+  select(Day, testing_policy) |>
+  rename(date = Day)
+```
+
+#### Merging all data
+
+```{r}
+#---------- Merge all data
+# setdiff(df_oc$state_name, df_mob$state_name)
+
+df <- df_oc |> left_join(df_mob, by = c("state_name", "date")) |> 
+  left_join(df_owid, by = "date") |> 
+  left_join(df_test_pol, by = "date")
+
+# Exclude Omicron variant
+df <- df |>
+  filter(date >= ymd("2020-02-15") & date < ymd("2021-12-01"))
+
+# Replace missing values (testing, vaccine were not available)
+df <- df |>
+  mutate(
+    test_thousand = ifelse(is.na(test_thousand), 0, test_thousand),
+    tests_per_case = ifelse(is.na(tests_per_case), 0, tests_per_case),
+    vacc_any = ifelse(is.na(vacc_any), 0, vacc_any),
+    vacc_fully = ifelse(is.na(vacc_fully), 0, vacc_fully)
+  )
+
+glimpse(df)
+
+head(df) |> knitr::kable()
+```
+
+
+:::
 
 ## Conclusion
 
