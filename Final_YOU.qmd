@@ -1,0 +1,510 @@
+---
+title: 'MIMIC_analyticfile_You'
+subtitle: "Independent study_Fall2023"
+format: 
+  html:
+    theme: lumen
+    toc: true #
+    toc-location: left 
+editor: visual
+theme: united #how you can change your theme
+embed-resources: true
+number-sections: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Overview
+
+> Sepsis is among the leading causes of hospital readmissions, and survivors often experience long-term consequences. Research has shown that home health services can improve the outcomes of sepsis survivors, reducing the likelihood of hospital readmission. This project aims to identify the patient/clinical characteristics that are associated with sepsis survivors' discharge dispositions (home or home with home health care) and 30-day rehospitalization using Medical Information Mart for Intensive Care (MIMIC-IV) data, which is a publicly accessible and deidentified data.
+
+# Introduction
+
+> Sepsis is a severe condition caused by infection, leading to life-threatening organ dysfunction. Annually more than 1.7 million adults in the US are diagnosed with sepsis, with a majority falling into the age group of 65 or older. Despite improvements in healthcare, sepsis survivors in this age group still grapple with elevated mortality rates and lingering physical, psychological, and emotional consequences. A significant proportion of sepsis survivors are readmitted to the hospital within 30 days after initial sepsis hospitalization. Sepsis places a substantial economic burden on society, necessitating post-acute care to address lingering complications. Home health care (HHC) is provided to a significant portion of sepsis survivors to support their recovery and rehabilitation. However, the impact of HHC on reducing 30-day readmission rates for sepsis survivors remains unexplored. This retrospective cohort study, using the MIMIC-IV database, aims to address this gap by examining the following objectives: (1) describe and compare baseline patient characteristics (i.e., demographic and clinical characteristics) and 30-day readmission rates of older sepsis survivors discharged home with HHC and without HHC; (2) determine the risk factors associated with 30-day readmission.
+>
+> The proposed study involves interdisciplinary collaboration, focusing on the transition of sepsis survivors form acute hospitals to post-acute settings (i.e., home and home health care). Transisition is one of the vulnerable points where medical errors occur, as multiple stakeholders and multiple entities are involved in this process. Discharge planning involves a team of professionals, including physicians, nurses, social workers, and case managers, and patients and care partners to ensure safe and smooth transition from hospital to home. The findings of the study may offer valuable insights to healthcare providers engaged in discharge planning for older sepsis survivors. By considering the risk factors associated with readmission, this study can serve as a basis for supporting evidence-based recommendations for those who are involved in decision-making for discharge disposition decisions. This, in turn, empowers healthcare decision-makers to strategize discharge planning effectively, with a focus on identifying individuals at the highest risk of rehospitalization among the patient population with continuous health concerns.
+
+# Methods
+
+This project uses the MIMIC-IV datbase version 2.2, accessed on September, 2023. I gained access to MIMIC by completing required training for "Data specimens only research" provided by the Collaborative Institutional Training Initiative and obtaining qualification. I have been qualified and approved to access and extract data for research purposes.
+
+Data were downloaded using Mac Terminal Version 2.11 (440), downloaded in September 2023, via designated terminal \<wget -r -N -c -np \--user ysb8390 \--ask-password https://physionet.org/files/mimiciv/2.2/\>. For data analysis, R software (version 4.3.1., CRAN) was used.
+
+## Data Source: Overview of MIMIC-IV
+
+MIMIC-IV is a public database, which contains deidentified clinical data of adult patients aged 18 or older admitted to critical care units at the Beth Israel Deaconess Medical Center (BIDMC) in Boston, Massachusetts from either the ED or an ICU (Johnson, 2023). This extensive data contains records from 299,712 patients, encompassing 431,231 hospital admissions and 73,181 ICU stays between 2008 and 2019.
+
+## Installing/Loading Necessary Packages
+
+```{r}
+#| eval: FALSE
+
+package_to_install<- c("tidyverse", "dplyr", "gtsummary", "ggplot2", "lubridate", "RColorBrewer", "cowplot", "ggpubr", "pROC", "comorbidity", "readr")
+
+for (packages in package_to_install) {
+  install.packages(packages, dependencies=TRUE, quietly=TRUE)
+}
+
+```
+
+```{r}
+#| label: load-packages
+#| include: FALSE
+
+library(tidyverse)
+library(dplyr) #For data cleaning
+library(gtsummary) #For descriptive statistics
+library(ggplot2) #For graphd 
+library(lubridate) #For handling and converting dates
+library(RColorBrewer) #For coloring the plots
+library(cowplot) #For combining multiple plots into one figure
+library(ggpubr) #For combining multiple graphs into one figure
+library(pROC) #For cross-validation
+library(comorbidity) #For Elixhauser comorbidity
+library(readr)
+library(broom) # useful for regression models
+```
+
+## Preprocessing
+
+### Identifying in-hospital stays (vs. observational stays)
+
+In this study, I will focus on cases when patients had in-hospital stays, meaning hospital length of stays longer than 48 hours to exclude observational stay cases. We will first create a hospital length of stay variable and then filter cases whose hospital length of stay is less than 48 hours (i.e., observational stays).
+
+```{r}
+transfers <- read.csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/transfers.csv")
+
+# Convert the intime and outtime from character to datetime format
+transfers <- transfers |>
+  mutate(intime = ymd_hms(intime),
+         outtime = ymd_hms(outtime))
+
+# Check if the data type has been sucessfully changed to datetime format
+str(transfers$intime) 
+str(transfers$outtime)
+
+#In-hospital stay (exclude observation care)
+unique(transfers$eventtype) # eventtype = "ED", "admit", "discharge", "tranfer"
+
+transfers <- transfers |>
+  arrange(subject_id, intime)
+
+hosp_los_fromed <- transfers |>
+  group_by(subject_id, hadm_id) |>
+  filter(!is.na(hadm_id)) |>
+  filter(intime == min(intime) | intime == max(intime))
+
+hosp_los_fromed <-hosp_los_fromed |>
+  group_by(subject_id, hadm_id) |>
+  mutate(hosp_los = as.numeric(difftime(max(intime), min(intime), units = "days"))) |>
+  mutate(inhosp = ifelse(hosp_los >= 2, 1, 0)) |>
+  ungroup()
+# hosp_los value is same for each hadm_id
+##### NEED TO INVESTIGATE WHY THE # OF OBSERVATIONS IS ODDS (862465) -which i believe should be in even number since I selected min/max value for intime
+
+
+hosp_los_inhosp <- hosp_los_fromed |>
+  select(subject_id, hadm_id, hosp_los, inhosp) |> # select the columns I am interested in
+  group_by(subject_id, hadm_id) |>
+  filter(row_number() == 1) # this is to avoid multiple values (hosp_los, inhosp) for the same hadm_id due to different transfer_id (in and out)
+# hosp_los_inhosp = 431231 observations (which is almost half of hosp_los_fromed = 862465)
+
+hosp_los_inhosp <- hosp_los_inhosp |>
+  filter(inhosp == 1) # observations have decreased from 431231 to 272506 after limiting to hosplos >= 2 (days)
+
+
+# data frame
+# hosp_los_inhosp = in-hospital stays cohort (sourced from transfers table but only kept the first row of each hadm_id)
+# variable
+# inhosp = 1 means inhospital stay (hosp_los > 2days)
+```
+
+### Sepsis Cohort Selection
+
+Sepsis patients will be identified based on internation classification of disease (ICD) codes from both the 9th and 10th revisions, as both versions were available in MIMIC. Sepsis cases will be identified through two strategies: (1) explicit ICD-9 codes (995.92, and 785.52) or explicit ICD-10 codes (R65.2, R65.20, and R65.21), and (2) implicit identification method using Angus criteria (Angus, 2001) that considers the case as sepsis when the patient is coded for both infection (i.e., ICD 9 or 10 infection codes) and organ dysfunction (i.e., ICD 9 or 10 organ dysfunction codes). These two strategies are adopted to increase the sensitivity of sepsis diagnosis up to 50% compared to other methods to identify sepsis patients.
+
+```{r}
+# Diagnosis_icd table
+icd  <- read_csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/diagnoses_icd.csv.gz")
+
+# Check data class 
+str(icd$icd_code) #character
+str(icd$icd_version) #integar
+
+# Icd9 codes
+
+# Explicit sepsis
+icd <- icd |>
+  mutate(
+    icd9_sepsis = case_when(
+      icd_version == 9 &
+        icd_code %in% c ("99592", "78552") ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd9_sepsis)
+
+# Implicit - Infection    
+icd<- icd |>
+  mutate(
+    icd9_infection = case_when(
+      icd_version == 9 &
+        substr(icd_code, 1, 3) %in% c("001","002","003","004","005","008",
+                                      "009","010","011","012","013","014",
+                                      "015","016","017","018","020","021",
+                                      "022","023","024","025","026","027",
+                                      "030","031","032","033","034","035",
+                                      "036","037","038","039","040","041",
+                                      "090","091","092","093","094","095",
+                                      "096","097","098","100","101","102",
+                                      "103","104","110","111","112","114",
+                                      "115","116","117","118","320","322",
+                                      "324","325","420","421","451","461",
+                                      "462","463","464","465","481","482",
+                                      "485","486","494","510","513","540",
+                                      "541","542","566","567","590","597",
+                                      "601","614","615","616","681","682",
+                                      "683","686","730") ~ 1,
+      substr(icd_code, 1, 4) %in% c("5695","5720","5721","5750","5990","7110",
+                                    "7907","9966","9985","9993") ~ 1,
+      substr(icd_code, 1, 5) %in% c("49121","56201","56203","56211","56213",
+                                    "56983", "99591") ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd9_infection)
+
+# Implicit - Organ dysfunction
+icd<- icd |>
+  mutate(
+    icd9_organdysfunction = case_when(
+      icd_version == 9 &
+        substr(icd_code, 1, 3) %in% c("458", "293", "570", "584") ~ 1, 
+      substr(icd_code, 1, 3) %in% c("7855", "3483", "3481", "2874", "2875", "2869", "2866", "5734") ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd9_organdysfunction)
+
+
+# Icd10 codes
+# Explicit sepsis
+icd <- icd |>
+  mutate(
+    icd10_sepsis = case_when(
+      icd_version == 10 &
+        icd_code %in% c ("R652", "R6520", "R6521") ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd10_sepsis)
+
+# Implicit - Infection
+# As ICD-10 codes for infection is too long (830 codes), made a new text.file named icd10_infection
+# Import icd10_infection
+icd10_angus_infection <- read_csv("/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/sepsis definition/ITRANSFER_icd10/icd10_angus_infection")
+
+as.list(icd10_angus_infection) #change the data.frame into a list
+
+icd <- icd |>
+  mutate(
+    icd10_infection = case_when(
+      icd_version == 10 &
+        icd_code %in% (icd10_angus_infection$V1) ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd10_infection)
+
+
+# Implicit - Organ Dysfunction
+icd <- icd |>
+  mutate(
+    icd10_organdysfunction = case_when(
+      icd_version == 10 &
+        icd_code %in% c("I951", "I9589", "I953", "I952", "I9581", "I959", "R579", "R570", "R6521", "R571", "R578", "D65", "D688", "D689", "D6951", "D6959", "D696", "K7200", "K762", "K763", "F05", "G931", "G9340", "G9341", "G9349", "I6783", "N170", "N171", "N172", "N178", "N179", "J9600", "J9690", "J80", "R0603", "J9610", "J9620", "J984", "R0681", "R092") ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+table(icd$icd10_organdysfunction)
+
+# Sepsis cases identified by Angus method
+# Icd-9
+angus <- icd |>
+  group_by(subject_id, hadm_id) |>
+  summarise( ## should be 'summarise' instead of 'mutate'
+    icd9_angus = ifelse (any(icd9_infection == 1) & any(icd9_organdysfunction == 1), 1, 0),
+    icd10_angus = ifelse (any(icd10_infection == 1) & any(icd10_organdysfunction == 1), 1, 0)
+  ) |>
+  ungroup()
+
+table(angus$icd9_angus)
+table(angus$icd10_angus)
+
+# Create a new data.frame for sepsis_cohort
+sepsis_cohort <- icd |>
+  group_by(subject_id, hadm_id) |>
+  summarise(
+    sepsis = case_when(
+      any(icd9_sepsis == 1) | (any(icd9_infection == 1) & any(icd9_organdysfunction == 1)) ~ 1,
+      any(icd10_sepsis == 1) | (any(icd10_infection == 1) & any(icd10_organdysfunction == 1)) ~ 1,
+      TRUE ~ 0
+    )
+  ) |>
+  ungroup()
+
+table(sepsis_cohort$sepsis) # non-sepsis = 388831; sepsis = 42021
+sum(is.na(sepsis_cohort$sepsis)) # no missing values
+
+# join with hosp_los_inhosp table (inhospital stay cohort)
+inhosp_sepsis_cohort <- hosp_los_inhosp |>
+  left_join(sepsis_cohort, by =c("subject_id", "hadm_id"))
+
+table(inhosp_sepsis_cohort$sepsis) # non-sepsis = 233347; sepsis = 39046 in inhospital stays cohort
+unique(inhosp_sepsis_cohort$sepsis)
+sum(is.na(inhosp_sepsis_cohort$sepsis)) #113 missing values
+
+## investigating missing sepsis values
+inhosp_sepsis_cohort |>
+  filter(is.na(sepsis))
+# hadm_ids that did not have icd codes
+
+# Select patients with sepsis (explicit & implicit)
+inhosp_sepsis_cohort <- inhosp_sepsis_cohort |>
+  filter(sepsis == 1)
+
+table(inhosp_sepsis_cohort$sepsis) # confirmed that only patients with sepsis is captured (39046 hospital episodes associated with sepsis inhospitalization)
+
+# dataframe
+# sepsis_cohort = sepsis patients
+# inhosp_sepsis_cohort = sepsis patients with in hospital stays (hospital los > 2days) (39046 observations)
+
+# variables
+# sepsis = explicit + implicit sepsis 
+# icd9_angus/icd10_angus = implicit sepsis
+# icd9_sepsis/icd10_sepsis = explicit sepsis
+```
+
+Here, I am investigating if there's a difference in sample size when we restrict to sepsis inhospital stays vs sepsis all stays.
+
+```{r}
+## Sepsis inhospital stays
+test1 <- hosp_los_fromed |>
+  left_join(sepsis_cohort, by = c("subject_id", "hadm_id")) |>
+  filter(inhosp == 1) |>
+  filter(sepsis == 1)
+unique(test1$sepsis)
+unique(test1$inhosp)
+
+# sepsis_cohort = 439852 observations (before filtered for sepsis == 1)
+# hosp_los_inhosp = 272506 observations (filtered for hospital los >= 2days)
+# test1 = 78092 observations (unique hospitalization episodes)
+
+## Sepsis all stays
+test2 <- hosp_los_fromed |>
+  left_join(sepsis_cohort, by = c("subject_id", "hadm_id")) |>
+  filter(sepsis == 1)
+# sepsis_cohort = 439852 observations (before filtered for sepsis == 1)
+# hosp_los_fromed = 862465 observations (regardless of hospital los)
+# test2 = 84042 observations (unique hospitalization episodes)
+
+# We have approximately 5950 sepsis cases (84042 vs 78092) who did not have hospital stay less than 2 days 
+
+## When compared manually, transfers table's intime and outtime captures wider range of time compared to admissions table's admittime and dischtime; 
+## also, transfers table captures cases when it is not even when patient is not admitted to hospital (does not have hadm_id)
+## one of the explanations of why these time differences exist is because admittime could be recorded late; i.e., the patient was already in the hospital and the administratively recorded "admission" time is later than when they actually physically were in the hospital
+# (sourced from: https://github.com/MIT-LCP/mimic-code/discussions/1525) 
+
+# thus, I choose to use transfers table instead of admissions table
+
+
+# Here, I will investigate cases when it was observational stays
+test3 <- hosp_los_fromed |>
+  mutate(inhosp = ifelse(hosp_los >= 2, 1, 0)) |>
+  filter(inhosp == 0)
+
+test4 <- test3 |> 
+  left_join(admissions, by = c("subject_id", "hadm_id"))
+
+unique(test4$admission_type)
+table(test4$admission_type)
+# no particular pattern found in admssion_type for those had observational stays
+
+test5 <- test4 |>
+  left_join(sepsis_cohort,by = c("subject_id", "hadm_id")) |>
+  filter(sepsis == 1)
+table(test4$admission_type)
+# no particular pattern found in admssion_type for those had observational stays
+```
+
+As I have identified sepsis cohort, now I am going to limit our sample to older adults.
+
+### Older Sepsis Cohort Selection
+
+Although sepsis can impact people of all ages, it has been reported that some groups are more likely to be affected, including older adults. Now, I will filter cases to limit the cohort to older sepsis patients.
+
+```{r}
+# Read in the data
+patients <- read_csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/patients.csv.gz")
+
+admissions <- read_csv("~/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/admissions.csv")
+
+# Calculate age for each hospital admission event
+# We will calculate "age" variable for each subject_id and unique hospitalizations 
+# codes sourced from: https://github.com/MIT-LCP/mimic-code/issues/963)
+
+patients <- patients |>
+  mutate(anchor_dob = anchor_year - anchor_age,
+         anchor_year_start = str_trunc(anchor_year_group, width = 4, ellipsis  = "", side = "right")) |>
+  left_join(distinct(admissions, hadm_id, subject_id, admittime), by = "subject_id") |>
+  subset(!is.na(hadm_id)) |>
+  mutate(admittime = as_datetime(admittime),
+         anchor_dob = ymd(anchor_dob, truncated = 2),
+         age = trunc(time_length(difftime(admittime, anchor_dob), "years")),
+         anchor_year = paste(anchor_year_start, "-", (as.numeric(anchor_year_start) + 2))) |> ## Because the original anchor_year_group was within 2 years
+  select(subject_id, hadm_id, gender, age, anchor_year, dod)
+
+inhosp_older_sepsis <- inhosp_sepsis_cohort |> 
+  left_join(patients, by = c("subject_id", "hadm_id"))
+
+inhosp_older_sepsis <- inhosp_older_sepsis |>
+  filter(age >= 65)
+
+# dataframe
+# older_adults = filtered to patients who are 65 + years 
+# inhosp_older_sepsis = filtered by inhosp == 1, sepsis == 1, age >= 65 (24348 observations)
+# age calculated for each hadm_id
+```
+
+### Older Sepsis Discharged Home Cohort
+
+Now, I will filter cases to patients who were discharged home without any services and those who were discharged home with home health care.
+
+```{r}
+inhosp_older_sepsis2 <- inhosp_older_sepsis |>
+  left_join(admissions, by = c("subject_id", "hadm_id"))
+
+# older sepsis patients' (inhospital stays) discharge disposition
+inhosp_older_sepsis2 |>
+  select(discharge_location)|>
+  tbl_summary() 
+# 12% went home; 25% went home with HHC (among older sepsis patients with inhospital stays regardless of their discharge dispositions)
+
+inhosp_older_sepsis2 |>
+  ggplot(aes(x = discharge_location, fill = gender)) +
+  geom_bar() +
+  labs(x = "Discharge Location", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Select patients who went home without any services or with HHC
+inhosp_older_sepsis_home <- inhosp_older_sepsis2 |>
+  filter(discharge_location == "HOME" | discharge_location == "HOME HEALTH CARE")
+
+unique(inhosp_older_sepsis_home$discharge_location) # successfully filtered
+
+inhosp_older_sepsis_home |>
+  select(discharge_location)|>
+  tbl_summary()
+# 33% went home; 67% went home with HHC (among older sepsis patients with inhospital stays went either home or HHC)
+
+# data frame
+# inhosp_older_sepsis2 = joined inhosp_older_sepsis with admissions table
+# inhosp_older_sepsis_home = filtered to 'sepsis == 1' & 'age >= 65' & 'discharge_location = "HOME" | discharge_location = "HOME HEALTH CARE"' (24348 unique hospitalizations)
+```
+
+Now, as we have identified our cohort, now I am going to make predictors in a format that I would like to include in a model.
+
+## Manipulating Predictors
+
+### Demographic characteristics
+
+I will collapse categories of several demographic characteristics for analysis.
+
+-   race
+
+-   marital status
+
+-   insurance
+
+-   etc
+
+### Clinical characteristics
+
+-   admission type
+
+-   length of stay
+
+-   number of previous hospitalization
+
+Now we are going to make a predictor variable that tells us number of previous hospitalizations in the past 90days (3months) and 180 days(6months). Instead of 3 months, 90days were set due to avoid any errors when there were no specific date for specific month (e.g., 2146-04-30; 2147-08-31). And this goes the same for 6 months. These dates were coded NAs since such dates do not exist in real world.
+
+```{r}
+# Number of previous hospitalization (hospitalization associated with any diagnosis) within past 90 days
+# instead of 3 month, 90days were set due to avoid any errors when there were no specific date for specific month (e.g., 2146-04-30; 2147-08-31). These dates were coded NAs since such dates do not exist in real world
+# Admissions table have been already loaded above. Instead of the cohort table (inhosp_older_sepsis_home), I used admissions (the original table with all diagnoses) since I am interested in number of previous hospitalization associated with any diagnoses.
+
+################NEED TO DECIDE WHICH TABLE TO USE: ADMISSIONS VS TRANSFERS ??????###
+
+admissions <- admissions |>
+  mutate(admittime = ymd_hms(admittime),
+         dischtime = ymd_hms(dischtime))
+
+admissions <- admissions |>
+  group_by(subject_id) |>
+  arrange(subject_id, admittime) |> # make sure the data frame is arrange by admittime before running the below for-loop code
+  mutate(prev90d = admittime - days(90)) |>
+  ungroup()
+
+sum(is.na(admissions$prev90d)) # confirmed that there is no missing value
+
+admissions <- admissions |>
+  group_by(subject_id) |>
+  arrange(subject_id, admittime) |>
+  mutate(prev90d_hosp = ifelse(is.na(dplyr::lag(dischtime)) | 
+                                  dplyr::lag(dischtime) < prev90d, 0, 1)) |>
+  ungroup()
+
+prev90d_hosp_sum <- integer()
+for (i in 1:nrow(admissions)) {
+  if(i == 1) # first row coded 0 bc no previous hospitalization is present
+    prev90d_hosp_sum[i] <- 0
+  else if(i < 21) { # set for 20 because that was the maximum value one was hospitalized within 90 day time frame
+    this_patient <- admissions$subject_id[i]
+    this_prev90d <- admissions$prev90d[i]
+    this_admittime <- admissions$admittime[i]
+    
+    prev90d_hosp_sum[i] <- admissions |> 
+      filter(subject_id == this_patient & 
+               dischtime >= this_prev90d & 
+               admittime < this_admittime) |> 
+      nrow()
+  } else{
+    this_patient <- admissions$subject_id[i]
+    this_prev90d <- admissions$prev90d[i]
+    this_admittime <- admissions$admittime[i]
+    
+    prev90d_hosp_sum[i] <- admissions[(i-20):i,] |> 
+      filter(subject_id == this_patient & 
+               dischtime >= this_prev90d & 
+               admittime < this_admittime) |>
+      nrow()
+  }
+}
+
+admissions$prev90d_hosp_sum <- prev90d_hosp_sum
+
+inhosp_older_sepsis_home <- admissions |>
+  select(c("subject_id", "hadm_id", "prev90d_hosp", "prev90d_hosp_sum")) |>
+  right_join(inhosp_older_sepsis_home, by = c("subject_id", "hadm_id"))
+
+```
+
+-   ICU history
+
+-   
