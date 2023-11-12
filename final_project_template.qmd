@@ -23,6 +23,8 @@ library(readxl)
 library(tigris)
 library(sf)
 library(leaflet)
+library(gridExtra)
+library(RColorBrewer)
 options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
@@ -39,7 +41,7 @@ For SVI, the most recent available dataset is from 2020. For this project, natio
 
 ## Introduction {#sec-introduction}
 
-As Rollings et al 2023 discuss, there exist several area-level socioeconomic deprivation indices without consensus within healthcare research and policy fields about which indices should be used for a variety of analyses. In comparing two frequently used indices, SVI and ADI, in their associations with SMART BRFSS dataset, this project has the potential to inform selection of the appropriate index for future work. This project is interdisciplinary in that it spans data science, social science and biomedical informatics.
+As Rollings et al 2023 discuss, there exist several area-level socioeconomic deprivation indices without consensus within healthcare research and policy fields about which indices should be used for a variety of analyses. In comparing two frequently used indices, SVI and ADI, in their associations with SMART BRFSS dataset, this project has the potential to inform selection of the appropriate index for future work. This project is interdisciplinary in that it spans data science, social science, and biomedical informatics.
 
 A challenge for this project, as with many projects which incorporate geospatial variables, is differing geographic units. For this project, SVI is at the county level, ADI is at the census block group level, and the BRFSS outcomes are at the CBSA level. Fortunately, all of these geographic units are census-defined and are supersets or subsets of each other. The current plan is to link these datasets at the county level. Based on guidance from Dr. Sherrie Xie, ADI will be aggregated to the county-level using a weighted average that incorporates census counts for census block groups. The BRFSS smoking and asthma outcomes will be aggregated at the CBSA level. CBSAs and CBSA level smoking and asthma outcomes will be mapped to counties. An alternative approach uses weighted averages to aggregate both SVI and ADI to the CBSA level, which can also be explored.
 
@@ -58,38 +60,42 @@ There are several limitations of the project. One clear limitation is that the a
 ### SMART BRFSS CDC dataset
 
 ```{r loadmmsa}
+# MMSA2021.xpt retrieved from https://www.cdc.gov/brfss/smart/smart_2021.html
+# Accompanying documentation available at https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
 MMSA2021 <- read_xpt("input_data/mmsa/MMSA2021_XPT/MMSA2021.xpt")
-# docs https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
+
 MMSA2021 |> glimpse()
 ```
 
 ```{r mmsalabels}
-colname_labels <- MMSA2021 %>%
+# construct table of variable names and labels
+mmsa_colname_labels <- MMSA2021 %>%
   map_dfc(attr, "label") |>
   pivot_longer(everything(),
                names_to = "colname",
                values_to = "label")
-
-colname_labels_w_missing <- MMSA2021 |>
+# include variable names without labels
+mmsa_colnames_all <- MMSA2021 |>
   colnames() |>
   as_tibble() |>
   rename(colname = value) |>
-  left_join(colname_labels, by = join_by(colname))
-
-# The variable _MMSA is the code of metropolitan or micropolitan statistical area where the
-# respondent lives. The variable _MMSANAM is the MMSA name. The variable _MMSAWT is the
-# MMSA-level weight that is used when generating MMSA-level estimates for variables in the data
-# set. 
-colname_labels_w_missing
+  left_join(mmsa_colname_labels, by = join_by(colname))
+# add missing labels documented in https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
+attr(MMSA2021[["_MMSA"]], "label") <- toupper("the code of metropolitan or micropolitan statistical area where the respondent lives")
+attr(MMSA2021[["MMSANAME"]], "label") <- toupper("the MMSA name")
+attr(MMSA2021[["_MMSAWT"]], "label") <- toupper(" the MMSA-level weight that is used when generating MMSA-level estimates for variables in the data set")
+mmsa_colnames_all <- MMSA2021 %>%
+  map_dfc(attr, "label") |>
+  pivot_longer(everything(),
+               names_to = "colname",
+               values_to = "label")
 ```
-
-```{r mmsawt}
-# The variable _MMSAWT is the
-# MMSA-level weight that is used when generating MMSA-level estimates for variables in the data
-# set. 
-MMSA2021 |> 
-  group_by(`_MMSA`, MMSANAME) |> 
-  summarize(n_distinct(`_MMSAWT`))
+```{r}
+# rename columns to make them easier to work with using R (not requiring ``)
+# underscore prefix indicates derived or computed, replace with d_
+smart_2021 <- MMSA2021 |> 
+  rename_with(~ tolower(gsub("_", "d_", .x, fixed = TRUE)))
+smart_2021 |> View()
 ```
 
 ```{r mmsatocounty}
@@ -100,19 +106,45 @@ MMSA2021 |>
 # metropolitan divisions. OMB periodically updates the list of MMSAs. The list of areas used for this
 # analysis can be found here: https://www.census.gov/geographies/reference-files/timeseries/demo/metro-micro/delineation-files.html. The March 2020 release was used for defining
 # the MMSAs in the 2021 SMART data set.
-# https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/historical-delineation-files.html
+# retrieved from https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/historical-delineation-files.html
 delin_2020 <- read_xls("input_data/mmsa/list1_2020.xls",
-                       skip = 2)
+                       skip = 2) |>
+  rename_with(~ tolower(gsub(" ", "_", .x, fixed = TRUE))) |> 
+  rename_with(~ tolower(gsub("/", "_", .x, fixed = TRUE)))
 
-mmsa_county_mapping <- MMSA2021 |> 
-  mutate(MMSA_char = as.character(`_MMSA`)) |>
-  distinct(`_MMSA`, MMSA_char, MMSANAME) |> 
-  left_join(delin_2020, by = c("MMSA_char" = "CBSA Code")) |> 
-  distinct(MMSA_char, MMSANAME, `CSA Title`, `County/County Equivalent`, `FIPS State Code`, `FIPS County Code`)
 
-mmsa_county_mapping
+delin_2020_cbsa_join <- delin_2020 |> filter(is.na(metropolitan_division_code)) # need to explore why this is necessary
+delin_2020_mdc_join <- delin_2020 |> filter(!is.na(metropolitan_division_code)) # need to explore why this is necessary
+
+# TODO check this
+mmsa_county_mapping_cbsa <- smart_2021 |> 
+  mutate(d_mmsa_char = as.character(d_mmsa)) |>
+  distinct(d_mmsa, d_mmsa_char, d_mmsa_char, mmsaname) |> 
+  left_join(delin_2020_cbsa_join, by = c("d_mmsa_char" = "cbsa_code"))  |> 
+  distinct(d_mmsa, d_mmsa_char, csa_title, county_county_equivalent, fips_state_code, fips_county_code)
+mmsa_county_mapping_mdc <- smart_2021 |> 
+  mutate(d_mmsa_char = as.character(d_mmsa)) |>
+  distinct(d_mmsa, d_mmsa_char, d_mmsa_char, mmsaname) |> 
+  left_join(delin_2020_mdc_join, by = c("d_mmsa_char" = "metropolitan_division_code"))  |> 
+  distinct(d_mmsa, d_mmsa_char, csa_title, county_county_equivalent, fips_state_code, fips_county_code)
+mmsa_county_mapping <- mmsa_county_mapping_cbsa |> 
+  dplyr::union(mmsa_county_mapping_mdc) |> 
+  distinct()
+
+
+# smart_2021 |> summarize(n_distinct(d_mmsa)) |> pull() == mmsa_county_mapping |> summarize(n_distinct(d_mmsa)) |> pull()
+
+# check for issues with leading zeros
+# smart_2021 |> 
+#   filter(nchar(d_mmsa) != 5)
+# smart_2021 |> 
+#   mutate(d_mmsa_char = as.character(d_mmsa)) |> 
+#   filter(nchar(d_mmsa_char) != 5)
+# mmsa_county_mapping |> 
+#   filter(nchar(d_mmsa_char) != 5)
+# delin_2020 |> 
+#   filter(nchar(cbsa_code) != 5)
 ```
-
 
 ```{r plotmmsacounties}
 tigris_counties <- counties() |>
@@ -121,35 +153,80 @@ tigris_counties <- counties() |>
                          "66", "69",
                          "72", "78"))
 
-mmsa_county_mapping_geoid <- mmsa_county_mapping |> 
-  left_join(tigris_counties, by = c("FIPS State Code"= "STATEFP", "FIPS County Code" = "COUNTYFP"))
+mmsa_county_mapping_geoid <- mmsa_county_mapping |>
+  mutate(smart = TRUE) |> 
+  right_join(tigris_counties, by = c("fips_state_code"= "STATEFP", "fips_county_code" = "COUNTYFP")) |>
+  mutate(smart = replace_na(smart, FALSE))
 
+mmsa_county_mapping_geoid |> filter(smart == TRUE) |> nrow() == mmsa_county_mapping |> nrow()
 
 mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |> st_as_sf()
-tigris_counties_sf <- tigris_counties |> st_as_sf()
 
-ggplot() +
-  geom_sf(data = st_simplify(tigris_counties_sf, dTolerance = 1e3)) +
-  geom_sf(
-    data = st_simplify(mmsa_county_mapping_geoid_sf, dTolerance = 1e3),
-    fill = "red"
-  )
+# simple map
+# mmsa_county_mapping_geoid_sf |>
+#   st_simplify(dTolerance = 1e3) |>
+#   ggplot(aes(fill = smart)) +
+#   geom_sf()
+```
+
+```{r convertsmart}
+# Before we create the leaflet maps, we will change the CRS (Coordinate Reference System) to 4326 because leaflet expects the data provided to it to be in WGS84, which is EPSG:4326. We can do the transformation with st_transform.
+# This is slow so I did it once and saved the RDS
+
+# mmsa_county_mapping_geoid_sf_4326 <- st_transform(mmsa_county_mapping_geoid_sf, crs = 4326)
+# mmsa_county_mapping_geoid_sf_4326 |> saveRDS("mmsa_county_mapping_geoid_sf_4326.rds")
+mmsa_county_mapping_geoid_sf_4326 <- readRDS("mmsa_county_mapping_geoid_sf_4326.rds")
+mmsa_county_mapping_geoid_sf_4326
+```
+
+
+```{r smartleaflet}
+pal_fun <- colorFactor(topo.colors(2), mmsa_county_mapping_geoid_sf_4326$smart)
+
+mmsa_county_mapping_geoid_sf_4326  |>
+  filter(!is.na(FUNCSTAT)) |> # need to explore why this is necessary 
+  st_simplify(dTolerance = 1e3)  |>
+  leaflet() |>
+  addPolygons(
+    stroke = FALSE,
+    # remove polygon borders
+    fillColor = ~ pal_fun(smart),
+    fillOpacity = 0.5,
+    smoothFactor = 0.5,
+    # increase opacity and resolution
+    popup = mmsa_county_mapping_geoid_sf_4326$county_county_equivalent
+  ) |>
+  addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
+  addLegend(
+    "bottomright",
+    # location of legend
+    pal = pal_fun,
+    # palette function
+    values = ~ smart,
+    # variable to pass to palette function
+    title = 'Included in SMART BRFSS dataset',
+    # legend title
+    opacity = 1 # legend opacity (1 = completely opaque)
+  ) |>
+  addScaleBar()
 ```
 
 ### SVI dataset
 
 ```{r loadsvi}
+# retrieved from https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html
 svi2021 <- read_csv("input_data/svi/SVI_2020_US_county.csv")
 svi2021 |> glimpse()
 ```
 
 ### ADI dataset
 
-
 ```{r loadadi}
+# retrieved from https://www.neighborhoodatlas.medicine.wisc.edu/
 adi2021 <- read_csv("input_data/adi/adi-download/US_2021_ADI_Census_Block_Group_v4_0_1.csv")
 adi2021 |> glimpse()
 ```
+
 ## Results {#sec-results}
 
 <!-- Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required. -->
