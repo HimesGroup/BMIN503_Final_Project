@@ -1,5 +1,7 @@
-# BMIN503/EPID600 Final Project
+# Sarai Garcia BMIN503 Final Project
 
+This repository contains my analysis for a study entitled: "Effects of repetitive transcranial magnetic stimulation on affective ratings modulated by trauma in depression and PTSD". The purpose of this study was to identify factors that influence clinical outcomes/receptivity to TMS, and FDA-approved treatment for treatment-resistant depresssion. 
+ 
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
