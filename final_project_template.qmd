@@ -1,5 +1,5 @@
 ---
-title: "Comparison of Machine Learning Models to Predict Biomarker-based PARDS Subphenotypes Using CLinical Data"
+title: "Comparison of Machine Learning Models to Predict Biomarker-based PARDS Subphenotypes Using Clinical Data"
 subtitle: "BMIN503/EPID600 Final Project"
 author: "Daniel Balcarcel"
 format: html
@@ -26,24 +26,196 @@ Describe the data used and general methodological approach. Subsequently, incorp
 Load packages needed for the analysis
 
 ```{r}
-
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(here)
+library(dbplyr)
+library(DBI)
+library(readxl)
+library(glue)
+library(imputeTS)
+library(imputeTS)
+library(xgboost)
+library(Matrix)
+library(tidyverse)
+library(mice)
+library(caret)
+library(randomForest)
+library(missForest)
+library(pROC)
+library(ROCR)
+library(magrittr)
+library(car)
+library(kernlab)
+library(glmnet)
+library(tidymodels)
 ```
 
-Load training data and impute missing variables
+Load training data, clean it
 
 ```{r}
 
+ARDS_train_raw <- read.csv("H:/Research/ARDS Extra cohort/Final Data/PARDS_1_Training.csv", fileEncoding="UTF-8-BOM")
+  
+ARDS_validate_raw <- read.csv("H:/Research/ARDS Extra cohort/Final Data/PARDS_2_Validation.csv",fileEncoding="UTF-8-BOM")
+
+ARDS_train <- ARDS_train_raw
+
+#Remove incomplete data
+ARDS_validate <- ARDS_validate_raw |>
+  drop_na(Class)
+
+#Change Sex to an integer
+#Make M=0, F=1
+ARDS_train$SEX <- if_else(ARDS_train$SEX == "M", "0", "1")
+ARDS_train$SEX <- as.integer(ARDS_train$SEX)
+
+ARDS_validate$SEX <- if_else(ARDS_validate$SEX == "M", "0", "1")
+ARDS_validate$SEX <- as.integer(ARDS_validate$SEX)
+
+#Ensure all clinical variables are numeric
+# Function to convert specified columns of a dataframe to numeric
+convert_columns_to_numeric <- function(dataframe, columns) {
+  for (column in columns) {
+    dataframe[[column]] <- as.numeric(dataframe[[column]])
+  }
+  return(dataframe)
+}
+
+# List of column names to convert
+columns_to_convert <- c("ALC_Max", "ALT_Max", "ANC_Max", "AST_Max", "BUN_Max", 
+                        "Fibrinogen_Max", "Glucose_Max", "Platelets_Max", "Sodium_Max", "GGT_Max",
+                        "ALC_Min", "ALT_Min", "ANC_Min", "AST_Min", "BUN_Min", 
+                        "Fibrinogen_Min", "Glucose_Min", "Platelets_Min", "Sodium_Min", "GGT_Min",
+                        "Systolic.max", "Diastolic.max", "SpO2.max",
+                        "MAP.max", "Systolic.min", "Diastolic.min", "SpO2.min", "MAP.min")
+
+# Convert columns for ARDS_train
+ARDS_train <- convert_columns_to_numeric(ARDS_train, columns_to_convert)
+
+# Convert columns for ARDS_validate
+ARDS_validate <- convert_columns_to_numeric(ARDS_validate, columns_to_convert)
+
+#Make CLass 0 and 1
+    
+ARDS_train$Class <- as.numeric(ARDS_train$Class) - 1
+
+ARDS_validate$Class <- as.numeric(ARDS_validate$Class)
+
 ```
 
-Use 10 fold cross validation to train a model using XGBoost
+Impute Missing Variables
 
 ```{r}
 
+#Training
+ARDS_train.imp <- missForest(ARDS_train)
+
+ARDS_train <- ARDS_train.imp$ximp
+
+
+
+#Validation
+
+ARDS_validate.imp <- missForest(ARDS_validate)
+
+ARDS_validate <- ARDS_validate.imp$ximp
+
 ```
 
-Lasso
+XG Boost
 
 ```{r}
+
+#Run the classifier model
+
+set.seed(1234)
+              
+train <- ARDS_train
+test <- ARDS_validate
+
+
+#Preparing data set
+
+trainm <- sparse.model.matrix(Class ~ .-1, data = train)
+
+train_label <- train[,"Class"]
+
+train_matrix <- xgb.DMatrix(data =as.matrix(trainm), label = train_label)
+
+#Prepare validation data
+
+testm <- sparse.model.matrix(Class~ .-1, data = test)
+
+test_label <- test[,"Class"]
+test_matrix <-xgb.DMatrix(data = as.matrix(testm), label = test_label)
+
+
+
+#parameters
+xgb_params <- list(objective   = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth   = 3,
+                   eta         = 0.25,
+                   gammma      = 1,
+                   colsample_bytree = 0.5,
+                   min_child_weight = 1)
+
+#model
+
+
+bst_model <- xgb.train(params = xgb_params, data = train_matrix,
+                      nrounds = 1000)
+bst_model
+
+#Confusion Matrix
+p <- predict(bst_model, newdata = test_matrix)
+
+test$predicted <- ifelse(p > 0.5,1,0)
+
+confusionMatrix(table(test$predicted, test$Class))
+
+#AUC
+roc_24 <- roc(test$Class, p)
+auc_val <- auc(roc_24)
+```
+
+Support Vector Machine
+
+```{r}
+svm_cls_spec <- 
+  svm_linear(cost = 1) |> 
+  set_engine("kernlab") |>
+  set_mode("classification") 
+svm_cls_spec
+
+svm_cls_fit <- svm_cls_spec |>
+  fit(Class ~ ., data = train)
+
+
+# Making predictions on the test set
+svm_preds <- predict(svm_cls_fit, new_data = test)
+
+# You can view the predictions using:
+svm_preds
+
+# To evaluate the model's performance, you might want to use a confusion matrix or other metrics
+conf_mat <- confusion_matrix(svm_preds, test$Class)
+
+# View the confusion matrix
+conf_mat
+
+# Other performance metrics like accuracy, precision, recall, etc. can also be calculated
+accuracy <- accuracy(svm_preds, test$Class)
+precision <- precision(svm_preds, test$Class)
+recall <- recall(svm_preds, test$Class)
+
+# Print the performance metrics
+accuracy
+precision
+recall
 
 ```
 
