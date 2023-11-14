@@ -1,5 +1,6 @@
-# BMIN503/EPID600 Final Project
+# BMIN503/EPID600 Final Project: Using Childhood and Adulthood Stress Factors as Predictors for Tobacco/Nicotine Use
 
+Katie Cardone
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
