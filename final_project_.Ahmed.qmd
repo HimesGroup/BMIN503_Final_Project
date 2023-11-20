@@ -1,0 +1,563 @@
+---
+title: "Final Project"
+subtitle: "Data Science for Biomedical Informatics (BMIN503/EPID600)"
+format: 
+  html:
+    toc: true
+  toc-location: body
+editor: visual
+embed-resources: true
+editor_options: 
+  chunk_output_type: inline
+excute:
+  warning: false
+  message: false
+---
+
+### Overview
+
+Southern Asia and sub-Saharan Africa have the highest rates of preterm birth. Furthermore, babies in this regions face the hugest mortality risk. Ethiopia is among the top 15 countries that contribute to two-thirds of the world's preterm babies. The goal of this project is to perform statistical analyses to assess the relationships between preterm mortality and regions in Ethiopia.
+
+### Introduction
+
+Despite the many efforts over the last decades, there has been no measurable change in preterm birth rates at a global level. In 2020, the estimated number of preterm births was 13.4 million, compared to 13.8 million preterm in 2010 globally. Of this, 65% of them are in sub-Saharan Africa and South Asia.
+
+Notably, gaps in national routine data for preterm birth in the most affected regions have made it harder to address the gap in knowledge of mortality and the morbidity associated with preterm birth. Preterm babies are at a higher risk of disability and developmental delays, potentially leading to lifelong health consequence. Therefore, understanding the key population impacted by preterm mortality is important to decreasing preterm births and improving outcomes.
+
+Ethiopia, a country in sub-Saharan Africa, contributes to two-thirds of the world's preterm babies, with an estimated preterm birth rate of 14.1%. While it is common to have disparities in health service utilization within and between regional states of countries with diverse sociocultural and economic conditions such as Ethiopia, it is important to address avoidable differences within regions. Therefore, this analysis aims to assess if there is a difference in preterm mortality by region in Ethiopia.
+
+**Dataset description**
+
+This data was imported from ClinEpiDB, a clinical epidemiology database. The data is from a longitudinal cohort study of preterm birth outcomes conducted in three different regions in Ethiopia: Oromia region, the Amhara region, and the capital, Addis Ababa. Preterm infants \<7 days old were enrolled and followed over the first 28 days of life or until death. The dataset includes information on birth place, birth location, and many other clinical characteristics outcome for all preterm birth including causes of death. For maternal characteristics, socio-demographic, obstetric, and maternal factors were collected.
+
+I primarily discussed my data with Dr. Elizabeth Lowenthal. Our focus centered on identifying key factors for assessing preterm mortlaity and regional variations. Variables we deemed crucial for consideration included maternal age, martial status, occupation, and parity. For infants, factors such as birth location, gestational age at birth, birth weight, and mortality were considered.
+
+### Methods
+
+#### R Libraries
+
+First, all necessary packages are loaded first to keep the code organized.
+
+```{r}
+#| eval: FALSE
+#| include: false
+install.packages("pwr")
+install.packages("sf")
+install.packages("epitools")
+install.packages("epiR")
+install.packages("gtsummary")
+install.packages("cowplot")
+```
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+#load necessary Packages
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(grid)
+library(gridExtra)
+library(dplyr)
+library(pwr)
+library(tidyr)
+library(tibble)
+library(leaflet)
+library(sf)
+library (epitools)
+library(epiR)
+library(gtsummary)
+library(cowplot)
+
+```
+
+#### Pre-processing/Merging data
+
+This block of code imports the raw data extracted from ClinEpiDB which is a clinical epidemiology data base. The data is from a longitudinal cohort study of preterm birth conducted in three different regions in Ethiopia: Oromia region, the Amhara region, and the capital, Addis Ababa (Map of Ethiopia with the different regions is provided below).
+
+Data set titled "household" and "participant" were merged on the variable "household ID".
+
+```{r, results='hide'}
+# looking for working directory 
+current_directory <- getwd()
+#loading in data from folder
+#household data = 4,919 ( data of hospital and region of participant)
+house_data <- read.delim("/Users/ahmedd/Desktop/SIP Data/Household_subsettedData.txt")
+head(house_data,5)
+
+#  participant data = 4,919 ( background of mother and infant)
+parti_data <- read.delim("/Users/ahmedd/Desktop/SIP Data/Participant_subsettedData.txt")
+head(parti_data,5)
+
+
+# data repeated measure= 36779
+repeatedm_data <- read.delim("/Users/ahmedd/Desktop/SIP Data/repeated measure_subsettedData.txt")
+head(repeatedm_data,5)
+
+# merging household and participant demographic data on the Household_ID column
+merged_data <- merge(house_data, parti_data, by = "Household_ID", all = TRUE)
+head(merged_data,5)
+```
+
+#### Data cleaning
+
+The data cleaning steps involved several actions: renaming certain variables for easier access, adding new columns named "region" based on the hospital collection site(e.g Gondar University Hospital corresponds to the Amhara Region), and "mortality" based on those with information on cause of death.
+
+```{r, results=FALSE}
+
+# Rename specific columns in the original data frame
+colnames(merged_data)[colnames(merged_data) == "Sex..PATO_0000047."] <- "sex"
+colnames(merged_data)[colnames(merged_data) == "Birth.weight..g...EFO_0004344."] <- "birthweight"
+colnames(merged_data)[colnames(merged_data) == "Gestational.age.at.delivery..weeks...NCIT_C124435."] <- "gestageweeksatdelivery"
+colnames(merged_data)[colnames(merged_data) == "Birth.place..EUPATH_0012417."] <- "birthlocation"
+colnames(merged_data)[colnames(merged_data) == "Birth.location..EUPATH_0038716."] <- "birthplace"
+colnames(merged_data)[colnames(merged_data) == "Hospital..EUPATH_0038001."] <- "hospitalname"
+colnames(merged_data)[colnames(merged_data) =="Mother.s.1st.pregnancy..EUPATH_0038014."] <- "firstpreg"
+colnames(merged_data)[colnames(merged_data) =="Mother.s.age..years...EUPATH_0035109."] <- "maternalage"
+colnames(merged_data)[colnames(merged_data) =="Mother.s.occupation..EUPATH_0036221."] <- "occupation"
+colnames(merged_data)[colnames(merged_data) =="Mother.s.marital.status..EUPATH_0048083."] <- "maritalstatus"
+colnames(merged_data)[colnames(merged_data) =="Mother.s.education.level..EUPATH_0036220."] <- "educationlevel"
+
+# Create a new column region based on hospital name
+merged_data <- merged_data %>%
+  mutate(region = case_when(
+   hospitalname == "Gondar University Hospital" ~ "Amhara region",
+   hospitalname == "Jimma University Hospital" ~ "Oromia region",
+    hospitalname %in% c("Ghandi Memorial Hospital", "St. Paul's Hospital", "Tikur Anbessa Hospital") ~ "Addis Ababa",
+    TRUE ~ "Other"
+  ))
+table(merged_data$region)
+
+# Filter the data to select rows where "Sex" is neither "Male" nor "Female"
+filtered_data <- merged_data %>%
+  filter(sex != "Male" & sex != "Female")
+
+# Create a new column mortality based on those with cause of death record cause. 
+merged_data$mortality <- ifelse(merged_data$Cause.of.death..by.clinician..EUPATH_0038269. == "", 0, 1)
+#convert mortality from characteric to numeric 
+merged_data$mortality <- as.numeric(merged_data$mortality)
+#checking  mortality data output for possible error (comparing #'s to original dataset)
+table (merged_data$mortality)
+
+#changing frist pregnancy from yes/no to 0/1
+merged_data$firstpreg <- ifelse(merged_data$firstpreg =="No", 0, 1)
+#convert mortality from characteric to numeric 
+merged_data$firstpregnum <- as.numeric(merged_data$firstpreg)
+
+```
+
+### Results
+
+#### Map of Location of study
+
+The study was conducted in hospitals located in the Oromia region, the Amhara region, and the capital, Addis Ababa.
+
+```{r, results='hide'}
+#creating a map for of Ethiopia with region labeled
+# Download and unzip the GeoJSON file
+url <- "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_ETH_1.json.zip"
+download.file(url, destfile = "gadm41_ETH_1.json.zip")
+unzip("gadm41_ETH_1.json.zip", exdir = "ethiopian_data")
+
+# Read the GeoJSON file using sf
+ethiopian_data <- st_read("ethiopian_data/gadm41_ETH_1.json")
+# Check the structure
+str(ethiopian_data)
+# Create color palette
+unique_names <- unique(ethiopian_data$NAME_1)
+pal <- colorFactor(palette = "Blues", domain = unique_names)
+
+```
+
+```{r}
+# Plot the map
+leaflet(ethiopian_data) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(NAME_1),
+    weight = 2,
+    opacity = 1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = 0.7,
+    highlight = highlightOptions(
+      weight = 5,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    label = ~as.character(NAME_1)
+  ) %>%
+  addLegend(pal = pal, values = unique_names, title = "Regions")
+
+```
+
+#### **Infant Baseline characteristics by Region**
+
+The median gestational age at delivery was 34, 34, and 33 weeks in Addis Ababa, Amhara region, and Oromia region respectively. BirthWeight also differ between the three region, Oromia has the lowest birthweight ( median=1730 grams).
+
+```{r}
+# Infant characterisitics 
+merged_data %>%
+  select(c(gestageweeksatdelivery, sex, birthweight, region)) %>%
+  tbl_summary(by = region) %>%
+  add_p()
+# plotting Infant birth weight (gram)  by region
+fig <- ggplot(merged_data, aes(x = region, y =birthweight, fill = region)) +
+  geom_boxplot() +
+  stat_summary(fun = median, geom = "text", aes(label = paste("Median =", round(..y.., 2))),
+               vjust = -0.5, position = position_dodge(width = 0.75), size = 3) +
+  labs(title = "Birth Weight (g) by Region",
+       x = "Region",
+       y = "Birth Weight (g)") +
+  theme_minimal()
+
+# plotting Infant gestational week at delivery by region
+fig.2 <-ggplot(merged_data, aes(x = region, y =gestageweeksatdelivery, fill = region)) +
+  geom_boxplot() +
+  stat_summary(fun = median, geom = "text", aes(label = paste("Median =", round(..y.., 2))),
+               vjust = -0.5, position = position_dodge(width = 0.75), size = 3) +
+  labs(title = "Gestational week at Delivery  by Region",
+       x = "Region",
+       y = "Gestational Week at Delivery ") +
+  theme_minimal()
+#graphical representation of infant characteristics
+# saving output 
+ggsave("Ex.pdf") 
+ggsave("Ex.tiff", plot = fig)
+#printing the output of figure one + two combined
+plot_grid(fig, fig.2, labels = "AUTO")
+
+```
+
+**Maternal Baseline Characteristics by Region**
+
+There is a statistically significant difference in maternal age by region.
+
+```{r, warning=FALSE, message=FALSE}
+#Maternal Characteristics 
+merged_data %>%
+  select(c( maternalage, firstpreg, educationlevel , occupation, maritalstatus, region)) %>%
+  tbl_summary(by = region) %>%
+  add_p()
+# use, tbl_summary()
+# Maternal characteristic (first vs not first pregnancy by region)
+
+# Calculate proportions of first vs. not first pregnancies by region
+proportions_firstpreg <- merged_data %>%
+  group_by(region, firstpreg) %>%
+  summarize(Count = n()) %>%
+  group_by(region) %>%
+  mutate(Proportion = Count / sum(Count))
+
+# plotting first vs not first pregnancy by region 
+fig <-ggplot(proportions_firstpreg, aes(x = region, y = Proportion, fill = factor(firstpreg))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = scales::percent(Proportion)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3) +
+  labs(title = "Proportion of First vs. Not First Pregnancy by Region",
+       x = "Region",
+       y = "Proportion") +
+  scale_fill_manual(values = c("1" = "darkblue", "0" = "brown"),
+                    name = "First Pregnancy",
+                    labels = c("1" = "Yes", "0" = "No")) +
+  theme_minimal()
+# Maternal characteristic (maternal age by region)
+fig.2 <-ggplot(merged_data, aes(x = region, y = maternalage, fill = region)) +
+  geom_boxplot() +
+  stat_summary(fun = median, geom = "text", aes(label = paste("Median =", round(..y.., 2))),
+               vjust = -0.5, position = position_dodge(width = 0.75), size = 3) +
+  labs(title = "Maternal Age by Region",
+       x = "Region",
+       y = "Maternal Age") +
+  theme_minimal()
+
+# maternal Education
+proportions_education <- merged_data %>%
+  group_by(region,educationlevel ) %>%
+  summarize(Count = n()) %>%
+  group_by(region) %>%
+  mutate(Proportion = Count / sum(Count))
+
+# plotting it by region
+#  convert educational level to a factor and reorder
+proportions_education$educationlevel <- factor(proportions_education$educationlevel, 
+                                               levels = c("None, not able to read or write", 
+                                                          "None, able to read and write", 
+                                                          "Primary school", 
+                                                          "Secondary school", 
+                                                          "Higher education", 
+                                                          "Don't know"))
+
+# create the ggplot with the modified data
+fig.3 <-ggplot(proportions_education, aes(x = region, y = Proportion, fill = educationlevel)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Proportion of Education Levels by Region",
+       x = "Region",
+       y = "Proportion") +
+  scale_fill_manual(values = c("Don't know" = "gray", "Higher education" = "blue", 
+                               "None, able to read and write" = "purple", 
+                               "None, not able to read or write" = "red", 
+                               "Primary school" = "darkgreen", "Secondary school" = "black")) +
+  theme_minimal()
+
+# maternal occupation
+proportions_work <- merged_data %>%
+  group_by(region,occupation) %>%
+  summarize(Count = n()) %>%
+  group_by(region) %>%
+  mutate(Proportion = Count / sum(Count))
+#  convert occupation level to a factor and reorder
+proportions_work$occupation <- factor(proportions_work$occupation, 
+                                               levels = c("Housewife", 
+                                                           "Farmer", 
+                                                          "Self-employed" , 
+                                                           "Government or company", 
+                                                          "Other", 
+                                                          "Don't know"))
+
+# plotting maternal occupation by region
+fig.4 <-ggplot(proportions_work, aes(x = region, y = Proportion, fill = occupation)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Proportion of Maternal Occupation by Region",
+       x = "Region",
+       y = "Proportion") +
+  scale_fill_manual(values = c(
+    "Self-employed" = "blue",
+    "Housewife" = "darkgreen",
+    "Don't know" = "red",
+    "Other" = "purple",
+    "Government or company" = "orange",
+    "Farmer" = "brown"
+  )) +
+  theme_minimal()
+
+# maternal marital status 
+proportions_married <- merged_data %>%
+  group_by(region,maritalstatus) %>%
+  summarize(Count = n()) %>%
+  group_by(region) %>%
+  mutate(Proportion = Count / sum(Count))
+#  convert marital status level to a factor and reorder
+proportions_work$occupation <- factor(proportions_work$occupation, 
+                                               levels = c("Married", 
+                                                           "Farmer", 
+                                                          "Widowed" , 
+                                                           "Divorced", 
+                                                          "Single" , 
+                                                          "Don't know"))
+
+
+# Create a bar plot of maternal marital status by region
+fig.5 <-ggplot(proportions_married, aes(x = region, y = Proportion, fill = maritalstatus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Proportion of Maternal Marital Status by Region",
+       x = "Region",
+       y = "Proportion") +
+  scale_fill_manual(values = c(
+    "Married" = "darkblue",
+    "Single" = "darkgreen",
+    "Don't Know" = "red",
+    "Widowed" = "purple",
+    "Divorced" = "orange"
+  )) +
+  theme_minimal()
+
+ggsave("Ex.pdf") #Default plot to save is last plot
+ggsave("Ex.tiff", plot = fig)
+plot_grid(fig, fig.2, fig.3, fig.4,fig.5,labels = "AUTO")
+```
+
+**Mortality by Region**
+
+```{r, warning=FALSE, message=FALSE}
+#looking at # of mortality by region
+proportions_mortality <- merged_data %>%
+  group_by(region,mortality) %>%
+  summarize(Count = n()) %>%
+  group_by(region) %>%
+  mutate(Proportion = Count / sum(Count)) 
+# plotting mortality by region 
+ggplot(proportions_mortality, aes(x = region, y = Proportion, fill = factor(mortality))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = scales::percent(Proportion)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3) +
+  labs(title = "Mortality by Region",
+       x = "Region",
+       y = "Proportion") +
+  scale_fill_manual(values = c("1" = "darkblue", "0" = "brown"),
+                    name = "mortality",
+                    labels = c("1" = "Died", "0" = "Alive")) +
+  theme_minimal()
+
+#statistically testing region vs mortality (chi2)
+# create a table with the needed varaibles
+mortality.chi = table(merged_data$region, merged_data$mortality)
+print(mortality.chi)
+#performe the chi-square test 
+print(chisq.test((mortality.chi)))
+
+
+```
+
+**Assessing confounders (maternal characteristics)**
+
+```{r, message=FALSE, warning=FALSE}
+#simple logistic regression between preterm death and region
+model1 <- glm(mortality ~ region, data = merged_data, family = binomial)
+# Obtain the summary of the model
+summary_model <- summary(model1)
+summary_model
+
+##checking for possible confounders (maternal characteristics )
+#mother age and region (association)
+anova_maternalage <- aov(maternalage ~ region, data = merged_data)
+print(summary(anova_maternalage))
+# first pregnancy and region 
+firstpreg.chi = table(merged_data$region, merged_data$firstpreg)
+print(firstpreg.chi)
+print(chisq.test((firstpreg.chi)))
+
+# occupation and region
+# Create a contingency table
+occupation.chi <- table(merged_data$region, merged_data$occupation)
+print(occupation.chi)
+chi_square_test <- chisq.test(occupation.chi)
+print(chi_square_test)
+
+# marital status and region
+# Create a contingency table and Perform the chi-square test
+status.chi <- table(merged_data$region, merged_data$maritalstatus)
+print(status.chi)
+chisq.test(status.chi)
+
+```
+
+**Assessing confounders (infant characteristics)**
+
+```{r, message=FALSE, warning=FALSE}
+##checking for possible confounders infant characteristics 
+#gestational week at delivery by region 
+# Perform one-way ANOVA
+anova_gest <- aov(gestageweeksatdelivery ~ region, data = merged_data)
+print(summary(anova_gest))
+# birthweight and region 
+anova_birthweight <- aov(birthweight ~ region, data = merged_data)
+print(summary(anova_birthweight))
+```
+
+**Model**
+
+```{r, message=FALSE,warning=FALSE}
+# adding all confounder's in the modell
+glm_fit_confounding <-glm(mortality ~ region + maternalage + firstpreg + birthweight + gestageweeksatdelivery + maritalstatus + occupation, data = merged_data, family =binomial)
+summary(glm_fit_confounding)
+```
+
+**Stratification by Parity**
+
+```{r, message=FALSE, warning=FALSE}
+#stratification of first vs not first pregnancy 
+# Subset data for firstpreg == 0
+data_firstpreg_0 <- merged_data[merged_data$firstpreg == 0, ]
+
+# Subset data for firstpreg == 1
+data_firstpreg_1 <- merged_data[merged_data$firstpreg == 1, ]
+
+# Analysis for first vs not first pregnancy stratified 
+# Fit logistic regression model for firstpreg == 0
+model_firstpreg_0 <- glm(mortality ~ region + maternalage +  birthweight + gestageweeksatdelivery + maritalstatus + occupation, data = data_firstpreg_0 ,family = binomial)
+summary(model_firstpreg_0)
+
+# Fit logistic regression model for firstpreg == 1
+model_firstpreg_1 <- glm(mortality ~ region + maternalage +  birthweight + gestageweeksatdelivery + maritalstatus + occupation, data = data_firstpreg_1 ,family = binomial)
+summary(model_firstpreg_1)
+
+```
+
+**Stratification by Gestational Age**
+
+```{r, message=FALSE, warning=FALSE}
+#stratifying gestational age
+# Categorize gestageweeksatdelivery
+merged_data$gestation_category <- cut(
+  merged_data$gestageweeksatdelivery,
+  breaks = c(0, 28, 31, 34, 36, Inf),
+  labels = c("<28 weeks", "28 to 31 weeks", "32 to 34 weeks", "35 to <36 weeks", ">=36 weeks"),
+  include.lowest = TRUE
+)
+# Verify the new variable
+head(merged_data$gestation_category)
+
+# Create stratified datasets gestational age
+# Access the subset for "<28 weeks"
+subset_less_than_28 <- merged_data[merged_data$gestation_category == "<28 weeks", ]
+# Fit logistic regression model for <28 weeks
+model_less28 <- glm(mortality ~ region + maternalage + birthweight + firstpreg + maritalstatus + occupation, data = subset_less_than_28, family = binomial)
+summary(model_less28 )
+
+# Access the subset for "28 to 31 weeks"
+subset_28_to_31 <- merged_data[merged_data$gestation_category == "28 to 31 weeks", ]
+model_28_31 <- glm(mortality ~ region + maternalage + birthweight +  firstpreg + maritalstatus + occupation, data = subset_28_to_31, family = binomial)
+summary(model_28_31)
+
+
+# Access the subset for "32 to 34 weeks"
+subset_32_to_34 <- merged_data[merged_data$gestation_category == "32 to 34 weeks", ]
+model_32_to_34 <- glm(mortality ~ region + maternalage + birthweight +  firstpreg + maritalstatus + occupation, data = subset_32_to_34, family = binomial)
+summary(model_32_to_34)
+
+# Access the subset for "35 to <36 weeks"
+subset_35_to_less_than_36 <- merged_data[merged_data$gestation_category == "35 to <36 weeks", ]
+model_35_to_less_than_36  <- glm(mortality ~ region + maternalage + birthweight + firstpreg + maritalstatus + occupation, data = subset_35_to_less_than_36 , family = binomial)
+summary(model_35_to_less_than_36 )
+
+# Access the subset for ">=36 weeks"
+subset_greater_than_equal_36 <- merged_data[merged_data$gestation_category == ">=36 weeks", ]
+model_greater_than_equal_36 <- glm(mortality ~ region + maternalage + birthweight + firstpreg + maritalstatus + occupation, data = subset_35_to_less_than_36 , family = binomial)
+summary(model_greater_than_equal_36)
+
+```
+
+**Stratification by Birthweight**
+
+```{r, warning=FALSE, message=FALSE}
+#stratifying birthweight (in grams)
+# Categorize gestageweeksatdelivery
+# Define the breaks and labels
+breaks_birthweight <- c(-Inf, 1000, 1500, 2000, Inf)
+labels_birthweight <- c("<1000", "1000 to <1500", "1500 to <2000", ">=2000")
+
+# Create a new categorical variable 'birthweight_category'
+merged_data$birthweight_category <- cut(merged_data$birthweight, breaks = breaks_birthweight, labels = labels_birthweight, include.lowest = TRUE)
+
+# Display the first few rows to verify the new variable
+head(merged_data[c("birthweight", "birthweight_category")])
+
+
+# Create a new categorical variable 'birthweight_category'
+merged_data$birthweight_category <- cut(merged_data$birthweight, breaks = breaks_birthweight, labels = labels_birthweight, include.lowest = TRUE)
+
+# Display the first few rows to verify the new variable
+head(merged_data[c("birthweight", "birthweight_category")])
+
+
+# Create subset for "<1000"
+subset_less_than_1000 <- subset(merged_data, birthweight_category == "<1000")
+model_less_than_1000 <- glm(mortality ~ region + maternalage + gestageweeksatdelivery + firstpreg + maritalstatus + occupation, data = subset_less_than_1000 , family = binomial)
+summary(model_less_than_1000)
+# Create subset for "1000 to <1500"
+subset_1000_to_1500 <- subset(merged_data, birthweight_category == "1000 to <1500")
+model_1000_to_1500 <- glm(mortality ~ region + maternalage + gestageweeksatdelivery + firstpreg + maritalstatus + occupation, data = subset_1000_to_1500  , family = binomial)
+summary(model_1000_to_1500 )
+# Create subset for "1500 to <2000"
+subset_1500_to_2000 <- subset(merged_data, birthweight_category == "1500 to <2000")
+model_500_to_2000  <- glm(mortality ~ region + maternalage + gestageweeksatdelivery + firstpreg + maritalstatus + occupation, data = subset_1500_to_2000   , family = binomial)
+summary(model_500_to_2000  )
+# Create subset for ">=2000"
+subset_greater_than_equal_2000 <- subset(merged_data, birthweight_category == ">=2000")
+model_greater_than_equal_2000 <- glm(mortality ~ region + maternalage + gestageweeksatdelivery + firstpreg + maritalstatus + occupation, data = subset_greater_than_equal_2000  , family = binomial)
+summary(model_greater_than_equal_2000 )
+
+```
