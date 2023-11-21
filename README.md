@@ -1,19 +1,18 @@
 # BMIN503/EPID600 Final Project
+These are the materials for my data science final project, in which I clean, process, and perform exploratory analysis on my respondent survey dataset collected from Jan-Sep 2023. This work seeks to: a) define two cohorts - VCUG and control; b) perform EDA to inform whether the sample collected allows for statistical analysis between the VCUG and control groups; and c) perform chosen analyses on both groups to assess trends between the two. 
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+**Note on data source:**
+This survey was distributed and collected using REDCap. To preserve respondent confidentiality, I will not upload the raw data file to GitHub. I will, however, include the data dictionary and the recruitment flyer/IRB approval form. The raw (de-identified) data file is available upon request, only to those who require access for the purposes of validating the project and/or study.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+**Contents:**
 
+**finalproject_mcdonald.qmd:** QMD file for the report
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+**finalproject_mcdonald.html:** The report itself
 
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+**VCUG_datadictionary.xlsx:** Data dictionary to understand variables of interest
 
+**IBC 2023 Study Recruitment Flyer.pdf:** flyer used to recruit respondents for this study
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+**IBC 2023 Study IRB Approval Exemption Form:** record of IRB approval 
 
