@@ -34,6 +34,9 @@ library(zoo)
 library(psych)
 library(meta)
 library(DT)
+library(viridis)
+library(gganimate)
+library(gifski)
 ```
 
 ## Overview {#sec-overview}
@@ -120,8 +123,7 @@ df_death <- df_death |>
 df_oc <- df_case |> left_join(df_death, by = c("State", "date")) 
 
 # Get counties shapefile: to get full state name from abbriviation
-st_name_full <- urbnmapr::counties |>
-  mutate(fips.code = as.numeric(county_fips)) |>
+st_name_full <- urbnmapr::states |>
   group_by(state_abbv, state_name) |>
   slice(1) |>
   select(state_abbv, state_name)
@@ -205,7 +207,7 @@ df <- df |>
 
 dim(df)
 
-df[1:200, ] |> datatable()
+# df[1:200, ] |> datatable()
 ```
 :::
 
@@ -259,7 +261,7 @@ df <- df |> mutate(
                      retail_recreation + park + residential)/5
 )
 
-df[1:200, ] |> datatable()
+# df[1:200, ] |> datatable()
 ```
 :::
 
@@ -294,6 +296,171 @@ We did sensitivity analysis to evaluate the relationship of interest under diffe
 ## Results {#sec-results}
 
 ### Descriptive statistics
+
+#### Animation maps for outcome and mobility 
+
+```{r}
+# Summarized by month for animation maps
+df2 <- df |>
+  mutate(month_year = ym(paste0(year(date), "-", month(date))))
+
+
+df2 <- df2 |> group_by(state_abbv, state_name, month_year) |>
+  summarise(
+    GR_case = mean(GR_case, na.rm = T),
+    mobility = mean(mobility, na.rm = T),
+    grocery_pharm = mean(grocery_pharm, na.rm = T),
+    transit = mean(transit, na.rm = T),
+    workplace = mean(workplace, na.rm = T),
+    park = mean(park, na.rm = T),
+    retail_recreation = mean(retail_recreation, na.rm = T),
+    residential = mean(residential, na.rm = T),
+  ) |>
+  ungroup()
+
+# Merge data with shape file for US
+df2_sh <- df2 |>
+  left_join(urbnmapr::states, by = c("state_abbv", "state_name"))
+
+# Set up theme
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.4, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 20),
+        legend.position = "bottom",
+        strip.text = element_text(face = "bold", size = 16),
+        strip.background = element_rect(fill = "white", color = NA))      
+}
+
+# Growth rate
+#--------------------------------------------------------------
+GR_trans_fig <- df2_sh |> filter(GR_case > 0) |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = GR_case), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "D",
+                     direction = -1, 
+                     name = "Growth rate",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  my_theme() +
+  labs(
+    title = "Growth rate of cases on {frame_time}"
+  ) + 
+  transition_time(month_year)
+
+# Mobility
+#--------------------------------------------------------------
+mob_trans_fig <- df2_sh |> filter(GR_case > 0) |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = mobility*100), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "C",
+                     direction = -1, 
+                     name = "Mobility (%)",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  my_theme() +
+  labs(
+    title = "Mobility on {frame_time}"
+  ) + 
+  transition_time(month_year)
+```
+
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+```{r}
+animate(GR_trans_fig, fps = 2)
+```
+
+:::
+
+::: {.column width="50%"}
+
+```{r}
+animate(mob_trans_fig, fps = 2)
+```
+:::
+
+::::
+
+
+
+#### Animation maps for six types of mobility
+
+```{r, fig.width=10, fig.height=12}
+df2_sh_long <- df2_sh |> select(grocery_pharm, transit, workplace, park, 
+                                retail_recreation, residential, long, lat, 
+                                group, month_year) |>
+  gather(-c(long, lat, group, month_year), key = "mob_type", value = mobility) |>
+  mutate(mob_type2 = case_when(mob_type == "grocery_pharm" ~ "Groceries & pharmacies",
+                               mob_type == "transit" ~ "Transit stations",
+                               mob_type == "workplace" ~ "Workplaces",
+                               mob_type == "retail_recreation" ~ "Retail and recreation",
+                               mob_type == "park" ~ "Parks",
+                               mob_type == "residential" ~ "Residential areas")) 
+
+mob_all_trans_fig <- df2_sh_long |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = mobility*100), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "C",
+                     direction = -1, 
+                     name = "Mobility (%)",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  facet_wrap(~mob_type2, ncol = 2) +
+  my_theme() +
+  labs(
+    title = "Mobility on {frame_time}"
+  ) +
+  transition_time(month_year)
+
+animate(mob_all_trans_fig, width = 1000, height = 1200)
+```
+
+
+
+
+
+
+
+#### Correlation between mobility and growth rate of cases
+
+
+
+
+
 
 ### Effects of mobility restrictions on spread of COVID-19
 
