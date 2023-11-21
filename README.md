@@ -1,19 +1,6 @@
-# BMIN503/EPID600 Final Project
+# Andi Fu BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains files for my final project relating to looking at trend in psychiatric emergencies that present to the CHOP Emergency room, in anticipation of using that information to help inform staffing of a new pediatric psychiatry crisis center. 
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
-
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+The data from January 1 2021 until November 17, 2023 is pulled from Chop's dataware house, cleaned, and stripped of any PHI and saved as a csv. The data is then analyzed to look at trends in volume of visits per month, day of the week, and hour, as well as trends in most popular disposition recommendations, diagnoses, and statistics on length of stay. 
 
