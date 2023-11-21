@@ -1,1 +1,251 @@
+---
+title: "Emergency Department Trends in Behavioral Health Presentations"
+subtitle: "BMIN503/EPID600 Final Project"
+author: "Andi Fu"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+execute: 
+  warning: false
+  message: false
+---
+
+------------------------------------------------------------------------
+
+## Overview {#sec-overview}
+
+In anticipation of opening CHOP's first inpatient child and adolescent psychiatric units and Crisis Response Center (CRC) in January 2024, our leadership is interested in having a better, data informed understanding of volume and acuity of behavioral health presentations to the current CHOP emergency rooms in order to better inform staffing.
+
+Faculty that are participating in this project are Weston Geddings, MD, Medical Director of Emergency Psychiatric Services who is overseeing the development of the Crisis Response Center and Joy Payton, Supervisor of Data Education at ARCUS, Department of Biomedical and Health Informatics at Children's who will be aiding in data extraction and analysis.
+
+## Introduction {#sec-introduction}
+
+Prior to 2017, Philadelphia had two city-designated children's crisis response centers (CRCs) that children experiencing a psychiatric emergency could present to as walk-ins for support and treatment 24/7. A CRC is also the designated care space that police or EMTs will bring any child under a 302 warrant for emergency psychiatric evaluation that has been approved by the Office of Mental Health. In 2017, both Philadelphia CRCs closed due to issues relating to volume and capacity, and CHOP had to adapt to sudden increased volumes of children presenting to the CHOP Emergency Room with primarily behavioral health and psychiatric emergencies. In addition, during the COVID pandemic which saw increasing mental health needs in the pediatric population, emergency departments everywhere became safety nets for pediatric mental health care. However, the utilization of emergency departments, which typically lack child and adolescent mental health professionals with appropriate treatment spaces and resources, limits appropriate diagnosis, treatment and disposition. These factors contribute to overutilization of inpatient care due to needs for immediate treatment.
+
+Belmont CRC in Philadelphia has since re-opened, however, CHOP has continued to see high volumes of behavioral health emergencies as both CHOP and the city of Philadelphia has recognized that one children's CRC is not sufficient to meet the needs of the population. In 2022 CHOP submitted and won a bid to open another CRC, and aims to use a trauma informed framework and positive behavioral interventions to guide treatment. This includes having staff on-site who have expertise in recognition and intervention for trauma, including trauma informed care, behavioral intervention for ASD and behavioral disorders, parent interventions, suicide prevention and violence prevention. However, staffing has been an ongoing challenge across numerous hospital systems, and in planning to open this new CRC space and service line, leadership wants to ensure that we not just meet minimal staffing requirements, but that we can plan for appropriate increases in staffing when needed during times of high volume or acuity.
+
+In speaking and working with Dr. Geddings and other emergency room clinicians, it has long been felt that there are trends in the behavioral health volume and acuity presenting to the emergency room depending on time of year as well as time of day, and if we could reliably identify times of high surge we could anticipate increased staffing accordingly to ensure smooth workflow and patient safety since long wait times and increased volumes in an emergency setting can lead to patients leaving without being seen or other unwanted outcomes. In general, the ability to visualize and track this data over time will be useful to operational decision making about resource management. This problem is interdisciplinary given the numerous personnel involved ranging from the current emergency room staff, consulting psychiatrists, clinical social workers, behavioral health technicians, and data analysts.
+
+According to Joy Payton and other data analysts familiar with reporting out emergency room and behavioral health data, there is currently no existing dashboard that offers data visualization for emergency psychiatric presentations that can be analyzed by time and date. Such data availability would be helpful not only in anticipatory staffing, but would allow for longitudinal awareness that could inform needed adjustments in real time.
+
+## Methods {#sec-methods}
+
+The data used was obtained from the CHOP data warehouse, all data is in the aggregrate and free of PHI. Appropriate tables for Emergency Department visits, psychiatric complaints, diagnoses, length of stay, and disposition were located using CHOP data analytic database tools such as Gene. Data will be extracted using SQL into csv files that will then be loaded into R for cleaning, analysis, and visualization.
+
+Prior to using R, data had to be extracted from numerous tables in CHOP's CDW.\
+Tables used:
+
+ENCOUNTER_ED: This table contains all encounter information from the ED (Emergency Dept)\
+BH_DISPOSITIONS_MEDICAL_CLEARANCE: This table contains information about recommended level of behavioral health treatment after evaluation in the ED\
+SMART_DATA_ELEMENT_ALL\
+MASTER_DIAGNOSIS
+
+The following SQL code will look for distinct visits by visit_key, that are in the BHD table (and therefore seen for psychiatric evaluation and disposition), and return information about those visits in terms of date and times of presentation to the emergency room, length of stay in hours, primary psychiatric diagnosis, and whether they were recommended for inpatient psychiatric care (ED_FIRST_IP_IND), and what level of care they were recommended for overall (ED_DISPO_FIRST). I used data from the past 3 years (2021-now) since 2019-2020 had a lot of anomaly due to Covid pandemic.
+
+SQL code:
+
+SELECT\
+DISTINCT bhd.visit_key,\
+bhd.ED_DISPO_FIRST,\
+bhd.ED_DISPO_FIRST_IP_IND,\
+md.dx_id,\
+md.dx_nm,\
+ed.age_years,\
+ed.ed_los_hrs,\
+ed.ed_arrival_date\
+FROM CHOP_ANALYTICS.ADMIN.BH_DISPOSITIONS_MEDICAL_CLEARANCE bhd\
+JOIN CHOP_ANALYTICS.admin.SMART_DATA_ELEMENT_ALL sde ON bhd.VISIT_KEY = sde.VISIT_KEY\
+JOIN CDWPRD.admin.MASTER_DIAGNOSIS md ON sde.ELEMENT_VALUE = md.DX_ID\
+JOIN CHOP_ANALYTICS.ADMIN.ENCOUNTER_ED ed ON bhd.VISIT_KEY = ed.VISIT_KEY\
+AND sde.concept_ID = 'CHOP#831'\
+AND bhd.encounter_date BETWEEN '2021-01-01' AND '2023-11-17'
+
+```{r}
+#| eval: FALSE
+install.packages("kableExtra")
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(yardstick)
+library(tidymodels)
+library(ggplot2)
+library(kableExtra)
+```
+
+```{r}
+#Load in csv file from above SQL cod
+data <- read.csv("bminB2023.csv")
+
+#Clean the data
+#Rename columns for ease of use, and drop VISIT_KEY as we will not need it
+data<- data |>
+    rename(DISPO = ED_DISPO_FIRST ,DATE=ENCOUNTER_DATE,IP_IND = ED_DISPO_FIRST_IP_IND, AGE = AGE_YEARS, LOS = ED_LOS_HRS,FULLDATE = ED_ARRIVAL_DATE) |>
+    select(-VISIT_KEY)
+
+#Drop rows where IP_IND is null as it means there was no discharge indicated from the encounter
+  data <- data |> filter(!is.na(IP_IND))
+  
+```
+
+Now I need to manipulate my date columns since both read in as chr type and I need them to be date types. In addition, I need to extract the hour from my FULLDATE column since that's the element I"m interested in, and I want to create another column with day of the week given the encounter date.
+
+```{r}
+#From the column FUllDATE which is the date and time, extract just the hour 
+data <- data |>
+      mutate(
+        FULLDATE_datetime = mdy_hm(FULLDATE),  # Convert to datetime
+        HOUR = hour(FULLDATE_datetime)  # Extract hour
+      ) 
+#Convert DATE from chr to date format, then make a new column to tell us day of the week
+data <- data |>
+   mutate(DATE = mdy(DATE))|>
+    mutate(
+        DAY = wday(DATE, label = TRUE) # Extract day of the week
+      )
+
+```
+
+Now that I have the columns I want in the right formats, I will try to answer some questions I have regarding trends in Behavioral Health presentations to the Emergency Room.
+
+```{r}
+#Visit volume by Month
+VisitsByMonth <- data |>
+  mutate(month = lubridate::month(DATE, label = TRUE, abbr = TRUE)) |>
+  group_by(month) |>
+  summarize(count = n())
+
+ggplot(VisitsByMonth, aes(x = month, y = count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Count of Visits by Month", x = "Month", y = "Count")
+
+#Visit volume by Day of the week
+VisitsByDay <- data |>
+  group_by(DAY) |>
+  summarize(count = n())
+
+ggplot(VisitsByDay, aes(x = DAY, y = count)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "Count of Visits by Day of Week", x = "Day of the Week", y = "Count")
+
+#Visit volume by Hour
+VisitsByHour <- data |>
+  group_by(HOUR) |>
+  summarize(count = n())
+
+ggplot(VisitsByHour, aes(x = HOUR, y = count)) +
+  geom_bar(stat = "identity", fill = "black") +
+  labs(title = "Count of Visits by Hour", x = "Hour", y = "Count")
+```
+
+Are the number of visits significantly different depending on month, day of week, or hour?
+
+```{r}
+#By Month
+pMonth <- chisq.test(VisitsByMonth$count, VisitsByMonth$month)
+print(pMonth)
+
+#By Day of Week
+pDay <- chisq.test(VisitsByDay$count, VisitsByDay$DAY)
+print(pDay)
+
+#By hour
+pHour <- chisq.test(VisitsByHour$count, VisitsByHour$HOUR)
+print(pHour)
+
+
+```
+
+```{r}
+#Acuity by Month, Day, Hour
+
+#Acuity volume by Month
+# Group data by month and summarize the count of admitted patients
+IPByMonth <- data |>
+  mutate(month = lubridate::month(DATE, label = TRUE, abbr = TRUE)) |>
+  group_by(month) |>
+  summarize(count = sum(IP_IND))
+
+ggplot(IPByMonth, aes(x = month, y = count)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(title = "Inpatient recommendations by Month", x = "Month", y = "Count")
+
+#Acuity volume by Day
+# Group data by day of week and summarize the count of admitted patients
+IPByDay <- data |>
+  group_by(DAY) |>
+  summarize(count = sum(IP_IND))
+
+ggplot(IPByDay, aes(x = DAY, y = count)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "Inpatient recommendations by Day of Week", x = "Day of Week", y = "Count")
+
+#Acuity volume by Hour
+# Group data by day of week and summarize the count of admitted patients
+IPByHr <- data |>
+  group_by(HOUR) |>
+  summarize(count = sum(IP_IND))
+
+ggplot(IPByHr, aes(x = HOUR, y = count)) +
+  geom_bar(stat = "identity", fill = "green") +
+  labs(title = "Inpatient recommendations by Hour", x = "Hour", y = "Count")
+```
+
+```{r}
+
+```
+
+```{r}
+#Explore diagnoses
+diagnosis_summary <- table(data$DX_NM)
+diagnosis_summary <- as.data.frame(diagnosis_summary)
+d_sorted <- diagnosis_summary |> 
+  arrange(desc(Freq))
+top_20DX <- head(d_sorted, 20)
+
+top_20DX <- top_20DX |>
+  rename(Diagnosis = Var1)
+top_20DX <- top_20DX |>
+  mutate(Percentage = round((Freq / 9602) * 100))
+
+
+top_20DX |>
+  kable() |>
+  kable_styling()
+
+
+#Explore dispositions
+dispo_summary <- table(data$DISPO)
+dispo_summary <- as.data.frame(dispo_summary)
+dispo_sorted <- dispo_summary |> 
+  arrange(desc(Freq))
+top_10dispo <- head(dispo_sorted, 10)
+
+top_10dispo <- top_10dispo |>
+  rename(Disposition = Var1) |>
+  mutate(Percentage = round((Freq / 9602) * 100))
+
+top_10dispo |>
+  kable() |>
+  kable_styling()
+```
+
+```{r}
+#Statistics for length of stay
+summaryLOS <- summary(data$LOS)
+print(summaryLOS)
+
+```
+
+## Results {#sec-results}
+
+The above results show some variations in volume trends that could inform staffing and the times of day and week that may benefit from the ability to have additional staff to address increase in volume.
+
+Based on the Volume graphs, it would seem that Monday-Friday sees higher volumes than the weekend, especially during the hours of 11am to 7pm. It would also seem that June, July, August and December tend to be months that see lower volumes, which is likely related to those months correlating to summer and winter breaks from school. It is not surprising given that school is often cited as a major stressor that drives depression in children (relating to school work, grades, bullying, and social stressors).
+
+## Conclusion
+
+Based on the results I would suggest we have 1.5x level staffing of behavioral health evaluators and psychiatrists for 11am-7pm on Monday through Friday, January through May, and September through November.
 
