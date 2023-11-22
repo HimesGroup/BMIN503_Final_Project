@@ -1,0 +1,755 @@
+---
+title: "<br> Mobility Restriction and the Spread of COVID-19 in the United States"
+subtitle: "BMIN503/EPID600 Final Project"
+author: 'Quynh Long Khuong'
+date: last-modified
+date-format: "MM-DD-YYYY"
+title-block-banner: "#011F5B"
+format: 
+  html:
+    embed-resources: true
+    smooth-scroll: true
+    theme: lumen
+    toc: true
+    toc-location: left
+    toc-title: Summary
+    urlcolor: orange
+    linkcolor: orange
+    df_print: kable
+    code-fold: true
+execute:
+  warning: false
+bibliography: references.bib
+csl: nature.csl
+css: style.css
+---
+
+------------------------------------------------------------------------
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(urbnmapr)
+library(zoo)
+library(psych)
+library(meta)
+library(DT)
+library(viridis)
+library(gganimate)
+library(gifski)
+```
+
+## Overview {#sec-overview}
+
+Mobility restriction was one of the main policies trying to reduce the spread of the COVID-19 pandemic. However, the effectiveness of this intervention remains controversial. In this project, we aim to investigate the impact of mobility restrictions on the spread of COVID-19 in the U.S. The analysis took into account other factors, including the government response to COVID-19 and vaccination.
+
+This assignment was conducted with advice of Dr. John H. Holmes, PhD, FACE, FACMI, Professor of Medical Informatics in Epidemiology.
+
+My GitHub repo for this project can be found [here](https://github.com/khuongquynhlong/BMIN503_Final_Project)
+
+## Introduction {#sec-introduction}
+
+Throughout the COVID-19 pandemic, human mobility restrictions were one of the main policies implemented in many countries with the aim of reducing the transmission of SARS-CoV-2. [@flaxman2020estimating; @lancet2020india; @signorelli2020covid] Such restrictions include physical distancing and community containment measures to reduce public transport use, public gatherings, school closures, and encouraging working from home where possible. Prior experiences with the 2009 H1N1 influenza [@chowell2011characterizing] and Ebola [@peak2018population] provided evidence for the effectiveness of these interventions in reducing disease transmission. However, the effectiveness of imposing mobility restrictions as a policy for controlling COVID-19 outbreaks has been controversial. Recent studies found that travel restrictions were effective in the early stages of the outbreak but may be less useful when the disease is widespread.[@kraemer2020effect; @oh2021mobility] Furthermore, these restrictions have also led to enormous economic losses.[@han2020lessons] Estimates suggest that global GDP growth has fallen by as much as 10%, at least part of which can be attributed to these mobility restrictions. [@hatzius2020sudden] Hence, it is critical to quantify the effectiveness of decisions to apply large-scale mobility restrictions in limiting the spread of the pandemic.
+
+This study was conducted to investigate the impact of mobility restrictions on the spread of COVID-19 in the U.S. In fact, the U.S. experienced significant challenges in managing the pandemic in the early stages due to the large population, diverse demographics, and different healthcare settings across states. The findings of this project might not only support the current response but also contribute valuable evidence to the global scientific community, informing future disease control strategies. This evidence guides policymakers in future outbreaks, enabling timely interventions, especially when vaccination is not available.
+
+## Methods {#sec-methods}
+
+### Data sources
+
+| Dataset                              | Measurement | Temporal coverage | Source                                                                              |
+|-----------------------------|---------------|---------------|---------------|
+| COVID cases                          | Daily       | Jan 2020-present  | [usafacts.org](https://usafacts.org/visualizations/coronavirus-covid-19-spread-map) |
+| Google Mobility                      | Daily       | Feb 2020-present  | [google.com](https://www.google.com/covid19/mobility)                               |
+| Vaccination and Government response | Daily       | Jan 2020-present  | [ourworldindata.org](https://ourworldindata.org/coronavirus)                        |
+
+: Datasets Overview {#tbl-table1}
+
+@tbl-table1 summrizes the data sources used in this study
+
+#### COVID-19 cases and deaths
+
+We obtained the data for COVID-19 cases and deaths from the USAFacts official website (https://usafacts.org/visualizations/coronavirus-covid-19-spread-map). USAFacts is a non-profit civic initiative that aims to provide a data-driven portrait of the American population, U.S. government finances, and the government's impact on society. For COVID-19, USAFacts offers real-time pandemic data from all 50 states and the capital city. [@usafacts]
+
+#### Google Mobility Dataset
+
+For mobility measures, we used the Google mobility dataset. The data contain information about the daily amount of visitors to a specific place, including (1) groceries and pharmacies, (2) transit stations, (3) retail and recreation venues, (4) workplaces, (5) parks, and (6) residential areas. The measurements were based on mobile device-based global positioning system (GPS). [@googlemobility] The data were measured from February 15, 2020 to present.
+
+#### Vaccination and Government responses
+
+We collected data on vaccination and Government responses from Our World in Data (OWID). The OWID is managed by a non-profit organization, providing rich datasets for the COVID-19 pandemic over the globe, including cases, deaths, vaccination, policies, population characteristics, etc. [@owidcovid]
+
+::: panel-tabset
+#### COVID-19
+
+```{r}
+#---------- COVID cases and deaths
+df_case <- read_csv("Data/covid_confirmed_usafacts.csv")
+df_death <- read_csv("Data/covid_deaths_usafacts.csv")
+
+#----- Case: aggregate at state level
+df_case <- df_case |>
+  rename(county_name = `County Name`) |>
+  gather(-c(countyFIPS, county_name, State, StateFIPS), 
+            key = "date", value = "new_cases") |>
+  mutate(date = ymd(date)) |> 
+  group_by(State, date) |>
+  summarise(new_cases_cum = sum(new_cases, na.rm = T)) |>
+  ungroup() |>
+  group_by(State) |>
+  mutate(new_cases_cum_lag1 = lag(new_cases_cum, 1),
+         new_cases = new_cases_cum - new_cases_cum_lag1,
+         new_cases = ifelse(new_cases < 0, 0, new_cases)) |>
+  ungroup()|>
+  select(-new_cases_cum_lag1)
+
+#----- Deaths: aggregate at state level
+df_death <- df_death |>
+  rename(county_name = `County Name`) |>
+  gather(-c(countyFIPS, county_name, State, StateFIPS), 
+         key = "date", value = "new_deaths") |>
+  mutate(date = ymd(date))|> 
+  group_by(State, date) |>
+  summarise(new_deaths_cum = sum(new_deaths, na.rm = T)) |>
+  ungroup()|>
+  group_by(State) |>
+  mutate(new_deaths_cum_lag1 = lag(new_deaths_cum, 1),
+         new_deaths = new_deaths_cum - new_deaths_cum_lag1,
+         new_deaths = ifelse(new_deaths < 0, 0, new_deaths)) |>
+  ungroup() |>
+  select(-new_deaths_cum_lag1)
+
+#----- Merge new case, death, and population datasets
+df_oc <- df_case |> left_join(df_death, by = c("State", "date")) 
+
+# Get counties shapefile: to get full state name from abbriviation
+st_name_full <- urbnmapr::states |>
+  group_by(state_abbv, state_name) |>
+  slice(1) |>
+  select(state_abbv, state_name)
+
+# Create full name for state
+df_oc <- df_oc |> rename(state_abbv = State) |>
+  left_join(st_name_full, by = "state_abbv")
+```
+
+#### Mobility data
+
+```{r}
+#---------- Google Mobility data
+df_mob <- read_csv("Data/Global_Mobility_Report.csv")
+
+df_mob <- df_mob |> filter(country_region == "United States") |> 
+  filter(sub_region_1 != "") |>
+  rename(
+    state_name = sub_region_1,
+    grocery_pharm = grocery_and_pharmacy_percent_change_from_baseline,
+    retail_recreation = retail_and_recreation_percent_change_from_baseline,
+    park = parks_percent_change_from_baseline,
+    transit = transit_stations_percent_change_from_baseline,
+    workplace = workplaces_percent_change_from_baseline,
+    residential = residential_percent_change_from_baseline,
+  ) |>
+  select(state_name, date, grocery_pharm, retail_recreation, park,
+         transit, workplace, residential)
+
+# Aggregated at state level
+df_mob <- df_mob |> group_by(state_name, date) |>
+  summarise(grocery_pharm = mean(grocery_pharm, na.rm = T)/100,
+            retail_recreation = mean(retail_recreation, na.rm = T)/100,
+            retail_recreation = mean(retail_recreation, na.rm = T)/100,
+            park = mean(park, na.rm = T)/100,
+            transit = mean(transit, na.rm = T)/100,
+            workplace = mean(workplace, na.rm = T)/100,
+            residential = mean(residential, na.rm = T)/100)
+```
+
+#### Vaccination & Government responses
+
+```{r}
+#---------- Vaccination
+# Data from Our World in Data
+df_owid <- read_csv("Data/owid-covid-data.csv") |>
+  filter(location == "United States")
+
+df_owid <- df_owid |>
+  select(date, reproduction_rate, new_tests_smoothed_per_thousand, tests_per_case,
+         total_vaccinations_per_hundred, people_fully_vaccinated_per_hundred,
+         stringency_index) |>
+  rename(
+    test_thousand = new_tests_smoothed_per_thousand,
+    vacc_any = total_vaccinations_per_hundred,
+    vacc_fully = people_fully_vaccinated_per_hundred,
+  )
+```
+
+#### Merging all data
+
+```{r}
+#---------- Merge all data
+# setdiff(df_oc$state_name, df_mob$state_name)
+
+df <- df_oc |> left_join(df_mob, by = c("state_name", "date")) |> 
+  left_join(df_owid, by = "date")
+
+# Exclude Omicron variant
+df <- df |>
+  filter(date >= ymd("2020-02-15") & date < ymd("2021-12-01"))
+
+# Replace missing values (testing, vaccine were not available)
+df <- df |>
+  mutate(
+    test_thousand = ifelse(is.na(test_thousand), 0, test_thousand),
+    tests_per_case = ifelse(is.na(tests_per_case), 0, tests_per_case),
+    vacc_any = ifelse(is.na(vacc_any), 0, vacc_any),
+    vacc_fully = ifelse(is.na(vacc_fully), 0, vacc_fully)
+  )
+
+dim(df)
+
+# df[1:200, ] |> datatable()
+```
+:::
+
+### Variables
+
+#### Outcomes
+
+The main outcome of this study was the growth rate (GR) of cases. The GR indicates how fast the spread of COVID-19 is. In this study, we defined GR of cases for specific state ith and date tth as the logarithmic rate of change for the new cases (C) in the preceding three days relative to the logarithmic rate of change for the new cases in the preceding seven days.
+
+$$GR_i^t = \frac{log(\sum_{t-2}^{t}\frac{C_i^t}{3})}{log(\sum_{t-6}^{t}\frac{C_i^t}{7})}$$
+
+#### Independent variables
+
+The focal exposure in this study was mobility, derived from the original values of the Google mobility dataset. These mobility values reflect the median change (in percentage) in the number of visitors to specific categories of locations compared to the reference period (between January 3 and February 6, 2020, before the declaration of COVID-19 as a global pandemic).[@googlemobility] These data were aggregated at the state level.
+
+We defined the main mobility variable by average mobility of six venues (groceries and pharmacies, transit stations, retail and recreation venues, workplaces, parks, and residential areas)
+
+#### Covariates
+
+The covariates included
+
+-   Fully vaccination, which was defined as the percentage of the population having fully two required doses of COVID-19 vaccination.
+
+-   Stringency index, which was a composite measure of nine of the response metrics: school closures; workplace closures; cancellation of public events; restrictions on public gatherings; closures of public transport; stay-at-home requirements; public information campaigns; restrictions on internal movements; and international travel controls.[@owidcovid] The values of the stringency index were calculated as the mean scores of the nine metrics, with the range of 0 to 100. A higher value of the stringency index indicates a stricter response.[@owidcovid]
+
+::: panel-tabset
+#### Outcome
+
+```{r}
+#---------- Outcome
+df <- df |> 
+  group_by(state_name) |>
+  mutate(
+    GR_case_num = lag(rollapply(new_cases, 3, mean, fill = NA), 1),
+    GR_case_den = lag(rollapply(new_cases, 7, mean, fill = NA), 3),
+    GR_case = log(GR_case_num)/log(GR_case_den)
+  ) |> ungroup() 
+
+
+df <- df |>
+  mutate(GR_case = ifelse(is.nan(GR_case), 0, GR_case)) |>
+  mutate(GR_case = ifelse(is.infinite(GR_case), NA, GR_case))
+```
+
+#### Mobility
+
+```{r}
+#---------- Composite mobility
+df <- df |> mutate(
+  mobility = (grocery_pharm + transit + workplace + 
+                     retail_recreation + park + residential)/5
+)
+
+# df[1:200, ] |> datatable()
+```
+:::
+
+## Statistical analysis
+
+### Descriptive statistics
+
+For descriptive statistics, we created the animation choropleth maps to show the GR and six categories of mobility for all 50 states and the capital city over time. The scatter plots were used to visualize the initial sign of the correlation between the overall growth rate and outcome across all states oever time.
+
+### Effects of mobility restrictions on spread of COVID-19
+
+To evaluate the effects of mobility restrictions on the spread of COVID-19, we first restricted the data on the date before omicron variant was detected (i.e., November 30, 2021).
+
+Multiple linear regressions were performed to estimate the relationship of interest. The models were fitted separately for each state. The random effect meta-analysis was used to pool the estimates across 50 states and the capital city. The $I^2$ statistic was used to evaluate the heterogeneity in the estimates across states.
+
+As mobility required delayed time to affect the GR of cases of COVID-19, we applied the lag effect of mobility. Based on the previous study, the lag of 14 days was considered as the optimal lag for mobility on GR of cases.[@oh2021mobility] Therefore, we selected a lag of 14 days in our main analysis.
+
+In the main analysis, the composite mobility was obtained by taking the average of six mobility indicators. In the subsequent analysis, each of the six mobility indicators was analyzed.
+
+All the models were adjusted for full vaccination and stringency index. All these confounders were applied with the lag effects of 14 days.
+
+### Stratified analysis
+
+We assume that the effects of mobility restrictions on the spread of COVID-19 are different across the periods of COVID-19 pandemic. Therefore, we conducted the analysis stratified by two periods: (1) from February 15, 2020 (when the first mobility measure was available) to the date of 10% of the population received fully vaccination (before vaccine period), (2) after the date of 10% of the population received fully vaccination (after vaccine period).
+
+### Sensitivity analysis
+
+We did sensitivity analysis to evaluate the relationship of interest under different lag effects and different types of mobility. Therefore, we repeated the analyses with different lag, from 1 day to 21 days prior to the GR, for each type mobility.
+
+
+
+## Results {#sec-results}
+
+### Descriptive statistics
+
+#### Animation maps for outcome and mobility over time
+
+```{r}
+# Summarized by month for animation maps
+df2 <- df |>
+  mutate(month_year = ym(paste0(year(date), "-", month(date))))
+
+
+df2 <- df2 |> group_by(state_abbv, state_name, month_year) |>
+  summarise(
+    GR_case = mean(GR_case, na.rm = T),
+    mobility = mean(mobility, na.rm = T),
+    grocery_pharm = mean(grocery_pharm, na.rm = T),
+    transit = mean(transit, na.rm = T),
+    workplace = mean(workplace, na.rm = T),
+    park = mean(park, na.rm = T),
+    retail_recreation = mean(retail_recreation, na.rm = T),
+    residential = mean(residential, na.rm = T),
+  ) |>
+  ungroup()
+
+# Merge data with shape file for US
+df2_sh <- df2 |>
+  left_join(urbnmapr::states, by = c("state_abbv", "state_name"))
+
+# Set up theme
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.4, "cm"),          
+        legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 20),
+        legend.position = "bottom",
+        strip.text = element_text(face = "bold", size = 16),
+        strip.background = element_rect(fill = "white", color = NA))      
+}
+
+# Growth rate
+#--------------------------------------------------------------
+GR_trans_fig <- df2_sh |> filter(GR_case > 0) |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = GR_case), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "D",
+                     direction = -1, 
+                     name = "Growth rate",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  my_theme() +
+  labs(
+    title = "Growth rate of cases on {frame_time}"
+  ) + 
+  transition_time(month_year)
+
+# Mobility
+#--------------------------------------------------------------
+mob_trans_fig <- df2_sh |> filter(GR_case > 0) |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = mobility*100), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "C",
+                     direction = -1, 
+                     name = "Mobility (%)",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  my_theme() +
+  labs(
+    title = "Mobility on {frame_time}"
+  ) + 
+  transition_time(month_year)
+```
+
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+```{r}
+animate(GR_trans_fig)
+```
+
+:::
+
+::: {.column width="50%"}
+
+```{r}
+animate(mob_trans_fig)
+```
+:::
+
+::::
+
+
+
+#### Animation maps for six types of mobility
+
+```{r, fig.width=10, fig.height=12}
+df2_sh_long <- df2_sh |> select(grocery_pharm, transit, workplace, park, 
+                                retail_recreation, residential, long, lat, 
+                                group, month_year) |>
+  gather(-c(long, lat, group, month_year), key = "mob_type", value = mobility) |>
+  mutate(mob_type2 = case_when(mob_type == "grocery_pharm" ~ "Groceries & pharmacies",
+                               mob_type == "transit" ~ "Transit stations",
+                               mob_type == "workplace" ~ "Workplaces",
+                               mob_type == "retail_recreation" ~ "Retail and recreation",
+                               mob_type == "park" ~ "Parks",
+                               mob_type == "residential" ~ "Residential areas")) 
+
+mob_all_trans_fig <- df2_sh_long |>
+  ggplot() + 
+  geom_polygon(aes(long, lat, group = group, fill = mobility*100), 
+               color = "white", linewidth = 0.02) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
+  scale_fill_viridis(option = "C",
+                     direction = -1, 
+                     name = "Mobility (%)",
+                     guide = guide_colorbar(
+                     direction = "horizontal",
+                     barheight = unit(2, units = "mm"),
+                     barwidth = unit(100, units = "mm"),
+                     draw.ulim = FALSE,
+                     title.position = "top",
+                     title.hjust = 0.5,
+                     title.vjust = 0.5)) +
+  facet_wrap(~mob_type2, ncol = 2) +
+  my_theme() +
+  labs(
+    title = "Mobility on {frame_time}"
+  ) +
+  transition_time(month_year)
+
+animate(mob_all_trans_fig, width = 1000, height = 1200)
+```
+
+
+
+
+
+
+
+#### Average (across states) mobility and growth rate of cases over time
+
+```{r, fig.height=8, fig.width=8}
+df <- df |> 
+  mutate(period = ifelse(vacc_fully < 10, 0, 1),
+         period = factor(period, labels = c("Before vaccine", "After vaccine")))
+
+df_long <- df |> select(grocery_pharm, transit, workplace, park,
+                            retail_recreation, residential, date) |>
+  gather(-date, key = "mob_type", value = mobility) |>
+  mutate(
+    mob_type2 = case_when(mob_type == "grocery_pharm" ~ "Groceries & pharmacies",
+                          mob_type == "transit" ~ "Transit stations",
+                          mob_type == "workplace" ~ "Workplaces",
+                          mob_type == "retail_recreation" ~ "Retail and recreation",
+                          mob_type == "park" ~ "Parks",
+                          mob_type == "residential" ~ "Residential areas"),
+    mob_type2 = factor(mob_type2, 
+                      levels = c("Groceries & pharmacies", 
+                                 "Transit stations", "Workplaces", 
+                                 "Retail and recreation", 
+                                 "Parks", "Residential areas"))) 
+
+
+fig_des_GR <- df |>
+  ggplot(aes(x = date, y = GR_case)) +
+  geom_jitter(alpha = 0.2, color = "#016c59", shape = 21) +
+  geom_smooth(se = F, color = "#feb24c") +
+  labs(x = "Date", y = "Growth rate of cases", 
+       title = "Growth rate of cases") +
+  theme_minimal() + 
+  theme(
+    legend.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),
+    plot.title = element_text(size = 20)
+  ) +
+  coord_cartesian(ylim = c(-2, 2)) 
+
+fig_des_mob_overall <- df |>
+  ggplot(aes(x = date, y = mobility*100)) +
+  geom_jitter(alpha = 0.2, color = "#e7298a", shape = 21) +
+  geom_smooth(se = F, color = "#feb24c") +
+  labs(x = "Date", y = "Mobility (%)", title = "Overall mobility") +
+  theme_minimal() + 
+  theme(
+    legend.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),
+    plot.title = element_text(size = 20)
+  ) +
+  coord_cartesian(ylim = c(-50, 150)) 
+
+cowplot::plot_grid(fig_des_GR, fig_des_mob_overall, ncol = 1, labels = "AUTO")
+```
+
+
+```{r, fig.height=8, fig.width=10}
+fig_des_mob <- df_long |>
+  ggplot(aes(x = date, y = mobility*100)) +
+  geom_jitter(aes(color = mob_type2), alpha = 0.2, shape = 21, show.legend = F) +
+  geom_smooth(se = F) +
+  scale_color_brewer(palette = "Set1") +
+  facet_wrap(~mob_type2, ncol = 2) +
+  labs(x = "Date", y = "Mobility (%)",
+       title = "Six types of mobility") +
+  theme_minimal() +
+  theme(legend.text = element_text(size = 16),       
+        legend.title = element_text(size = 16),
+        plot.title = element_text(size = 20)) +
+  theme(panel.grid.minor = element_blank()) +
+  coord_cartesian(ylim = c(-50, 150)) 
+
+fig_des_mob
+```
+
+
+
+
+
+### Effects of mobility restrictions on spread of COVID-19
+
+#### Main analysis {#sec-main_analysis}
+
+To reduce the repeated work for `state`, different `lag effect` of mobility, and different `types of mobility`, I created a function so that I can use for subsequent analyses.
+
+```{r}
+# Obtain state name for loop
+st_name <- df$state_name |> unique()
+lag_name <- paste0(rep(c("beta", "se"), 15), rep(c(7:21), each = 2))
+
+# Define the function
+make_state_est <- function(var, ...) {
+  
+  # Define matrices to store the results
+  mat_earl <- matrix(ncol = 30, nrow = length(st_name))
+  mat_late <- matrix(ncol = 30, nrow = length(st_name))
+  
+  # 2 nested loop for `states` and different `lags`
+  for (i in seq(length(st_name))) { 
+    # Data for each state, here I convert `tible` to normal `data.frame` 
+    # to run easier inside a loop
+    df_sub <- as.data.frame(subset(df, state_name == st_name[i]))
+    df_sub$vacc_fully_lag <- lag(df_sub$vacc_fully, 14)
+    df_sub$stringency_index_lag <- lag(df_sub$stringency_index, 14)
+    # Apply different lags 7-21 days
+    for (j in 1:15) {
+      df_sub$mobility_lag <- lag(df_sub[, var], j+6)
+      
+      # Fit model 
+      # Early period
+      m1 <- lm(GR_case ~ mobility_lag + vacc_fully_lag + stringency_index_lag, 
+               data = subset(df_sub, vacc_fully_lag < 10))
+      
+      # Late period
+      m2 <- lm(GR_case ~ mobility_lag + vacc_fully_lag + stringency_index_lag, 
+               data = subset(df_sub, vacc_fully_lag >= 10))
+      
+      m1_summ <- summary(m1)
+      m2_summ <- summary(m2)
+      
+      # Store results to 2 matrices
+      mat_earl[i, j*2-1] <- m1_summ$coefficients[2, 1]
+      mat_earl[i, j*2] <- m1_summ$coefficients[2, 2]
+      
+      mat_late[i, j*2-1] <- m2_summ$coefficients[2, 1]
+      mat_late[i, j*2] <- m2_summ$coefficients[2, 2]
+      
+    }
+  }
+  # Convert to dataframes
+  mat_earl <- as.data.frame(mat_earl)
+  mat_late <- as.data.frame(mat_late)
+  
+  names(mat_earl) <- lag_name
+  names(mat_late) <- lag_name
+  
+  mat_earl$state_name <- st_name
+  mat_late$state_name <- st_name
+  
+  return(list(early = mat_earl, late = mat_late))
+}
+```
+
+Now I apply the function to obtain two estimates across all states and all 15 lag effects for early and late periods
+
+```{r}
+# Apply the function
+mobi_df_list <- make_state_est(var = "mobility")
+
+# Store two datasets for later analysis
+ovarall_earl <- mobi_df_list$early
+ovarall_late <- mobi_df_list$late
+```
+
+::: panel-tabset
+##### Before vaccine period
+
+```{r, fig.height=12, fig.width=8}
+# Conduct meta-analysis to pool the effect of all states
+mobility_earl_meta <- metagen(TE = beta14,
+                          seTE = se14,
+                          studlab = state_name,
+                          method.tau = "DL",
+                          common = FALSE,
+                          data = ovarall_earl,
+                          title = "Effect of mobility on growth rate, before vaccine period")
+# Forest plot
+forest(mobility_earl_meta)
+```
+
+##### After vaccine period
+
+```{r, fig.height=12, fig.width=8}
+mobility_late_meta <- metagen(TE = beta14,
+                          seTE = se14,
+                          studlab = state_name,
+                          method.tau = "DL",
+                          common = FALSE,
+                          data = ovarall_late,
+                          title = "Effect of mobility on growth rate, after vaccine")
+# Forest plot
+forest(mobility_late_meta)
+```
+:::
+
+#### Sensitivity analysis
+
+##### Sensitivity analsysis for different lag effects of mobility (7 to 21 days)
+
+As I proposed sensitivity analyses for all types of mobility, the function was created for this purpose
+
+```{r}
+sens_analysis <- function(data_early, data_late, title = NA, limit) {
+  
+  # Define matrices to store the results
+  early_sen_mat <- matrix(ncol = 2, nrow = 15)
+  late_sen_mat <- matrix(ncol = 2, nrow = 15)
+  
+  # loop for different lags
+  for (i in 1:15) {
+    meta_early_i <- metagen(TE = data_early[, i*2-1],
+                            seTE = data_early[, i*2],
+                            method.tau = "DL",
+                            common = FALSE)
+    meta_late_i <- metagen(TE = data_late[, i*2-1],
+                           seTE = data_late[, i*2],
+                           method.tau = "DL",
+                           common = FALSE)
+    
+    # Store result to matrices
+    early_sen_mat[i, 1] <- meta_early_i$TE.random
+    early_sen_mat[i, 2] <- meta_early_i$seTE.random
+    
+    late_sen_mat[i, 1] <- meta_late_i$TE.random
+    late_sen_mat[i, 2] <- meta_late_i$seTE.random
+  }
+  
+  early_sen_mat <- as.data.frame(early_sen_mat)
+  late_sen_mat <- as.data.frame(late_sen_mat)
+  
+  names(early_sen_mat) <- c("pooled_beta", "se")
+  early_sen_mat$lag <- 7:21
+  
+  names(late_sen_mat) <- c("pooled_beta", "se")
+  late_sen_mat$lag <- 7:21
+  
+  mobility_sen_mat <- rbind(early_sen_mat, late_sen_mat) |>
+    mutate(low = pooled_beta - 1.96*se,
+           high = pooled_beta + 1.96*se)
+  
+  mobility_sen_mat$period <- rep(c("Before vaccine", "After vaccine"), each = 15)
+  
+  
+  # Sensitivity figure
+  dodge <- position_dodge(width = 0.5)
+  
+  fig_sen <- ggplot(aes(as.factor(lag), y = pooled_beta, 
+                        ymin = low, ymax = high,
+                        color = period), data = mobility_sen_mat) +
+    geom_errorbar(width = 0.5, linewidth = 1, position = dodge) +
+    geom_point(size = 2, shape = 21, fill="white", position = dodge) +
+    geom_hline(yintercept = 0, linetype = 2, col = "gray10", size = 1) +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set1") +
+    coord_cartesian(ylim = limit) +
+    theme_bw() + 
+    theme(legend.position = "top") +
+    labs(
+      x = "Lag of mobility (day)",
+      y = "Pooled estimate",
+      title = title,
+      color = NULL
+    )
+  
+  return(fig_sen)
+}
+```
+
+Apply the function to evaluate effects of different lags of mobility on growth rate of cases
+
+```{r}
+sens_analysis(ovarall_earl, ovarall_late, 
+              title = "Effect of mobility (overall) on growth rate", 
+              limit = c(-0.3, 0.3))
+```
+
+##### Sensitivity analsysis for different types of mobility
+
+In this section, I applied the two functions (i.e., `make_state_est` and `sens_analysis`) defined in the [@sec-main_analysis]. Beside, I created a loop to conduct all sensitivity analyses for 6 types of mobility simultaneously. 
+
+
+```{r, fig.width=11, fig.height=11}
+mob_label <- c("groceries & pharmacies", "transit stations", "workplaces",
+               "retail and recreation", "parks", "residential areas")
+mob_name <- c("grocery_pharm", "transit", "workplace", 
+              "retail_recreation", "park", "residential")
+limit_range <- c(rep(c(-0.3, 0.3), 3), c(-15, 15), c(-0.05, 0.05), c(-1, 1))
+
+# For all 6 types of mobility
+for (i in 1:6) {
+  data_list <- make_state_est(var = mob_name[i])
+  zzz <- paste0("fig_", mob_name[i])
+  eval(call("<-", as.name(zzz), 
+            sens_analysis(data_list$early, data_list$late, 
+              title = paste0("Effect of mobility for ", mob_label[i], " on growth rate"), 
+              limit = c(limit_range[i*2-1], limit_range[i*2]))
+              ))
+}
+
+# Plot all figures
+cowplot::plot_grid(fig_grocery_pharm, fig_transit, fig_workplace,
+                   fig_retail_recreation, fig_park, fig_residential,
+                   labels = "AUTO", ncol = 2)
+```
+
+
+## Conclusion
+
+## References
