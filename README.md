@@ -1,19 +1,13 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This is the repository for the final project in BMIN5030/EPID6000: Data Science for Biomedical Informatics.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Overview of Project
+This project utilized mammography and MRI screening data from Penn Medicine to produce tables, graphs, and regression models examining differences in supplemental MRI screening utilization by race. 
 
+The goal of this project was to use data from Penn Medicine to see if the proportion of high risk Black and White women who utilize supplemental breast cancer screening is similar, and whether the utilization differs by other factors such as family history of breast cancer and breast density.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+Description of Repo Files 
+FinalProject_Mahmoud.html - HTML document containing project information, code, and output
 
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+FinalProject_Mahmoud.qmd - qmd file containing project information, code, and output
