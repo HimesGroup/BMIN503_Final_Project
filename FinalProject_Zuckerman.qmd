@@ -6,6 +6,9 @@ format: html
 editor: visual
 number-sections: true
 embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
 
 ------------------------------------------------------------------------
@@ -16,7 +19,7 @@ Preventing unintended teenage pregnancy is a public health priority that can be 
 
 ## Introduction {#sec-introduction}
 
-Despite decreases over the past several decades, unintended teenage pregnancy continues to persist as a public health problem that, compared to other high income countries, is especially prevalent in the United States.^1^ One objective of Healthy People 2030, an initiative from the US Department of Health and Human Services that identifies public health priorities to improve health and well-being across the United States,^2^ is to \"increase the proportion of adolescent females who used effective birth control the last time they had sex.\"^3^ In fact, several Healthy People 2030 objectives are related to adolescent sexual education, behaviors, and outcomes.^4^ There has also been extensive evidence demonstrating that teen pregnancy has negative lifelong consequences for both the birthing parent and the child.^5^ Teen pregnancy is also a health disparities issue. Disparities have been observed by age, race, geography, and socioeconomic status.^6^ Moreover, prior work has found that sexual minority adolescents are at a greater risk of teenage pregnancy than their heterosexual peers.^7--10^ This justifies an examination of contraceptive use by sociodemographic factors.
+Despite decreases over the past several decades, unintended teenage pregnancy continues to persist as a public health problem that, compared to other high income countries, is especially prevalent in the United States.^1^ One objective of Healthy People 2030, an initiative from the US Department of Health and Human Services that identifies public health priorities to improve health and well-being across the United States,^2^ is to "increase the proportion of adolescent females who used effective birth control the last time they had sex."^3^ In fact, several Healthy People 2030 objectives are related to adolescent sexual education, behaviors, and outcomes.^4^ There has also been extensive evidence demonstrating that teen pregnancy has negative lifelong consequences for both the birthing parent and the child.^5^ Teen pregnancy is also a health disparities issue. Disparities have been observed by age, race, geography, and socioeconomic status.^6^ Moreover, prior work has found that sexual minority adolescents are at a greater risk of teenage pregnancy than their heterosexual peers.^7--10^ This justifies an examination of contraceptive use by sociodemographic factors.
 
 Addressing and acquiring knowledge about adolescent contraceptive use requires an interdisciplinary approach. In addition to thinking about unintended pregnancy as a public health issue, behavioral experts (e.g., psychologists, health behaviorists) can contribute to our understanding of which adolescents choose to use contraception methods and what characteristics they express. Additionally, contraceptive access is of concern as adolescents may not have the financial or transportational means to ascertain pregnancy prevention and/or can lack health literacy around this sexual health. Lastly, because sex is particularly stigmatized among adolescents, teens cannot necessarily rely on their guardians or medical providers for sex-related advice or assistance in utilizing contraception.
 
@@ -28,27 +31,35 @@ We will first load several packages that will be used to analyze the YRBS data.
 
 ```{r}
 library(tidyverse)
-library(sf)
-library(RColorBrewer)
-library(tigris)
-library(tmap)
-library(tmaptools)
-library(grid)
-library(leaflet)
-library(forecast)
 library(ggthemes)
 library(png)
+library(Hmisc)
+library(survey)
+library(table1)
+library(gtsummary)
+library(expss)
+library(ggsurvey)
 ```
+
+### Data Overview
+
+This project utilizes data from the 2021 National High School Youth Risk Behavior Survey (YRBS). Years prior to 2015 did not collect information on sexual orientation. While sexual orientation was collected in 2015-2019 ("Which of the following best describes you?"), years prior to 2021 only offered the following response options: "heterosexual (straight)," "gay or lesbian," "bisexual," and "not sure." In order to capture adolescents whose self-describe their sexual orientation as"questioning" or "other," only 2021 data were used. Accurately capturing sexual orientation is of import as one of the primary project aims is to investigate whether use and type of pregnancy prevention methods differs by sexual minority status.
 
 ### Data Import
 
-YRBS does not have data in CSV form, so the dataset had to be downloaded and opened in SAS. Additionally, YRBS provides SAS code for loading and formatting the data. Thus, the data is already properly labelled and formatted. I additionally filtered out data from years outside of 2015-2021. No other data cleaning was conducted.
+YRBS does not have data in CSV form (only .dat files were available), so the dataset had to be downloaded and opened in SAS. Additionally, YRBS provides SAS code for loading and formatting the data. Thus, the data is already properly labelled and formatted. I additionally filtered out data from years outside of 2015-2021. No other data cleaning was conducted prior to running the following code.
 
 ```{r}
 yrbs <- read.csv("/Users/gmzuck/Library/Mobile Documents/com~apple~CloudDocs/Desktop/UPenn/Coursework/Fall 2023/EPID 6000/yrbs2015-2021.csv")
 ```
 
 ### Data Cleaning
+
+Remove observations for any year that is not 2021.
+
+```{r}
+yrbs <- yrbs %>% filter(year==2021)
+```
 
 Missing values are currently coded as the string "Missing" and must be changed to NA.
 
@@ -65,19 +76,308 @@ yrbs.female <- yrbs[yrbs$sex == "Female" & !is.na(yrbs$sex),]
 Now, we will limit the dataset to only include variables of interest as there are currently \>200 variables to look through in the dataset.
 
 ```{r}
-#yrbs.female <- yrbs.female %>% select(c("year","weight","stratum","PSU","record", #Survey Design "age","sex","grade","race4","race7","sexid","sexid2", #Demographics "q59","q60","q61","q62","q63","q64","q65","sexpart","sexpart2", #Sex-related "q30","q34","q37","q38","q40","q45","q48","q49","q51","q52","q53","q54","q55","q56","q57" #Risky Behaviors))
+yrbs.female <- yrbs.female %>% subset(select=c(year,weight,stratum,PSU,record,age,sex,grade,race4,race7,sexid,sexid2,q65,sexpart,sexpart2,q57,qn57,q58,qn58,q59,qn59,q60,qn60,q61,qn61,q62,qn62,q63,qn63,q64,q30,qn30,q34,qn34,q37,qn37,q38,qn38,q40,qn40,q45,qn45,q48,qn48,q49,qn49,q50,qn50,q51,qn51,q52,qn52,q53,qn53,q54,qn54,q55,qn55,q82,qn82,q83,qn83))
 ```
 
-### Data Checks
-
-It is good statistical practice to check the distributions of the variables that will be used to ensure that they make sense.
+We now want to give the variables labels so we can more easily identify them.
 
 ```{r}
+
+yrbs.female = apply_labels(yrbs.female,
+              year="Year of Survey",
+               weight="Analytical Weight",
+               stratum="Analytical Stratum",
+               PSU="Analytical Primary Sampling Unit",
+               record="ID",
+               age="Age in Years", 
+               sex="Sex of the participant",
+               grade="Grade",
+               race4="4-level Race/Ethnicity",
+               race7="7-level Race/Ethnicity",
+               q65="Sexual Orientation Survey Item",
+               sexid="Sexual Orientation",
+               sexid2="Collapsed Sexual Orientation",
+               q57="Have you had sexual intercourse?",
+               qn57="Dichotomous: Have you had sexual intercourse?",
+               sexpart="Sex of sexual contact(s)",
+               sexpart2="Collapsed sex of sexual contact(s)",
+               q58="How old were you when you had sexual intercourse for the first time?",
+               qn58="Dichotomous: How old were you when you had sexual intercourse for the first time?",
+               q59="During your life, with how many people have you had sexual intercourse?",
+               qn59="Dichotomous: During your life, with how many people have you had sexual intercourse?",
+               q60="During the past 3 months, with how many people did you have sexual intercourse?",
+               qn60="Dichotomous: During the past 3 months, with how many people did you have sexual intercourse?",
+               q61="Did you drink alcohol or use drugs before you had sexual intercourse the last time?",
+               qn61="Dichotomous: Did you drink alcohol or use drugs before you had sexual intercourse the last time?",
+               q62="The last time you had sexual intercourse, did you or your partner use a condom?",      
+               qn62="Dichotomous: The last time you had sexual intercourse, did you or your partner use a condom?",
+               q63="The last time you had sexual intercourse with an opposite-sex partner, what one method did you or your partner use to prevent pregnancy?",
+               qn63="Dichotomous: The last time you had sexual intercourse with an opposite-sex partner, what one method did you or your partner use to prevent pregnancy?",
+               q64="During your life, with whom have you had sexual contact?",
+               q30="Have you ever tried cigarette smoking, even one or two puffs?",      
+               qn30="Dichotomous: Ever tried cigarette smoking",     
+               q34="Have you ever used an electronic vapor product?",      
+               qn34="Dichotomous: Ever used an electronic vapor product",
+               q37="# of days in the past month that you used chewing tobacco, snuff, dip, snus, or dissolvable tobacco products",
+               qn37="Dichotomous: # of days in the past month that you used chewing tobacco, snuff, dip, snus, or dissolvable tobacco products",
+               q38="During the past 30 days, on how many days did you smoke cigars, cigarillos, or little cigars?",
+               qn38="Dichotomous: During the past 30 days, on how many days did you smoke cigars, cigarillos, or little cigars?",
+               q40="How old were you when you had your first drink of alcohol other than a few sips?",
+               qn40="Dichotomous: Age at first alcoholic drink",
+               q45="During your life, how many times have you used marijuana?",
+               qn45="Dichotomous: Lifetime marijuana use",
+               q48="During your life, how many times have you used synthetic marijuana?", 
+               qn48="Dichotomous: Lifetime synthetic marijuana use",
+               q49="During your life, how many times have you taken prescription pain medicine without a doctor's prescription or differently than how a doctor told you to use it?",
+               qn49="Dichotomous: Lifetime prescription pain medicine abuse",
+               q50="During your life, how many times have you used any form of cocaine, including powder, crack, or freebase?",
+               qn50="Dichotomous: Lifetime cocaine use",
+               q51="During your life, how many times have you sniffed glue, breathed the contents of aerosol spray cans, or inhaled any paints or sprays to get high?",
+               qn51="Dichotomous: Lifetime inhalant use",
+               q52="During your life, how many times have you used heroin (also called smack, junk, or China White)?",
+               qn52="Dichotomous: Lifetime heroin use",
+               q53="During your life, how many times have you used methamphetamines (also called speed, crystal meth, crank, ice, or meth)?",
+               qn53="Dichotomous: Lifetime methamphetamines use",
+               q54="During your life, how many times have you used ecstasy (also called MDMA or Molly)?",
+               qn54="Dichotomous: Lifetime ecstasy use",
+               q55="During your life, how many times have you used a needle to inject any illegal drug into your body?",
+               qn55="Dichotomous: Lifetime intravenous illicit drug use",
+               q82="Have you ever been tested for HIV, the virus that causes AIDS?",
+               qn82="Dichotomous: Ever been tested for HIV",
+               q83="During the past 12 months, have you been tested for a sexually transmitted disease (STD) other than HIV, such as chlamydia or gonorrhea? ",
+               qn83="Dichotomous: STD test in the past year"
+               )
+```
+
+Because substance use is not our outcome of interest, we will combine all substance use items into one binary variable called `substance.use`. Those who have used any substance will be assigned 1 while those who have not will be assigned 2. The substances included are: cigarettes, electronic vapor products, chewing tobacco, snuff, dip, snus, dissolvable tobacco products, cigars, cigarillos, little cigars, alcohol, marijuana, synthetic marijuana, prescription painkillers, cocaine, inhalants, heroin, methamphetamines, ecstasy, and illicit intravenous drugs. We will use the dichotomized versions of these variables in which a 1 indicates use and a 2 indicates no use.
+
+```{r}
+
+yrbs.female$substance.use <- ifelse(
+  yrbs.female$qn30==1 | yrbs.female$qn34==1 | yrbs.female$qn37==1 | yrbs.female$qn38==1 | yrbs.female$qn40==1 | yrbs.female$qn45==1 | yrbs.female$qn48==1 | yrbs.female$qn49==1 | yrbs.female$qn50==1 | yrbs.female$qn51==1 | yrbs.female$qn52==1 | yrbs.female$qn53==1 | yrbs.female$qn54==1 | yrbs.female$qn55==1, 1, 2)
+
+table(yrbs.female$substance.use, useNA="ifany")
+
+# We are able to confirm that there are 1810 rows in which all dichotomous drug variables have a value of 2.
+nrow(yrbs.female[(yrbs.female$qn30==2 & !is.na(yrbs.female$qn30)) & 
+                  (yrbs.female$qn34==2 & !is.na(yrbs.female$qn34)) & 
+                  (yrbs.female$qn37==2 & !is.na(yrbs.female$qn37)) & 
+                  (yrbs.female$qn38==2 & !is.na(yrbs.female$qn38)) & 
+                  (yrbs.female$qn40==2 & !is.na(yrbs.female$qn40)) & 
+                  (yrbs.female$qn45==2 & !is.na(yrbs.female$qn45)) &
+                  (yrbs.female$qn48==2 & !is.na(yrbs.female$qn48)) & 
+                  (yrbs.female$qn49==2 & !is.na(yrbs.female$qn49)) &
+                  (yrbs.female$qn50==2 & !is.na(yrbs.female$qn50)) & 
+                  (yrbs.female$qn51==2 & !is.na(yrbs.female$qn51)) & 
+                  (yrbs.female$qn52==2 & !is.na(yrbs.female$qn52)) & 
+                  (yrbs.female$qn53==2 & !is.na(yrbs.female$qn53)) & 
+                  (yrbs.female$qn54==2 & !is.na(yrbs.female$qn54)) & 
+                  (yrbs.female$qn55==2 & !is.na(yrbs.female$qn55)),])
+
+# For subjects who did not report use of any drug (i.e., no 1s) but have missing values (i.e., NAs) for some drugs, they will have a missing value for substance.use. This is because we cannot know whether they used the drugs for which a missing value is present. We can see how many participants this is true for by counting the number of rows for which: (1) they do not have a 1 for any dichotomous drug use variables, and (2) they are missing at least one dichotomous drug use variable. When we run this code, we confirm that the number of rows matches the number of NAs in our substance.use variable.
+nrow(yrbs.female[
+                (yrbs.female$qn30!=1 & yrbs.female$qn34!=1 & yrbs.female$qn37!=1 & yrbs.female$qn38!=1 & yrbs.female$qn40!=1 & yrbs.female$qn45!=1 & yrbs.female$qn48!=1 & yrbs.female$qn49!=1 & yrbs.female$qn50!=1 & yrbs.female$qn51!=1 & yrbs.female$qn52!=1 & yrbs.female$qn53!=1 & yrbs.female$qn54!=1 & yrbs.female$qn55!=1) &
+                (is.na(yrbs.female$qn30) | is.na(yrbs.female$qn34) | is.na(yrbs.female$qn37) | is.na(yrbs.female$qn38) | is.na(yrbs.female$qn40) | is.na(yrbs.female$qn45) | is.na(yrbs.female$qn48) | is.na(yrbs.female$qn49) | is.na(yrbs.female$qn50) | is.na(yrbs.female$qn51) | is.na(yrbs.female$qn52) | is.na(yrbs.female$qn53) | is.na(yrbs.female$qn54) | is.na(yrbs.female$qn55)),
+])
+```
+
+#### Limit the dataset to respondents who identify as heterosexual or a sexual minority
+
+```{r}
+yrbs.female <- yrbs.female[(yrbs.female$sexid2=="Heterosexual" | yrbs.female$sexid2=="Sexual Minority") & !is.na(yrbs.female$sexid2),]
+```
+
+#### Changing variable classes to factor (as needed)
+
+```{r}
+
+# Sexual orientation
+yrbs.female$sex.orientation <- ifelse(yrbs.female$sexid2=="Heterosexual", 1, 2)
+yrbs.female$sex.orientation <- factor(yrbs.female$sex.orientation, levels=1:2,                                                      labels=c("Heterosexual", "Sexual Minority"))
+# qn57 - Ever had sex
+yrbs.female$qn57 <- factor(yrbs.female$qn57, levels=1:2, labels=c("Yes","No"))
+# qn58 - Age at first time having sexual intercourse
+yrbs.female$qn58 <- ifelse(
+  yrbs.female$q58=="11 years old or younger" | yrbs.female$q58=="12 years old" | yrbs.female$q58=="13 years old", 1, ifelse(
+    yrbs.female$q58=="14 years old" | yrbs.female$q58=="15 years old" | yrbs.female$q58=="16 years old" | yrbs.female$q58=="17 years old or older", 2, NA
+  )
+)
+yrbs.female$qn58 <- factor(yrbs.female$qn58, levels=1:2, labels=c("<14 years old", "14+"))
+# qn59 - # of lifetime sexual partners 
+yrbs.female$qn59 <- factor(yrbs.female$qn59, levels=1:2, labels=c("4+","0-3"))
+# qn60 - # of sexual partners in past 3 months
+yrbs.female$qn60 <- factor(yrbs.female$qn60, levels=1:2, labels=c("1+","0"))
+# qn62 - Condom use during most recent sexual encounter
+yrbs.female$qn62 <- ifelse(yrbs.female$qn62==1, 1, 
+                             ifelse(yrbs.female$qn62==2, 2, NA))
+yrbs.female$qn62 <- factor(yrbs.female$qn62, levels=1:2, labels=c("Yes","No"))
+# qn63 - Use of any pregnancy prevention method in most recent sexual encounter
+yrbs.female$qn63 <- ifelse(
+  yrbs.female$q63=="Birth control pills" | yrbs.female$q63=="Condoms" | yrbs.female$q63=="IUD or implant" | yrbs.female$q63=="Shot/patch/birth control ring" | yrbs.female$q63=="Withdrawal or something else", 1, ifelse(
+    yrbs.female$q63=="No birth control" | yrbs.female$q63=="Not sure", 2, NA))
+yrbs.female$qn63 <- factor(yrbs.female$qn63, levels=1:2, labels=c("Yes","No/Not sure"))
+# substance.use - use of any substance
+yrbs.female$substance.use <- factor(yrbs.female$substance.use, levels=1:2, labels=c("Yes","No"))
+# qn82 - Ever tested for HIV/AIDS
+yrbs.female$qn82 <- factor(yrbs.female$qn82, levels=1:2, labels=c("Yes","No/Not sure"))
+# qn83 - STD test in last 12 months
+yrbs.female$qn83 <- factor(yrbs.female$qn83, levels=1:2, labels=c("Yes","No/Not sure"))
+```
+
+### Accounting for the complex sampling design
+
+The YRBS employs a complex sampling design that must be accounted for in order to correctly analyze the data. The dataset contains 3 variables - weight, stratum, and PSU- that we will use to obtain valid, nationally-representative estimates for grade 9-12 students in public and private schools. The code below will create a survey design object that can be used in place of a data frame for analytic purposes.
+
+```{r}
+
+yrbsdes <- svydesign(id=~PSU, weight=~weight, strata=~stratum, data=yrbs.female, nest=TRUE) 
+```
+
+### Setting up important analyses
+
+#### Create Table 1
+
+We will create a table looking at important demographics and outcomes by sexual minority status.
+
+```{r}
+
+table.1 <- tbl_svysummary(data=yrbsdes, by="sex.orientation", 
+               missing_text="Missing",
+               type = list(qn57 ~ "categorical", qn62 ~ "categorical", substance.use ~ "categorical"),
+               sort = list(grade ~ "frequency", qn59 ~ "frequency", qn60 ~ "frequency"),
+               include=c(grade, race4, qn57, qn58, q64, qn59, qn60, qn62, qn63, q63, substance.use, qn82, qn83),
+              label=list(grade~"Grade", 
+                         race4~"Race",
+                         qn57~"Ever had sex",
+                         qn58~"Age at first time having sex",
+                         q64~"Sex of sexual partners",
+                         qn59~"Number of lifetime sexual partners",
+                         qn60~"Number of sexual partners in past 3 months",
+                         qn62~"Condom use during previous sexual encounter",
+                         qn63~"Use of any pregnancy prevention method during previous sexual encounter with an opposite-sex partner",
+                         q63~"Type of pregnancy prevention method used during previous sexual encounter with an opposite-sex partner",
+                         qn82~"Ever tested for HIV/AIDS",
+                         qn83~"STD test in past 12 months",
+                         substance.use~"Ever used any substance/drug")) %>%
+  add_overall() 
+```
+
+#### Plotting pregnancy prevention methods
+
+```{r}
+
+# Overall
+plot1.all <- yrbs.female %>% filter(!is.na(q63)) %>% filter(q63 != "Never had sex")
+plot1.all.des <- svydesign(id=~PSU, weight=~weight, strata=~stratum, data=plot1.all,nest=TRUE) 
+
+plot1.all <- ggbarweight_svy(plot1.all.des, q63) + 
+  ylab("Proportion") +
+  xlab("Pregnancy Prevention Method") + 
+  ggtitle("Pregnancy Prevention Methods Used by Sexually Active \nAdolescent Females") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1),
+        plot.title = element_text(hjust=0.5)) +  
+  scale_y_continuous(labels = scales::percent)
+
+# Heterosexual
+plot1.heterosexual <- yrbs.female %>%
+  filter(!is.na(q63)) %>%
+  filter(q63 != "Never had sex") %>%
+  filter(sex.orientation=="Heterosexual")
+plot1.heterosexual.des <- svydesign(id=~PSU, weight=~weight, strata=~stratum, data=plot1.heterosexual,nest=TRUE) 
+
+plot1.het <- ggbarweight_svy(plot1.heterosexual.des, q63) + 
+  ylab("Proportion") +
+  xlab("Pregnancy Prevention Method") + 
+    ggtitle("Pregnancy Prevention Methods Used by Sexually Active \nHeterosexual Adolescent Females") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1),
+        plot.title = element_text(hjust=0.5)) +  
+  scale_y_continuous(labels = scales::percent)
+
+# Sexual Minority
+plot1.sexual.minority <- yrbs.female %>%
+  filter(!is.na(q63)) %>%
+  filter(q63 != "Never had sex") %>%
+  filter(sex.orientation=="Sexual Minority")
+plot1.sexual.minority.des <- svydesign(id=~PSU, weight=~weight, strata=~stratum, data=plot1.sexual.minority,nest=TRUE) 
+
+plot1.sm <- ggbarweight_svy(plot1.sexual.minority.des, q63) + 
+  ylab("Proportion") +
+  xlab("Pregnancy Prevention Method") + 
+    ggtitle("Pregnancy Prevention Methods Used by Sexually Active \nSexual Minority Adolescent Females") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1),
+        plot.title = element_text(hjust=0.5)) +  
+  scale_y_continuous(labels = scales::percent)
+```
+
+### Logistic Regression Models
+
+In the following regression models, we will examine whether there is a significant difference in the use of any pregnancy prevention method by sexual orientation. Here, we are once again only interested in adolescents who have had sex with an opposite-sex partner.
+
+#### Limit the data to those who have had sex with an opposite-sex partner
+
+```{r}
+yrbs.female.logreg <- yrbs.female %>%
+  filter(qn57=="Yes") %>%
+  filter(q64=="Females and males" | q64=="Males")
+```
+
+#### Unadjusted Model
+
+```{r}
+#code will go here
+```
+
+#### Adjusting only for demographics: grade, race
+
+```{r}
+#code will go here
+```
+
+#### Adjusting for the use of any substance
+
+```{r}
+#code will go here
+```
+
+#### Adjusting only for sex-related behaviors: age at first time having sex, sex of sexual partners, \# of lifetime sexual partners, \# of sexual partners in past 3 months, condom use during previous sexual encounter
+
+```{r}
+#code will go here
+```
+
+#### Adjusting for sexual health monitoring: ever tested for HIV/AIDS, STD test in past year
+
+```{r}
+#code will go here
 ```
 
 ## Results {#sec-results}
 
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+### Table 1 - Demographics
+
+> Summary of findings will go here
+
+```{r}
+table.1
+```
+
+### Figure 1 - Pregnancy Prevention Methods by Sexual Orientation
+
+> > Summary of findings will go here
+
+```{r}
+
+plot1.all
+plot1.het
+plot1.sm
+```
+
+### Logistic Regression Models
+
+> Code + summary of findings will go here
 
 ## Conclusion
 
