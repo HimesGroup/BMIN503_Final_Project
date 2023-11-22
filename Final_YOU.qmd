@@ -26,8 +26,6 @@ editor_options:
 
 # Methods
 
-This project uses the MIMIC-IV datbase version 2.2, accessed on September, 2023. I gained access to MIMIC by completing required training for "Data specimens only research" provided by the Collaborative Institutional Training Initiative and obtaining qualification. I have been qualified and approved to access and extract data for research purposes.
-
 Data were downloaded using Mac Terminal Version 2.11 (440), downloaded in September 2023, via designated terminal \<wget -r -N -c -np \--user ysb8390 \--ask-password https://physionet.org/files/mimiciv/2.2/\>. For data analysis, R software (version 4.3.1., CRAN) was used.
 
 ## Data Source: Overview of MIMIC-IV
@@ -39,12 +37,7 @@ MIMIC-IV is a public database, which contains deidentified clinical data of adul
 ```{r}
 #| eval: FALSE
 
-package_to_install<- c("tidyverse", "dplyr", "gtsummary", "ggplot2", "lubridate", "RColorBrewer", "cowplot", "ggpubr", "pROC", "comorbidity", "readr")
-
-for (packages in package_to_install) {
-  install.packages(packages, dependencies=TRUE, quietly=TRUE)
-}
-
+install.packages(c("tidyverse", "dplyr", "gtsummary", "ggplot2", "lubridate", "RColorBrewer", "cowplot", "ggpubr", "pROC", "comorbidity", "readr", "janitor", "pacman", "gee", "janitor", "geepack", "modelsummary", "psych", "furniture", "pander", "lme4", "texreg"))
 ```
 
 ```{r}
@@ -63,9 +56,34 @@ library(pROC) #For cross-validation
 library(comorbidity) #For Elixhauser comorbidity
 library(readr)
 library(broom) # useful for regression models
+library(janitor)
+library(pacman)
+library(gee) # generalized estimation equation solver
+library(geepack) # generalized estimation equation package
+library(modelsummary)
+library(psych) # describe function
+library(furniture) # nice table1() descriptives
+library(pander) # nice looking general tabulations
+library(lme4) # linear, generalized linear, & nonlinear mixed models
+library(texreg) # Convert regression output to LaTeX or HTML tables
+library(remotes)
 ```
 
-## Preprocessing
+# Identify Total Number of Hospital Admission
+
+```{r}
+admissions <- read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/admissions.csv")
+
+admissions |>
+  summarise(n_distinct(hadm_id),
+            n_distinct(subject_id))
+
+admissions <- admissions |>
+  mutate(admittime = ymd_hms(admittime),
+         dischtime = ymd_hms(dischtime))
+```
+
+# Cohort Identification
 
 ### Identifying in-hospital stays (vs. observational stays)
 
@@ -79,9 +97,6 @@ transfers <- transfers |>
   mutate(intime = ymd_hms(intime),
          outtime = ymd_hms(outtime))
 
-# Check if the data type has been sucessfully changed to datetime format
-str(transfers$intime) 
-str(transfers$outtime)
 
 #In-hospital stay (exclude observation care)
 unique(transfers$eventtype) # eventtype = "ED", "admit", "discharge", "tranfer"
@@ -97,21 +112,51 @@ hosp_los_fromed <- transfers |>
 hosp_los_fromed <-hosp_los_fromed |>
   group_by(subject_id, hadm_id) |>
   mutate(hosp_los = as.numeric(difftime(max(intime), min(intime), units = "days"))) |>
-  mutate(inhosp = ifelse(hosp_los >= 2, 1, 0)) |>
+  mutate(inhosp = ifelse(hosp_los < 2, 0, 1)) |>
+  mutate(inhosp = factor(inhosp, levels = c(0, 1))) |>
   ungroup()
 # hosp_los value is same for each hadm_id
-##### NEED TO INVESTIGATE WHY THE # OF OBSERVATIONS IS ODDS (862465) -which i believe should be in even number since I selected min/max value for intime
 
+# Investigate why the number of observations is in odd numbers (862465) -which i believe should be in even number since I selected min/max value for intime (transfers table had 1,890,972 rows)
+
+hosp_los_fromed |>
+  janitor::tabyl(hadm_id) |>
+  arrange(desc(n)) |>
+  head()
+# Three hadm_ids (23605872, 26530149, 26572582) had three rows
+# There were duplicate rows with the same intime/outtime value
+# subject_id = 11773656, dropped transfer_id = 32333659 since it is captured by transfer_id = 33659721
+# subject_id = 14725709, dropped transfer_id = 34471347 since intime = outtime and is the same for discharge time
+# subject_id = 15293444, dropped transfer_id = 39761845 since intime = outtime and is the same for admission time
+
+hosp_los_fromed <- hosp_los_fromed |>
+  filter(!transfer_id %in% c(32333659, 34471347, 39761845))
+# now I have 862,462 rows
+
+# confirm if every hadm_id have two rows
+hosp_los_fromed |>
+  janitor::tabyl(hadm_id) |>
+  arrange(desc(n)) |>
+  head()
+
+#### make a new variable named discharge_time and then select the first row
+hosp_los_fromed <- hosp_los_fromed |>
+  arrange(subject_id, hadm_id, intime) |>
+  group_by(hadm_id) |>
+  mutate(discharge_time = intime [2]) |>
+  ungroup()
+
+
+hosp_los_fromed <- hosp_los_fromed |>
+  select(subject_id, hadm_id, intime, discharge_time, hosp_los, inhosp) |> # select the columns I am interested in
+  group_by(subject_id, hadm_id) |>
+  filter(row_number() == 1) |> # this is to avoid multiple values (hosp_los, inhosp) for the same hadm_id due to different transfer_id (in and out) 
+  rename(tran_intime = intime,
+         tran_outtime = discharge_time)
+# hosp_los_inhosp = 431231 observations (which is half of hosp_los_fromed = 862462)
 
 hosp_los_inhosp <- hosp_los_fromed |>
-  select(subject_id, hadm_id, hosp_los, inhosp) |> # select the columns I am interested in
-  group_by(subject_id, hadm_id) |>
-  filter(row_number() == 1) # this is to avoid multiple values (hosp_los, inhosp) for the same hadm_id due to different transfer_id (in and out)
-# hosp_los_inhosp = 431231 observations (which is almost half of hosp_los_fromed = 862465)
-
-hosp_los_inhosp <- hosp_los_inhosp |>
   filter(inhosp == 1) # observations have decreased from 431231 to 272506 after limiting to hosplos >= 2 (days)
-
 
 # data frame
 # hosp_los_inhosp = in-hospital stays cohort (sourced from transfers table but only kept the first row of each hadm_id)
@@ -121,7 +166,9 @@ hosp_los_inhosp <- hosp_los_inhosp |>
 
 ### Sepsis Cohort Selection
 
-Sepsis patients will be identified based on internation classification of disease (ICD) codes from both the 9th and 10th revisions, as both versions were available in MIMIC. Sepsis cases will be identified through two strategies: (1) explicit ICD-9 codes (995.92, and 785.52) or explicit ICD-10 codes (R65.2, R65.20, and R65.21), and (2) implicit identification method using Angus criteria (Angus, 2001) that considers the case as sepsis when the patient is coded for both infection (i.e., ICD 9 or 10 infection codes) and organ dysfunction (i.e., ICD 9 or 10 organ dysfunction codes). These two strategies are adopted to increase the sensitivity of sepsis diagnosis up to 50% compared to other methods to identify sepsis patients.
+Sepsis patients will be identified based on international classification of disease (ICD) codes from both the 9th and 10th revisions, as both versions were available in MIMIC. Sepsis cases will be identified through two strategies: (1) explicit ICD-9 codes (995.92, and 785.52) or explicit ICD-10 codes (R65.2, R65.20, and R65.21), and (2) implicit identification method using Angus criteria (Angus, 2001) that considers the case as sepsis when the patient is coded for both infection (i.e., ICD 9 or 10 infection codes) and organ dysfunction (i.e., ICD 9 or 10 organ dysfunction codes). These two strategies are adopted to increase the sensitivity of sepsis diagnosis up to 50% compared to other methods to identify sepsis patients.
+
+Now, I am going to identify how many admissions are associated with sepsis diagnosis using both explicit and implicit methods.
 
 ```{r}
 # Diagnosis_icd table
@@ -131,10 +178,13 @@ icd  <- read_csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDo
 str(icd$icd_code) #character
 str(icd$icd_version) #integar
 
-# Icd9 codes
+inhosp_icd <- icd |>
+  left_join(hosp_los_inhosp, by = c("subject_id", "hadm_id")) |>
+  filter(inhosp == 1)
 
+# Icd9 codes
 # Explicit sepsis
-icd <- icd |>
+inhosp_icd <- inhosp_icd |>
   mutate(
     icd9_sepsis = case_when(
       icd_version == 9 &
@@ -143,10 +193,10 @@ icd <- icd |>
     )
   )
 
-table(icd$icd9_sepsis)
+table(inhosp_icd$icd9_sepsis)
 
 # Implicit - Infection    
-icd<- icd |>
+inhosp_icd<- inhosp_icd |>
   mutate(
     icd9_infection = case_when(
       icd_version == 9 &
@@ -174,10 +224,10 @@ icd<- icd |>
     )
   )
 
-table(icd$icd9_infection)
+table(inhosp_icd$icd9_infection)
 
 # Implicit - Organ dysfunction
-icd<- icd |>
+inhosp_icd<- inhosp_icd |>
   mutate(
     icd9_organdysfunction = case_when(
       icd_version == 9 &
@@ -187,12 +237,12 @@ icd<- icd |>
     )
   )
 
-table(icd$icd9_organdysfunction)
+table(inhosp_icd$icd9_organdysfunction)
 
 
 # Icd10 codes
 # Explicit sepsis
-icd <- icd |>
+inhosp_icd <- inhosp_icd |>
   mutate(
     icd10_sepsis = case_when(
       icd_version == 10 &
@@ -201,16 +251,16 @@ icd <- icd |>
     )
   )
 
-table(icd$icd10_sepsis)
+table(inhosp_icd$icd10_sepsis)
 
 # Implicit - Infection
 # As ICD-10 codes for infection is too long (830 codes), made a new text.file named icd10_infection
 # Import icd10_infection
 icd10_angus_infection <- read_csv("/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/sepsis definition/ITRANSFER_icd10/icd10_angus_infection")
 
-as.list(icd10_angus_infection) #change the data.frame into a list
+icd10_angus_infection <- as.list(icd10_angus_infection) #change the data.frame into a list
 
-icd <- icd |>
+inhosp_icd <- inhosp_icd |>
   mutate(
     icd10_infection = case_when(
       icd_version == 10 &
@@ -219,11 +269,11 @@ icd <- icd |>
     )
   )
 
-table(icd$icd10_infection)
+table(inhosp_icd$icd10_infection)
 
 
 # Implicit - Organ Dysfunction
-icd <- icd |>
+inhosp_icd <- inhosp_icd |>
   mutate(
     icd10_organdysfunction = case_when(
       icd_version == 10 &
@@ -232,11 +282,10 @@ icd <- icd |>
     )
   )
 
-table(icd$icd10_organdysfunction)
+table(inhosp_icd$icd10_organdysfunction)
 
 # Sepsis cases identified by Angus method
-# Icd-9
-angus <- icd |>
+angus <- inhosp_icd |>
   group_by(subject_id, hadm_id) |>
   summarise( ## should be 'summarise' instead of 'mutate'
     icd9_angus = ifelse (any(icd9_infection == 1) & any(icd9_organdysfunction == 1), 1, 0),
@@ -247,8 +296,13 @@ angus <- icd |>
 table(angus$icd9_angus)
 table(angus$icd10_angus)
 
+
+# Join angus with hosp_los_inhosp
+inhosp_icd <- inhosp_icd |>
+  left_join(angus, by = c("subject_id", "hadm_id"))
+
 # Create a new data.frame for sepsis_cohort
-sepsis_cohort <- icd |>
+sepsis_cohort <- inhosp_icd |>
   group_by(subject_id, hadm_id) |>
   summarise(
     sepsis = case_when(
@@ -259,12 +313,12 @@ sepsis_cohort <- icd |>
   ) |>
   ungroup()
 
-table(sepsis_cohort$sepsis) # non-sepsis = 388831; sepsis = 42021
+table(sepsis_cohort$sepsis) # non-sepsis = 233347; sepsis = 39046
 sum(is.na(sepsis_cohort$sepsis)) # no missing values
 
 # join with hosp_los_inhosp table (inhospital stay cohort)
 inhosp_sepsis_cohort <- hosp_los_inhosp |>
-  left_join(sepsis_cohort, by =c("subject_id", "hadm_id"))
+  left_join(sepsis_cohort, by =c("subject_id", "hadm_id")) 
 
 table(inhosp_sepsis_cohort$sepsis) # non-sepsis = 233347; sepsis = 39046 in inhospital stays cohort
 unique(inhosp_sepsis_cohort$sepsis)
@@ -273,6 +327,7 @@ sum(is.na(inhosp_sepsis_cohort$sepsis)) #113 missing values
 ## investigating missing sepsis values
 inhosp_sepsis_cohort |>
   filter(is.na(sepsis))
+# when searched their hadm_ids in the original icd table, not found
 # hadm_ids that did not have icd codes
 
 # Select patients with sepsis (explicit & implicit)
@@ -291,58 +346,6 @@ table(inhosp_sepsis_cohort$sepsis) # confirmed that only patients with sepsis is
 # icd9_sepsis/icd10_sepsis = explicit sepsis
 ```
 
-Here, I am investigating if there's a difference in sample size when we restrict to sepsis inhospital stays vs sepsis all stays.
-
-```{r}
-## Sepsis inhospital stays
-test1 <- hosp_los_fromed |>
-  left_join(sepsis_cohort, by = c("subject_id", "hadm_id")) |>
-  filter(inhosp == 1) |>
-  filter(sepsis == 1)
-unique(test1$sepsis)
-unique(test1$inhosp)
-
-# sepsis_cohort = 439852 observations (before filtered for sepsis == 1)
-# hosp_los_inhosp = 272506 observations (filtered for hospital los >= 2days)
-# test1 = 78092 observations (unique hospitalization episodes)
-
-## Sepsis all stays
-test2 <- hosp_los_fromed |>
-  left_join(sepsis_cohort, by = c("subject_id", "hadm_id")) |>
-  filter(sepsis == 1)
-# sepsis_cohort = 439852 observations (before filtered for sepsis == 1)
-# hosp_los_fromed = 862465 observations (regardless of hospital los)
-# test2 = 84042 observations (unique hospitalization episodes)
-
-# We have approximately 5950 sepsis cases (84042 vs 78092) who did not have hospital stay less than 2 days 
-
-## When compared manually, transfers table's intime and outtime captures wider range of time compared to admissions table's admittime and dischtime; 
-## also, transfers table captures cases when it is not even when patient is not admitted to hospital (does not have hadm_id)
-## one of the explanations of why these time differences exist is because admittime could be recorded late; i.e., the patient was already in the hospital and the administratively recorded "admission" time is later than when they actually physically were in the hospital
-# (sourced from: https://github.com/MIT-LCP/mimic-code/discussions/1525) 
-
-# thus, I choose to use transfers table instead of admissions table
-
-
-# Here, I will investigate cases when it was observational stays
-test3 <- hosp_los_fromed |>
-  mutate(inhosp = ifelse(hosp_los >= 2, 1, 0)) |>
-  filter(inhosp == 0)
-
-test4 <- test3 |> 
-  left_join(admissions, by = c("subject_id", "hadm_id"))
-
-unique(test4$admission_type)
-table(test4$admission_type)
-# no particular pattern found in admssion_type for those had observational stays
-
-test5 <- test4 |>
-  left_join(sepsis_cohort,by = c("subject_id", "hadm_id")) |>
-  filter(sepsis == 1)
-table(test4$admission_type)
-# no particular pattern found in admssion_type for those had observational stays
-```
-
 As I have identified sepsis cohort, now I am going to limit our sample to older adults.
 
 ### Older Sepsis Cohort Selection
@@ -353,10 +356,7 @@ Although sepsis can impact people of all ages, it has been reported that some gr
 # Read in the data
 patients <- read_csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/patients.csv.gz")
 
-admissions <- read_csv("~/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/admissions.csv")
-
 # Calculate age for each hospital admission event
-# We will calculate "age" variable for each subject_id and unique hospitalizations 
 # codes sourced from: https://github.com/MIT-LCP/mimic-code/issues/963)
 
 patients <- patients |>
@@ -374,7 +374,13 @@ inhosp_older_sepsis <- inhosp_sepsis_cohort |>
   left_join(patients, by = c("subject_id", "hadm_id"))
 
 inhosp_older_sepsis <- inhosp_older_sepsis |>
-  filter(age >= 65)
+  mutate(older_adult = ifelse(age < 65, 0, 1)) |>
+  mutate(older_adult = factor(older_adult, levels = c(0, 1)))
+
+table(inhosp_older_sepsis$older_adult)
+
+inhosp_older_sepsis <- inhosp_older_sepsis |>
+  filter(older_adult == 1)
 
 # dataframe
 # older_adults = filtered to patients who are 65 + years 
@@ -428,32 +434,124 @@ I will collapse categories of several demographic characteristics for analysis.
 
 -   race
 
+```{r}
+table(inhosp_older_sepsis_home$race) # total of 33 races
+sum(is.na(inhosp_older_sepsis_home$race)) # no missing values
+
+## MAY NEED TO SPLIT UNKNOWN & OTHER ??#####
+otherunknown_race <- c("AMERICAN INDIAN/ALASKA NATIVE", "MULTIPLE RACE/ETHNICITY", "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER", "OTHER", "PATIENT DECLINED TO ANSWER", "PORTUGUESE", "SOUTH AMERICAN", "UNABLE TO OBTAIN", "UNKNOWN")
+
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(race_cate = case_when(
+    str_detect(race, "^WHITE") ~ "WHITE",
+    str_detect(race, "^BLACK") ~ "BLACK",
+    str_detect(race, "^HISPANIC") ~ "HISPANIC",
+    str_detect(race, "^ASIAN") ~ "ASIAN",
+    race %in% otherunknown_race ~ "OTHER/UNKNOWN"
+  ))
+
+# Change to factor
+inhosp_older_sepsis_home$race_cate <- factor(inhosp_older_sepsis_home$race_cate,
+                                   levels = c("WHITE", "BLACK", "HISPANIC", 
+                                              "ASIAN", "OTHER/UNKNOWN")
+                                   )
+table(inhosp_older_sepsis_home$race_cate)
+
+# Validate code
+table(inhosp_older_sepsis_home$race_cate)
+sum(is.na(inhosp_older_sepsis_home$race_cate))
+
+# Compare with entire breakdown of race
+admissions |>
+  select(race) |>
+  tbl_summary()
+```
+
 -   marital status
+
+```{r}
+table(inhosp_older_sepsis_home$marital_status) # Divorced, Married, Single, Widowed
+sum(is.na(inhosp_older_sepsis_home$marital_status)) # no missing values
+
+# Change to factor
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(marital_status_cate = factor(marital_status,
+                            levels = c("MARRIED", "SINGLE", 
+                                       "DIVORCED", "WIDOWED")))
+
+# Validate code
+table (inhosp_older_sepsis_home$marital_status_cate)
+```
 
 -   insurance
 
--   etc
+```{r}
+table(inhosp_older_sepsis_home$insurance) # Medicare, Medicaid, Other
+sum(is.na(inhosp_older_sepsis_home$insurance)) # no missing values
+
+
+# Change to factor
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(insurance = factor(insurance,
+                            levels = c("Medicare", "Medicaid", "Other")))
+
+# Validate code
+table (inhosp_older_sepsis_home$insurance)
+```
+
+-   gender
+
+```{r}
+table(inhosp_older_sepsis_home$gender) # pretty even distribution
+sum(is.na(inhosp_older_sepsis_home$gender)) # no missing values
+
+# Change to factor
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(gender = factor(gender,
+                            levels = c("M", "F")))
+
+# Validate code
+table (inhosp_older_sepsis_home$gender)
+```
 
 ### Clinical characteristics
 
 -   admission type
 
--   length of stay
+```{r}
+table(inhosp_older_sepsis_home$admission_type) 
+sum(is.na(inhosp_older_sepsis_home$admission_type)) # no missing values
+
+adm_nonemergent <- c("ELECTIVE", "SURGICAL SAME DAY ADMISSION")
+adm_emergent <- c("DIRECT EMER.", "DIRECT OBSERVATION", "EU OBSERVATION", "EW EMER.", "OBSERVATION ADMIT", "URGENT")
+
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(admission_type_cate = case_when(
+    admission_type %in% adm_nonemergent ~ "Elective",
+    admission_type %in% adm_emergent ~ "Emergent"
+  ))
+
+table (inhosp_older_sepsis_home$admission_type_cate)
+sum(is.na(inhosp_older_sepsis_home$admission_type_cate))
+
+# Change to factor
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  mutate(admission_type_cate = factor(admission_type_cate,
+                            levels = c("Elective", "Emergent")))
+
+# Validate code
+table (inhosp_older_sepsis_home$admission_type_cate)
+```
+
+-   Hospital length of stay
+
+I have created hospital length of stay variable (hosp_los_fromed) (that is calculated from ED intime for each hospital admission episode) while I was identifying patients who had in-hospital stays compared to those who had observational stays. (variable name = hosp_los)
 
 -   number of previous hospitalization
 
-Now we are going to make a predictor variable that tells us number of previous hospitalizations in the past 90days (3months) and 180 days(6months). Instead of 3 months, 90days were set due to avoid any errors when there were no specific date for specific month (e.g., 2146-04-30; 2147-08-31). And this goes the same for 6 months. These dates were coded NAs since such dates do not exist in real world.
+Now we are going to make a predictor variable that tells us number of previous hospitalizations in the past 90days.
 
 ```{r}
-# Number of previous hospitalization (hospitalization associated with any diagnosis) within past 90 days
-# instead of 3 month, 90days were set due to avoid any errors when there were no specific date for specific month (e.g., 2146-04-30; 2147-08-31). These dates were coded NAs since such dates do not exist in real world
-# Admissions table have been already loaded above. Instead of the cohort table (inhosp_older_sepsis_home), I used admissions (the original table with all diagnoses) since I am interested in number of previous hospitalization associated with any diagnoses.
-
-################NEED TO DECIDE WHICH TABLE TO USE: ADMISSIONS VS TRANSFERS ??????###
-
-admissions <- admissions |>
-  mutate(admittime = ymd_hms(admittime),
-         dischtime = ymd_hms(dischtime))
 
 admissions <- admissions |>
   group_by(subject_id) |>
@@ -468,6 +566,7 @@ admissions <- admissions |>
   arrange(subject_id, admittime) |>
   mutate(prev90d_hosp = ifelse(is.na(dplyr::lag(dischtime)) | 
                                   dplyr::lag(dischtime) < prev90d, 0, 1)) |>
+  mutate(prev90d_hosp = factor(prev90d_hosp, levels = c(0, 1), labels = c(0, 1))) |>
   ungroup()
 
 prev90d_hosp_sum <- integer()
@@ -499,12 +598,328 @@ for (i in 1:nrow(admissions)) {
 
 admissions$prev90d_hosp_sum <- prev90d_hosp_sum
 
-inhosp_older_sepsis_home <- admissions |>
-  select(c("subject_id", "hadm_id", "prev90d_hosp", "prev90d_hosp_sum")) |>
-  right_join(inhosp_older_sepsis_home, by = c("subject_id", "hadm_id"))
+admissions2 <- admissions |>
+  select(subject_id, hadm_id, prev90d, prev90d_hosp, prev90d_hosp_sum)
+
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  left_join(admissions2, by = c("subject_id", "hadm_id"))
 
 ```
 
--   ICU history
+-   Number of ICU admissions
 
--   
+```{r}
+icustays <- read_csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/icu/icustays.csv.gz")
+colnames(icustays)
+
+icustays <- icustays |>
+  rename(icu_los = los) |> # renamed to not confuse with hospital length of stay
+  select(-c(last_careunit, intime, outtime)) #only selecting subject_id, hadm_id, stay_id, first_careunit, icu_los
+# Total of 73181 rows
+
+# Total ICU length of stay within a hospital episode 
+icustays2 <- icustays |>
+  group_by(subject_id, hadm_id) |>
+  summarize(total_icu_los = sum(icu_los))
+# Total of 66239 rows
+
+# Total number of ICU admission within a hospital episode
+icustays3 <- icustays |>
+  group_by(subject_id, hadm_id) |>
+  mutate(n_icuadmissions = n()) |>
+  distinct(hadm_id, .keep_all = TRUE)
+# Total of 66239 rows
+
+total_icustays <- icustays3 |>
+  left_join(icustays2, by = c("subject_id", "hadm_id"))
+# Total of 66239 rows
+
+# remove columns I don't need
+total_icustays <- total_icustays |>
+  select(-c(stay_id, icu_los))
+  
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  left_join(total_icustays, by = c("subject_id", "hadm_id"))
+# Total of 8954 rows
+
+sum(is.na(inhosp_older_sepsis_home$total_icu_los))
+# Changed NAs for total_icu_los to 0 (since total_icu_los = 0 means that the patient was not admitted to icu)
+inhosp_older_sepsis_home$total_icu_los[is.na(inhosp_older_sepsis_home$total_icu_los)] <- 0
+
+table(inhosp_older_sepsis_home$n_icuadmissions)
+sum(is.na(inhosp_older_sepsis_home$n_icuadmissions))
+# Total of 6310 cases with NAs
+
+inhosp_older_sepsis_home$n_icuadmissions[is.na(inhosp_older_sepsis_home$n_icuadmissions)] <- 0
+table(inhosp_older_sepsis_home$n_icuadmissions) # successfully assigned
+
+
+
+# Among inhosp_older_sepsis_home cohort (among 8954 admission episodes) 2644 patients had ICU stay (about 30%)
+inhosp_older_sepsis_home |>
+  janitor::tabyl(n_icuadmissions)
+
+```
+
+-   Elixhauser Comorbidity Score
+
+    Before making the comorbidity scores, since MIMIC-IV contains both ICD version 9 and 10, I will investigate cases with two versions of ICD codes for an admission episode and whether there are any duplicates.
+
+```{r}
+# Check if hospital admission ID can have ICD codes from both versions
+test_icd <- icd |>
+  group_by(hadm_id) |>
+  summarise(unique_icd = n_distinct(icd_version))
+table(test_icd$unique_icd)
+
+test_icd |>
+  filter(unique_icd == 2)
+# There are 10 cases where two versions of ICD codes have been used
+# Need to spearate for ICD 9 and ICD 10 codes
+```
+
+```{r}
+#| eval: FALSE
+
+# Investigate if there are any duplicates between ICD 9 and 10
+icd_test <- icd |>
+  filter(hadm_id %in% c("20216016", "21575927", "22870827", "23076003", "23969809", "24773199", "27016754", "27635276", "28333632", "29918558"))
+
+# read in the icd_dictionary
+d_icd <- read.csv(file="/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/MIMIC/mimic-iv-2.2/hosp/d_icd_diagnoses 3.csv")
+
+icd_test_dict <- icd_test |>
+  left_join(d_icd, by = c("icd_version", "icd_code"))
+
+icd_test_dict |> head(20)
+# there are some overlap between versions, but not necessarily exactly same
+# and their length of hosp los was not that long either
+# thus, decided to exclude 10 cases
+# although, some of cases had sepsis a diagnosis, they were not included in inhosp_older_sepsis_home cohort
+```
+
+```{r}
+# Exclude 10 cases that have two ICD versions for one hadm_id
+icd_uniquev <- icd |>
+  filter(!hadm_id %in% c("20216016", "21575927", "22870827", "23076003", "23969809", "24773199", "27016754", "27635276", "28333632", "29918558"))
+
+# Manipulate the ICD dataset to put all ICD codes for each hospital admission episode into a single row
+test_icd1 <- icd_uniquev |>
+  group_by(hadm_id) |>
+  filter(all(icd_version == 9)) |> # only selected hadm_ids with icd9 codes
+   summarise(
+    icd9_code = paste(case_when(
+      icd_version == 9 ~ as.character(icd_code)),
+      collapse = ", "))
+
+test_icd2 <- icd_uniquev |>
+  group_by(hadm_id) |>
+  filter(all(icd_version == 10)) |> # only selected hadm_ids with icd10 codes
+   summarise(
+    icd10_code = paste(case_when(
+      icd_version == 10 ~ as.character(icd_code)),
+      collapse = ", "))
+
+# Create a dataframe with the Elixhauser comorbidity scores
+icd9_comorbidity <- comorbidity::comorbidity(x= test_icd1, id = "hadm_id", code = "icd9_code", map = "elixhauser_icd9_quan", assign0 = FALSE)
+icd9_comorbidity$elixhauser9 <- score(x = icd9_comorbidity, weights = "vw", 
+                                       assign0 = FALSE)
+
+icd10_comorbidity <- comorbidity::comorbidity(x= test_icd2, id = "hadm_id", code = "icd10_code", map = "elixhauser_icd10_quan", assign0 = FALSE)
+icd10_comorbidity$elixhauser10 <- score(x = icd10_comorbidity, weights = "vw", 
+                                         assign0 = FALSE)
+
+table(icd9_comorbidity$elixhauser9)
+table(icd10_comorbidity$elixhauser10)
+
+# Changing the variable for elixhausesr score into a same name to combine two dataframes together
+icd9_comorbidity <- icd9_comorbidity |>
+  rename(comorbidity = elixhauser9) |>
+  select(hadm_id, comorbidity)
+
+icd10_comorbidity <- icd10_comorbidity |>
+  rename(comorbidity = elixhauser10) |>
+  select( hadm_id, comorbidity)
+
+# Combine two dataframes 
+comorbidities <- bind_rows(icd9_comorbidity, icd10_comorbidity) #430842 observations
+# icd9_comorbidity: 276793
+# icd10_comorbidity: 154049
+# comorbidities: combined the two (276793 + 154049 = 430842)
+# successfully combined
+
+# Join with our cohort
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  left_join(comorbidities, by = "hadm_id")
+
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  arrange(subject_id, tran_intime)
+
+```
+
+## Outcome
+
+```{r}
+# Outcome variable: 30-day rehospitalization; 60-day rehospitalization
+inhosp_older_sepsis_home <- inhosp_older_sepsis_home |>
+  group_by(subject_id) |>
+  arrange(subject_id, hadm_id, admittime) |>
+  mutate(prevadm30d = admittime - days(30)) |>
+  mutate(rehosp30d = ifelse(is.na(dplyr::lag(dischtime)) |
+                              dplyr::lag(dischtime) < prevadm30d, 0, 1)) |>
+  mutate(prevadm60d = admittime - days(60)) |>
+  mutate(rehosp60d = ifelse(is.na(dplyr::lag(dischtime)) |
+                              dplyr::lag(dischtime) < prevadm60d, 0, 1)) |>
+  mutate(rehosp30d = factor(rehosp30d, levels = c(0, 1))) |>
+  mutate(rehosp60d = factor(rehosp60d, levels = c(0, 1))) |>
+  ungroup()
+
+
+table(inhosp_older_sepsis_home$rehosp30d) # 1321 cases had 30day readmission
+table(inhosp_older_sepsis_home$rehosp60d) # 1403 cases had 60day readmission
+
+```
+
+As I have identified the cohort and made all of the variables I need for analysis, I will save the file.
+
+```{r}
+write_csv(inhosp_older_sepsis_home, "/Users/sangbin/Library/Mobile Documents/com~apple~CloudDocs/Penn/ONR/inhosp_older_sepsis_home.csv")
+```
+
+# Results
+
+First, we will identify characteristics of included hospital admissions.
+
+-   Demographic characteristics
+
+```{r}
+# Demo characteristics of the first admission (Baseline)
+inhosp_older_sepsis_home |>
+  arrange(subject_id, hadm_id, tran_intime) |>
+  group_by(subject_id) |>
+  filter(row_number() == 1) |>
+  group_by(discharge_location) |>
+  select(gender, age, anchor_year, race_cate, insurance, marital_status_cate, discharge_location) |>
+  furniture::table1("Self-Identified Gender" = gender,
+                    "Age" = age,
+                    "Year of Admission" = anchor_year,
+                    "Marital Status" = marital_status_cate,
+                    "Self-Identified Race" = race_cate,
+                    "Health Insurance" = insurance,
+                    caption = "Demographic Characteristics",
+                    FUN = NULL, # report mean(sd) for numeric data
+                    NAkeep = TRUE,
+                    na.rm = FALSE,
+                    total = TRUE,
+                    test = TRUE
+                    )
+
+
+```
+
+```{r}
+# Clinical characteristics of the first admission (Baseline)
+inhosp_older_sepsis_home |>
+  arrange(subject_id, hadm_id, tran_intime) |>
+  group_by(subject_id) |>
+  filter(row_number() == 1) |>
+  group_by(discharge_location) |>
+  select(admission_type_cate, comorbidity, hosp_los, prev90d_hosp_sum, n_icuadmissions, total_icu_los, rehosp30d, discharge_location) |>
+  furniture::table1("Admission Type" = admission_type_cate,
+                    "Elixhauser Comorbidity Scores" = comorbidity,
+                    "Hospital LOS" = hosp_los,
+                    "Number of Previous Hospitalizations Within 90 Days" = prev90d_hosp_sum,
+                    "Number of ICU Admissions" = n_icuadmissions,
+                    "Total ICU LOS" = total_icu_los,
+                    "Hospital Readmission Within 30 Days" = rehosp30d,
+                    caption = "Clinical Characteristics",
+                    FUN = NULL, # report mean(sd) for numeric data
+                    NAkeep = TRUE,
+                    total = TRUE,
+                    test = TRUE
+                    )
+```
+
+Here, I am going to examine the number of hospitalization for each subject_id and its distribution.
+
+```{r}
+# How many hospitalizations did the our cohort had within 2008 - 2019 time frame
+
+## INHOSP_OLDER_SESPSIS_HOME
+df <- inhosp_older_sepsis_home |>
+  group_by(subject_id) |>
+  summarize(n_admission = n()) |>
+  arrange(desc(n_admission))
+
+ggplot(df, aes(x = n_admission)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black") +
+  labs(title = "Histogram of Number of Admissions", x = "Number of Admissions", y = "Frequency")
+
+df |>
+  janitor::tabyl(n_admission) |>
+  arrange(desc(n_admission))
+  #head(5)
+```
+
+## GEE
+
+Based on identified characteristics
+
+```{r}
+gee_model <- gee(rehosp30d ~ gender + age + race_cate + insurance + 
+                    marital_status_cate + discharge_location + admission_type_cate + 
+                    hosp_los + prev90d_hosp_sum + n_icuadmissions + discharge_location,
+                data = inhosp_older_sepsis_home,
+                id = subject_id,
+                family = binomial(link=logit),
+                corstr = "exchangeable",
+                scale.fix = TRUE,
+                scale.value = 1)
+
+summary(gee_model)
+```
+
+-   Raw Estimates
+
+```{r}
+texreg::knitreg(list(gee_model),
+                custom.model.names = "GEE_Exchangeable Model",
+                caption = "Estimates on Logit Scale",
+                single.row = TRUE,
+                digits = 4)
+```
+
+-   Exponentiate the Estimates (Odds Ratio Scale)
+
+```{r}
+# Helper <extract> functions for exponentiation of parameters from regression models
+
+remotes::install_github("sarbearschwartz/texreghelpr")
+library(texreghelpr)
+```
+
+```{r}
+texreg::knitreg(list(extract_gee_exp(gee_model)),
+                custom.model.namess = "GEE_Exchangeable Model",
+                caption = "Estimates on Odds-Ratio Scale",
+                single.row = TRUE,
+                ci.test = 1,
+                digits = 3)
+```
+
+-   Eestimates on both logit and odds-ratio scale
+
+```{r}
+texreg::knitreg(list(gee_model, 
+                     texreghelpr::extract_gee_exp(gee_model,
+                                                  include.any = FALSE)),
+                custom.model.names = c("b (SE)", 
+                                       "OR [95% CI]"),
+                caption = "GEE Exchangable Model",
+                ci.test = 1,
+                single.row = TRUE,
+                digits = 3)
+
+```
+
+## 
