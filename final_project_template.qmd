@@ -51,6 +51,12 @@ library(car)
 library(kernlab)
 library(glmnet)
 library(tidymodels)
+library(yardstick)
+library(parsnip)
+library(ranger)
+library(kknn)
+library(discrim)
+library(klaR)
 ```
 
 Load training data, clean it
@@ -123,111 +129,250 @@ ARDS_validate.imp <- missForest(ARDS_validate)
 
 ARDS_validate <- ARDS_validate.imp$ximp
 
-```
-
-XG Boost
-
-```{r}
-
-#Run the classifier model
-
-set.seed(1234)
-              
 train <- ARDS_train
 test <- ARDS_validate
 
-
-#Preparing data set
-
-trainm <- sparse.model.matrix(Class ~ .-1, data = train)
-
-train_label <- train[,"Class"]
-
-train_matrix <- xgb.DMatrix(data =as.matrix(trainm), label = train_label)
-
-#Prepare validation data
-
-testm <- sparse.model.matrix(Class~ .-1, data = test)
-
-test_label <- test[,"Class"]
-test_matrix <-xgb.DMatrix(data = as.matrix(testm), label = test_label)
-
-
-
-#parameters
-xgb_params <- list(objective   = "binary:logistic",
-                   eval_metric = "error",
-                   max_depth   = 3,
-                   eta         = 0.25,
-                   gammma      = 1,
-                   colsample_bytree = 0.5,
-                   min_child_weight = 1)
-
-#model
-
-
-bst_model <- xgb.train(params = xgb_params, data = train_matrix,
-                      nrounds = 1000)
-bst_model
-
-#Confusion Matrix
-p <- predict(bst_model, newdata = test_matrix)
-
-test$predicted <- ifelse(p > 0.5,1,0)
-
-confusionMatrix(table(test$predicted, test$Class))
-
-#AUC
-roc_24 <- roc(test$Class, p)
-auc_val <- auc(roc_24)
 ```
 
-Support Vector Machine
+#Support Vector Machine
 
 ```{r}
+
+
+train_svm <- test |>
+  mutate(Class = factor(Class, levels = c(0,1)))
+
+set.seed(1234)
+training.folds <- vfold_cv(train_svm, v = 10)
+training.folds
+
 svm_cls_spec <- 
   svm_linear(cost = 1) |> 
   set_engine("kernlab") |>
   set_mode("classification") 
 svm_cls_spec
 
-svm_cls_fit <- svm_cls_spec |>
-  fit(Class ~ ., data = train)
+svm_workflow <-
+  workflow() |>
+  add_model(svm_cls_spec) |>
+  add_formula(Class ~ .)
 
+set.seed(1234)
 
-# Making predictions on the test set
-svm_preds <- predict(svm_cls_fit, new_data = test)
+svm_fit_cv <-
+  svm_workflow |>
+  fit_resamples(training.folds, 
+                control = control_resamples(save_pred = TRUE))
 
-# You can view the predictions using:
-svm_preds
+collect_metrics(svm_fit_cv)
 
-# To evaluate the model's performance, you might want to use a confusion matrix or other metrics
-conf_mat <- confusion_matrix(svm_preds, test$Class)
+# calculate AUC
+svm_auc <- svm_fit_cv|>
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  summarize(mean_auc = mean(mean))
 
-# View the confusion matrix
-conf_mat
+print(svm_auc)
 
-# Other performance metrics like accuracy, precision, recall, etc. can also be calculated
-accuracy <- accuracy(svm_preds, test$Class)
-precision <- precision(svm_preds, test$Class)
-recall <- recall(svm_preds, test$Class)
-
-# Print the performance metrics
-accuracy
-precision
-recall
 
 ```
 
-K nearest neighbors
+#K nearest neighbors
 
 ```{r}
+
+
+
+# Assuming train_svm is your training data and Class is your target variable
+train_knn <- test |>
+  mutate(Class = factor(Class, levels = c(0,1)))
+
+set.seed(1234)
+training.folds_knn <- vfold_cv(train_knn, v = 10)
+
+# Define the KNN model specification
+knn_spec <- 
+  nearest_neighbor(neighbors = 5) |> # you can change the number of neighbors
+  set_engine("kknn") |>
+  set_mode("classification") 
+knn_spec
+
+# Create a workflow with the KNN model
+knn_workflow <-
+  workflow() |>
+  add_model(knn_spec) |>
+  add_formula(Class ~ .)
+
+set.seed(1234)
+
+
+# Fit the KNN model using cross-validation
+knn_fit_cv <-
+  knn_workflow |>
+  fit_resamples(training.folds_knn, 
+                control = control_resamples(save_pred = TRUE))
+
+# Collect metrics
+collect_metrics(knn_fit_cv)
+
+# calculate AUC
+knn_auc <- knn_fit_cv|>
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  summarize(mean_auc = mean(mean))
+
+print(knn_auc)
+
 
 ```
 
-Random Forest Model
+#XGBoost
 
 ```{r}
+
+
+
+train_xgb <- train |>
+  mutate(Class = factor(Class, levels = c(0,1)))
+
+set.seed(1234)
+training.folds_xgb <- vfold_cv(train_xgb, v = 10)
+
+
+# Define the XGBoost model specification
+xgb_spec <- 
+  boost_tree(
+    trees = 1000,                # Number of trees (adjust as needed)
+    tree_depth = 6,              # Depth of trees (adjust as needed)
+    min_n = 10,                  # Minimum observations in nodes (adjust as needed)
+    learn_rate = 0.01            # Learning rate (adjust as needed)
+  ) |> 
+  set_engine("xgboost") |>
+  set_mode("classification") 
+xgb_spec
+
+# Create a workflow with the XGBoost model
+xgb_workflow <-
+  workflow() |>
+  add_model(xgb_spec) |>
+  add_formula(Class ~ .)
+
+set.seed(1234)
+
+# Fit the XGBoost model using cross-validation
+xgb_fit_cv <-
+  xgb_workflow |>
+  fit_resamples(training.folds_xgb, 
+                control = control_resamples(save_pred = TRUE))
+
+# Collect metrics
+collect_metrics(xgb_fit_cv)
+
+
+# calculate AUC
+xgb_auc <- xgb_fit_cv|>
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  summarize(mean_auc = mean(mean))
+
+print(xgb_auc)
+
+```
+
+#Random Forest Model
+
+```{r}
+
+
+# Assuming train_svm is your training data and Class is your target variable
+train_rf <- train |>
+  mutate(Class = factor(Class, levels = c(0,1)))
+
+set.seed(1234)
+training.folds_rf <- vfold_cv(train_rf, v = 10)
+
+# Define the Random Forest model specification
+rf_spec <- 
+  rand_forest(
+    trees = 1000,         # Number of trees (adjust as needed)
+    mode = "classification"
+  ) |> 
+  set_engine("ranger", importance = "impurity") |> 
+  set_mode("classification") 
+rf_spec
+
+# Create a workflow with the Random Forest model
+rf_workflow <-
+  workflow() |>
+  add_model(rf_spec) |>
+  add_formula(Class ~ .)
+
+set.seed(1234)
+
+# Fit the Random Forest model using cross-validation
+rf_fit_cv <-
+  rf_workflow |>
+  fit_resamples(training.folds_rf, 
+                control = control_resamples(save_pred = TRUE))
+
+# Collect metrics
+collect_metrics(rf_fit_cv)
+
+
+# calculate AUC
+rf_auc <- rf_fit_cv|>
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  summarize(mean_auc = mean(mean))
+
+print(rf_auc)
+
+
+```
+
+#Naive Bayes
+
+```{r}
+
+# Assuming train_svm is your training data and Class is your target variable
+train_nb <- train |>
+  mutate(Class = factor(Class, levels = c(0,1)))
+
+set.seed(1234)
+training.folds_nb <- vfold_cv(train_nb, v = 10)
+
+# Define the Naive Bayes model specification
+nb_spec <- 
+  naive_Bayes() |> 
+  set_engine("klaR") |> 
+  set_mode("classification") 
+nb_spec
+
+
+# Create a workflow with the Naive Bayes model
+nb_workflow <-
+  workflow() |>
+  add_model(nb_spec) |>
+  add_formula(Class ~ .)
+
+set.seed(1234)
+
+# Fit the Naive Bayes model using cross-validation
+nb_fit_cv <-
+  nb_workflow |>
+  fit_resamples(training.folds_nb, 
+                control = control_resamples(save_pred = TRUE))
+
+# Collect metrics
+collect_metrics(nb_fit_cv)
+
+# calculate AUC
+nb_auc <- nb_fit_cv|>
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  summarize(mean_auc = mean(mean))
+
+print(nb_auc)
 
 ```
 
@@ -235,13 +380,62 @@ Random Forest Model
 
 Plot all of the ROC Curves together
 
-```{r}
-
-```
-
-Find the most important features for each
+#Plot the AUROC Curves together
 
 ```{r}
+
+#SVM
+svm_results_cv <- svm_fit_cv |> 
+  collect_predictions()
+
+#ROC Curve
+svm_roc_curve <- roc_curve(svm_results_cv, truth = Class, .pred_0)
+
+#KNN
+knn_results_cv <- knn_fit_cv |> 
+  collect_predictions()
+
+#ROC Curve
+knn_roc_curve <- roc_curve(knn_results_cv, truth = Class, .pred_0)
+
+#XGBoost
+xgb_results_cv <- xgb_fit_cv |> 
+  collect_predictions()
+
+#Calculate the ROC curve
+xgb_roc_curve <- roc_curve(xgb_results_cv, truth = Class, .pred_0)
+
+
+#Random Forest
+rf_results_cv <- rf_fit_cv |> 
+  collect_predictions()
+
+#Calculate the ROC curve
+rf_roc_curve <- roc_curve(rf_results_cv, truth = Class, .pred_0)
+
+
+#Naive Bayes
+nb_results_cv <- nb_fit_cv |> 
+  collect_predictions()
+
+#Calculate the ROC curve
+nb_roc_curve <- roc_curve(nb_results_cv, truth = Class, .pred_0)
+
+
+#Plot
+ggplot() +
+    geom_line(data = svm_roc_curve, aes(x = 1 - specificity, y = sensitivity, color = "Support Vector Machine"), lwd = 1.5) +
+    geom_line(data = knn_roc_curve, aes(x = 1 - specificity, y = sensitivity, color = "K nearest neighbor"), lwd = 1.5) +
+    geom_line(data = xgb_roc_curve, aes(x = 1 - specificity, y = sensitivity, color = "XGBoost"), lwd = 1.5) + 
+    geom_line(data = rf_roc_curve, aes(x = 1 - specificity, y = sensitivity, color = "Random Forest"), lwd = 1.5) +
+    geom_line(data = nb_roc_curve, aes(x = 1 - specificity, y = sensitivity, color = "Naive Bayes"), lwd = 1.5) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_color_manual(values = c("Support Vector Machine" = "red", "K nearest neighbor" = "blue", "XGBoost" = "green", "Random Forest"= "orange", "Naive Bayes" = "pink")) +
+  labs(title = "ROC Curve Comparison",
+       x = "1 - Specificity",
+       y = "Sensitivity",
+       color = "Model") +
+  theme_minimal()
 
 ```
 
@@ -249,4 +443,4 @@ Describe your results and include relevant tables, plots, and code/comments used
 
 ### Conclusion
 
-Therefore, I conclude that...
+My study demonstrated that the most accurate prediction model was Random FOrest, followed in order by XGBoost, Naive Bayes, Support Vector Machine, and K nearest neighbor.
