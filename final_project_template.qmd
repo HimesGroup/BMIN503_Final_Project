@@ -40,20 +40,231 @@ library(dplyr)
 library(cowplot)
 library(RColorBrewer)
 
-#packages needed for making maps
+#Packages needed for making maps
+library(datasets)
 library(sf)
 library(tigris)
 library(leaflet)
 options(tigris_use_cache = TRUE)
 
-library(datasets)
 
 display.brewer.all()
 ```
 
 ```{r}
-#| label: ili_case
+#| label: organize_CDC_file
 
+#Load WHO/NREVSS surveillance data from clinical labs
+clinical_labs <- read_csv("WHO_NREVSS_Clinical_Labs.csv")
+
+#Rename variables and order week variable 
+clinical_labs <- clinical_labs |>
+        dplyr::select(-c("REGION TYPE")) |>
+        dplyr::rename(state = REGION, 
+               year = YEAR,
+               week = WEEK,
+               total_specimens = `TOTAL SPECIMENS`, 
+               total_A = `TOTAL A`,
+               total_B = `TOTAL B`,
+               percent_positive = `PERCENT POSITIVE`,
+               percent_A = `PERCENT A`,
+               percent_B = `PERCENT B`) |> 
+        mutate(ordered_week = (week - 40) %% 52 + 1) |>
+        mutate(season = ifelse(week >= 40, year, year - 1)) |>
+        mutate(ordered_week = as.factor(ordered_week)) |>
+        mutate(percent_positive = as.numeric(percent_positive))
+        
+#Retrieve state information and division using tigirs() and the package datasets 
+states <- states()
+
+#Obtain state information on names and division 
+states_division <- data.frame(NAME = datasets::state.name, division = datasets::state.division)
+
+states <- inner_join(states, states_division, by = "NAME") |>
+            rename(state = NAME)
+
+#Include state division info in clinical_labs df  
+clinical_labs <- inner_join(states, clinical_labs, by = "state")
+
+```
+
+```{r}
+#| label: 2017_season_percent_positive
+
+#Percent positive cases in each division in 2017-18 season 
+season2017 <- clinical_labs %>%
+  filter(season == "2017")
+
+#Percent positive cases in 2017-18 season 
+season2017 |> 
+  ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
+        facet_wrap(~ state, nrow = 5, ncol = 10) +
+        geom_bar(stat = "identity") +
+        scale_fill_brewer(palette = "Spectral") +
+        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        scale_y_continuous() +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 Influenza Positive Tests Reported to CDC") +
+        theme_classic() +
+        theme(legend.position = "none")
+
+# Get unique divisions
+unique_divisions <- unique(season2017$division)
+
+# Create a list to store individual plots
+season2017_plot_list <- list()
+
+# Create plots for each division
+for (i in unique_divisions) {
+        
+  division_data <- season2017 |> 
+          filter(division == i)
+  
+  p <- ggplot(division_data, aes(x = ordered_week, y = percent_positive, fill = state)) +
+    geom_bar(stat = "identity") +
+    facet_wrap(~ state, scales = "free_y") +
+    scale_fill_brewer(palette = "Spectral") +
+    scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+    scale_y_continuous() +
+    ylim(0, 66) +
+    labs(x = "Week", y = "Percent Positive", title = i) +
+    theme_classic() +
+    theme(legend.position = "none")
+ season2017_plot_list[[length(season2017_plot_list) + 1]] <- p
+}
+
+print(season2017_plot_list)
+
+#grid.arrange(grobs = season2017_plot_list, ncol = 3) 
+
+#Percent positive cases in 2017-18 season in Middle Atlantic
+season2017 |>
+        filter(division == "Middle Atlantic") |>
+        ggplot(aes(x = ordered_week, y = percent_positive, fill = state)) +
+        geom_bar(stat = "identity") +
+        facet_wrap(~ state) +
+        scale_fill_brewer(palette = "Spectral") +
+        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        scale_y_continuous() +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 Influenza Positive Tests Reported to CDC") +
+        theme_classic() +
+        theme(legend.position = "none")
+
+#Percent positive cases in 2017-18 season in Pennsylvania
+season2017 |>
+        filter(state == "Pennsylvania") |>
+        ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
+        geom_bar(stat = "identity") +
+        scale_fill_brewer(palette = "Spectral") +
+        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        scale_y_continuous() +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 Pennsylvania Influenza Positive Tests Reported to CDC") +
+        theme_classic() +
+        theme(legend.position = "none")
+
+
+```
+
+```{r}
+#| label: 2018_season_percent_positive
+
+#Percent positive cases in 2018-19 season 
+clinical_labs |> filter(season == "2018") |>
+        ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
+        facet_wrap(~ state, nrow = 5, ncol = 10) +
+        geom_bar(stat = "identity") +
+        scale_fill_brewer(palette = "Spectral") +
+        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        scale_y_continuous() +
+        labs(x = "Week", y = "Percent Positive", title = "2018-19 Influenza Positive Tests Reported to CDC") +
+        theme_classic() +
+        theme(legend.position = "none")
+
+```
+
+```{r}
+#| label: percent_positive_map
+
+#Map of 48 states
+# states |>
+#   filter(!STATEFP %in% c("02", "15")) |> #remove Alaska and Hawaii
+#   ggplot() +
+#   geom_sf() +
+#   theme_void()
+
+continuous_states_clinical_labs <- clinical_labs |>
+  filter(!STATEFP %in% c("02", "15"))  #remove Alaska and Hawaii
+
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.4, "cm"),          
+        legend.text = element_text(size = 8),       
+        legend.title = element_text(size = 10),
+        plot.title = element_text(size = 18))      
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+continuous_season2017 <- continuous_states_clinical_labs |>
+  filter(season == "2017")
+
+
+#Graphing map of week 40   
+st_simplify(continuous_season2017) |> 
+  filter(week == "40") |>
+  ggplot() +
+  geom_sf(aes(fill = percent_positive), dTolerance = 1e3) + 
+  my_theme() +
+  scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
+                             limit = range(0, 70))
+
+# Get unique divisions
+unique_week <- unique(continuous_season2017$week)
+
+i# Create a list to store individual plots
+season2017_map_list <- list()
+
+# Create plots for each division
+for (i in unique_week) {
+        
+  week_data <- continuous_season2017 |> 
+          filter(week == i)
+ 
+ weekly_map <- st_simplify(week_data) |> 
+  ggplot() +
+  geom_sf(aes(fill = percent_positive), dTolerance = 1e3) + 
+  my_theme() +
+  scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
+                             limit = range(0, 70))
+  season2017_map_list[[length(season2017_map_list) + 1]] <- weekly_map
+
+}
+
+#print(season2017_map_list)
+
+library(animation)
+
+# Set up animation options
+ani.options(interval = 1, outdir = getwd(), ani.width = 800, ani.height = 600)
+
+# Create animation
+saveGIF({
+  for (i in seq_along(season2017_map_list)) {
+    print(season2017_map_list[[i]])
+  }
+}, movie.name = "2017_positive.gif", interval = 0.5, ani.width = 800, ani.height = 600)
+
+knitr::include_graphics("2017_positive.gif")
+
+
+```
+
+```{r}
+#| label: ili_case
+#| eval: FALSE
 #Load CDC data
 state_ili_case <- read_csv("StateDatabySeason.csv")
 
@@ -67,17 +278,6 @@ state_ili_case <- state_ili_case |>
                season = SEASON) |> 
         mutate(level = as.numeric(gsub("Level ", "", level))) |>
         mutate(ordered_week = (week - 40) %% 52 + 1) 
-
-#Retrieve state information and division using tigirs() and the package datasets 
-states <- states()
-
-states_division <- data.frame(NAME = datasets::state.name, division = datasets::state.division)
-
-states <- inner_join(states, states_division, by = "NAME") |>
-            rename(state = NAME)
-
-#Include state division  
-state_ili_case <- inner_join(state_ili_case, states, by = "state")
 
 #ILI activity in 2018-19 
 state_ili_case |> filter(season == "2018-19") |>
@@ -107,13 +307,11 @@ state_ili_case |> filter(season == "2018-19") |>
         labs(x = "Week", y = "ILI Activity Level", title = "2018-19 ILI Activity") +
         theme_bw()
         
-
-
-        
 ```
 
 ```{r}
-#|: PA_ILI_activity
+#| label: PA_ILI_activity
+#| eval: FALSE
 
 pa_ili_case <- state_ili_case |>
         filter(state == "Pennsylvania")
@@ -159,40 +357,6 @@ pa_ili_case |> filter(season == "2018-19") |>
         labs(x = "Week", y = "ILI Activity Level", title = "2018-19 ILI Activity") +
         theme_classic()
 
-```
-
-```{r}
-#|: ILI_map
-
-#Map of 48 states
-states |>
-  filter(!STATEFP %in% c("02", "15")) |> #remove Alaska and Hawaii 
-  ggplot() +
-  geom_sf() +
-  theme_void()
-
-my_theme <- function() {
-  theme_minimal() +                                  
-  theme(axis.line = element_blank(),                 
-        axis.text = element_blank(),                 
-        axis.title = element_blank(),
-        panel.grid = element_line(color = "white"),  
-        legend.key.size = unit(0.4, "cm"),          
-        legend.text = element_text(size = 8),       
-        legend.title = element_text(size = 10),
-        plot.title = element_text(size = 18))      
-}
-
-myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
-
-ggplot() +
-  geom_sf(data = state_ili_case, aes(fill = level)) +
-  my_theme() +
-  scale_fill_gradientn(name = "Obesity rate (%)", colours = myPalette(100))
-  
-ggplot() +
-  geom_sf(data = state_ili_case, aes(fill = level))
-  
 ```
 
 ### Results
