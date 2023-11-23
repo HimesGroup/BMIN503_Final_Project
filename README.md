@@ -1,19 +1,13 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains files for my final project for BMIN5030/EPID6000: Data Science for Biomedical Informatics.
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+##Overview
 
+Season influenza viruses continues to be a major global burden. There are around a billion cases annually and up to 650,000 people die of influenza. Influenza activity patterns vary geographically and temporally, so we want to examine the spatiotemporal patterns of influenza activity in the United States and determine if variations in influenza activities across states or regions are associated with distribution of circulating virus strains. I will be using surveillance data published by the Centers for Disease Control and Prevention (CDC) and viral sequences from the Global Initiative on Sharing All Influenza Data (GIDSAID) to answer these questions. Understanding patterns of seasonal influenza activity can help guide early influenza surveillance and inform influenza prevention and control programs. 
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+##Contents
+-'README.md': current file which contains an overview of the project
+-'BMIN503_final_project_Li.qmd': Quarto markdown file for final report
+-'BMIN503_final_project_Li.html': HTML final report output 
 
