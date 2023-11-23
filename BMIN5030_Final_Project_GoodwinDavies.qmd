@@ -48,6 +48,9 @@ The goal of this project is to compare the Agency for Toxic Substances and Disea
 
 For SVI, the most recent available dataset is from 2020. For this project, national ranking at the county level will be used. The most recent ADI dataset is from 2021. National ranking for ADI is provided at the census block group level. For the asthma and smoking outcomes in the BRFSS CDC dataset, the 2021 Selected Metropolitan/Micropolitan Area Risk Trends (SMART) subset will used. The SMART BRFSS dataset provides the CBSA (Core-based statistical area), which "consist of the county or counties (or equivalent entities) associated with at least one core (urban area) of at least 10,000 population, plus adjacent counties having a high degree of social and economic integration with the core as measured through commuting ties." <https://www.census.gov/programs-surveys/metro-micro/about/glossary.html>
 
+<!-- MMSAs were selected in the SMART BRFSS MMSA data if there were 500 or more respondents -->
+<!-- in the 2021 BRFSS combined landline telephone and cellular telephone data.  -->
+
 <!-- Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository. -->
 
 ## Introduction {#sec-introduction}
@@ -73,7 +76,8 @@ There are several limitations of the project. One clear limitation is that the a
 ```{r loadmmsa}
 # MMSA2021.xpt retrieved from https://www.cdc.gov/brfss/smart/smart_2021.html
 # Accompanying documentation available at https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
-MMSA2021 <- read_xpt("data/input_data/mmsa/MMSA2021_XPT/MMSA2021.xpt")
+MMSA2021 <- read_xpt("data/input_data/mmsa/MMSA2021_XPT/MMSA2021.xpt") |> 
+  mutate(`_resp_id` = str_pad(row_number(), pad = 0, width = 6)) # add respondent id
 ```
 
 ```{r glimpsemmsa}
@@ -97,7 +101,8 @@ mmsa_colnames_all <- MMSA2021 |>
 # add missing labels documented in https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
 attr(MMSA2021[["_MMSA"]], "label") <- toupper("the code of metropolitan or micropolitan statistical area where the respondent lives")
 attr(MMSA2021[["MMSANAME"]], "label") <- toupper("the MMSA name")
-attr(MMSA2021[["_MMSAWT"]], "label") <- toupper(" the MMSA-level weight that is used when generating MMSA-level estimates for variables in the data set")
+attr(MMSA2021[["_MMSAWT"]], "label") <- toupper("the MMSA-level weight that is used when generating MMSA-level estimates for variables in the data set")
+attr(MMSA2021[["_resp_id"]], "label") <- toupper("respondent ID")
 mmsa_colnames_all <- MMSA2021 %>%
   map_dfc(attr, "label") |>
   pivot_longer(everything(),
@@ -109,7 +114,8 @@ mmsa_colnames_all <- MMSA2021 %>%
 # rename columns to make them easier to work with using R (not requiring ``)
 # underscore prefix indicates derived or computed, replace with d_
 smart_2021 <- MMSA2021 |> 
-  rename_with(~ tolower(gsub("_", "d_", .x, fixed = TRUE)))
+  rename_with(~ tolower(str_replace(.x, "^_", "d_")))
+smart_2021 |> colnames()
 ```
 
 ```{r glimpserenamemmsa}
@@ -242,6 +248,77 @@ mmsa_county_mapping_geoid_sf_4326  |>
 ::: {.callout-note}
 To be added
 :::
+```{r dsmoker3}
+# https://www.r-bloggers.com/2020/02/dem-7283-example-1-survey-statistics-using-brfss-data/
+library(survey)
+library(srvyr)
+# https://stackoverflow.com/questions/55975478/problems-due-to-having-too-many-single-psus-at-stage-one
+options(survey.adjust.domain.lonely=TRUE)
+options(survey.lonely.psu="adjust")
+smart_2021_surv <- smart_2021 %>%
+  filter(!is.na(d_mmsawt)) |>
+  as_survey_design(ids = 1,
+                   strata = d_ststr,
+                   weights = d_mmsawt)
+```
+
+```{r wtkg3}
+#| eval: FALSE
+# Investigate survey weighting use wtkg3 as can apply general expectations about distributions
+
+# WEIGHT IN KG
+# [2 implied decimal places]
+smart_2021 %>%
+  filter(!is.na(d_mmsawt)) |>
+  ggplot(aes(x = wtkg3 / 100)) + # divide by 100 for 2 implied decimal places
+  geom_histogram()
+
+uw_wtkg3_mmsa_tbl <- smart_2021 %>%
+  filter(!is.na(d_mmsawt)) |>
+  group_by(d_mmsa, mmsaname) |>
+  summarize(uw_wtkg3 = mean(wtkg3, na.rm = TRUE))
+
+w_wtkg3_mmsa_tbl <- svyby( ~ wtkg3,
+                           ~ d_mmsa,
+                           design = smart_2021_surv,
+                           FUN = svymean,
+                           na.rm = TRUE) |> 
+  rename(w_wtkg3 = wtkg3)
+# TODO investigate "only one PSU at stage 1" warnings / confirm approach
+
+wtkg3_mmsa_tbl <- w_wtkg3_mmsa_tbl |>
+  inner_join(uw_wtkg3_mmsa_tbl, by = "d_mmsa") |>
+  select(-se) |> 
+  pivot_longer(cols = c("w_wtkg3", "uw_wtkg3"),
+               values_to = "wtkg3")
+
+wtkg3_mmsa_tbl |>
+  ggplot(aes(x = wtkg3 / 100, colour = name)) + # divide by 100 for 2 implied decimal places
+  geom_density() +
+  theme_minimal()
+
+wtkg3_mmsa_tbl |>
+  arrange(desc(wtkg3))
+
+wtkg3_mmsa_tbl |>
+  arrange(wtkg3)
+```
+
+```{r wtkg3}
+smart_2021_d_smoker3_cbsa <- smart_2021 |>
+  select(d_mmsa, d_mmsawt, d_smoker3, d_resp_id) |>
+  mutate(ever_smoker = case_when(d_smoker3 %in% c(1, 2, 3) ~ TRUE,
+                                 TRUE ~ FALSE)) |>
+  group_by(d_mmsa, ever_smoker) |>
+  summarize(n_respondents = n_distinct(d_resp_id)) |>
+  ungroup() |>
+  pivot_wider(id_cols = d_mmsa,
+              values_from = n_respondents,
+              names_from = ever_smoker,
+              names_glue =  'ever_smoker_{ever_smoker}') |>
+  mutate(total_respondents = across(starts_with("ever_smoker_")) |> rowSums())
+```
+
 
 ##### `_LTASTH1`
 
