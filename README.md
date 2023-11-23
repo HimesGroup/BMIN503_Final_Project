@@ -1,19 +1,22 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+Hello :) This repository it for my final project for BMIN503 Data Science course. 
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+## Project Overview
+Sepsis is among the leading causes of hospital readmissions, and survivors often experience long-term consequences. Research has shown that home health services can improve the outcomes of sepsis survivors, reducing the likelihood of hospital readmission. This project aims to identify the patient/clinical characteristics that are associated with sepsis survivors' discharge dispositions (home or home with home health care) and 30-day rehospitalization using Medical Information Mart for Intensive Care (MIMIC-IV) data, which is a publicly accessible and deidentified data.
 
+## Aims
+(1) Describe and compare patient characteristics (i.e., demographic and clinical characteristics) and 30-day readmission rates between older sepsis survivors discharged home with HHC and without HHC
+(2) Determine the risk factors associated with 30-day readmission.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+## Information about the Data Set (MIMIC-IV)
+https://physionet.org/content/mimiciv/2.2/
 
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+## Files in the Repository
+Final_You.html -> .html version of .qmd file 
+Final_You.qmd -> contains intro, methods, results (TBD) until current
+GEE_coefficients -> Raw estimates (logit scale)
+GEE_OR -> Exponentiated estimates (odds ratio scale)
+GEE_RESULTS -> Estimates on both logit and odd-ratio scales
 
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
 
