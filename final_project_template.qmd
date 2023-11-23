@@ -2,12 +2,13 @@
 title: "Another comparison of two area-level socioeconomic deprivation indices: SVI  (Social Vulnerability Index) and ADI (Area Deprivation Index) and their associations with asthma and smoking outcomes from survey data"
 subtitle: "BMIN503/EPID600 Final Project"
 author: "Amy Goodwin Davies"
+date: today
 format: 
   html:
     toc: true
     toc-depth: 6
     theme: minty
-editor: visual
+editor: source
 number-sections: true
 embed-resources: true
 execute: 
@@ -16,15 +17,21 @@ execute:
 
 ------------------------------------------------------------------------
 
+::: {.callout-caution}
+This report is still under construction, but ready for peer feedback.
+:::
+
 ```{r packages}
 library(haven)
 library(tidyverse)
 library(readxl)
 library(tigris)
+library(tidycensus)
 library(sf)
 library(leaflet)
 library(gridExtra)
 library(RColorBrewer)
+library(kableExtra)
 options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
@@ -66,8 +73,11 @@ There are several limitations of the project. One clear limitation is that the a
 ```{r loadmmsa}
 # MMSA2021.xpt retrieved from https://www.cdc.gov/brfss/smart/smart_2021.html
 # Accompanying documentation available at https://www.cdc.gov/brfss/annual_data/2021/pdf/2021_smart_brfss_mmsa_methodology-508.pdf
-MMSA2021 <- read_xpt("input_data/mmsa/MMSA2021_XPT/MMSA2021.xpt")
+MMSA2021 <- read_xpt("data/input_data/mmsa/MMSA2021_XPT/MMSA2021.xpt")
+```
 
+```{r glimpsemmsa}
+#| eval: FALSE
 MMSA2021 |> glimpse()
 ```
 
@@ -94,12 +104,17 @@ mmsa_colnames_all <- MMSA2021 %>%
                names_to = "colname",
                values_to = "label")
 ```
-```{r}
+
+```{r renamemmsa}
 # rename columns to make them easier to work with using R (not requiring ``)
 # underscore prefix indicates derived or computed, replace with d_
 smart_2021 <- MMSA2021 |> 
   rename_with(~ tolower(gsub("_", "d_", .x, fixed = TRUE)))
-smart_2021 |> View()
+```
+
+```{r glimpserenamemmsa}
+#| eval: FALSE
+smart_2021 |> glimpse()
 ```
 
 ```{r mmsatocounty}
@@ -111,60 +126,63 @@ smart_2021 |> View()
 # analysis can be found here: https://www.census.gov/geographies/reference-files/timeseries/demo/metro-micro/delineation-files.html. The March 2020 release was used for defining
 # the MMSAs in the 2021 SMART data set.
 # retrieved from https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/historical-delineation-files.html
-delin_2020 <- read_xls("input_data/mmsa/list1_2020.xls",
-                       skip = 2) |>
+delin_2020 <- read_xls("data/input_data/mmsa/list1_2020.xls",
+                       range = "A3:L1919") |>
   rename_with(~ tolower(gsub(" ", "_", .x, fixed = TRUE))) |> 
   rename_with(~ tolower(gsub("/", "_", .x, fixed = TRUE)))
 
 
-delin_2020_cbsa_join <- delin_2020 |> filter(is.na(metropolitan_division_code)) # need to explore why this is necessary
-delin_2020_mdc_join <- delin_2020 |> filter(!is.na(metropolitan_division_code)) # need to explore why this is necessary
+delin_2020_cbsa_join <- delin_2020 |> filter(is.na(metropolitan_division_code)) # TODO explore why this is necessary
+delin_2020_mdc_join <- delin_2020 |> filter(!is.na(metropolitan_division_code)) # TODO explore why this is necessary
 
 # TODO check this
 mmsa_county_mapping_cbsa <- smart_2021 |> 
   mutate(d_mmsa_char = as.character(d_mmsa)) |>
   distinct(d_mmsa, d_mmsa_char, d_mmsa_char, mmsaname) |> 
-  left_join(delin_2020_cbsa_join, by = c("d_mmsa_char" = "cbsa_code"))  |> 
+  inner_join(delin_2020_cbsa_join, by = c("d_mmsa_char" = "cbsa_code"))  |> 
   distinct(d_mmsa, d_mmsa_char, csa_title, county_county_equivalent, fips_state_code, fips_county_code)
 mmsa_county_mapping_mdc <- smart_2021 |> 
   mutate(d_mmsa_char = as.character(d_mmsa)) |>
   distinct(d_mmsa, d_mmsa_char, d_mmsa_char, mmsaname) |> 
-  left_join(delin_2020_mdc_join, by = c("d_mmsa_char" = "metropolitan_division_code"))  |> 
+  inner_join(delin_2020_mdc_join, by = c("d_mmsa_char" = "metropolitan_division_code"))  |> 
   distinct(d_mmsa, d_mmsa_char, csa_title, county_county_equivalent, fips_state_code, fips_county_code)
 mmsa_county_mapping <- mmsa_county_mapping_cbsa |> 
   dplyr::union(mmsa_county_mapping_mdc) |> 
   distinct()
+```
 
-
-# smart_2021 |> summarize(n_distinct(d_mmsa)) |> pull() == mmsa_county_mapping |> summarize(n_distinct(d_mmsa)) |> pull()
+```{r dqmmsatocounty}
+#| eval: FALSE
+smart_2021 |> summarize(n_distinct(d_mmsa)) |> pull() == mmsa_county_mapping |> summarize(n_distinct(d_mmsa)) |> pull()
 
 # check for issues with leading zeros
-# smart_2021 |> 
-#   filter(nchar(d_mmsa) != 5)
-# smart_2021 |> 
-#   mutate(d_mmsa_char = as.character(d_mmsa)) |> 
-#   filter(nchar(d_mmsa_char) != 5)
-# mmsa_county_mapping |> 
-#   filter(nchar(d_mmsa_char) != 5)
-# delin_2020 |> 
-#   filter(nchar(cbsa_code) != 5)
+smart_2021 |>
+  filter(nchar(d_mmsa) != 5)
+smart_2021 |>
+  mutate(d_mmsa_char = as.character(d_mmsa)) |>
+  filter(nchar(d_mmsa_char) != 5)
+mmsa_county_mapping |>
+  filter(nchar(d_mmsa_char) != 5)
+delin_2020 |>
+  filter(nchar(cbsa_code) != 5)
 ```
 
 ```{r plotmmsacounties}
-tigris_counties <- counties() |>
-  filter(!STATEFP %in% c("02",
-                         "15", "60",
-                         "66", "69",
-                         "72", "78"))
+tigris_counties <- counties() 
 
 mmsa_county_mapping_geoid <- mmsa_county_mapping |>
   mutate(smart = TRUE) |> 
-  right_join(tigris_counties, by = c("fips_state_code"= "STATEFP", "fips_county_code" = "COUNTYFP")) |>
+  inner_join(tigris_counties, by = c("fips_state_code"= "STATEFP", "fips_county_code" = "COUNTYFP")) |>
   mutate(smart = replace_na(smart, FALSE))
 
 mmsa_county_mapping_geoid |> filter(smart == TRUE) |> nrow() == mmsa_county_mapping |> nrow()
 
-mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |> st_as_sf()
+mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |>
+  filter(!fips_state_code %in% c("02",
+                         "15", "60",
+                         "66", "69",
+                         "72", "78")) |> # limit to contiguous states and DC
+  st_as_sf()
 
 # simple map
 # mmsa_county_mapping_geoid_sf |>
@@ -173,22 +191,24 @@ mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |> st_as_sf()
 #   geom_sf()
 ```
 
-```{r convertsmart}
+
+```{r convertsmart1}
+#| eval: false
 # Before we create the leaflet maps, we will change the CRS (Coordinate Reference System) to 4326 because leaflet expects the data provided to it to be in WGS84, which is EPSG:4326. We can do the transformation with st_transform.
 # This is slow so I did it once and saved the RDS
 
-# mmsa_county_mapping_geoid_sf_4326 <- st_transform(mmsa_county_mapping_geoid_sf, crs = 4326)
-# mmsa_county_mapping_geoid_sf_4326 |> saveRDS("mmsa_county_mapping_geoid_sf_4326.rds")
-mmsa_county_mapping_geoid_sf_4326 <- readRDS("mmsa_county_mapping_geoid_sf_4326.rds")
-mmsa_county_mapping_geoid_sf_4326
+mmsa_county_mapping_geoid_sf_4326 <- st_transform(mmsa_county_mapping_geoid_sf, crs = 4326)
+mmsa_county_mapping_geoid_sf_4326 |> saveRDS("data/intermediate_data/mmsa_county_mapping_geoid_sf_4326.rds")
 ```
 
+```{r convertsmart2}
+mmsa_county_mapping_geoid_sf_4326 <- readRDS("data/intermediate_data/mmsa_county_mapping_geoid_sf_4326.rds")
+```
 
 ```{r smartleaflet}
 pal_fun <- colorFactor(topo.colors(2), mmsa_county_mapping_geoid_sf_4326$smart)
 
 mmsa_county_mapping_geoid_sf_4326  |>
-  filter(!is.na(FUNCSTAT)) |> # need to explore why this is necessary 
   st_simplify(dTolerance = 1e3)  |>
   leaflet() |>
   addPolygons(
@@ -215,15 +235,34 @@ mmsa_county_mapping_geoid_sf_4326  |>
   addScaleBar()
 ```
 
+#### Aggregating smoking and lung cancer variables at CBSA level
+
+##### `_SMOKER3`
+
+::: {.callout-note}
+To be added
+:::
+
+##### `_LTASTH1`
+
+::: {.callout-note}
+To be added
+:::
+
 ### SVI dataset
 
 ```{r loadsvi}
 # retrieved from https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html
-svi2020 <- read_csv("input_data/svi/SVI_2020_US_county.csv")
+svi2020 <- read_csv("data/input_data/svi/SVI_2020_US_county.csv")
+```
+
+```{r glimpsesvi}
+#| eval: FALSE
 svi2020 |> glimpse()
 ```
 
-```{r mapsvi}
+```{r mapsvi1}
+#| eval: FALSE
 svi2020_sf <- svi2020 |>
   select(RPL_THEME1,
          RPL_THEME2,
@@ -231,20 +270,27 @@ svi2020_sf <- svi2020 |>
          RPL_THEME4,
          RPL_THEMES,
          FIPS) |>
-  left_join(tigris_counties, by = c("FIPS" = "GEOID")) |>
+  left_join(tigris_counties, by = c("FIPS" = "GEOID"))
   st_as_sf()
 
-# svi2020_sf_4326 <- st_transform(svi2020_sf, crs = 4326)
-# svi2020_sf_4326 |> saveRDS("svi2020_sf_4326.rds")
-svi2020_sf_4326 <- readRDS("svi2020_sf_4326.rds")
-svi2020_sf_4326
+svi2020_sf_4326 <- st_transform(svi2020_sf, crs = 4326)
+svi2020_sf_4326 |> saveRDS("data/intermediate_data/svi2020_sf_4326.rds")
+```
+
+```{r mapsvi2}
+svi2020_sf_4326 <-
+  readRDS("data/intermediate_data/svi2020_sf_4326.rds")   |>
+  filter(!STATEFP %in% c("02",
+                         "15", "60",
+                         "66", "69",
+                         "72", "78"))  # limit to contiguous states and DC
 ```
 
 ```{r leafletsvi}
 pal_svi <- colorNumeric("inferno", NULL, reverse = TRUE)
 
 svi2020_sf_4326  |>
-  filter(!is.na(FUNCSTAT)) |> # need to explore why this is necessary
+  filter(!is.na(FUNCSTAT)) |> # TODO explore why this is necessary
   st_simplify(dTolerance = 1e3)  |>
   leaflet() |>
   addPolygons(
@@ -270,75 +316,174 @@ svi2020_sf_4326  |>
   addScaleBar()
 ```
 
-
-
 ### ADI dataset
 
 ```{r loadadi}
 # retrieved from https://www.neighborhoodatlas.medicine.wisc.edu/
-adi2021 <- read_csv("input_data/adi/adi-download/US_2021_ADI_Census_Block_Group_v4_0_1.csv")
+adi2021 <- read_csv("data/input_data/adi/adi-download/US_2021_ADI_Census_Block_Group_v4_0_1.csv")
+tigris_cbg <- block_groups(cb = TRUE)  |>
+  filter(!STATEFP %in% c("02",
+                         "15", "60",
+                         "66", "69",
+                         "72", "78"))
+```
+
+```{r glimpseadi}
+#| eval: FALSE
 adi2021 |> glimpse()
 ```
 
-```{r mapadi}
-tigris_cbg <- block_groups(cb = TRUE)
+```{r mapadi1}
+#| eval: false
 
 adi2021_sf <- adi2021 |>
-  left_join(tigris_cbg, by = c("FIPS" = "GEOID")) |>
+  inner_join(tigris_cbg, by = c("FIPS" = "GEOID")) |>
   st_as_sf()
 
-# adi2021_sf_4326 <- st_transform(adi2021_sf, crs = 4326)
-# adi2021_sf_4326 |> saveRDS("adi2021_sf_4326.rds")
-adi2021_sf_4326 <- readRDS("adi2021_sf_4326.rds")
-adi2021_sf_4326
+adi2021_sf_4326 <- st_transform(adi2021_sf, crs = 4326)
+adi2021_sf_4326 |> saveRDS("data/intermediate_data/adi2021_sf_4326.rds")
+```
+
+```{r dqadi}
+adi_no_cbg <- adi2021 |>
+  anti_join(tigris_cbg, by = c("FIPS" = "GEOID"))
 
 
-# simple map
-# adi2021_sf_4326 |>
-#   mutate(ADI_NATRANK = as.numeric(ADI_NATRANK)) |>
-#   filter(!is.na(ADI_NATRANK)) |>
-#   st_simplify(dTolerance = 1e3) |>
-#   ggplot(aes(fill = ADI_NATRANK)) +
-#   geom_sf()
+cbg_no_adi <- tigris_cbg |>
+  anti_join(adi2021, by = c("GEOID" = "FIPS"))
+
+# When a Census block group falls into one or more of the suppression criteria mentioned above the ADI rank is replaced with a code describing the suppression reason. Three possible codes will appear in the ADI field: "PH" for suppression due to low population and/or housing, "GQ" for suppression due to a high group quarters population, and "PH-GQ" for suppression due to both types of suppression criteria. A code of "QDI" designates block groups without an ADI due to Questionable Data Integrity, stemming from missing data in the source ACS data.
+```
+
+```{r mapadi2}
+adi2021_sf_4326 <- readRDS("data/intermediate_data/adi2021_sf_4326.rds")
+```
+
+```{r cbgcounts1}
+#| eval: false
+contig_state_vctr <- datasets::state.abb |>
+  setdiff(c("AK", "HI"))
+# https://walker-data.com/umich-workshop-2022/intro-2020-census/#1
+# get cbg counts to compute cbg weights for aggregating adi at county level
+cbg_counts <- list()
+for (contig_state in contig_state_vctr) {
+  cbg_counts[[contig_state]] <- get_decennial(
+    geography = "block group",
+    variables = "P1_001N",
+    state = contig_state,
+    year = 2020,
+    output = "wide"
+  ) |>
+    mutate(state_abb = contig_state)
+}
+cbg_counts |> saveRDS("data/intermediate_data/cbg_counts.RDS")
+```
+
+```{r cbgcounts2}
+#| eval: false
+cbg_counts <- readRDS("data/intermediate_data/cbg_counts.RDS") |> 
+  bind_rows()
+
+# computed cbg weights for county level
+cbg_wts <- tigris_cbg |> 
+  select(STATEFP, COUNTYFP, TRACTCE, BLKGRPCE, GEOID) |>
+  st_drop_geometry() |> 
+  inner_join(cbg_counts, by = "GEOID") |> 
+  group_by(STATEFP, COUNTYFP) |>
+  # county pop
+  mutate(county_pop = sum(P1_001N)) |> 
+  ungroup() |> 
+  # cbg pop / county pop
+  mutate(cbg_wt = P1_001N/county_pop) |>
+  arrange(GEOID)
+
+cbg_wts |> saveRDS("data/intermediate_data/cbg_wts.RDS")
+```
+
+```{r cbgcounts3}
+#| eval: false
+cbg_wts <- readRDS("data/intermediate_data/cbg_wts.RDS")
+
+# compute weighted average for adi at county level
+county_adi <- adi2021_sf_4326 |>
+  select(-STATEFP, -COUNTYFP, -TRACTCE, -BLKGRPCE, -NAME) |> 
+  inner_join(cbg_wts, by = c("FIPS" = "GEOID")) |>
+  mutate(ADI_NATRANK = as.numeric(ADI_NATRANK)) |>
+  filter(!is.na(ADI_NATRANK)) |>
+  # national adi rank * cbg wt
+  mutate(adi_wts = ADI_NATRANK * cbg_wt) |>
+  group_by(STATEFP, COUNTYFP) |>
+  # weighted average sum of weighted adis
+  summarize(county_adi_value = sum(adi_wts))
+
+county_adi |> saveRDS("data/intermediate_data/county_adi.RDS")
+
+# cbg_counts_comb <- cbg_counts |> 
+#   bind_rows()
+# cbg_counts_comb |> ggplot(aes(x = P1_001N)) + geom_histogram()
+```
+
+```{r cbgcounts4}
+county_adi <- readRDS("data/intermediate_data/county_adi.RDS")
 ```
 
 ```{r leafletadi}
-# pal_adi <- colorNumeric("plasma", NULL)
-# 
-# adi2021_sf_4326  |>
-#   head(100) |> 
-#   mutate(ADI_NATRANK = as.numeric(ADI_NATRANK)) |>
-#   filter(!is.na(ADI_NATRANK)) |> 
-#   st_simplify(dTolerance = 1e3)  |>
-#   leaflet() |>
-#   addPolygons(
-#     stroke = FALSE,
-#     # remove polygon borders
-#     fillColor = ~ pal_adi(ADI_NATRANK),
-#     fillOpacity = 0.5,
-#     smoothFactor = 0.5
-#     # increase opacity and resolution
-#   ) |>
-#   addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
-#   addLegend(
-#     "bottomright",
-#     # location of legend
-#     pal = pal_adi,
-#     # palette function
-#     values = ~ ADI_NATRANK,
-#     # variable to pass to palette function
-#     title = 'adi',
-#     # legend title
-#     opacity = 1 # legend opacity (1 = completely opaque)
-#   ) |>
-#   addScaleBar()
-# ```
+pal_adi <- colorNumeric("plasma", NULL)
+
+county_adi  |>
+  st_simplify(dTolerance = 1e3)  |>
+  leaflet() |>
+  addPolygons(
+    stroke = FALSE,
+    # remove polygon borders
+    fillColor = ~ pal_adi(county_adi_value),
+    fillOpacity = 0.5,
+    smoothFactor = 0.5
+    # increase opacity and resolution
+  ) |>
+  addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
+  addLegend(
+    "bottomright",
+    # location of legend
+    pal = pal_adi,
+    # palette function
+    values = ~ county_adi_value,
+    # variable to pass to palette function
+    title = 'adi',
+    # legend title
+    opacity = 1 # legend opacity (1 = completely opaque)
+  ) |>
+  addScaleBar()
+```
 
 ### Combine datasets
 
+::: {.callout-note}
+To be added
+:::
 
+```{r combinedataset}
+
+
+
+```
+
+### Modelling
+
+::: {.callout-note}
+To be added
+:::
+
+```{r modelling}
+
+
+```
 
 ## Results {#sec-results}
+
+::: {.callout-note}
+To be added
+:::
 
 <!-- Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required. -->
 
@@ -350,15 +495,34 @@ adi2021_sf_4326
 
 <!-- Need to figure out how to properly manage references -->
 
+
+*Centers for Disease Control and Prevention (CDC). Behavioral Risk Factor Surveillance System Survey Questionnaire. Atlanta, Georgia: U.S. Department of Health and Human Services, Centers for Disease Control and Prevention, 2021.*
+
+*Centers for Disease Control and Prevention (CDC). Behavioral Risk Factor Surveillance System Survey Data. Atlanta, Georgia: U.S. Department of Health and Human Services, Centers for Disease Control and Prevention, 2021.*
+
+*Centers for Disease Control and Prevention/ Agency for Toxic Substances and Disease Registry/ Geospatial Research, Analysis, and Services Program. CDC/ATSDR Social Vulnerability Index 2020 Database US. https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html. Accessed on 2023/11/04.*
+
+*Kind AJH, Buckingham W. Making Neighborhood Disadvantage Metrics Accessible: The Neighborhood Atlas. New England Journal of Medicine, 2018. 378: 2456-2458. DOI: 10.1056/NEJMp1802313. PMCID: PMC6051533.*
+
 *Rollings KA, Noppert GA, Griggs JJ, Melendez RA, Clarke PJ. Comparison of two area-level socioeconomic deprivation indices: Implications for public health research, practice, and policy. PLoS One. 2023 Oct 5;18(10):e0292281. doi: 10.1371/journal.pone.0292281. PMID: 37797080; PMCID: PMC10553799.*
 
 *Tipirneni R, Schmidt H, Lantz PM, Karmakar M. Associations of 4 Geographic Social Vulnerability Indices With US COVID-19 Incidence and Mortality. Am J Public Health. 2022 Nov;112(11):1584-1588. doi: 10.2105/AJPH.2022.307018. Epub 2022 Sep 15. PMID: 36108250; PMCID: PMC9558191.*
+
+
+*University of Wisconsin School of Medicine and Public Health. 2021 Area Deprivation Index v4.0.1. Downloaded from https://www.neighborhoodatlas.medicine.wisc.edu/ 2023/11/04*
 
 *Xie S, Himes BE. Approaches to Link Geospatially Varying Social, Economic, and Environmental Factors with Electronic Health Record Data to Better Understand Asthma Exacerbations. AMIA Annu Symp Proc. 2018 Dec 5;2018:1561-1570. PMID: 30815202; PMCID: PMC6371292.*
 
 *Xie S, Hubbard RA, Himes BE. Neighborhood-level measures of socioeconomic status are more correlated with individual-level measures in urban areas compared with less urban areas. Ann Epidemiol. 2020 Mar;43:37-43.e4. doi: 10.1016/j.annepidem.2020.01.012. Epub 2020 Feb 11. PMID: 32151518; PMCID: PMC7160852.*
 
+
 ## Appendices {#sec-app}
+
+### Session Info
+
+```{r sessioninfo}
+sessionInfo()
+```
 
 ### Asthma and smoking BRFSS variables
 
