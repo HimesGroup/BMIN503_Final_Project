@@ -14,9 +14,13 @@ https://physionet.org/content/mimiciv/2.2/
 
 ## Files in the Repository
 Final_You.html -> .html version of .qmd file 
+
 Final_You.qmd -> contains intro, methods, results (TBD) until current
+
 GEE_coefficients -> Raw estimates (logit scale)
+
 GEE_OR -> Exponentiated estimates (odds ratio scale)
+
 GEE_RESULTS -> Estimates on both logit and odd-ratio scales
 
 
