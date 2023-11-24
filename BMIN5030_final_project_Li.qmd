@@ -27,8 +27,6 @@ The CDC routinely publishes weekly reports of influenza surveillance data provid
 
 ### Methods
 
-#### Data source
-
 ```{r}
 #| label: load-packages
 #| include: false
@@ -37,8 +35,12 @@ library(tidyverse)
 library(dplyr)
 library(cowplot)
 library(RColorBrewer)
+library(ggsci)
+library(wesanderson)
+library(grid)
+library(gridExtra)
 
-#Packages needed for making maps
+# Packages needed for making maps
 library(datasets)
 library(sf)
 library(tigris)
@@ -50,20 +52,31 @@ library(animation)
 display.brewer.all()
 ```
 
-#### Download and clean data 
+#### Data source
+
+| Datasets | Description                                                                                                                                                                                                                                            | Report frequency | Source                                                      |
+|-------------|-----------------------------------|-------------|-------------|
+| FluView  | Virologic surveillance from approximately 300 clinical laboratories throughout all 50 states in the U.S. World Health Organization (WHO) Collaborating Laboratories System and the National Respiratory and Enteric Virus Surveillance System (NREVSS) | Weekly           | <https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html> |
+| GISAID   |                                                                                                                                                                                                                                                        |                  |                                                             |
+|          |                                                                                                                                                                                                                                                        |                  |                                                             |
+
+#### Download and clean data
+
+First, we will download the weekly U.S. Influenza Surveillance Report. Data collection from both the U.S. WhO Collaborating Laboratories System and NREVSS began during the 1997-98 season. The total number of respiratory specimens tested and %positive rate for influenza are reported weekly.
 
 ```{r}
 #| label: load_clinical_labs_surveillance data
 
 # Load WHO/NREVSS surveillance data from clinical labs
-# Retrieved from https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html
 clinical_labs <- read_csv("WHO_NREVSS_Clinical_Labs.csv")
 ```
+
+Next, I will clean the surveillance data by removing unused variables and renaming variables. Influenza season typically starts on week 40 (first week of October), so I will include a variable named "ordered_week" that arrange weeks starting with week 40.
 
 ```{r}
 #| label: organize_CDC_file
 
-# Rename variables and order week variable 
+# Rename variables and order week variable
 clinical_labs <- clinical_labs |>
         dplyr::select(-c("REGION TYPE")) |>
         dplyr::rename(state = REGION, 
@@ -81,19 +94,23 @@ clinical_labs <- clinical_labs |>
         mutate(percent_positive = as.numeric(percent_positive))
 ```
 
+Since I will be drawing maps, I will retrieve shapefile for all states using tigris() and obtain information on states using the R Datasets Package.
+
 ```{r}
 #| label: retrieve_state_info
 
-# Retrieve state information and division using tigirs() and the package datasets 
+# Retrieve shapefile for all states using tigirs() 
 states <- states()
 
-# Obtain state information on names and division 
+# Obtain state information on names and division using the package datasets
 states_division <- data.frame(NAME = datasets::state.name, division = datasets::state.division)
 
+# Merge shapefile with state information 
 states <- inner_join(states, states_division, by = "NAME") |>
             rename(state = NAME)
-
 ```
+
+Now I will merge the shapefile data frame with surveillance data.
 
 ```{r}
 #| label: combine_surveillance_state_df
@@ -103,15 +120,17 @@ clinical_labs <- inner_join(states, clinical_labs, by = "state")
 
 ```
 
-
-
 ### Results
+
+#### Exploratory data analysis
+
+I will start with some exploratory data analysis by looking at the surveillance data in the 2017-18 flu season.
 
 ```{r}
 #| label: 2017_season_percent_positive
 
-# Percent positive cases in each division in 2017-18 season 
-season2017 <- clinical_labs %>%
+# Filter data from the 2017-18 season 
+season2017 <- clinical_labs |>
   filter(season == "2017")
 
 # Percent positive cases in 2017-18 season 
@@ -119,12 +138,23 @@ season2017 |>
   ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
         facet_wrap(~ state, nrow = 5, ncol = 10) +
         geom_bar(stat = "identity") +
-        scale_fill_brewer(palette = "Spectral") +
-        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        scale_fill_brewer(palette = "RdBu") +
+        scale_x_discrete(breaks = c(1, 14, 27, 40), labels = c(40, 1, 14, 27)) +
         scale_y_continuous() +
         labs(x = "Week", y = "Percent Positive", title = "2017-18 Influenza Positive Tests Reported to CDC") +
         theme_classic() +
-        theme(legend.position = "none")
+        theme(legend.position = "none",
+              strip.background = element_blank(),
+              panel.border = element_rect(color = "black", fill = NA))
+
+```
+It is clear that influenza activity varied greatly across states in the 2017-18 season. States like California and Nevada had pretty early influenza detection whereas some states did not experience peak flu activity until later. There is also missing data for some of the states. 
+
+
+The U.S. Census Bureau has grouped the 50 states and the District of Columbia into nine divisions based on geographic proximity. I will also look at the surveillance data within each division.
+
+```{r}
+#| label: 2017_season_percent_positive_division
 
 # Get unique divisions
 unique_divisions <- unique(season2017$division)
@@ -141,64 +171,58 @@ for (i in unique_divisions) {
   p <- ggplot(division_data, aes(x = ordered_week, y = percent_positive, fill = state)) +
     geom_bar(stat = "identity") +
     facet_wrap(~ state, scales = "free_y") +
-    scale_fill_brewer(palette = "Spectral") +
-    scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+    scale_fill_manual(values = wes_palette("Zissou1", n = 8, type = "continuous")) +
+    scale_x_discrete(breaks = c(1, 14, 27, 40), labels = c(40, 1, 14, 27)) +
     scale_y_continuous() +
     ylim(0, 66) +
     labs(x = "Week", y = "Percent Positive", title = i) +
     theme_classic() +
-    theme(legend.position = "none")
+    theme(legend.position = "none",
+              strip.background = element_blank(),
+              panel.border = element_rect(color = "black", fill = NA))
  season2017_plot_list[[length(season2017_plot_list) + 1]] <- p
 }
 
 print(season2017_plot_list)
 
-# grid.arrange(grobs = season2017_plot_list, ncol = 3) 
+#grid.arrange(grobs = season2017_plot_list, ncol = 3) 
+```
 
-# Percent positive cases in 2017-18 season in Middle Atlantic
+
+```{r}
+#| label: 2017_season_percent_positive_pacific
+
+# Percent positive cases in 2017-18 season in Pacific
 season2017 |>
-        filter(division == "Middle Atlantic") |>
+        filter(division == "Pacific") |>
         ggplot(aes(x = ordered_week, y = percent_positive, fill = state)) +
         geom_bar(stat = "identity") +
         facet_wrap(~ state) +
-        scale_fill_brewer(palette = "Spectral") +
-        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
+        #scale_fill_manual(values = wes_palette("Zissou1", n = 5, type = "continuous")) +
+        scale_fill_manual(values = c('#855C75', '#D9AF6B', '#AF6458', '#736F4C', '#526A83', '#625377', '#68855C')) +
+        scale_x_discrete(breaks = c(1, 14, 27, 40, 52), labels = c(40, 1, 14, 27, 39)) +
         scale_y_continuous() +
-        labs(x = "Week", y = "Percent Positive", title = "2017-18 Influenza Positive Tests Reported to CDC") +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 Pacific Influenza Positive Tests") +
         theme_classic() +
-        theme(legend.position = "none")
+        theme(legend.position = "none",
+              strip.background = element_blank(),
+              panel.border = element_rect(color = "black", fill = NA))
 
-# Percent positive cases in 2017-18 season in Pennsylvania
+# Percent positive cases in 2017-18 season in California
 season2017 |>
-        filter(state == "Pennsylvania") |>
+        filter(state == "California") |>
         ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
         geom_bar(stat = "identity") +
-        scale_fill_brewer(palette = "Spectral") +
+        scale_fill_manual(values = "#68855C") +
         scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
         scale_y_continuous() +
-        labs(x = "Week", y = "Percent Positive", title = "2017-18 Pennsylvania Influenza Positive Tests Reported to CDC") +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 California Influenza Positive Tests") +
         theme_classic() +
         theme(legend.position = "none")
 
 
 ```
 
-```{r}
-#| label: 2018_season_percent_positive
-
-# Percent positive cases in 2018-19 season 
-clinical_labs |> filter(season == "2018") |>
-        ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
-        facet_wrap(~ state, nrow = 5, ncol = 10) +
-        geom_bar(stat = "identity") +
-        scale_fill_brewer(palette = "Spectral") +
-        scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
-        scale_y_continuous() +
-        labs(x = "Week", y = "Percent Positive", title = "2018-19 Influenza Positive Tests Reported to CDC") +
-        theme_classic() +
-        theme(legend.position = "none")
-
-```
 
 ```{r}
 #| label: percent_positive_map
@@ -379,3 +403,5 @@ pa_ili_case |> filter(season == "2018-19") |>
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
 ### References
+
+U.S. Influenza Surveillance: Purpose and Methods: <https://www.cdc.gov/flu/weekly/overview.htm>
