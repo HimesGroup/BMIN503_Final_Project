@@ -1,8 +1,12 @@
 ---
 title: "Sociodemographic Disparities in Pediatric Emergency Department Revisit Rates"
 subtitle: "BMIN503/EPID600 Final Project"
-author: "Casey Pitts"
-format: html
+author: "Casey E. Pitts"
+format: 
+  html:
+    theme: flatly
+    fontsize: smaller
+    code-overflow: wrap
 editor: visual
 number-sections: true
 embed-resources: true
@@ -32,15 +36,434 @@ Understanding the disparities associated with increased revisit rates and discov
 
 ## Methods {#sec-methods}
 
-This is a retrospective study of patients, between 0-18 years old, presenting to a urban, tertiary, academic pediatric emergency department between November 01, 2018 to November 01, 2023. We calculated rates of 72 hour revisits resulting in repeat discharge or hospital admission. Both patient and visit-level factors were included for exploratory analysis. Visit-level factors include daily volume, daily average acuity, daily average wait time, and ED location. Patient-level factors include age, sex, race, ethnicity, preferred language, individual triage acuity, history of complex medical conditions, chief complaint, insurance status, COI, distance from the ED, and green space access.
+This is a retrospective study of patients, between 0-18 years old, presenting to a urban, tertiary, academic pediatric emergency department between November 01, 2021 to November 01, 2023. We calculated rates of 72 hour revisits resulting in repeat discharge or hospital admission. Both patient and visit-level factors were included for exploratory analysis. Visit-level factors include daily volume, daily average acuity, daily average wait time, and ED location. Patient-level factors include age, sex, race, ethnicity, preferred language, individual triage acuity, history of complex medical conditions, chief complaint, insurance status, COI, distance from the ED, and green space access.
 
 Data was accessed through the institutional data warehouse, extracted from patient and encounter-level tables and downloaded as a CSV file.
 
-*Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.*
+### Install Packages
+
+```{r}
+#| eval: FALSE
+install.packages("tidyverse")
+install.packages("expss")
+install.packages("tidymodels")
+install.packages("ggplot2")
+install.packages("cowplot")
+install.packages("lubridate")
+install.packages("gtsummary")
+install.packages("dplyr")
+```
+
+### Load Packages
+
+```{r}
+#| include: false
+library(tidyverse)
+library(expss)
+library(tidymodels)
+library(ggplot2)
+library(lubridate)
+library(gtsummary) 
+library(cowplot) 
+library(dplyr)
+library(gifski)
+```
+
+### Read in & Clean the Data
+
+```{r}
+#Read in CSV File
+data<- read.csv("./EDRevisits.csv")
+
+#Convert data types as needed
+data$ENCOUNTER_DATE <- mdy(data$ENCOUNTER_DATE)
+data$WAITTIME<- period_to_seconds(hms(data$WAITTIME))
+data$ARRIVALTIME<- lubridate::hms(data$ARRIVALTIME)
+data$DAILYVISITS<- as.numeric(as.integer(data$DAILYVISITS))
+
+#Convert Wait Time from HMS to Minutes
+data<- data|>
+  mutate(waitmin = WAITTIME/60)
+```
+
+#### Additional Cleaning
+
+```{r}
+#Race/Ethnicity Category Collapse
+data<- data|> 
+  mutate (eth_cat = case_when(
+    str_detect(RACE_ETHNICITY, "White") ~ "White",
+    str_detect(RACE_ETHNICITY, "Black") ~ "Black",
+    str_detect(RACE_ETHNICITY, "Asian") ~ "Asian",
+    str_detect(RACE_ETHNICITY, "Latino") ~ "Hispanic/Latino",
+    str_detect(RACE_ETHNICITY, "Multi") ~ "Multi-Racial",
+    str_detect(RACE_ETHNICITY, "Other") ~ "Other",
+    str_detect(RACE_ETHNICITY, "Native") ~ "Indigenous/Other",
+    str_detect(RACE_ETHNICITY, "nknown") ~ "Unknown",
+    str_detect(RACE_ETHNICITY, "Refused") ~ "Unknown",
+    str_detect(RACE_ETHNICITY, "disclose") ~ "Unknown",
+      ))
+
+#Collapse Arrival Times to 3 Categories
+data<- data |>
+  mutate (Arrival = case_when(
+    hour(ARRIVALTIME) >= 23 ~ "Overnight",
+    hour(ARRIVALTIME) >= 15 ~"Evening",
+    hour(ARRIVALTIME) >=7 ~ "Daytime",
+    hour(ARRIVALTIME) < 7 ~ "Overnight"
+  ))
+
+#Rename Columns
+data <- data|>
+  apply_labels(
+          ENCOUNTER_DATE = "Date",
+          SEX = "Sex",
+          DAILYVISITS = "Total Daily Visits",
+          AVGESI = "Average Daily Acuity",
+          WAITTIME = "Average Daily Wait Time",
+          AGE_AT_VISIT = "Age",
+          RACE_ETHNICITY = "Race & Ethnicity",
+          LANGIND = "Language",
+          LANGIND = c("English" = 1,
+                      "Spanish" = 2,
+                      "Other" = 0),
+          PAYOR_GROUP = "Insurance Type",
+          SVI_CATEGORY = "Vulnerability Score",
+          PATIENT_ADDRESS_ZIP_CODE = "Zip Code",
+          ED_LOS = "Length of Stay",
+          REVISIT_72_HR = "Revisit within 72 Hours",
+          READMIT_72_HR = "Admission within 72 Hours",
+          COMPLEX_CHRONIC_CONDITION_IND = "Complex or Chronic History",
+          ED_DISPOSITION = "Disposition from ED",
+          PCP_VISIT_72_HR = "PCP Visit within 72 Hours",
+          PCP_VISIT_72_HR = c("PCP Visit" = 1, 
+                              "No PCP Visit" = 0),
+          eth_cat = "Race/Ethnicity",
+          CAMPUS = "Campus",
+          waitmin = "Average Daily Wait Time (in minutes)"
+          )
+```
 
 ## Results {#sec-results}
 
-*Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed.*
+### Summary Statistics
+
+```{r}
+#Overall Emergency Department Summary
+tbl_summary(data, include = c(DAILYVISITS, AVGESI, waitmin),
+      statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} / {N} ({p}%)"
+    ),
+            by = CAMPUS) |>
+  modify_caption ("**Table 1: Emergency Department Characteristics**") |>
+  modify_header (label = "") |>
+  bold_labels()
+
+#Plot Average Daily Volume by Month 
+VisitsbyMonth <- data |>
+  group_by(CAMPUS, Year = as.character(year(ENCOUNTER_DATE)), month = month(ENCOUNTER_DATE, label = TRUE)) |>
+      summarise(avg = mean(DAILYVISITS))
+
+ggplot(VisitsbyMonth, aes(x =month, y = avg, color = Year)) +
+  geom_line(aes(group = Year)) +
+  geom_point() +
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
+  labs(title = paste0("Average Daily Volume by Month "), x = "Month", y = "Avg Daily Visit Count")
+
+#Plot Average Wait Time by Month 
+WaitbyMonth <- data |>
+  group_by(CAMPUS, Year = as.character(year(ENCOUNTER_DATE)), month = month(ENCOUNTER_DATE, label = TRUE)) |>
+      summarise(avg = mean(waitmin))
+
+ggplot(WaitbyMonth, aes(x =month, y = avg, color = Year)) +
+  geom_line(aes(group = Year)) +
+  geom_point() +
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
+  labs(title = paste0("Average Daily Wait Time by Month "), x = "Month", y = "Avg Daily Wait Time")
+
+#Plot Average Daily Acuity by Month
+AcuitybyMonth <- data |>
+  group_by(CAMPUS, Year = as.character(year(ENCOUNTER_DATE)), month = month(ENCOUNTER_DATE, label = TRUE)) |>
+      summarise(avg = mean(AVGESI))
+
+ggplot(AcuitybyMonth, aes(x =month, y = avg, color = Year)) +
+  geom_line(aes(group = Year)) +
+  geom_point() +
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
+  labs(title = paste0("Average Daily Acuity by Month "), x = "Month", y = "Avg Daily Acuity") +
+  ylim (low = 2.5, high = 3.5)
+```
+
+```{r}
+#Descriptive Statistics
+data|>
+  select(SEX, AGE_AT_VISIT, eth_cat, LANGIND, PAYOR_GROUP, SVI_CATEGORY, ACUITY, COMPLEX_CHRONIC_CONDITION_IND, CAMPUS, ED_LOS, Arrival, ED_DISPOSITION, READMIT_72_HR, REVISIT_72_HR)|>
+  tbl_strata2(
+    strata = CAMPUS,
+    .tbl_fun = 
+    ~.x |>
+tbl_summary(missing_text = "NA",
+            by = REVISIT_72_HR) |>
+  modify_caption ("**Table 2: Patient Characteristics**") |>
+  modify_header (label = "**Variable**") |>
+  bold_labels()
+)
+```
+
+```{r}
+# Sex
+sexplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = SEX)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Sex")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x = element_text(size=8), 
+        axis.title.x = element_text(size=8),
+        legend.title = element_text(size =8),
+        legend.text = element_text(size=8),
+        axis.title.y = element_text(size=10))
+
+# Admission Type
+admitplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(READMIT_72_HR))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Admission Type")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Language
+langplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(LANGIND))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Language")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Insurance
+insuranceplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = PAYOR_GROUP)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Insurance")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Acuity
+acuityplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(ACUITY))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Acuity")+
+  #scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Vulnerability Status
+sviplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = SVI_CATEGORY)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Vulnerability Status")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# Ethnicity
+ethnicityplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = eth_cat)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Ethnicity")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Chronic Conditions
+chronicplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(COMPLEX_CHRONIC_CONDITION_IND))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Chronic/Complex History")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+
+# PCP Visit within 72 Hours
+pcpplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(PCP_VISIT_72_HR))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "PCP Visit Within 72 Hours")+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_text(size =5),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+# Age 
+ageplot <- ggplot(data, aes(factor(REVISIT_72_HR), AGE_AT_VISIT)) +
+  geom_boxplot(fill=c("#f6eaea", "#B2182B")) +
+  labs(title = "Age") +
+  ylab("Years")+
+  xlab("")+
+  theme_minimal()
+
+# LOS
+LOSplot <- ggplot(data, aes(factor(REVISIT_72_HR), ED_LOS)) +
+  geom_boxplot(fill=c("#f6eaea", "#B2182B")) +
+  labs(title = "Length of Stay") +
+  ylab("Minutes")+
+  xlab("")+
+  theme_minimal()
+
+# Summary Graphs 1: Demographics between group comparison
+ggdraw() +
+  draw_plot(sexplot, x=0, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(ageplot, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(langplot, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(ethnicityplot, x=0.5, y=0, width = 0.5, height = 0.5)+
+  theme_minimal()
+
+ggdraw() +
+  draw_plot(acuityplot, x=0, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(sviplot, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(chronicplot, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(pcpplot, x=0.5, y=0, width = 0.5, height = 0.5)+
+  theme_minimal()
+```
+
+### Preliminary Analysis
+
+#### **Chi Squared Tests**
+
+```{r}
+data$READMIT_72_HR <- as.factor(data$REVISIT_72_HR)
+
+#Sex:
+chisq.test(table(data$REVISIT_72_HR, data$SEX)) 
+#Ethnicity:
+chisq.test(table(data$REVISIT_72_HR, data$eth_cat))
+#Language
+chisq.test(table(data$REVISIT_72_HR, data$LANGIND))
+#Insurance
+chisq.test(table(data$REVISIT_72_HR, data$PAYOR_GROUP)) 
+#Vulnerability
+chisq.test(table(data$REVISIT_72_HR, data$SVI_CATEGORY)) 
+#ACUITY
+chisq.test(table(data$REVISIT_72_HR, data$ACUITY))
+#Complex/Chronic
+chisq.test(table(data$REVISIT_72_HR, data$COMPLEX_CHRONIC_CONDITION_IND))
+#PCP Visit
+chisq.test(table(data$REVISIT_72_HR, data$PCP_VISIT_72_HR)) 
+#Arrival
+chisq.test(table(data$REVISIT_72_HR, data$Arrival))
+#Campus
+chisq.test(table(data$REVISIT_72_HR, data$CAMPUS))
+```
+
+```{r}
+data.fit <- data |>
+  select(REVISIT_72_HR, READMIT_72_HR, Arrival, SEX, eth_cat, LANGIND, PAYOR_GROUP, 
+        SVI_CATEGORY, ACUITY,COMPLEX_CHRONIC_CONDITION_IND, ED_DISPOSITION, Arrival, CAMPUS) |>
+  drop_na() |>
+  mutate(REVISIT_72_HR = factor(REVISIT_72_HR, levels = c(0, 1), 
+                           labels = c("No Revisit", "Revisit"))) |>
+  mutate(READMIT_72_HR = factor(READMIT_72_HR, levels = c(0, 1),
+                         labels = c("Re-discharged", "Admitted"))) |>
+  mutate(SEX = factor(SEX, levels = c("M", "F"), 
+                      labels = c("Male", "Female"))) |>
+  mutate(COMPLEX_CHRONIC_CONDITION_IND = factor(COMPLEX_CHRONIC_CONDITION_IND, levels = c(0,1),
+                    labels = c("None", "Chronic/Complex"))) |>
+  mutate(ACUITY = factor(ACUITY, levels = c(1,2,3,4,5),
+                         labels = c(1,2,3,4,5)))
+
+sigFactors <- data.frame(variable = character(), p_value = numeric())
+
+#create loop and function to analyze each vairable individually using logistic regression models glm, and to put the feature and it's p-value into the new dataframe if the p-value is less than 0.05 which is generally considered significant
+
+for(var in colnames(data.fit)[-which(colnames(data.fit) == 'REVISIT_72_HR')]) {
+  
+  formula <- as.formula(paste("REVISIT_72_HR ~", var)) #make new function
+  model <- glm(formula, data = data.fit, family = "binomial") 
+  p_value <- summary(model)$coefficients[2, "Pr(>|z|)"] #from the summary of the regression model extract the "Pr(>|z|)" row which contains the p-value which is what we are interested in
+  if(p_value < 0.05) {
+    sigFactors <- rbind(sigFactors, data.frame(variable = var, p_value = p_value))
+  } #inset the row values if p_value is less than 0.05
+}
+# Sort by p-value
+sigFactors  <- sigFactors  |> arrange(p_value)
+print(sigFactors)
+```
+
+```{r}
+m1 <- glm(REVISIT_72_HR ~ Arrival + SEX + eth_cat + LANGIND + PAYOR_GROUP + ACUITY+ COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS, data = data.fit,family = binomial())
+```
+
+```{r}
+t3 <- tbl_regression(m1, exponentiate = TRUE) %>%
+  bold_p(t = 0.10) %>%
+  bold_labels() %>%
+  italicize_levels()
+t3
+```
 
 ## Conclusion
 
