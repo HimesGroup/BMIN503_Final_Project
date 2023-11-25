@@ -91,18 +91,26 @@ data<- data|>
 ```{r}
 #Race/Ethnicity Category Collapse
 data<- data|> 
-  mutate (eth_cat = case_when(
+  mutate (eth_cat = (case_when(
     str_detect(RACE_ETHNICITY, "White") ~ "White",
     str_detect(RACE_ETHNICITY, "Black") ~ "Black",
     str_detect(RACE_ETHNICITY, "Asian") ~ "Asian",
     str_detect(RACE_ETHNICITY, "Latino") ~ "Hispanic/Latino",
     str_detect(RACE_ETHNICITY, "Multi") ~ "Multi-Racial",
-    str_detect(RACE_ETHNICITY, "Other") ~ "Other",
+    str_detect(RACE_ETHNICITY, "Other") ~ "Indigenous/Other",
     str_detect(RACE_ETHNICITY, "Native") ~ "Indigenous/Other",
     str_detect(RACE_ETHNICITY, "nknown") ~ "Unknown",
     str_detect(RACE_ETHNICITY, "Refused") ~ "Unknown",
     str_detect(RACE_ETHNICITY, "disclose") ~ "Unknown",
-      ))
+      )))|>
+  mutate (eth_cat = factor(eth_cat, 
+            levels = c("White", "Black", "Asian", "Hispanic/Latino", "Multi-Racial", "Indigenous/Other", "Unknown"),
+            labels = c("White", "Black", "Asian", "Hispanic/Latino", "Multi-Racial", "Indigenous/Other", "Unknown")))
+
+#Replace NA with "Unknown" for Insurance Group
+data<- data|>
+  mutate (PAYOR_GROUP = replace_na(PAYOR_GROUP, "Unknown"))|>
+  mutate (SVI_CATEGORY = replace_na(SVI_CATEGORY, "Unknown"))
 
 #Collapse Arrival Times to 3 Categories
 data<- data |>
@@ -112,6 +120,42 @@ data<- data |>
     hour(ARRIVALTIME) >=7 ~ "Daytime",
     hour(ARRIVALTIME) < 7 ~ "Overnight"
   ))
+
+#Age to Categories
+data<- data |>
+  mutate (age_cat = case_when(
+    AGE_AT_VISIT < 1 ~ "0",
+    AGE_AT_VISIT < 3 ~ "1 - 2",
+    AGE_AT_VISIT < 5 ~ "3 - 4",
+    AGE_AT_VISIT < 9 ~ "5 - 8",
+    AGE_AT_VISIT < 13 ~ "9 - 12",
+    AGE_AT_VISIT < 16 ~ "13 - 15",
+    AGE_AT_VISIT <= 18 ~ "16 - 18"
+  ))
+
+#Factor
+data<- data |>
+  mutate(REVISIT_72_HR = factor(REVISIT_72_HR, levels = c(0, 1), 
+                           labels = c("No Revisit", "Revisit")))|>
+  mutate(LANGIND = factor(LANGIND, levels = c(1,2,0),
+                          labels = c("English",
+                      "Spanish",
+                      "Other")))|>
+  mutate(PCP_VISIT_72_HR = factor(PCP_VISIT_72_HR, levels = c(0,1), 
+                            labels = c("No PCP Visit", 
+                              "PCP Visit"))) |>
+  mutate(READMIT_72_HR = factor(READMIT_72_HR, levels = c(0, 1),
+                         labels = c("Re-discharged", "Admitted"))) |>
+  mutate(SEX = factor(SEX, levels = c("M", "F"), 
+                      labels = c("Male", "Female"))) |>
+  mutate(COMPLEX_CHRONIC_CONDITION_IND = factor(COMPLEX_CHRONIC_CONDITION_IND,
+                      levels = c(0,1),
+                      labels = c("None", "Chronic/Complex"))) |>
+  mutate(ACUITY = factor(ACUITY, levels = c(1,2,3,4,5),
+                         labels = c(1,2,3,4,5))) |>
+  mutate(ED_DISPOSITION = factor(ED_DISPOSITION, levels = c("Discharge", "AMA", "Left Before Discharge (Eloped)"),
+              labels = c("Discharge", "AMA", "Left Before Discharge (Eloped)")))|>
+  mutate(CAMPUS = factor(CAMPUS, levels = c("Main","Community"),                                            labels = c("Main","Community")))
 
 #Rename Columns
 data <- data|>
@@ -124,9 +168,6 @@ data <- data|>
           AGE_AT_VISIT = "Age",
           RACE_ETHNICITY = "Race & Ethnicity",
           LANGIND = "Language",
-          LANGIND = c("English" = 1,
-                      "Spanish" = 2,
-                      "Other" = 0),
           PAYOR_GROUP = "Insurance Type",
           SVI_CATEGORY = "Vulnerability Score",
           PATIENT_ADDRESS_ZIP_CODE = "Zip Code",
@@ -136,11 +177,11 @@ data <- data|>
           COMPLEX_CHRONIC_CONDITION_IND = "Complex or Chronic History",
           ED_DISPOSITION = "Disposition from ED",
           PCP_VISIT_72_HR = "PCP Visit within 72 Hours",
-          PCP_VISIT_72_HR = c("PCP Visit" = 1, 
-                              "No PCP Visit" = 0),
           eth_cat = "Race/Ethnicity",
           CAMPUS = "Campus",
-          waitmin = "Average Daily Wait Time (in minutes)"
+          waitmin = "Average Daily Wait Time (in minutes)",
+          ACUITY = "Acuity",
+          age_cat = "Age (Categorical)"
           )
 ```
 
@@ -155,7 +196,8 @@ tbl_summary(data, include = c(DAILYVISITS, AVGESI, waitmin),
       all_continuous() ~ "{mean} ({sd})",
       all_categorical() ~ "{n} / {N} ({p}%)"
     ),
-            by = CAMPUS) |>
+            by = CAMPUS,
+    missing = "no") |>
   modify_caption ("**Table 1: Emergency Department Characteristics**") |>
   modify_header (label = "") |>
   bold_labels()
@@ -207,7 +249,8 @@ data|>
     .tbl_fun = 
     ~.x |>
 tbl_summary(missing_text = "NA",
-            by = REVISIT_72_HR) |>
+            by = REVISIT_72_HR,
+            missing = "no") |>
   modify_caption ("**Table 2: Patient Characteristics**") |>
   modify_header (label = "**Variable**") |>
   bold_labels()
@@ -395,10 +438,10 @@ ggdraw() +
 #### **Chi Squared Tests**
 
 ```{r}
-data$READMIT_72_HR <- as.factor(data$REVISIT_72_HR)
-
 #Sex:
-chisq.test(table(data$REVISIT_72_HR, data$SEX)) 
+chisq.test(table(data$REVISIT_72_HR, data$SEX))
+#Age(Categorical)
+chisq.test(table(data$REVISIT_72_HR, data$age_cat))
 #Ethnicity:
 chisq.test(table(data$REVISIT_72_HR, data$eth_cat))
 #Language
@@ -421,19 +464,8 @@ chisq.test(table(data$REVISIT_72_HR, data$CAMPUS))
 
 ```{r}
 data.fit <- data |>
-  select(REVISIT_72_HR, READMIT_72_HR, Arrival, SEX, eth_cat, LANGIND, PAYOR_GROUP, 
-        SVI_CATEGORY, ACUITY,COMPLEX_CHRONIC_CONDITION_IND, ED_DISPOSITION, Arrival, CAMPUS) |>
-  drop_na() |>
-  mutate(REVISIT_72_HR = factor(REVISIT_72_HR, levels = c(0, 1), 
-                           labels = c("No Revisit", "Revisit"))) |>
-  mutate(READMIT_72_HR = factor(READMIT_72_HR, levels = c(0, 1),
-                         labels = c("Re-discharged", "Admitted"))) |>
-  mutate(SEX = factor(SEX, levels = c("M", "F"), 
-                      labels = c("Male", "Female"))) |>
-  mutate(COMPLEX_CHRONIC_CONDITION_IND = factor(COMPLEX_CHRONIC_CONDITION_IND, levels = c(0,1),
-                    labels = c("None", "Chronic/Complex"))) |>
-  mutate(ACUITY = factor(ACUITY, levels = c(1,2,3,4,5),
-                         labels = c(1,2,3,4,5)))
+  select(REVISIT_72_HR, READMIT_72_HR, Arrival, SEX, eth_cat, LANGIND, PAYOR_GROUP, PCP_VISIT_72_HR, age_cat, SVI_CATEGORY, ACUITY,COMPLEX_CHRONIC_CONDITION_IND, ED_DISPOSITION, Arrival, CAMPUS) |>
+  drop_na()
 
 sigFactors <- data.frame(variable = character(), p_value = numeric())
 
@@ -454,12 +486,12 @@ print(sigFactors)
 ```
 
 ```{r}
-m1 <- glm(REVISIT_72_HR ~ Arrival + SEX + eth_cat + LANGIND + PAYOR_GROUP + ACUITY+ COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS, data = data.fit,family = binomial())
+m1 <- glm(REVISIT_72_HR ~ Arrival + SEX + + age_cat + eth_cat + LANGIND + PAYOR_GROUP + ACUITY+ COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS + PCP_VISIT_72_HR, data = data.fit,family = binomial())
 ```
 
 ```{r}
 t3 <- tbl_regression(m1, exponentiate = TRUE) %>%
-  bold_p(t = 0.10) %>%
+  bold_p(t = 0.05) %>%
   bold_labels() %>%
   italicize_levels()
 t3
