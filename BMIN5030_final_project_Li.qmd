@@ -46,23 +46,33 @@ library(sf)
 library(tigris)
 library(leaflet)
 options(tigris_use_cache = TRUE)
-library(animation)
-
+library(gifski)
 
 display.brewer.all()
 ```
 
 #### Data source
 
-| Datasets | Description                                                                                                                                                                                                                                            | Report frequency | Source                                                      |
-|-------------|-----------------------------------|-------------|-------------|
-| FluView  | Virologic surveillance from approximately 300 clinical laboratories throughout all 50 states in the U.S. World Health Organization (WHO) Collaborating Laboratories System and the National Respiratory and Enteric Virus Surveillance System (NREVSS) | Weekly           | <https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html> |
-| GISAID   |                                                                                                                                                                                                                                                        |                  |                                                             |
-|          |                                                                                                                                                                                                                                                        |                  |                                                             |
+| Datasets                  | Time range               | Source                                                               |
+|----------------|--------------------------|----------------|
+| Influenza surveillance    | 2010-present             | [FluView](https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html) |
+| Influenza sequencing data | 2010-10-01 to 2019-10-01 | [GISAID](https://gisaid.org)                                         |
+
+*Influenza surveillance*
+
+We obtained influenza surveillance data from the CDC Weekly U.S. Influenza Surveillance Report. Viral surveillance from approximately 300 clinical laboratories in the U.S. World Health Organization (WHO) Collaborating Laboratories System and the National Respiratory and Enteric Virus Surveillance System (NREVSS) is reported weekly and data can be accessed through FluView Interactive.
+
+For this project, I downloaded data from all 50 states starting from the 2010-11 season. Data from clinical laboratories include the weekly total number of specimens tested, the number of positive influenza tests, and the percent positive by influenza type.
+
+*GISAID*
+
+GISAID, the Global Initiative on Sharing All Influenza Data, is a global database that provides access to genomic data of influenza viruses and other pathogens including coronaviruses and poxvirus. Add more here!
+
+On GISAID, I searched for human influenza A and influenza B viruses collected in the United States from October 2010 to October 2019. For the selection criteria, I only wanted entry that has a full hemagglutinin and neuraminidase. I downloaded the virus metadata.
 
 #### Download and clean data
 
-First, we will download the weekly U.S. Influenza Surveillance Report. Data collection from both the U.S. WhO Collaborating Laboratories System and NREVSS began during the 1997-98 season. The total number of respiratory specimens tested and %positive rate for influenza are reported weekly.
+First, we will download the weekly U.S. Influenza Surveillance Report. Data collection from both the U.S. WHO Collaborating Laboratories System and NREVSS began during the 1997-98 season. The total number of respiratory specimens tested and %positive rate for influenza are reported weekly.
 
 ```{r}
 #| label: load_clinical_labs_surveillance data
@@ -120,18 +130,94 @@ clinical_labs <- inner_join(states, clinical_labs, by = "state")
 
 ```
 
+Finally, I am going to download influenza sequencing data from GISAID.
+
+```{r}
+#| label: GISAID_data
+
+gisaid_a <- read_csv("gisaid_epiflu_isolates_fluA.csv")
+gisaid_b <- read_csv("gisaid_epiflu_isolates_fluB.csv")
+gisaid <- bind_rows(gisaid_a, gisaid_b)
+
+gisaid <- gisaid |>
+            dplyr::select(c("Isolate_Id", "Isolate_Name", "Subtype", "Clade", "Collection_Date"))
+
+```
+
 ### Results
 
 #### Exploratory data analysis
 
-I will start with some exploratory data analysis by looking at the surveillance data in the 2017-18 flu season.
+I will start with some exploratory data analysis by looking at the CDC surveillance data in the 2017-18 flu season.
 
 ```{r}
-#| label: 2017_season_percent_positive
+#| label: drawing_map
 
 # Filter data from the 2017-18 season 
 season2017 <- clinical_labs |>
   filter(season == "2017")
+
+# Set up theme for graphing maps 
+my_theme <- function() {
+  theme_minimal() +                                  
+  theme(axis.line = element_blank(),                 
+        axis.text = element_blank(),                 
+        axis.title = element_blank(),
+        panel.grid = element_line(color = "white"),  
+        legend.key.size = unit(0.4, "cm"),          
+        legend.text = element_text(size = 8),       
+        legend.title = element_text(size = 10),
+        plot.title = element_text(size = 12))      
+}
+
+myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+
+# Function to create a single map for a given week
+create_weekly_map <- function(week_data) {
+  weekly_map <- week_data |> 
+    st_simplify() |>
+    ggplot() +
+    geom_sf(aes(fill = percent_positive)) + 
+    my_theme() +
+    labs(title = paste("Week", unique(week_data$week))) +
+    scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
+                         limit = range(0, 70))
+  #return(weekly_map)
+}
+
+# Create a list to store individual plots
+season2017_map_list <- list()
+
+# Create plots for each week
+unique_week <- unique(season2017$week)
+
+for (i in unique_week) {
+  week_data <- season2017 |> 
+    filter(week == i) |>
+    shift_geometry()
+  
+  weekly_map <- create_weekly_map(week_data)
+  
+  season2017_map_list[[length(season2017_map_list) + 1]] <- weekly_map
+}
+
+```
+
+```{r, animation.hook='gifski'}
+#| label: percent_positive_map
+
+# Create animation using gifski()
+for (i in seq_along(season2017_map_list)) {
+  print(season2017_map_list[[i]])
+}
+
+```
+
+Next let's take a closer look of the CDC surveillance data by state.
+
+```{r}
+#| label: 2017_season_percent_positive
+
 
 # Percent positive cases in 2017-18 season 
 season2017 |> 
@@ -148,8 +234,8 @@ season2017 |>
               panel.border = element_rect(color = "black", fill = NA))
 
 ```
-It is clear that influenza activity varied greatly across states in the 2017-18 season. States like California and Nevada had pretty early influenza detection whereas some states did not experience peak flu activity until later. There is also missing data for some of the states. 
 
+It is clear that influenza activity varied greatly across states in the 2017-18 season. States like California and Nevada had pretty early influenza detection whereas some states did not experience peak flu activity until later. There is also missing data for some of the states.
 
 The U.S. Census Bureau has grouped the 50 states and the District of Columbia into nine divisions based on geographic proximity. I will also look at the surveillance data within each division.
 
@@ -188,7 +274,6 @@ print(season2017_plot_list)
 #grid.arrange(grobs = season2017_plot_list, ncol = 3) 
 ```
 
-
 ```{r}
 #| label: 2017_season_percent_positive_pacific
 
@@ -223,89 +308,11 @@ season2017 |>
 
 ```
 
-
-```{r}
-#| label: percent_positive_map
-
-#Map of 48 states
-# states |>
-#   filter(!STATEFP %in% c("02", "15")) |> #remove Alaska and Hawaii
-#   ggplot() +
-#   geom_sf() +
-#   theme_void()
-
-continuous_states_clinical_labs <- clinical_labs |>
-  filter(!STATEFP %in% c("02", "15"))  #remove Alaska and Hawaii
-
-my_theme <- function() {
-  theme_minimal() +                                  
-  theme(axis.line = element_blank(),                 
-        axis.text = element_blank(),                 
-        axis.title = element_blank(),
-        panel.grid = element_line(color = "white"),  
-        legend.key.size = unit(0.4, "cm"),          
-        legend.text = element_text(size = 8),       
-        legend.title = element_text(size = 10),
-        plot.title = element_text(size = 18))      
-}
-
-myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
-
-continuous_season2017 <- continuous_states_clinical_labs |>
-  filter(season == "2017")
-
-
-# Graphing map of week 40   
-st_simplify(continuous_season2017) |> 
-  filter(week == "40") |>
-  ggplot() +
-  geom_sf(aes(fill = percent_positive), dTolerance = 1e3) + 
-  my_theme() +
-  scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
-                             limit = range(0, 70))
-
-# Get unique divisions
-unique_week <- unique(continuous_season2017$week)
-
-# Create a list to store individual plots
-season2017_map_list <- list()
-
-# Create plots for each division
-for (i in unique_week) {
-        
-  week_data <- continuous_season2017 |> 
-          filter(week == i)
- 
- weekly_map <- st_simplify(week_data) |> 
-  ggplot() +
-  geom_sf(aes(fill = percent_positive), dTolerance = 1e3) + 
-  my_theme() +
-  scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
-                             limit = range(0, 70))
-  season2017_map_list[[length(season2017_map_list) + 1]] <- weekly_map
-
-}
-
-#print(season2017_map_list)
-
-# Set up animation options
-ani.options(interval = 1, outdir = getwd(), ani.width = 800, ani.height = 600)
-
-# Create animation
-saveGIF({
-  for (i in seq_along(season2017_map_list)) {
-    print(season2017_map_list[[i]])
-  }
-}, movie.name = "2017_positive.gif", interval = 0.5, ani.width = 800, ani.height = 600)
-
-knitr::include_graphics("2017_positive.gif")
-
-
-```
-
 ```{r}
 #| label: ili_case
 #| eval: FALSE
+#| include: FALSE
+
 # Load CDC data
 state_ili_case <- read_csv("StateDatabySeason.csv")
 
@@ -353,6 +360,7 @@ state_ili_case |> filter(season == "2018-19") |>
 ```{r}
 #| label: PA_ILI_activity
 #| eval: FALSE
+#| include: FALSE
 
 pa_ili_case <- state_ili_case |>
         filter(state == "Pennsylvania")
@@ -398,6 +406,55 @@ pa_ili_case |> filter(season == "2018-19") |>
         labs(x = "Week", y = "ILI Activity Level", title = "2018-19 ILI Activity") +
         theme_classic()
 
+```
+
+```{r}
+#| label: gganimate
+#| eval: FALSE
+#| include: FALSE
+
+#This code chunks incldude codes for drawing map that I might need later 
+
+library(gganimate)
+library(transformr)
+library(animation)
+
+
+# Graphing map of week 40
+st_simplify(season2017) |>
+  filter(week == "40") |>
+  shift_geometry() |>
+  ggplot() +
+  geom_sf(aes(fill = percent_positive), colour = "white", lwd = 0.02) +  # Shift and rescale Alaska, Hawaii, and Puerto Rico
+  my_theme() +
+  scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
+                             limit = range(0, 70))
+
+# test <- season2017 |>
+#   shift_geometry() |>
+#   mutate(ordered_week = as.numeric(ordered_week)) |>
+#   ggplot() +
+#   geom_sf(aes(fill = percent_positive), colour = "white", lwd = 0.02) + 
+#   my_theme() +
+#   transition_time(ordered_week) +
+#   scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
+#                              limit = range(0, 70))
+# 
+# animate(test)
+
+# This works but the formatting is off 
+
+# Set up animation options
+ani.options(interval = 1, outdir = getwd(), ani.width = 800, ani.height = 600, ani.res = 300)
+
+# Create animation
+saveGIF({
+  for (i in seq_along(season2017_map_list)) {
+    print(season2017_map_list[[i]])
+  }
+}, movie.name = "2017_positive.gif", interval = 0.5)
+
+knitr::include_graphics("2017_positive.gif")
 ```
 
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
