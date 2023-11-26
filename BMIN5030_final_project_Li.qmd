@@ -33,6 +33,7 @@ The CDC routinely publishes weekly reports of influenza surveillance data provid
 
 library(tidyverse)
 library(dplyr)
+library(lubridate)
 library(cowplot)
 library(RColorBrewer)
 library(ggsci)
@@ -54,7 +55,7 @@ display.brewer.all()
 #### Data source
 
 | Datasets                  | Time range               | Source                                                               |
-|----------------|--------------------------|----------------|
+|--------------------|--------------------------------|--------------------|
 | Influenza surveillance    | 2010-present             | [FluView](https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html) |
 | Influenza sequencing data | 2010-10-01 to 2019-10-01 | [GISAID](https://gisaid.org)                                         |
 
@@ -68,7 +69,7 @@ For this project, I downloaded data from all 50 states starting from the 2010-11
 
 GISAID, the Global Initiative on Sharing All Influenza Data, is a global database that provides access to genomic data of influenza viruses and other pathogens including coronaviruses and poxvirus. Add more here!
 
-On GISAID, I searched for human influenza A and influenza B viruses collected in the United States from October 2010 to October 2019. For the selection criteria, I only wanted entry that has a full hemagglutinin and neuraminidase. I downloaded the virus metadata.
+Within the EpiFlu database in GISAID, I searched for human influenza A and influenza B viruse isolates collected in the United States from October 2010 to October 2019. I further filtered isolate selection by requiring the isolate to contain complete sequences of both the hemagglutinin and neuraminidase segment and not been passaged in cells or eggs. I downloaded the virus metadata that contains information including isolate name, subtype, and clade.
 
 #### Download and clean data
 
@@ -113,7 +114,8 @@ Since I will be drawing maps, I will retrieve shapefile for all states using tig
 states <- states()
 
 # Obtain state information on names and division using the package datasets
-states_division <- data.frame(NAME = datasets::state.name, division = datasets::state.division)
+states_division <- data.frame(NAME = datasets::state.name, 
+                              division = datasets::state.division)
 
 # Merge shapefile with state information 
 states <- inner_join(states, states_division, by = "NAME") |>
@@ -135,13 +137,58 @@ Finally, I am going to download influenza sequencing data from GISAID.
 ```{r}
 #| label: GISAID_data
 
+# Load data for influenza A and influenza B viruses
 gisaid_a <- read_csv("gisaid_epiflu_isolates_fluA.csv")
 gisaid_b <- read_csv("gisaid_epiflu_isolates_fluB.csv")
+
+# Combine data for influenza A and influenza B viruses
 gisaid <- bind_rows(gisaid_a, gisaid_b)
 
+# Select relevant variables and rename variables
 gisaid <- gisaid |>
-            dplyr::select(c("Isolate_Id", "Isolate_Name", "Subtype", "Clade", "Collection_Date"))
+            dplyr::select(c("Isolate_Id", "Isolate_Name", 
+                            "Subtype", "Clade", "Collection_Date")) |>
+            rename(id = Isolate_Id, 
+                   name = Isolate_Name,
+                   subtype = Subtype,
+                   clade = Clade,
+                   collection_date = Collection_Date) 
 
+# Convert 'collection_date' to Date format
+gisaid$collection_date <- as.Date(gisaid$collection_date)
+
+# Create a new column 'week' indicating the week of the year
+gisaid$week <- week(gisaid$collection_date)
+
+# Create a new column 'season' indicating the flu season from which the isolate was sequenced
+gisaid$season <- ifelse(gisaid$week >= 40, year(gisaid$collection_date), 
+                        year(gisaid$collection_date) - 1)
+```
+
+Next we will clean up the GISAID dataset.
+
+```{r}
+#| label: GISAID_data_cleanup
+
+# Group by 'subtype' and count the occurrences of each subtype
+gisaid |>
+  group_by(subtype) |>
+  count()
+
+# Remove rows where 'subtype' is "A", "A / H1N2", or "A / H3" (incomplete sequencing)
+gisaid <- gisaid |> 
+            filter(!(subtype %in% c("A", "A / H1N2", "A / H3")))
+
+# Group by 'subtype' and summarize the count of rows with NAs in 'clade'
+gisaid |>
+  group_by(subtype) |>
+  summarize(na_count = sum(is.na(clade)))
+
+# Remove rows where 'clade' or 'collection_date' is NA or if clade is unassigned
+gisaid <- gisaid |>
+            filter(!is.na(clade) & !is.na(collection_date)) |>
+            filter(!(clade %in% c("unassigned")))
+  
 ```
 
 ### Results
@@ -155,7 +202,7 @@ I will start with some exploratory data analysis by looking at the CDC surveilla
 
 # Filter data from the 2017-18 season 
 season2017 <- clinical_labs |>
-  filter(season == "2017")
+                filter(season == "2017")
 
 # Set up theme for graphing maps 
 my_theme <- function() {
@@ -170,10 +217,12 @@ my_theme <- function() {
         plot.title = element_text(size = 12))      
 }
 
+# Create a color palette function
 myPalette <- colorRampPalette(brewer.pal(9, "YlOrRd"))
 
 # Function to create a single map for a given week
 create_weekly_map <- function(week_data) {
+  
   weekly_map <- week_data |> 
     st_simplify() |>
     ggplot() +
@@ -192,10 +241,12 @@ season2017_map_list <- list()
 unique_week <- unique(season2017$week)
 
 for (i in unique_week) {
+  # Filter data for the specific week and shift geometry
   week_data <- season2017 |> 
     filter(week == i) |>
     shift_geometry()
   
+  # Create a weekly map and add it to the list
   weekly_map <- create_weekly_map(week_data)
   
   season2017_map_list[[length(season2017_map_list) + 1]] <- weekly_map
@@ -305,6 +356,10 @@ season2017 |>
         theme_classic() +
         theme(legend.position = "none")
 
+
+```
+
+```{r}
 
 ```
 
@@ -455,7 +510,17 @@ saveGIF({
 }, movie.name = "2017_positive.gif", interval = 0.5)
 
 knitr::include_graphics("2017_positive.gif")
+
+
+# Create the gif using gifski()
+gifski::save_gif({
+  for (i in seq_along(season2017_map_list)) {
+    print(season2017_map_list[[i]])
+  }
+}, gif_file = "2017_positive_gifski.gif", gif_options = gif_options)
 ```
+
+
 
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
