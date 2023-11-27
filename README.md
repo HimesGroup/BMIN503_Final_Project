@@ -1,19 +1,10 @@
-# BMIN503/EPID600 Final Project
+## BMIN503/EPID600 Final Project [Balcarcel]
 
-This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+# Predicting Pediatric ARDS Subphenotypes using Machine Learning
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+# Overview
+This project focuses on developing and validating machine learning models to predict biomarker-based Pediatric Acute Respiratory Distress Syndrome (ARDS) Subphenotypes using clinical data available in electronic health records (EHR). The goal is to evaluate the performance of various supervised machine learning techniques, including k-nearest neighbors, Random Forest, neural networks, and XGBoost, and compare their effectiveness in accurately predicting ARDS subphenotypes.
 
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+# Acknowledgements
+Special thanks to Naidr Yehya, Blanca Himes, and Alicia Alcamo for their invaluable assistance and support throughout this project.
 
