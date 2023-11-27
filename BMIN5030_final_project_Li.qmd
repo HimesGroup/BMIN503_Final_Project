@@ -34,12 +34,14 @@ The CDC routinely publishes weekly reports of influenza surveillance data provid
 library(tidyverse)
 library(dplyr)
 library(lubridate)
+library(gtsummary)
 library(cowplot)
 library(RColorBrewer)
 library(ggsci)
 library(wesanderson)
 library(grid)
 library(gridExtra)
+
 
 # Packages needed for making maps
 library(datasets)
@@ -163,6 +165,17 @@ gisaid$week <- week(gisaid$collection_date)
 # Create a new column 'season' indicating the flu season from which the isolate was sequenced
 gisaid$season <- ifelse(gisaid$week >= 40, year(gisaid$collection_date), 
                         year(gisaid$collection_date) - 1)
+
+# Create a new column 'ordered_week' for graphing and convert 'ordered_week' to numeric type
+gisaid <- gisaid |>
+            mutate(ordered_week = (week - 40) %% 52 + 1) |>
+            mutate(ordered_week = as.numeric(ordered_week))
+# Create a new column 'state' to indicate where the virus isolate came from
+gisaid <- gisaid |>
+  mutate(state = sapply(strsplit(as.character(name), "/"), `[`, 2))
+
+head(gisaid)
+
 ```
 
 Next we will clean up the GISAID dataset.
@@ -170,25 +183,34 @@ Next we will clean up the GISAID dataset.
 ```{r}
 #| label: GISAID_data_cleanup
 
-# Group by 'subtype' and count the occurrences of each subtype
-gisaid |>
-  group_by(subtype) |>
-  count()
-
 # Remove rows where 'subtype' is "A", "A / H1N2", or "A / H3" (incomplete sequencing)
 gisaid <- gisaid |> 
             filter(!(subtype %in% c("A", "A / H1N2", "A / H3")))
-
-# Group by 'subtype' and summarize the count of rows with NAs in 'clade'
-gisaid |>
-  group_by(subtype) |>
-  summarize(na_count = sum(is.na(clade)))
 
 # Remove rows where 'clade' or 'collection_date' is NA or if clade is unassigned
 gisaid <- gisaid |>
             filter(!is.na(clade) & !is.na(collection_date)) |>
             filter(!(clade %in% c("unassigned")))
-  
+
+# Define a vector containing the names of all 50 states
+states_list <- c(
+  "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
+  "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho",
+  "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine",
+  "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi",
+  "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey",
+  "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma",
+  "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota",
+  "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia",
+  "Wisconsin", "Wyoming"
+)
+
+# Keep only rows where the "state" column matches any state in the 50 states (exclude entries like New Yock City or District of Columbia)
+gisaid <- gisaid |>
+            filter(state %in% states_list)
+
+head(gisaid)
+
 ```
 
 ### Results
@@ -231,7 +253,6 @@ create_weekly_map <- function(week_data) {
     labs(title = paste("Week", unique(week_data$week))) +
     scale_fill_gradientn(name = "% Positive", colours = myPalette(100),
                          limit = range(0, 70))
-  #return(weekly_map)
 }
 
 # Create a list to store individual plots
@@ -264,19 +285,20 @@ for (i in seq_along(season2017_map_list)) {
 
 ```
 
+Overall, we can see that the timing and duration of flu seasons varied in different parts of the country. In some states, flu season began as early as October and November while some states had a later start but continued to have flu circulation until May. We can also see some of the potential issues we might run into using the CDC FluView data. For example, surveillance data is incomplete for some of the states or even completely absent in several states, and this problem is consistent across flu seasons. This is both an artifact of how I selected the surveillance data and the overall surveillance system in the United States.
+
 Next let's take a closer look of the CDC surveillance data by state.
 
 ```{r}
 #| label: 2017_season_percent_positive
-
 
 # Percent positive cases in 2017-18 season 
 season2017 |> 
   ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
         facet_wrap(~ state, nrow = 5, ncol = 10) +
         geom_bar(stat = "identity") +
-        scale_fill_brewer(palette = "RdBu") +
-        scale_x_discrete(breaks = c(1, 14, 27, 40), labels = c(40, 1, 14, 27)) +
+        scale_fill_brewer(palette = "GnBu") +
+        scale_x_discrete(breaks = c(1, 14, 27, 40, 52), labels = c(40, 1, 14, 27, 39)) +
         scale_y_continuous() +
         labs(x = "Week", y = "Percent Positive", title = "2017-18 Influenza Positive Tests Reported to CDC") +
         theme_classic() +
@@ -286,9 +308,9 @@ season2017 |>
 
 ```
 
-It is clear that influenza activity varied greatly across states in the 2017-18 season. States like California and Nevada had pretty early influenza detection whereas some states did not experience peak flu activity until later. There is also missing data for some of the states.
+It is clear that influenza activity varied greatly across states in the 2017-18 season. States like Nevada had pretty early influenza detection whereas some states did not experience peak flu activity until later. Flu activity remained elevated in the spring in some regions such as the East North Central states. In addition, some states have longer flu season than others and some experienced several waves of influenza activity.
 
-The U.S. Census Bureau has grouped the 50 states and the District of Columbia into nine divisions based on geographic proximity. I will also look at the surveillance data within each division.
+The U.S. Census Bureau has grouped the 50 states and the District of Columbia into nine divisions based on geographic proximity. I will also look at the surveillance data within each division to see if states in close proximity might exhibit similar flu activity patterns.
 
 ```{r}
 #| label: 2017_season_percent_positive_division
@@ -307,59 +329,216 @@ for (i in unique_divisions) {
   
   p <- ggplot(division_data, aes(x = ordered_week, y = percent_positive, fill = state)) +
     geom_bar(stat = "identity") +
-    facet_wrap(~ state, scales = "free_y") +
+    facet_wrap(~ state, ncol = 4, nrow = 2, scales = "free") +
     scale_fill_manual(values = wes_palette("Zissou1", n = 8, type = "continuous")) +
-    scale_x_discrete(breaks = c(1, 14, 27, 40), labels = c(40, 1, 14, 27)) +
+    scale_x_discrete(breaks = c(1, 14, 27, 40, 52), labels = c(40, 1, 14, 27, 39)) +
     scale_y_continuous() +
     ylim(0, 66) +
     labs(x = "Week", y = "Percent Positive", title = i) +
     theme_classic() +
     theme(legend.position = "none",
-              strip.background = element_blank(),
-              panel.border = element_rect(color = "black", fill = NA))
+          strip.background = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA),
+          aspect.ratio = 1)
  season2017_plot_list[[length(season2017_plot_list) + 1]] <- p
 }
 
 print(season2017_plot_list)
 
-#grid.arrange(grobs = season2017_plot_list, ncol = 3) 
 ```
+
+In some divisions, flu activity was very similar between states. For example, New York and Pennsylvania had similar pattern of flu activities, peaking around week 5. East North Central states also had relatively homogenous flu activity.
+
+In contrast, states in the Mountain/West region had pretty distinct patterns. Nevada was one of the first states to start the 2017-18 flu season but flu activity did not start until later in the year in Utah. Interestingly, Idaho experienced two waves of influenza activity.
 
 ```{r}
 #| label: 2017_season_percent_positive_pacific
 
-# Percent positive cases in 2017-18 season in Pacific
+# Percent positive cases in 2017-18 season in Mountain
 season2017 |>
-        filter(division == "Pacific") |>
+        filter(division == "Mountain") |>
         ggplot(aes(x = ordered_week, y = percent_positive, fill = state)) +
         geom_bar(stat = "identity") +
         facet_wrap(~ state) +
-        #scale_fill_manual(values = wes_palette("Zissou1", n = 5, type = "continuous")) +
-        scale_fill_manual(values = c('#855C75', '#D9AF6B', '#AF6458', '#736F4C', '#526A83', '#625377', '#68855C')) +
+        scale_fill_manual(values = c('#855C75', '#D9AF6B', '#AF6458', '#736F4C', '#526A83', '#625377', '#68855C', 'deepskyblue4')) +
         scale_x_discrete(breaks = c(1, 14, 27, 40, 52), labels = c(40, 1, 14, 27, 39)) +
         scale_y_continuous() +
-        labs(x = "Week", y = "Percent Positive", title = "2017-18 Pacific Influenza Positive Tests") +
+        labs(x = "Week", y = "Percent Positive", title = "2017-18 Mountain Influenza Activity") +
         theme_classic() +
         theme(legend.position = "none",
               strip.background = element_blank(),
               panel.border = element_rect(color = "black", fill = NA))
 
-# Percent positive cases in 2017-18 season in California
+# Percent positive cases in 2017-18 season in Idaho
 season2017 |>
-        filter(state == "California") |>
+        filter(state == "Idaho") |>
         ggplot(aes(x = ordered_week, y = percent_positive, fill = division)) +
         geom_bar(stat = "identity") +
-        scale_fill_manual(values = "#68855C") +
+        scale_fill_manual(values = "#AF6458") +
         scale_x_discrete(breaks = 1:52, labels = c(40:52, 1:39)) +
         scale_y_continuous() +
-        labs(x = "Week", y = "Percent Positive", title = "2017-18 California Influenza Positive Tests") +
+        labs(x = "Week", y = "Percent Positive", 
+             title = "2017-18 Idaho Influenza Positive Tests") +
         theme_classic() +
         theme(legend.position = "none")
+
+```
+
+Now let's take a look at the influenza sequencing data retrieved from GISAID.
+
+```{r}
+#| label: gisaid_summary
+
+# Group by 'subtype' and count the occurrences of each subtype
+gisaid |>
+  group_by(subtype) |>
+  count()
+
+# Create a table summary by 'state'
+gisaid |> 
+  select(-c(id, name, collection_date, week, clade, ordered_week, season)) |> 
+  tbl_summary(by = state)
+
+# Create a table summary by 'season'
+gisaid |> 
+  select(-c(id, name, collection_date, week, clade, ordered_week, state)) |> 
+  tbl_summary(by = season)
 
 
 ```
 
+From the summaries, we can see that we have more influenza A sequences than influenza B sequences in the United States between 2010 to 2019, which is consistent with influenza circulation pattern since influenza A is more common overall. Similar to the issue we encountered with the surveillance data, we will also have varied numbers of isolate sequences from state to state depending on the number of laboratories and resources allocated for influenza genome sequencing. My selection criteria might have also introduced bias in sampling. Finally, if we break it down by seasons, we can see that we have more sequencing data from 2015 to 2018, so I will focus my analysis on those flu seasons.
+
+
+#### Duration of flu season and clade distribution
+
+I want to start by determining which states had the longest/shortest flu season for every season between 2015 and 2018. To calculate this, I am counting the number of weeks where more than 10% of specimens tested are positive for influenza virus for each state.
+
 ```{r}
+# | label: flu_season_duration
+
+# Define the season of interest
+seasons <- 2015:2018
+
+# Extract relevant columns from clinical_labs and convert to dataframe
+clinical_labs_1 <- clinical_labs |>
+                      select(week, state, year, percent_positive, ordered_week)
+                      
+clinical_labs_1 <- as.data.frame(clinical_labs_1)
+
+# Initialize an empty data frame to store flu season duration results
+flu_duration <- data.frame()  
+
+# Iterate over each season to find states with maximum and minimum flu season durations
+for (season in seasons) {
+  
+  # Filter and summarize data for each state in the current season
+  season_data <- clinical_labs_1 |>
+    filter(!is.na(percent_positive)) |>
+    group_by(state) |>
+    summarize(flu_season_duration = sum(percent_positive > 10, na.rm = TRUE))
+  
+  # Find the state with the maximum flu season duration
+  max_duration_state <- season_data |>
+    filter(flu_season_duration == max(flu_season_duration, na.rm = TRUE)) |>
+    select(state)
+  
+  # Find the state with the minimum flu season duration
+  min_duration_state <- season_data |>
+    filter(flu_season_duration == min(flu_season_duration, na.rm = TRUE)) |>
+    select(state)
+
+  # Append results to the flu_duration data frame
+  flu_duration <- bind_rows(flu_duration, 
+                            data.frame(Season = season, 
+                                       Max_State = max_duration_state$state, 
+                                       Min_State = min_duration_state$state))
+}
+
+flu_duration
+```
+
+However, due to unequal sampling between states in each season, I want to make sure that the number of missing values is not biasing our calculation above in finding the state with the longest/shortest duration of flu activity. Therefore, I am also calculating the ratio of weeks with percent_positive > 10 to the total number of weeks with non-missing values in order to account for the proportion of available data rather than just the count of weeks meeting the condition. 
+
+```{r}
+# | label: flu_season_duration_ratio
+
+# Initialize an empty data frame to store flu season duration ratio results
+flu_duration_ratio <- data.frame()
+
+# Iterate over each season to find states with maximum and minimum flu season duration ratios
+for (season in seasons) {
+  
+  # Filter and summarize data for each state in the current season
+  season_data <- clinical_labs_1 %>%
+    filter(season == season) %>%
+    group_by(state) %>%
+    summarize(
+      total_weeks = sum(!is.na(percent_positive)),
+      flu_season_duration = sum(percent_positive > 10, na.rm = TRUE)
+    ) %>%
+    mutate(ratio = flu_season_duration / total_weeks)
+  
+  # Find the state with the maximum flu season duration ratio
+  max_ratio_state <- season_data %>%
+    filter(ratio == max(ratio, na.rm = TRUE)) %>%
+    select(state)
+  
+  # Find the state with the minimum flu season duration ratio
+  min_ratio_state <- season_data %>%
+    filter(ratio == min(ratio, na.rm = TRUE)) %>%
+    select(state)
+  
+  flu_duration_ratio <- bind_rows(flu_duration_ratio, 
+                                  data.frame(Season = season, 
+                                             Max_State = max_ratio_state$state, 
+                                             Min_State = min_ratio_state$state))
+}
+
+flu_duration_ratio
+```
+
+I am still working on the code below.
+
+```{r}
+#| label: stacked_area_chart
+
+# Function to create a single stacked area chart for a given season
+create_stacked_area_chart <- function(season_data) {
+  
+  stacked_area_chart <- season_data |> 
+                          ggplot(aes(x = ordered_week, y = ..count.., fill = clade)) +
+                          geom_area(stat = "count", position = "fill", 
+                                    alpha = .8) +
+                          scale_x_continuous(breaks = 1:52, 
+                                             labels = c(40:52, 1:39)) +
+                          labs(title = paste(unique(season_data$season), "season"),
+                          x = "Week", y = "Frequency") +
+                          scale_fill_brewer(palette = "Set3") +  # Customize color palette
+                          theme_classic()
+}
+
+# Create a list to store individual plots
+H1_stacked_area_list <- list()
+
+# Create plots for each week
+stacked_season <- c(2015, 2016, 2017, 2018)
+
+for (i in stacked_season) {
+  # Filter data for the specific season
+  season_data <- gisaid |> 
+    filter(subtype == "A / H3N2") |> 
+    filter(state == "California") |>
+    filter(season == i)
+  
+  # Create a stacked area chart for each season and add it to the list
+  season_stacked_area_chart <- create_stacked_area_chart(season_data)
+  
+  H1_stacked_area_list[[length(H1_stacked_area_list) + 1]] <- 
+    season_stacked_area_chart
+}
+
+plot_grid(plotlist = H1_stacked_area_list, ncol = 1)
 
 ```
 
@@ -385,7 +564,7 @@ state_ili_case <- state_ili_case |>
 # ILI activity in 2018-19 
 state_ili_case |> filter(season == "2018-19") |>
         ggplot(aes(x = ordered_week, y = level, color = state)) +
-        facet_wrap(~ division) +
+        facet_wrap(~ state) +
         geom_point() +
         geom_line() +
         # scale_color_brewer(palette = "Set1") +
@@ -400,9 +579,8 @@ color <- brewer.pal(11, "Spectral")
 color <- colorRampPalette(color)(50)
 
 state_ili_case |> filter(season == "2018-19") |> 
-        # group_by(division) |>
         ggplot(aes(x = ordered_week, y = level, color = state)) +
-        facet_wrap(. ~ division) +
+        facet_wrap(~ state) +
         geom_point() +
         geom_line() +
         scale_color_manual(values = color) +
@@ -502,25 +680,49 @@ st_simplify(season2017) |>
 # Set up animation options
 ani.options(interval = 1, outdir = getwd(), ani.width = 800, ani.height = 600, ani.res = 300)
 
-# Create animation
-saveGIF({
-  for (i in seq_along(season2017_map_list)) {
+# Create animation --> doesn't work well
+# saveGIF({
+#   for (i in seq_along(season2017_map_list)) {
+#     print(season2017_map_list[[i]])
+#   }
+# }, movie.name = "2017_positive.gif", interval = 0.5)
+# 
+# knitr::include_graphics("2017_positive.gif")
+
+
+# Create the gif using gifski() --> format looks weird
+# gifski::save_gif({
+#   for (i in seq_along(season2017_map_list)) {
+#     print(season2017_map_list[[i]])
+#   }
+# }, gif_file = "2017_positive_gifski.gif", width = 800, height = 600, res = 300, delay = 0.5)
+
+# Use this code to save GIFs 
+
+# Create a function that prints existing pngs
+makeplot <- function(){
+  for (i in seq_along(season2017_map_list)){
     print(season2017_map_list[[i]])
   }
-}, movie.name = "2017_positive.gif", interval = 0.5)
+}
+# Set path and file name
+gif_file <- "~/downloads/2017_positive_gifski.gif"
 
-knitr::include_graphics("2017_positive.gif")
+# Save gif (don't change resolution)
+save_gif(makeplot(), gif_file, 1280, 720, res = 200, delay = 0.5)
 
+# save plot
+fig1 + theme(panel.spacing = unit(1, "lines"))
+ggsave("fig1.tiff", width = 22, height = 10, device = "tiff", dpi = 700)
 
-# Create the gif using gifski()
-gifski::save_gif({
-  for (i in seq_along(season2017_map_list)) {
-    print(season2017_map_list[[i]])
-  }
-}, gif_file = "2017_positive_gifski.gif", gif_options = gif_options)
+# save plots from a list
+for (i in 1:9) {
+  # Save each plot individually
+  plot_path <- paste("division", i, ".tiff", sep="")
+  ggsave(plot_path, season2017_plot_list[[i]], width = 22, height = 10, 
+         device = "tiff", dpi = 700)
+}
 ```
-
-
 
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
 
