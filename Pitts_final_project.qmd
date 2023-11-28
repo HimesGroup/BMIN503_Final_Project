@@ -52,6 +52,9 @@ install.packages("cowplot")
 install.packages("lubridate")
 install.packages("gtsummary")
 install.packages("dplyr")
+install.packages("paletteer")
+install.packages("ggthemes")
+install.packages("pROC")
 ```
 
 ### Load Packages
@@ -67,6 +70,9 @@ library(gtsummary)
 library(cowplot) 
 library(dplyr)
 library(gifski)
+library(paletteer)
+library(ggthemes)
+library(pROC)
 ```
 
 ### Read in & Clean the Data
@@ -76,6 +82,7 @@ library(gifski)
 data<- read.csv("./EDRevisits.csv")
 
 #Convert data types as needed
+data[data=='']<-NA
 data$ENCOUNTER_DATE <- mdy(data$ENCOUNTER_DATE)
 data$WAITTIME<- period_to_seconds(hms(data$WAITTIME))
 data$ARRIVALTIME<- lubridate::hms(data$ARRIVALTIME)
@@ -89,28 +96,33 @@ data<- data|>
 #### Additional Cleaning
 
 ```{r}
-#Race/Ethnicity Category Collapse
+#Race/Ethnicity Category Collapse & Factor
 data<- data|> 
   mutate (eth_cat = (case_when(
     str_detect(RACE_ETHNICITY, "White") ~ "White",
     str_detect(RACE_ETHNICITY, "Black") ~ "Black",
-    str_detect(RACE_ETHNICITY, "Asian") ~ "Asian",
+    str_detect(RACE_ETHNICITY, "Asian") ~ "Other",
     str_detect(RACE_ETHNICITY, "Latino") ~ "Hispanic/Latino",
-    str_detect(RACE_ETHNICITY, "Multi") ~ "Multi-Racial",
-    str_detect(RACE_ETHNICITY, "Other") ~ "Indigenous/Other",
-    str_detect(RACE_ETHNICITY, "Native") ~ "Indigenous/Other",
-    str_detect(RACE_ETHNICITY, "nknown") ~ "Unknown",
-    str_detect(RACE_ETHNICITY, "Refused") ~ "Unknown",
-    str_detect(RACE_ETHNICITY, "disclose") ~ "Unknown",
+    str_detect(RACE_ETHNICITY, "Multi") ~ "Other",
+    str_detect(RACE_ETHNICITY, "Other") ~ "Other",
+    str_detect(RACE_ETHNICITY, "Native") ~ "Other",
+    str_detect(RACE_ETHNICITY, "nknown") ~ "Other",
+    str_detect(RACE_ETHNICITY, "Refused") ~ "Other",
+    str_detect(RACE_ETHNICITY, "disclose") ~ "Other",
       )))|>
-  mutate (eth_cat = factor(eth_cat, 
-            levels = c("White", "Black", "Asian", "Hispanic/Latino", "Multi-Racial", "Indigenous/Other", "Unknown"),
-            labels = c("White", "Black", "Asian", "Hispanic/Latino", "Multi-Racial", "Indigenous/Other", "Unknown")))
+  mutate (eth_cat = factor(eth_cat, levels = c("White", "Black", "Hispanic/Latino", "Other"), labels = c("White", "Black", "Hispanic/Latino", "Other")))
 
-#Replace NA with "Unknown" for Insurance Group
-data<- data|>
-  mutate (PAYOR_GROUP = replace_na(PAYOR_GROUP, "Unknown"))|>
-  mutate (SVI_CATEGORY = replace_na(SVI_CATEGORY, "Unknown"))
+#Convert ED Volume to Categorical
+data<- data |>
+  mutate (volume = case_when(
+    CAMPUS == "Main" & DAILYVISITS <=244 ~ "Low",
+    CAMPUS == "Main" & DAILYVISITS <=277 ~ "Medium-Low",
+    CAMPUS == "Main" & DAILYVISITS <=307 ~ "Medium-High",
+    CAMPUS == "Main" & DAILYVISITS >307 ~ "High",
+    CAMPUS == "Community" & DAILYVISITS <=90 ~ "Low",
+    CAMPUS == "Community" & DAILYVISITS <=103 ~ "Medium-Low",
+    CAMPUS == "Community" & DAILYVISITS <=114 ~ "Medium-High",
+    CAMPUS == "Community" & DAILYVISITS >296 ~ "High"))
 
 #Collapse Arrival Times to 3 Categories
 data<- data |>
@@ -121,29 +133,33 @@ data<- data |>
     hour(ARRIVALTIME) < 7 ~ "Overnight"
   ))
 
-#Age to Categories
+#Age to Dichotomous
 data<- data |>
   mutate (age_cat = case_when(
-    AGE_AT_VISIT < 1 ~ "0",
-    AGE_AT_VISIT < 3 ~ "1 - 2",
-    AGE_AT_VISIT < 5 ~ "3 - 4",
-    AGE_AT_VISIT < 9 ~ "5 - 8",
-    AGE_AT_VISIT < 13 ~ "9 - 12",
-    AGE_AT_VISIT < 16 ~ "13 - 15",
-    AGE_AT_VISIT <= 18 ~ "16 - 18"
-  ))
+    AGE_AT_VISIT < 1 ~ "Infant",
+    AGE_AT_VISIT >=1 ~ "Child/Teen"))
+
+#ED Disposition to Dichotomous
+data<- data |>
+  mutate (ED_DISPOSITION = case_when(
+    str_detect(ED_DISPOSITION, "Discharge") ~ "Discharge",
+    str_detect(ED_DISPOSITION, "AMA") ~ "AMA/Eloped",
+    str_detect(ED_DISPOSITION, "Left Before Discharge (Eloped)") ~ "AMA/Eloped"))
+
+#Acuity to Dichotomous
+data<- data |>
+  mutate (esigp = case_when(
+    ACUITY >= 1 & ACUITY <= 3  ~ "Acute",
+    ACUITY >=4 & ACUITY <= 5 ~ "Non-Urgent"))
 
 #Factor
 data<- data |>
-  mutate(REVISIT_72_HR = factor(REVISIT_72_HR, levels = c(0, 1), 
-                           labels = c("No Revisit", "Revisit")))|>
-  mutate(LANGIND = factor(LANGIND, levels = c(1,2,0),
-                          labels = c("English",
-                      "Spanish",
-                      "Other")))|>
+  mutate(REVISIT_72_HR = factor(REVISIT_72_HR, levels = c(0,1), 
+                                labels = c("No Revisit", "Revisit")))|>
+  mutate(LANGIND = factor(LANGIND, levels = c(1,0),
+                          labels = c("English","Other")))|>
   mutate(PCP_VISIT_72_HR = factor(PCP_VISIT_72_HR, levels = c(0,1), 
-                            labels = c("No PCP Visit", 
-                              "PCP Visit"))) |>
+                            labels = c("No PCP Visit", "PCP Visit"))) |>
   mutate(READMIT_72_HR = factor(READMIT_72_HR, levels = c(0, 1),
                          labels = c("Re-discharged", "Admitted"))) |>
   mutate(SEX = factor(SEX, levels = c("M", "F"), 
@@ -151,11 +167,17 @@ data<- data |>
   mutate(COMPLEX_CHRONIC_CONDITION_IND = factor(COMPLEX_CHRONIC_CONDITION_IND,
                       levels = c(0,1),
                       labels = c("None", "Chronic/Complex"))) |>
-  mutate(ACUITY = factor(ACUITY, levels = c(1,2,3,4,5),
-                         labels = c(1,2,3,4,5))) |>
-  mutate(ED_DISPOSITION = factor(ED_DISPOSITION, levels = c("Discharge", "AMA", "Left Before Discharge (Eloped)"),
-              labels = c("Discharge", "AMA", "Left Before Discharge (Eloped)")))|>
-  mutate(CAMPUS = factor(CAMPUS, levels = c("Main","Community"),                                            labels = c("Main","Community")))
+  mutate(ACUITY = factor(ACUITY)) |>
+  mutate(ED_DISPOSITION = factor(ED_DISPOSITION, levels = c("Discharge", "AMA/Eloped"), labels = c("Discharge", "AMA/Eloped")))|>
+  mutate(CAMPUS = factor(CAMPUS, levels = c("Main", "Community"), 
+                         labels = c("Main", "Community")))|>
+  mutate(age_cat = factor(age_cat))|>
+  mutate(Arrival = factor(Arrival))|>
+  mutate(PAYOR_GROUP = factor(PAYOR_GROUP, levels = c("COMMERCIAL", "GOVERNMENT", "CHARITY CARE", "SELF PAY"),
+                              labels = c("Commercial", "Government", "Charity Care", "Self Pay")))|>
+  mutate(SVI_CATEGORY = factor(SVI_CATEGORY))|>
+  mutate(esigp = factor(esigp))|>
+  mutate(volume = factor(volume))
 
 #Rename Columns
 data <- data|>
@@ -181,7 +203,9 @@ data <- data|>
           CAMPUS = "Campus",
           waitmin = "Average Daily Wait Time (in minutes)",
           ACUITY = "Acuity",
-          age_cat = "Age (Categorical)"
+          age_cat = "Age (Categorical)",
+          esigp = "Acuity (Dichotomized)",
+          volume = "ED Volume (Categorical)"
           )
 ```
 
@@ -197,7 +221,7 @@ tbl_summary(data, include = c(DAILYVISITS, AVGESI, waitmin),
       all_categorical() ~ "{n} / {N} ({p}%)"
     ),
             by = CAMPUS,
-    missing = "no") |>
+    missing = "no")|>
   modify_caption ("**Table 1: Emergency Department Characteristics**") |>
   modify_header (label = "") |>
   bold_labels()
@@ -209,10 +233,16 @@ VisitsbyMonth <- data |>
 
 ggplot(VisitsbyMonth, aes(x =month, y = avg, color = Year)) +
   geom_line(aes(group = Year)) +
-  geom_point() +
+  geom_point(size = 3) +
   facet_grid(~CAMPUS) +
+  theme_few() +
+  ggtitle("Daily Volume by Month") +
+  theme(plot.title =element_text(face = "bold"),
+        strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
-  labs(title = paste0("Average Daily Volume by Month "), x = "Month", y = "Avg Daily Visit Count")
+  labs(x = "Month", y = "Daily Visit Count") +
+  scale_color_paletteer_d("futurevisions::jupiter")
 
 #Plot Average Wait Time by Month 
 WaitbyMonth <- data |>
@@ -221,10 +251,16 @@ WaitbyMonth <- data |>
 
 ggplot(WaitbyMonth, aes(x =month, y = avg, color = Year)) +
   geom_line(aes(group = Year)) +
-  geom_point() +
+  geom_point(size = 3) +
   facet_grid(~CAMPUS) +
+  theme_few() +
+  ggtitle("Average Daily Wait Time by Month") +
+  theme(plot.title =element_text(face = "bold"),
+        strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
-  labs(title = paste0("Average Daily Wait Time by Month "), x = "Month", y = "Avg Daily Wait Time")
+  labs(x = "Month", y = "Avg Daily Wait Time") +
+  scale_color_paletteer_d("futurevisions::jupiter")
 
 #Plot Average Daily Acuity by Month
 AcuitybyMonth <- data |>
@@ -233,11 +269,18 @@ AcuitybyMonth <- data |>
 
 ggplot(AcuitybyMonth, aes(x =month, y = avg, color = Year)) +
   geom_line(aes(group = Year)) +
-  geom_point() +
+  geom_point(size = 3) +
   facet_grid(~CAMPUS) +
+  theme_few() +
+  ggtitle("Average Daily Acuity by Month") +
+  theme(plot.title =element_text(face = "bold"),
+        strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x  = element_text(angle=90, vjust=0.8)) +
-  labs(title = paste0("Average Daily Acuity by Month "), x = "Month", y = "Avg Daily Acuity") +
-  ylim (low = 2.5, high = 3.5)
+  theme(plot.title =element_text(face = "bold"))+
+  labs(x = "Month", y = "Avg Daily Acuity") +
+  ylim (low = 2.5, high = 3.5)+
+  scale_color_paletteer_d("futurevisions::jupiter")
 ```
 
 ```{r}
@@ -265,29 +308,15 @@ sexplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = SEX)) +
   ylab("Percentage")+
   xlab("")+
   labs(title = "Sex")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
   facet_grid(~CAMPUS) +
+  theme(plot.title =element_text(face = "bold"),
+        #strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=8), 
         axis.title.x = element_text(size=8),
-        legend.title = element_text(size =8),
+       legend.title = element_blank(),
         legend.text = element_text(size=8),
-        axis.title.y = element_text(size=10))
-
-# Admission Type
-admitplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(READMIT_72_HR))) +
-  geom_bar(position = "fill") +
-  scale_y_continuous(labels = scales::percent) +
-  ylab("Percentage")+
-  xlab("")+
-  labs(title = "Admission Type")+
-  scale_fill_brewer(palette="Paired")+
-  theme_minimal()+
-  facet_grid(~CAMPUS) +
-  theme(axis.text.x = element_text(size=6), 
-        axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
-        legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
 
 # Language
@@ -297,12 +326,14 @@ langplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(LANGIND)))
   ylab("Percentage")+
   xlab("")+
   labs(title = "Language")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
   facet_grid(~CAMPUS) +
+  theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
 
@@ -314,28 +345,52 @@ insuranceplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = PAYOR_GROUP))
   ylab("Percentage")+
   xlab("")+
   labs(title = "Insurance")+
-  scale_fill_brewer(palette="Paired")+
+  scale_color_paletteer_d("futurevisions::jupiter")+
   theme_minimal()+
   facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+        #strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
 
-# Acuity
+# Acuity (Categorical)
 acuityplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(ACUITY))) +
   geom_bar(position = "fill") +
   scale_y_continuous(labels = scales::percent) +
   ylab("Percentage")+
   xlab("")+
   labs(title = "Acuity")+
-  #scale_fill_brewer(palette="Paired")+
   theme_minimal()+
   facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+        #strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))+
+  scale_fill_paletteer_d("futurevisions::jupiter")
+
+#Acuity(Dichotomous)
+esigpplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(esigp))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Acuity")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
 
@@ -346,29 +401,37 @@ sviplot<- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = SVI_CATEGORY)) +
   ylab("Percentage")+
   xlab("")+
   labs(title = "Vulnerability Status")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
-        axis.title.y = element_text(size=10))
+        axis.title.y = element_text(size=10))+
+  scale_fill_paletteer_d("futurevisions::jupiter")
 
 
-# Ethnicity
+# Race/Ethnicity
 ethnicityplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = eth_cat)) +
   geom_bar(position = "fill") +
   scale_y_continuous(labels = scales::percent) +
   ylab("Percentage")+
   xlab("")+
   labs(title = "Ethnicity")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
-        axis.title.y = element_text(size=10))
+        axis.title.y = element_text(size=10))+
+  scale_fill_paletteer_d("futurevisions::jupiter")
 
 # Chronic Conditions
 chronicplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(COMPLEX_CHRONIC_CONDITION_IND))) +
@@ -377,14 +440,16 @@ chronicplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(COMPLEX
   ylab("Percentage")+
   xlab("")+
   labs(title = "Chronic/Complex History")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
-
 
 # PCP Visit within 72 Hours
 pcpplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(PCP_VISIT_72_HR))) +
@@ -393,29 +458,79 @@ pcpplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(PCP_VISIT_7
   ylab("Percentage")+
   xlab("")+
   labs(title = "PCP Visit Within 72 Hours")+
-  scale_fill_brewer(palette="Paired")+
   theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   theme(axis.text.x = element_text(size=6), 
         axis.title.x = element_text(size=10),
-        legend.title = element_text(size =5),
+        legend.title = element_blank(),
         legend.text = element_text(size=4),
         axis.title.y = element_text(size=10))
 
 # Age 
-ageplot <- ggplot(data, aes(factor(REVISIT_72_HR), AGE_AT_VISIT)) +
-  geom_boxplot(fill=c("#f6eaea", "#B2182B")) +
+ageplot <- ggplot(data, aes(x = factor(REVISIT_72_HR),y = AGE_AT_VISIT, fill = REVISIT_72_HR)) +
+  geom_boxplot() +
+  facet_wrap(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   labs(title = "Age") +
   ylab("Years")+
   xlab("")+
-  theme_minimal()
+  theme_minimal()+
+  theme( legend.title = element_blank())
+
+# Age (Dichotomous)
+agecatplot <- ggplot(data, aes(x = factor(REVISIT_72_HR), fill = factor(age_cat))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "Infant vs Child/Teen")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_blank(),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
+
+#ED Disposition
+dispoplot <- ggplot(data, aes(x = REVISIT_72_HR, fill = ED_DISPOSITION)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage")+
+  xlab("")+
+  labs(title = "ED Disposition")+
+  theme_minimal()+
+  facet_grid(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+       # strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
+  theme(axis.text.x = element_text(size=6), 
+        axis.title.x = element_text(size=10),
+        legend.title = element_blank(),
+        legend.text = element_text(size=4),
+        axis.title.y = element_text(size=10))
 
 # LOS
 LOSplot <- ggplot(data, aes(factor(REVISIT_72_HR), ED_LOS)) +
-  geom_boxplot(fill=c("#f6eaea", "#B2182B")) +
+  geom_boxplot() +
+  facet_wrap(~CAMPUS) +
+    theme(plot.title =element_text(face = "bold"),
+        #strip.text.x = element_text(size = 14),
+        panel.grid = element_line(color = "lightgrey",linetype = "dotted"))+
   labs(title = "Length of Stay") +
   ylab("Minutes")+
   xlab("")+
-  theme_minimal()
+  theme_minimal()+
+  theme(legend.title = element_blank())
+
 
 # Summary Graphs 1: Demographics between group comparison
 ggdraw() +
@@ -427,7 +542,14 @@ ggdraw() +
 
 ggdraw() +
   draw_plot(acuityplot, x=0, y=0.5, width = 0.5, height = 0.5)+
-  draw_plot(sviplot, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(esigpplot, x=0.5, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(sviplot, x=0, y=0, width = 0.5, height = 0.5)+
+  draw_plot(agecatplot, x=0.5, y=0, width = 0.5, height = 0.5)+
+  theme_minimal()
+
+ggdraw() +
+  draw_plot(dispoplot, x=0, y=0.5, width = 0.5, height = 0.5)+
+  draw_plot(LOSplot, x=0.5, y=0.5, width = 0.5, height = 0.5)+
   draw_plot(chronicplot, x=0, y=0, width = 0.5, height = 0.5)+
   draw_plot(pcpplot, x=0.5, y=0, width = 0.5, height = 0.5)+
   theme_minimal()
@@ -435,14 +557,26 @@ ggdraw() +
 
 ### Preliminary Analysis
 
-#### **Chi Squared Tests**
+*Categorical/Continuous Variables*
+
+Race/Ethnicity (p\<.001)\
+Insurance type (p\<.0012)\
+Vulnerability Status (p\<.001)\
+Acuity (p\<.001)\
+Arrival time (categorical) (p\<.001)
+
+*Dichotomous Variables*
+
+Age (p\<.001)\
+Acuity (Dichotomous) (p\<.001)\
+Complex Condition (p\<.001)\
+PCP within 72 Hours (p\<.001)\
+Campus (p\<.001)\
+Disposition type (p\<.001)
 
 ```{r}
-#Sex:
-chisq.test(table(data$REVISIT_72_HR, data$SEX))
-#Age(Categorical)
-chisq.test(table(data$REVISIT_72_HR, data$age_cat))
-#Ethnicity:
+#Categorical/Continuous Variables
+#Race/Ethnicity:
 chisq.test(table(data$REVISIT_72_HR, data$eth_cat))
 #Language
 chisq.test(table(data$REVISIT_72_HR, data$LANGIND))
@@ -450,43 +584,112 @@ chisq.test(table(data$REVISIT_72_HR, data$LANGIND))
 chisq.test(table(data$REVISIT_72_HR, data$PAYOR_GROUP)) 
 #Vulnerability
 chisq.test(table(data$REVISIT_72_HR, data$SVI_CATEGORY)) 
-#ACUITY
+#Acuity (Categorical)
 chisq.test(table(data$REVISIT_72_HR, data$ACUITY))
+#Arrival
+chisq.test(table(data$REVISIT_72_HR, data$Arrival))
+#ED Volume
+chisq.test(table(data$REVISIT_72_HR, data$volume))
+
+
+#Dichtomous Variables
+#Sex: *Dichotomous for ease of analysis and 2/2 lack of reliable gender identity data
+chisq.test(table(data$REVISIT_72_HR, data$SEX))
+#Age(Dichotomous)
+chisq.test(table(data$REVISIT_72_HR, data$age_cat))
+#Acuity (Dichotomous)
+chisq.test(table(data$REVISIT_72_HR, data$esigp))
 #Complex/Chronic
 chisq.test(table(data$REVISIT_72_HR, data$COMPLEX_CHRONIC_CONDITION_IND))
 #PCP Visit
 chisq.test(table(data$REVISIT_72_HR, data$PCP_VISIT_72_HR)) 
-#Arrival
-chisq.test(table(data$REVISIT_72_HR, data$Arrival))
 #Campus
 chisq.test(table(data$REVISIT_72_HR, data$CAMPUS))
+#ED Disposition
+chisq.test(table(data$REVISIT_72_HR, data$ED_DISPOSITION))
+```
+
+#### Univariable Logistic Regression
+
+*Categorical/Continuous*
+
+Age (Continuous) (p\<.001)\
+Length of Stay (p\<.001)\
+Race/Ethnicity: Black (p\<.001)\
+Insurance: Commercial (p\<.05)\
+Insurance: Self-Pay (p\<.001)\
+Vulnerability Scale: Lowest (p\<.001)\
+Vulnerability Scale: Medium-Low (p\<.001)\
+Vulnerability Scale: Medium-High (p\<.01)\
+Arrival: Overnight (p\<.001)
+
+*Dichotomous Variables*
+
+Age: Infant (p\<.001)\
+Acuity: Non-Urgent (p\<.001)\
+Chronic/Complex (p\<.001)\
+PCP Visit w/in 72hrs (p\<.001)\
+ED Disposition: AMA/Eloped (p\<.001)\
+Campus: Community (p\<.001)
+
+```{r}
+#Categorical/Continuous Variables
+#Age (Continuous)
+summary((glm(REVISIT_72_HR ~ AGE_AT_VISIT, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ AGE_AT_VISIT, data = data, family = binomial()))) 
+#Length of Stay (Continuous)
+summary((glm(REVISIT_72_HR ~ ED_LOS, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ ED_LOS, data = data, family = binomial()))) 
+#Race:
+summary((glm(REVISIT_72_HR ~ eth_cat, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ eth_cat, data = data, family = binomial()))) 
+#Insurance
+summary((glm(REVISIT_72_HR ~ PAYOR_GROUP, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ PAYOR_GROUP, data = data, family = binomial()))) 
+#Vulnerability
+summary((glm(REVISIT_72_HR ~ SVI_CATEGORY, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ SVI_CATEGORY, data = data, family = binomial())))  
+#Acuity (categorical)
+summary((glm(REVISIT_72_HR ~ ACUITY, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ ACUITY, data = data, family = binomial()))) 
+#Arrival
+summary((glm(REVISIT_72_HR ~ Arrival, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ Arrival, data = data, family = binomial()))) 
+#Volume
+summary((glm(REVISIT_72_HR ~ volume, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ volume, data = data, family = binomial()))) 
+
+#Dichtomous Variables
+
+#Sex: *Dichotomous for ease of analysis and 2/2 lack of reliable gender identity data
+summary((glm(REVISIT_72_HR ~ SEX, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ SEX, data = data, family = binomial()))) 
+#Age(Dichotomous)
+summary((glm(REVISIT_72_HR ~ age_cat, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ age_cat, data = data, family = binomial())))
+#Acuity(Dichotomous)
+summary((glm(REVISIT_72_HR ~ esigp, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ esigp, data = data, family = binomial())))
+#Language
+summary((glm(REVISIT_72_HR ~ LANGIND, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ LANGIND, data = data, family = binomial()))) 
+#Complex/Chronic
+summary((glm(REVISIT_72_HR ~ COMPLEX_CHRONIC_CONDITION_IND, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ COMPLEX_CHRONIC_CONDITION_IND, data = data, family = binomial()))) 
+#PCP Visit
+summary((glm(REVISIT_72_HR ~ PCP_VISIT_72_HR, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ PCP_VISIT_72_HR, data = data, family = binomial())))
+#ED Disposition
+summary((glm(REVISIT_72_HR ~ ED_DISPOSITION, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ ED_DISPOSITION, data = data, family = binomial())))
+#Campus
+summary((glm(REVISIT_72_HR ~ CAMPUS, data = data, family = binomial())))
+exp(coef(glm(REVISIT_72_HR ~ CAMPUS, data = data, family = binomial()))) 
+
 ```
 
 ```{r}
-data.fit <- data |>
-  select(REVISIT_72_HR, READMIT_72_HR, Arrival, SEX, eth_cat, LANGIND, PAYOR_GROUP, PCP_VISIT_72_HR, age_cat, SVI_CATEGORY, ACUITY,COMPLEX_CHRONIC_CONDITION_IND, ED_DISPOSITION, Arrival, CAMPUS) |>
-  drop_na()
-
-sigFactors <- data.frame(variable = character(), p_value = numeric())
-
-#create loop and function to analyze each vairable individually using logistic regression models glm, and to put the feature and it's p-value into the new dataframe if the p-value is less than 0.05 which is generally considered significant
-
-for(var in colnames(data.fit)[-which(colnames(data.fit) == 'REVISIT_72_HR')]) {
-  
-  formula <- as.formula(paste("REVISIT_72_HR ~", var)) #make new function
-  model <- glm(formula, data = data.fit, family = "binomial") 
-  p_value <- summary(model)$coefficients[2, "Pr(>|z|)"] #from the summary of the regression model extract the "Pr(>|z|)" row which contains the p-value which is what we are interested in
-  if(p_value < 0.05) {
-    sigFactors <- rbind(sigFactors, data.frame(variable = var, p_value = p_value))
-  } #inset the row values if p_value is less than 0.05
-}
-# Sort by p-value
-sigFactors  <- sigFactors  |> arrange(p_value)
-print(sigFactors)
-```
-
-```{r}
-m1 <- glm(REVISIT_72_HR ~ Arrival + SEX + + age_cat + eth_cat + LANGIND + PAYOR_GROUP + ACUITY+ COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS + PCP_VISIT_72_HR, data = data.fit,family = binomial())
+m1 <- glm(REVISIT_72_HR ~ SEX + age_cat + eth_cat + LANGIND + ED_LOS + PAYOR_GROUP + SVI_CATEGORY + esigp + COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS + PCP_VISIT_72_HR + volume, data = data, family = binomial())
 ```
 
 ```{r}
@@ -495,6 +698,44 @@ t3 <- tbl_regression(m1, exponentiate = TRUE) %>%
   bold_labels() %>%
   italicize_levels()
 t3
+```
+
+```{r}
+glm.pred <- predict(m1, data, type = "response")
+head(glm.pred)
+```
+
+```{r}
+#K Fold Cross Validation
+N = nrow(data)
+K = 10
+set.seed(1234)
+s = sample(1:K, size = N, replace = T)
+pred.outputs.glm <- vector(mode = "numeric", length = N)
+obs.outputs <- vector(mode = "numeric", length = N)
+offset<- 0 
+
+for (i in 1:K){
+  train <- filter(data, s != i)
+  test <- filter(data, s == i)
+  obs.outputs[1:length(s[s == i]) + offset] <- test$REVISIT_72_HR
+  
+  # GLM train/test
+  glm <- glm(REVISIT_72_HR ~ SEX + age_cat + eth_cat + LANGIND + ED_LOS + PAYOR_GROUP + SVI_CATEGORY + esigp + COMPLEX_CHRONIC_CONDITION_IND + Arrival + ED_DISPOSITION + CAMPUS + PCP_VISIT_72_HR + volume, data = data, family = binomial(logit))
+  glm.pred.curr <- predict(glm, test, type = "response")
+  pred.outputs.glm[1:length(s[s == i]) + offset] <- glm.pred.curr
+  
+  offset <- offset + length(s[s == i])
+}
+head(cbind(pred.outputs.glm, obs.outputs))
+```
+
+```{r}
+roc(data$REVISIT_72_HR, glm.pred, ci = TRUE)
+
+plot.roc(data$REVISIT_72_HR, glm.pred, percent = TRUE, col = "purple", print.auc= TRUE, ci = TRUE) #graph that corresponds to that 
+
+plot.roc(obs.outputs, pred.outputs.glm, percent = TRUE, print.auc = TRUE, print.auc.y = 40, ci = TRUE, col = "forestgreen", add = TRUE) #observed data. cross validation curve is almost the same
 ```
 
 ## Conclusion
