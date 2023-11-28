@@ -409,10 +409,9 @@ gisaid |>
 
 From the summaries, we can see that we have more influenza A sequences than influenza B sequences in the United States between 2010 to 2019, which is consistent with influenza circulation pattern since influenza A is more common overall. Similar to the issue we encountered with the surveillance data, we will also have varied numbers of isolate sequences from state to state depending on the number of laboratories and resources allocated for influenza genome sequencing. My selection criteria might have also introduced bias in sampling. Finally, if we break it down by seasons, we can see that we have more sequencing data from 2015 to 2018, so I will focus my analysis on those flu seasons.
 
-
 #### Duration of flu season and clade distribution
 
-I want to start by determining which states had the longest/shortest flu season for every season between 2015 and 2018. To calculate this, I am counting the number of weeks where more than 10% of specimens tested are positive for influenza virus for each state.
+I want to start by determining which states had the longest/shortest flu season for every season between 2015 and 2019. To calculate this, I am counting the number of weeks where more than 10% of specimens tested are positive for influenza virus for each state.
 
 ```{r}
 # | label: flu_season_duration
@@ -420,37 +419,41 @@ I want to start by determining which states had the longest/shortest flu season 
 # Define the season of interest
 seasons <- 2015:2018
 
-# Extract relevant columns from clinical_labs and convert to dataframe
-clinical_labs_1 <- clinical_labs |>
-                      select(week, state, year, percent_positive, ordered_week)
-                      
-clinical_labs_1 <- as.data.frame(clinical_labs_1)
+# Extract relevant columns from clinical_labs and convert from sf to dataframe
+clinical_labs_df <- clinical_labs |>
+                      select(week, state, year, season,
+                             percent_positive, ordered_week) |>
+                      st_drop_geometry() # drops geometry and reclasses df
+  
 
 # Initialize an empty data frame to store flu season duration results
 flu_duration <- data.frame()  
 
 # Iterate over each season to find states with maximum and minimum flu season durations
-for (season in seasons) {
+for (ii in seasons) {
   
   # Filter and summarize data for each state in the current season
-  season_data <- clinical_labs_1 |>
-    filter(!is.na(percent_positive)) |>
-    group_by(state) |>
-    summarize(flu_season_duration = sum(percent_positive > 10, na.rm = TRUE))
+  season_data <- clinical_labs_df |>
+                  filter(season == ii) |>
+                  group_by(state) |>
+                  summarize(flu_season_duration = sum(percent_positive > 10, 
+                                                      na.rm = TRUE))
   
   # Find the state with the maximum flu season duration
   max_duration_state <- season_data |>
-    filter(flu_season_duration == max(flu_season_duration, na.rm = TRUE)) |>
-    select(state)
+                          filter(flu_season_duration == 
+                                 max(flu_season_duration, na.rm = TRUE)) |>
+                          select(state)
   
   # Find the state with the minimum flu season duration
   min_duration_state <- season_data |>
-    filter(flu_season_duration == min(flu_season_duration, na.rm = TRUE)) |>
-    select(state)
+                          filter(flu_season_duration == 
+                                   min(flu_season_duration, na.rm = TRUE)) |>
+                          select(state)
 
   # Append results to the flu_duration data frame
   flu_duration <- bind_rows(flu_duration, 
-                            data.frame(Season = season, 
+                            data.frame(Season = ii, 
                                        Max_State = max_duration_state$state, 
                                        Min_State = min_duration_state$state))
 }
@@ -458,7 +461,7 @@ for (season in seasons) {
 flu_duration
 ```
 
-However, due to unequal sampling between states in each season, I want to make sure that the number of missing values is not biasing our calculation above in finding the state with the longest/shortest duration of flu activity. Therefore, I am also calculating the ratio of weeks with percent_positive > 10 to the total number of weeks with non-missing values in order to account for the proportion of available data rather than just the count of weeks meeting the condition. 
+However, due to unequal sampling between states in each season, I want to make sure that the number of missing values is not biasing our calculation above in finding the state with the longest/shortest duration of flu activity. Therefore, I am also calculating the ratio of weeks with percent_positive \> 10 to the total number of weeks with non-missing values in order to account for the proportion of available data rather than just the count of weeks meeting the condition.
 
 ```{r}
 # | label: flu_season_duration_ratio
@@ -467,30 +470,30 @@ However, due to unequal sampling between states in each season, I want to make s
 flu_duration_ratio <- data.frame()
 
 # Iterate over each season to find states with maximum and minimum flu season duration ratios
-for (season in seasons) {
+for (ii in seasons) {
   
   # Filter and summarize data for each state in the current season
-  season_data <- clinical_labs_1 %>%
-    filter(season == season) %>%
-    group_by(state) %>%
-    summarize(
-      total_weeks = sum(!is.na(percent_positive)),
-      flu_season_duration = sum(percent_positive > 10, na.rm = TRUE)
-    ) %>%
-    mutate(ratio = flu_season_duration / total_weeks)
+  season_data <- clinical_labs_df |>
+                  filter(season == ii) |>
+                  group_by(state) |>
+                  summarize(
+                    total_weeks = sum(!is.na(percent_positive)),
+                    flu_season_duration = sum(percent_positive > 10, na.rm = TRUE)
+                    ) |>
+                  mutate(ratio = flu_season_duration / total_weeks)
   
   # Find the state with the maximum flu season duration ratio
-  max_ratio_state <- season_data %>%
-    filter(ratio == max(ratio, na.rm = TRUE)) %>%
-    select(state)
+  max_ratio_state <- season_data |>
+                      filter(ratio == max(ratio, na.rm = TRUE)) |>
+                      select(state)
   
   # Find the state with the minimum flu season duration ratio
-  min_ratio_state <- season_data %>%
-    filter(ratio == min(ratio, na.rm = TRUE)) %>%
-    select(state)
+  min_ratio_state <- season_data |>
+                      filter(ratio == min(ratio, na.rm = TRUE)) |>
+                      select(state)
   
   flu_duration_ratio <- bind_rows(flu_duration_ratio, 
-                                  data.frame(Season = season, 
+                                  data.frame(Season = ii, 
                                              Max_State = max_ratio_state$state, 
                                              Min_State = min_ratio_state$state))
 }
@@ -501,7 +504,320 @@ flu_duration_ratio
 I am still working on the code below.
 
 ```{r}
+#| label: stacked_line_graph
+
+get_plot <- function(gisaid, plot_season, plot_state, plot_subtype){
+  # filter gisaid df
+  data1 <- gisaid |>
+            filter(season %in% plot_season) |>
+            filter(state %in% plot_state) |>
+            filter(subtype %in% plot_subtype)
+  
+  plot_title <- paste0("Circulating Flu in ", plot_state,', Subtype: ', 
+                       plot_subtype,' \nSeason: ', 
+                       as.character(paste(plot_season, collapse = " ")))
+  
+  data1$date <- data1$collection_date
+  
+  data1$clade <- data1$clade
+  
+  # Round collection dates to first day of the week 
+  
+  # Make a column that is the rounded date to the week or month
+  data1$date <- as.Date(format(data1$collection_date, "%Y-%m-01"))
+  
+  # Generate dates by week from min to max 
+  d_min <- min(data1$date)
+  d_max <- max(data1$date)
+  
+  # Generate a sequence of dates for each week
+  date_week <- seq(from = d_min, to = d_max, by = "week")
+  
+  # Round each date to the first day of the month
+  date_week <- as.Date(format(date_week, "%Y-%m-01"))
+  
+  # Generate lists of unique clades
+  clades_unique <- unique(data1$clade)
+  
+  # Make a blank df for every date and clade combination 
+  data2 <- expand.grid(date = date_week, clade = clades_unique)
+  
+  # Add a column for prop_clade (you can fill it with NAs initially)
+  data2$prop_clade <- 0
+  
+  # Populate df based on data1 
+  for(ii in 1:nrow(data2)){
+    temp_w <- data2$date[ii] # the week for this row
+    temp_data <- subset(data1,data1$date == temp_w) # Select all the data from that week
+    temp_table <- data.frame(table(temp_data$clade)) # Get a table of the frequency for the clades of that week
+    temp_table$proportion <- temp_table$Freq / sum(temp_table$Freq) # Determine the proportion of that clade
+    
+    # Populate the data2 based on the proportion of temp_table
+    temp_c <- as.character(data2$clade[ii])  # Determine the clade of the current row
+    temp_table2 <- subset(temp_table,temp_table$Var1==temp_c) # Determine if that clade was found in the data that week
+    if(nrow(temp_table2) > 0){ # If the clade was found for this week then save that clade's proportion to the data2 data frame
+      data2$prop_clade[ii] <- temp_table2$proportion[1]
+    }
+    
+    # Check if ii is a multiple of 1000
+    if (ii %% 1000 == 0) {
+      # Calculate and print the percentage complete
+      percent_complete <- (ii / nrow(data2)) * 100
+      cat(sprintf("Progress: %.2f%% complete. Currently on iteration %d\n", percent_complete, ii))
+    }
+  }
+  
+  data3 <- data2
+  data3$date_clade <- paste0(as.character(data3$date),'_', 
+                             as.character(data3$clade))
+  temp_date_prev <- d_min 
+  ## Loop through the weeks and if there is a week with no data, then use the data from the last week.
+  for(ii in 1:nrow(data3)){
+    
+    # Part 1: Detect which weeks have no data.
+    temp_date <- data3$date[ii]
+    temp_df <- subset(data3,data3$date == temp_date)
+    temp_table <- data.frame(table(temp_df$prop_clade))
+    # If there is data for this week then we will have more than row in this data frame (after filtering out 0 for Var1)
+    temp_table <- subset(temp_table,temp_table$Var1 != 0)
+    
+    # Part 2: Populate with the last week's data.
+    # If there is no data for this week (nrow == 0), then use the previous week's data.
+    # Rationale: Determine which dates have no data, then look for the last week's data, make a lookup table which uses this week's data and then we populate data3 with that.
+    if(nrow(temp_table) < 1){ # If there is no data
+      # Since this week had no reported data, make a lookup table from the last week's data and populate this week's using it
+      temp_last <- subset(data3,data3$date == temp_date_prev)
+      # Modify the lookup table so that we can assign this week's date instead of last week's date.
+      temp_last$date <- temp_date
+      temp_last$date_clade <- paste0(as.character(temp_last$date),'_',as.character(temp_last$clade))
+      # Assign the data to be found in the table.
+      lookup_tab <- temp_last$prop_clade
+      # Give the data names.
+      names(lookup_tab) <- temp_last$date_clade
+      # Find indices where a match is found in the lookup table. It does its magic here.
+      matching_indices <- match(data3$date_clade, names(lookup_tab))
+      
+      # Update the values in data3$prop_clade only where a match is found
+      data3$prop_clade[!is.na(matching_indices)] <- lookup_tab[matching_indices[!is.na(matching_indices)]]
+      
+    }
+    
+    # Remember this as the previous date.
+    temp_date_prev <- temp_date
+    
+    # Check if ii is a multiple of 1000
+    if (ii %% 1000 == 0) {
+      # Calculate and print the percentage complete
+      percent_complete <- (ii / nrow(data2)) * 100
+      cat(sprintf("Progress: %.2f%% complete. Currently on iteration %d\n", percent_complete, ii))
+    }
+  }
+  
+  breaks_num <- 50
+  label_count <- date_week
+  
+  # Get the colors 
+  # Create a gradient from red to violet
+  color_gradient <- colorRampPalette(c("red", "orange", "yellow", 
+                                       "blue", "violet"))
+  # Generate the colors for each clade
+  color_clade <- color_gradient(length(clades_unique))
+  
+  # Specify the breaks for the x-axis labels
+  breaks <- seq(min(data3$date), max(data3$date), by = "1 months")
+  
+  # Format breaks to display as "Month Year"
+  formatted_labels <- format(breaks, "%b %Y")
+  
+  # Plot with custom x-axis labels
+  plot <- ggplot(data3, aes(fill = clade, y = prop_clade, x = date, group = clade)) +
+    geom_area(size = 0.5, color = "white") +
+    labs(fill = "", x = "", y = "Proportion") +
+    ggtitle(plot_title) +
+    theme(axis.text = element_text(size = 9), 
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(), 
+          axis.line = element_line(colour = "black")) +
+    guides(fill = guide_legend(title = "Clade")) +
+    scale_fill_manual(values = color_clade) +
+    scale_x_date(breaks = breaks, labels = formatted_labels)
+  
+  # Print the plot
+  plot
+}
+
+```
+
+```{r}
+#| label: 50states_stacked_graphs
+
+# Make stacked line chart for all H1N1 sequences in all 50 states
+plot_season <- c(2015:2018)
+plot_state <- states_list
+plot_subtype <- "A / H1N1"
+get_plot(gisaid, plot_season, plot_state, plot_subtype)
+
+# Make stacked line chart for all H3N2 sequences in all 50 states
+plot_season <- c(2015:2018)
+plot_state <- states_list
+plot_subtype <- "A / H3N2"
+get_plot(gisaid, plot_season, plot_state, plot_subtype)
+
+# Make stacked line chart for all IBV sequences in all 50 states
+plot_season <- c(2015:2018)
+plot_state <- states_list
+plot_subtype <- "B"
+get_plot(gisaid, plot_season, plot_state, plot_subtype)
+
+```
+
+```{r}
+#| label: 2015_stacked_line_chart
+
+flu_season <- c(2015)
+max_min_duration <- c("Alaska", "Missouri")
+subtypes <- c("A / H1N1", "A / H3N2", "B")
+
+# Create an empty list to store plots
+plots_list <- list()
+
+# Generate plots for all combinations of variables
+for (season in flu_season) {
+  for (state in max_min_duration) {
+    for (subtype in subtypes) {
+      tryCatch({
+        # Generate a plot for the current combination
+        plot <- get_plot(gisaid, season, state, subtype)
+        # Store the plot in the list
+        plots_list[[paste(season, state, subtype)]] <- plot
+      }, error = function(e) {
+        # Print a message when there is an error (e.g., no data for the combination)
+        cat("Error:", e$message, "\n")
+      })
+    }
+  }
+}
+plot_grid(plotlist = plots_list[1:2], ncol = 1)
+plot_grid(plotlist = plots_list[3:5], ncol = 1)
+
+
+for (season in flu_season) {
+  for (state in max_min_duration) {
+    for (subtype in subtypes) {
+      tryCatch({
+        # Generate a plot for the current combination
+        plot <- get_plot(gisaid, season, state, subtype)
+        # Store the plot in the list
+        plots_list[[paste(season, state, subtype)]] <- plot
+      }, error = function(e) {
+        # Print a message when there is an error (e.g., no data for the combination)
+        cat("Error:", e$message, "\n")
+      })
+    }
+  }
+}
+
+```
+
+```{r}
+#| label: 2016_stacked_line_chart
+
+flu_season <- c(2016)
+max_min_duration <- c("Maine", "California", "Kentucky")
+subtypes <- c("A / H1N1", "A / H3N2", "B")
+
+# Create an empty list to store plots
+plots_list <- list()
+
+# Generate plots for all combinations of variables
+for (season in flu_season) {
+  for (state in max_min_duration) {
+    for (subtype in subtypes) {
+      tryCatch({
+        # Generate a plot for the current combination
+        plot <- get_plot(gisaid, season, state, subtype)
+        # Store the plot in the list
+        plots_list[[paste(season, state, subtype)]] <- plot
+      }, error = function(e) {
+        # Print a message when there is an error (e.g., no data for the combination)
+        cat("Error:", e$message, "\n")
+      })
+    }
+  }
+}
+plot_grid(plotlist = plots_list[1:3], ncol = 1)
+plot_grid(plotlist = plots_list[4:6], ncol = 1)
+plot_grid(plotlist = plots_list[7:9], ncol = 1)
+
+```
+
+```{r}
+#| label: 2017_stacked_line_chart
+
+flu_season <- c(2017)
+max_min_duration <- c("Wyoming", "South Dakota")
+subtypes <- c("A / H1N1", "A / H3N2", "B")
+
+# Create an empty list to store plots
+plots_list <- list()
+
+# Generate plots for all combinations of variables
+for (season in flu_season) {
+  for (state in max_min_duration) {
+    for (subtype in subtypes) {
+      tryCatch({
+        # Generate a plot for the current combination
+        plot <- get_plot(gisaid, season, state, subtype)
+        # Store the plot in the list
+        plots_list[[paste(season, state, subtype)]] <- plot
+      }, error = function(e) {
+        # Print a message when there is an error (e.g., no data for the combination)
+        cat("Error:", e$message, "\n")
+      })
+    }
+  }
+}
+plot_grid(plotlist = plots_list[1:3], ncol = 1)
+plot_grid(plotlist = plots_list[4:6], ncol = 1)
+
+```
+
+```{r}
+#| label: 2018_stacked_line_chart
+
+flu_season <- c(2018)
+max_min_duration <- c("Idaho", "South Dakota")
+subtypes <- c("A / H1N1", "A / H3N2", "B")
+
+# Create an empty list to store plots
+plots_list <- list()
+
+# Generate plots for all combinations of variables
+for (season in flu_season) {
+  for (state in max_min_duration) {
+    for (subtype in subtypes) {
+      tryCatch({
+        # Generate a plot for the current combination
+        plot <- get_plot(gisaid, season, state, subtype)
+        # Store the plot in the list
+        plots_list[[paste(season, state, subtype)]] <- plot
+      }, error = function(e) {
+        # Print a message when there is an error (e.g., no data for the combination)
+        cat("Error:", e$message, "\n")
+      })
+    }
+  }
+}
+plot_grid(plotlist = plots_list[1:3], ncol = 1)
+plot_grid(plotlist = plots_list[4:6], ncol = 1)
+
+```
+
+```{r}
 #| label: stacked_area_chart
+#| include: false
 
 # Function to create a single stacked area chart for a given season
 create_stacked_area_chart <- function(season_data) {
@@ -522,9 +838,8 @@ create_stacked_area_chart <- function(season_data) {
 H1_stacked_area_list <- list()
 
 # Create plots for each week
-stacked_season <- c(2015, 2016, 2017, 2018)
 
-for (i in stacked_season) {
+for (i in seasons) {
   # Filter data for the specific season
   season_data <- gisaid |> 
     filter(subtype == "A / H3N2") |> 
