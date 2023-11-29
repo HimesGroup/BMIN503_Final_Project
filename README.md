@@ -13,9 +13,9 @@ This repository contains templates for your final written report and GitHub repo
 
 Follow the instructions [here][forking] if you are unsure what the above steps mean.
 
-"README.md": current file contains an overview of the project
-"final_project_template.qmd": Quarto markdown file for final project
-"final_project_template.html": HTML final project
+- "README.md": current file contains an overview of the project
+- "final_project_template.qmd": Quarto markdown file for final project
+- "final_project_template.html": HTML final project
 
 DUE DATE FOR FINAL VERSION: 12/13/23 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
 
