@@ -32,12 +32,34 @@ library(leaflet)
 library(gridExtra)
 library(RColorBrewer)
 library(kableExtra)
+library(broom.mixed)
+library(modelsummary)
 options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
 
 ```{r functions}
-
+# from https://rdrr.io/github/bradisbrad/olfatbones/src/R/get_tri.R
+#' Triangularize a Correlation Matrix
+#' @description Takes a correlation matrix and removes the redundant information
+#' @param cormat Correlation Matrix
+#' @param lower Lower or upper half (default = T) select F for upper half
+#'
+#' @return Matrix
+#' @export get_tri
+#'
+#' @examples
+#' cormat <- round(cor(mtcars), 2)
+#' get_tri(cormat)
+#'
+get_tri <- function(cormat, lower = T){
+  if(lower){
+    cormat[upper.tri(cormat)] <- NA
+  } else {
+    cormat[lower.tri(cormat)] <- NA
+  }
+  cormat
+}
 ```
 
 <!-- Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, although this is not required. -->
@@ -60,7 +82,7 @@ As Rollings et al 2023 discuss, there exist several area-level socioeconomic dep
 
 A challenge for this project, as with many projects which incorporate geospatial variables, is differing geographic units. For this project, SVI is at the county level, ADI is at the census block group level, and the BRFSS outcomes are at the CBSA level. Fortunately, all of these geographic units are census-defined and are supersets or subsets of each other. The current plan is to link these datasets at the county level. Based on guidance from Dr. Sherrie Xie, ADI will be aggregated to the county-level using a weighted average that incorporates census counts for census block groups. The BRFSS smoking and asthma outcomes will be aggregated at the CBSA level. CBSAs and CBSA level smoking and asthma outcomes will be mapped to counties. An alternative approach uses weighted averages to aggregate both SVI and ADI to the CBSA level, which can also be explored.
 
-Once the linked dataset is prepared, logistic regression models will be used to compare SVI and ADI as predictors of the aggregated smoking and asthma outcomes. Spatial autoregressive regression, as used by Tipirneni et al 2022 will also be considered. For smoking, the smoking status variable `_SMOKER3` will be aggregated at the CBSA level. For asthma, the variable for lifetime asthma prevalence `_LTASTH1` will be aggregated at the CBSA level. More information about the smoking and asthma variables available in the SMART BRFSS dataset is provided in @sec-app.
+Once the linked dataset is prepared, regression models will be used to compare SVI and ADI as predictors of the aggregated smoking and asthma outcomes. Spatial autoregressive regression, as used by Tipirneni et al 2022 will also be considered. For smoking, the smoking status variable `_SMOKER3` will be aggregated at the CBSA level. For asthma, the variable for lifetime asthma prevalence `_LTASTH1` will be aggregated at the CBSA level. More information about the smoking and asthma variables available in the SMART BRFSS dataset is provided in @sec-app.
 
 There are several limitations of the project. One clear limitation is that the analyses will be restricted to areas of the US which are included in a CBSA grouping included in the SMART BRFSS dataset.
 
@@ -74,7 +96,7 @@ There are several limitations of the project. One clear limitation is that the a
 
 ### SMART BRFSS CDC dataset
 
-The SMART BRFSS CDC dataset was retrieved from
+<!-- The SMART BRFSS CDC dataset was retrieved from -->
 
 ```{r loadmmsa}
 # MMSA2021.xpt retrieved from https://www.cdc.gov/brfss/smart/smart_2021.html
@@ -255,10 +277,6 @@ smart_2021 <- smart_2021 |>
 
 ##### `_SMOKER3`
 
-::: callout-note
-To be added
-:::
-
 ```{r dsmoker3}
 # https://www.r-bloggers.com/2020/02/dem-7283-example-1-survey-statistics-using-brfss-data/
 library(survey)
@@ -266,6 +284,7 @@ library(srvyr)
 # https://stackoverflow.com/questions/55975478/problems-due-to-having-too-many-single-psus-at-stage-one
 options(survey.adjust.domain.lonely=TRUE)
 options(survey.lonely.psu="adjust")
+# TODO check this
 smart_2021_surv <- smart_2021 %>%
   as_survey_design(ids = 1,
                    strata = d_ststr,
@@ -364,7 +383,10 @@ w_ever_smoker_mmsa_tbl <- svyby(
 ever_smoker_mmsa_tbl <- w_ever_smoker_mmsa_tbl |>
   inner_join(uw_ever_smoker_mmsa_tbl, by = "d_mmsa") |>
   select(-se)
+```
 
+```{r eversmoker2}
+#| eval: false
 ever_smoker_mmsa_tbl |>
   arrange(desc(w_ever_smoker)) |> 
   head(5)
@@ -426,7 +448,10 @@ w_ever_asthma_mmsa_tbl <- svyby(
 ever_asthma_mmsa_tbl <- w_ever_asthma_mmsa_tbl |>
   inner_join(uw_ever_asthma_mmsa_tbl, by = "d_mmsa") |>
   select(-se)
+```
 
+```{r everasthma2}
+#| eval: false
 ever_asthma_mmsa_tbl |>
   arrange(desc(w_ever_asthma)) |> 
   head(5)
@@ -471,6 +496,7 @@ mmsa_county_mapping_geoid_sf_4326  |>
 
 ```{r loadsvi}
 # retrieved from https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html
+# documentation here https://www.atsdr.cdc.gov/placeandhealth/svi/documentation/pdf/SVI2020Documentation_08.05.22.pdf
 svi2020 <- read_csv("data/input_data/svi/SVI_2020_US_county.csv")
 ```
 
@@ -684,9 +710,6 @@ adi2021_county_sf_4326  |>
 
 ### Combining datasets
 
-::: callout-note
-To be added
-:::
 
 ```{r combinedataset}
 #| eval: FALSE
@@ -704,20 +727,261 @@ combined_dataset <- mmsa_county_mapping_geoid_sf_4326 |>
 combined_dataset |> saveRDS("data/final_data/combined_dataset.rds")
 ```
 
-## Results {#sec-results}
+```{r loadcomb}
+#| eval: false
+# add county counts for poisson regression
+combined_dataset <- readRDS("data/final_data/combined_dataset.rds")
+combined_dataset_no_geo <- combined_dataset |>
+  st_drop_geometry()
 
-::: callout-note
-To be added
-:::
 
-### Modelling
+county_cts <- get_decennial(
+  geography = "county",
+  variables = "P1_001N",
+  year = 2020,
+  output = "wide"
+) |>
+  rename(county_ct = P1_001N)
 
-To be added
+combined_dataset_w_counts <- combined_dataset_no_geo |>
+  mutate(GEOID = paste0(fips_state_code, fips_county_code)) |>
+  left_join(county_cts, by = "GEOID") |>
+  mutate(
+    n_w_ever_smoker = floor(w_ever_smoker * county_ct),
+    n_uw_ever_smoker = floor(uw_ever_smoker * county_ct),
+    n_w_ever_asthma = floor(w_ever_asthma * county_ct),
+    n_uw_ever_asthma = floor(uw_ever_asthma * county_ct)
+  )
 
-```{r modelling}
+combined_dataset_w_counts |> saveRDS("data/final_data/combined_dataset_w_counts.rds")
 ```
 
-## 
+## Results {#sec-results}
+
+
+### Analyses
+
+```{r correlations}
+combined_dataset_w_counts <- readRDS("data/final_data/combined_dataset_w_counts.rds")
+
+# benefited from approach here https://rpubs.com/cqj_00/785193
+combined_corrs <- combined_dataset_w_counts |>
+  select(
+    w_ever_asthma,
+    w_ever_smoker,
+    RPL_THEME1,
+    RPL_THEME2,
+    RPL_THEME3,
+    RPL_THEME4,
+    RPL_THEMES,
+    county_adi_value,
+    county_ct
+  ) |>
+  cor(use = "complete.obs", method = "spearman") |>
+  as.matrix() %>%
+  get_tri() %>%
+  reshape2::melt(na.rm = TRUE) |> 
+  rename(variable_1 = Var1,
+         variable_2 = Var2)
+  # as_tibble(rownames = "variable_1") |>
+  # pivot_longer(
+  #   values_drop_na = TRUE,
+  #   cols_vary = "slowest",
+  #   names_to = "variable_2",
+  #   cols = c(
+  #     "w_ever_asthma",
+  #     "uw_ever_asthma",
+  #     "w_ever_smoker",
+  #     "uw_ever_smoker",
+  #     "RPL_THEME1",
+  #     "RPL_THEME2",
+  #     "RPL_THEME3",
+  #     "RPL_THEME4",
+  #     "RPL_THEMES",
+  #     "county_adi_value"
+  #   )
+  # )
+
+combined_corrs |>
+  ggplot(aes(x = variable_2, y = variable_1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    mid = "grey100",
+    # midpoint = 0.5,
+    limit = c(-1, 0.999),
+    space = "Lab",
+    name = "Spearman\nCorrelation"
+  ) +
+  theme_minimal() + # minimal theme
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      vjust = 1,
+      size = 10,
+      hjust = 1
+    ),
+    axis.text.y = element_text(size = 10)
+  ) +
+  coord_fixed() +
+  coord_flip()
+```
+
+#### Correlations between SVI and ADI
+
+```{r}
+svi_adi_model <-
+  glm(county_adi_value ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_ct,
+      family = gaussian(),
+      data = combined_dataset_w_counts)
+
+
+modelsummary(
+  list(
+    "svi_adi_model" = svi_adi_model
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]"
+)
+```
+
+#### Smoking
+
+```{r}
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_smoker)) +
+  geom_density()  +
+  theme_minimal()
+
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = county_adi_value)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = RPL_THEME3)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+```
+
+```{r}
+# remove outliers
+smoking_dataset_cleaned <- combined_dataset_w_counts |> 
+  filter(w_ever_smoker >= 0.2)
+# exploring modelling approaches..
+# benefitted from https://rpubs.com/kaz_yos/poisson
+smoking_quasibinom_adi_only <-
+  glm(w_ever_smoker ~ county_adi_value,
+      family = quasibinomial(),
+      data = smoking_dataset_cleaned)
+
+smoking_quasipoisson_adi_only <-
+  glm(
+    n_w_ever_smoker ~ county_adi_value,
+    offset = log(county_ct),
+    family = quasipoisson(link = "log"),
+    data = smoking_dataset_cleaned
+  )
+
+smoking_quasibinom <-
+  glm(w_ever_smoker ~ county_adi_value * RPL_THEME3,
+      family = quasibinomial(),
+      data = smoking_dataset_cleaned)
+
+smoking_quasipoisson <-
+  glm(
+    n_w_ever_smoker ~ county_adi_value * RPL_THEME3,
+    offset = log(county_ct),
+    family = quasipoisson(link = "log"),
+    data = smoking_dataset_cleaned
+  )
+
+modelsummary(
+  list(
+    "smoking_quasibinom" = smoking_quasibinom,
+    "smoking_quasibinom_adi_only" = smoking_quasibinom_adi_only,
+    "smoking_quasipoisson" = smoking_quasipoisson,
+    "smoking_quasipoisson_adi_only" = smoking_quasipoisson_adi_only
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]",
+  exponentiate = TRUE
+)
+```
+
+#### Asthma
+
+```{r}
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_asthma)) +
+  geom_density()  +
+  theme_minimal()
+
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_asthma,
+             y = county_adi_value)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+combined_dataset_w_counts |> 
+  ggplot(aes(x = w_ever_asthma,
+             y = RPL_THEME3)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+```
+
+```{r}
+# remove outliers
+asthma_dataset_cleaned <- combined_dataset_w_counts
+# exploring modelling approaches..
+# benefitted from https://rpubs.com/kaz_yos/poisson
+asthma_quasibinom <-
+  glm(w_ever_asthma ~ county_adi_value * RPL_THEME3,
+      family = quasibinomial(),
+      data = asthma_dataset_cleaned)
+
+asthma_quasipoisson <-
+  glm(
+    n_w_ever_asthma ~ county_adi_value * RPL_THEME3,
+    offset = log(county_ct),
+    family = quasipoisson(link = "log"),
+    data = asthma_dataset_cleaned
+  )
+
+asthma_quasibinom_adi_only <-
+  glm(w_ever_asthma ~ county_adi_value,
+      family = quasibinomial(),
+      data = asthma_dataset_cleaned)
+
+asthma_quasipoisson_adi_only <-
+  glm(
+    n_w_ever_asthma ~ county_adi_value,
+    offset = log(county_ct),
+    family = quasipoisson(link = "log"),
+    data = asthma_dataset_cleaned
+  )
+
+modelsummary(
+  list(
+    "asthma_quasibinom" = asthma_quasibinom,
+    "asthma_quasibinom_adi_only" = asthma_quasibinom_adi_only,
+    "asthma_quasipoisson" = asthma_quasipoisson,
+    "asthma_quasipoisson_adi_only" = asthma_quasipoisson_adi_only
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]",
+  exponentiate = TRUE
+)
+```
+
+
+
 
 <!-- Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required. -->
 
