@@ -235,26 +235,6 @@ df <- na.omit(df)
 ## Identifying variables associated with Steatosis
 
 ```{r}
-
-model_steatosis_binary <- glm(fibroscan_steatosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df, family = binomial)
-
-summary(model_steatosis_binary)
-
-significant_results_steatosis_binary <- tidy(model_steatosis_binary)|> filter(p.value < 0.05) |> arrange(p.value) |> mutate(Odds_Ratio = exp(estimate))
-
-#How does the strongest variable associate with the outcome? \# BMI
-
-#PLOT
-
-ggplot(data=subset(df, !is.na(fibroscan_steatosis)), aes(x = fibroscan_steatosis, y = body_bmi)) +
-
-geom_violin(aes(fill = fibroscan_steatosis)) +
-
-geom_boxplot(width = 0.1, alpha = 0.2)
-
-```
-
-```{r}
 model_steatosis_binary <- glm(fibroscan_steatosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c +  insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df, family = binomial)
 
 summary(model_steatosis_binary)
@@ -435,116 +415,195 @@ column_number <- which(names(df) == target_column_name)
 
 ```
 
+## Identifying variables associated with Cirrhosis
+
 ```{r}
 
+table(df$hbcore_positive)
 
+model_cirrhosis_binary <- glm(fibroscan_cirrhosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi + hcab + hbcore_positive + hcrna, data = df, family = binomial)
+
+summary(model_cirrhosis_binary)
+
+significant_results_cirrhosis_binary <- tidy(model_cirrhosis_binary)|> filter(p.value < 0.05) |> arrange(p.value) |> mutate(Odds_Ratio = exp(estimate))
+
+significant_results_cirrhosis_binary
+
+#How does the strongest variable associate with the outcome? \# BMI
+
+#PLOT
+
+ggplot(data=df, aes(x = fibroscan_cirrhosis, y = body_bmi)) +
+
+geom_violin(aes(fill = fibroscan_cirrhosis)) +
+
+geom_boxplot(width = 0.1, alpha = 0.2)
 
 
 
 ```
 
+As a continuous variable
+
 ```{r}
 
+model_cirrhosis_continuous <- glm(fibroscan_meanstiffness_kpa ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi + hcab + hbcore_positive + hcrna, data = df)
 
+significant_results_cirrhosis_continuous <- tidy(model_cirrhosis_continuous)|> filter(p.value < 0.05) |> arrange(p.value) |> mutate(Odds_Ratio = exp(estimate))
+
+significant_results_cirrhosis_continuous
+
+
+#How does the strongest variable associate with the outcome? # BMI
+#PLOT to see the number of hcrna
+ggplot(df, aes(x = body_bmi, y = fibroscan_meanstiffness_kpa, color=hcrna)) + geom_point()+
+  geom_smooth(method = "lm") 
+
+#PLOT to see the numebr of hb
+ggplot(df, aes(x = body_bmi, y = fibroscan_meanstiffness_kpa, color=hbcore_positive)) + geom_point()+
+  geom_smooth(method = "lm") 
 
 
 
 ```
 
-```{r}
+Supervised Machine Learning using Random Forest Model to assess the most important factors To Assess GINI
 
-
-
-
-
-```
+For this we will have to convert the cases to 1 and controls to 0 as the "truth" argument of the predictor variable regonizes "Cases" and "Controls" best
 
 ```{r}
-
-
-
-
-
-```
-
-```{r}
-
-
-
-
-
-```
-
-```{r}
-
-
-
-
-
-```
-
-```{r}
-
-
-
-
-
-```
-
-```{r}
-
-
-#Cirrhosis
+#We will convert 1-> Cases and 0-> Controls
+#Steatosis
 df<- df |>
-  mutate(fibroscan_cirrhosis = ifelse(fibroscan_steatosis == 1, "Cases", "Controls"))
+  mutate(fibroscan_cirrhosis = ifelse(fibroscan_cirrhosis == 1, "Cases", "Controls"))
+
+table(df$fibroscan_cirrhosis)
+
+df$fibroscan_cirrhosis <-  as.factor(df$fibroscan_cirrhosis)
+
+
+```
+
+```{r}
+#Random forest model
+rf_cls_spec <- 
+  rand_forest(trees = 1000, min_n = 5) |> 
+  set_engine("randomForest", importance = TRUE) |>
+  set_mode("classification")
+
+rf_cls_spec
+
+rf_cls_fit_cirrhosis <- rf_cls_spec |>
+  fit(fibroscan_cirrhosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi + hcab + hbcore_positive + hcrna, data = df)
+
+
+rf_cls_fit_cirrhosis
+
+#for importance scores 
+rf_cls_fit_cirrhosis |>
+  extract_fit_engine() |>
+  importance()
+
+#to plot MeanDecreaseGini
+rf_cls_fit_cirrhosis |>
+  extract_fit_engine() |>
+  vip()
+
+
+#save
+rf.predicted.cirrhosis <- bind_cols(
+  truth = df$fibroscan_cirrhosis,
+  predict(rf_cls_fit_cirrhosis, df),
+  predict(rf_cls_fit_cirrhosis, df, type = "prob")
+)
+
+
+rf.predicted.cirrhosis
+
+#RF plots
+
+autoplot(roc_curve(rf.predicted.cirrhosis, 
+                   truth, .pred_Cases ))
+
+roc_auc(rf.predicted.cirrhosis, 
+                   truth,  .pred_Cases )
+
+
 
 
 
 
 ```
 
-```{r}
+For obtaining 10-fold cross validation classification vectors for the model
 
+```{r}
+set.seed(1234)
+
+data.split <- initial_split(df, 
+                            strata = fibroscan_cirrhosis, 
+                            prop = 0.80)
+
+data.split
+
+data.train <- training(data.split)
+data.test <- testing(data.split)
 
 
 
 
 ```
 
+Training based on RF model
+
 ```{r}
+rf_cls_fit_train<- rf_cls_spec |>
+  fit(fibroscan_cirrhosis ~ ., data = data.train)
 
 
-
-
-
+rf_cls_fit_train
 ```
 
+Testing based on RF model
+
 ```{r}
+data.rf.pred.values.test <-  bind_cols(
+  truth = data.test$fibroscan_cirrhosis,
+  predict(rf_cls_fit_train, data.test),
+  predict(rf_cls_fit_train, data.test, type = "prob")
+)
 
 
-
-
-
+data.rf.pred.values.test
 ```
 
+ROC and AUC Curves
+
 ```{r}
+autoplot(roc_curve(data.rf.pred.values.test, 
+                   truth, .pred_Cases))
 
 
-
-
-
+roc_auc(data.rf.pred.values.test, 
+                   truth, .pred_Cases)
 ```
 
-```{r}
-
-
-
-
-
-```
+Unsupervised Machine Learning using K-means clustering
 
 ```{r}
+set.seed(1234)
 
+df.kmeans <- kmeans(df[ , 1:24], 2)
+df.kmeans
+table(df$fibroscan_cirrhosis, df.kmeans$cluster)
+centers <- as.data.frame(df.kmeans$centers)
+
+
+ggplot(data = df) +
+    geom_point(aes(body_bmi, ha1c, 
+                        color = factor(df.kmeans$cluster))) +
+    geom_point(data = centers, aes(body_bmi, ha1c), 
+               color = "purple", size = 2)
 
 
 
