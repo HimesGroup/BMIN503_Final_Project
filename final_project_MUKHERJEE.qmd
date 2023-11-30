@@ -45,6 +45,13 @@ Install packages
 #install.packages("haven")
 #install.packages("tidyverse")
 #install.packages("tidyr")
+#install.packages("kernlab")
+#install.packages("randomForest")
+#install.packages("glmnet")
+#install.packages("tidymodels")
+#install.packages("dotwhisker")
+#install.packages("vip")
+
 ```
 
 Load packages
@@ -58,6 +65,13 @@ library(ggplot2)
 library(dplyr)
 library(haven) #required to read XPT files
 library(tidyr)
+library(kernlab)
+library(randomForest)
+library(glmnet)
+library(tidymodels)
+tidymodels_prefer()
+library(dotwhisker)
+library(vip)
 ```
 
 ```{r}
@@ -206,10 +220,12 @@ We will also truncate the table to only the columns of interest
 
 ```{r}
 
-df <- merged_df[, c("alt", "alb","alp", "ast", "urea", "cr", "ggt", "ldh", "na", "tbil", "chol", "tg", "etoh", "fibroscan_meanstiffness_kpa", "ha1c", "fibroscan_stiffnessiqr", "fibroscan_cap", "hc_self_cpiqr", "insurance_covered","demo_gender", "demo_age" , "demo_race", "demo_education", "body_bmi", "hb_self_reported", "hb_self_reported_treated", "hc_self_reported", "hc_self_reported", "hc_self_reported_treated", "hbcore_positive", "hbsag_positive", "hcrna", "hcab", "hcgenotype", "fibroscan_steatosis", "fibroscan_cirrhosis")]
+df <- merged_df[, c("alt", "alb","alp", "ast", "urea", "cr", "ggt", "ldh", "na", "tbil", "chol", "tg", "etoh", "fibroscan_meanstiffness_kpa", "ha1c", "fibroscan_stiffnessiqr", "fibroscan_cap", "hc_self_cpiqr", "insurance_covered","demo_gender", "demo_age" , "demo_race", "demo_education", "body_bmi", "hb_self_reported", "hc_self_reported", "hc_self_reported", "hbcore_positive", "hcrna", "hcab",  "fibroscan_steatosis", "fibroscan_cirrhosis")]
 
+# we will have to remove columns hc_self_reported_treated, hb_self_reported_treated, hcgenotype, hbsag as these are the columns with the maximum number of missings
 
-
+#We now remove all the missings
+df <- na.omit(df)
 ```
 
 ## Identifying variables associated with Steatosis
@@ -241,10 +257,18 @@ significant_results_steatosis_binary <- tidy(model_steatosis_binary)|> filter(p.
 
 #How does the strongest variable associate with the outcome? # BMI
 #PLOT 
-ggplot(data=subset(df, !is.na(fibroscan_steatosis)), aes(x = fibroscan_steatosis, y = body_bmi)) +
+ggplot(df, aes(x = fibroscan_steatosis, y = body_bmi)) +
   geom_violin(aes(fill = fibroscan_steatosis)) +
   geom_boxplot(width = 0.1, alpha = 0.2)
+
 ```
+To create a new data set 'df_steatosis' without missing
+```{r}
+
+df_steatosis=subset(df, !is.na(fibroscan_steatosis))
+
+```
+
 
 As a continuous variable
 
@@ -268,9 +292,55 @@ ggplot(df, aes(x = body_bmi, y = fibroscan_cap)) + geom_point()+
 
 ```
 
-Supervised Machine Learning
-
+Supervised Machine Learning using Random Forest Model to assess the most important factors
+To Assess GINI
 ```{r}
+#Random forest model
+rf_cls_spec <- 
+  rand_forest(trees = 1000, min_n = 5) |> 
+  set_engine("randomForest", importance = TRUE) |>
+  set_mode("classification")
+
+rf_cls_spec
+
+rf_cls_fit_steatosis <- rf_cls_spec |>
+  fit(fibroscan_steatosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c +  insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df_steatosis)
+
+
+rf_cls_fit_steatosis
+
+#for importance scores 
+rf_cls_fit_steatosis |>
+  extract_fit_engine() |>
+  importance()
+
+#to plot MeanDecreaseGini
+rf_cls_fit_steatosis |>
+  extract_fit_engine() |>
+  vip()
+
+```
+
+
+Given that many columns possess missing data, we will use only the predictors based on the GINI score 
+```{r}
+#save
+rf.predicted.steatosis <- bind_cols(
+  truth = df_steatosis,
+  predict(rf_cls_fit_steatosis, df_steatosis),
+  predict(rf_cls_fit_steatosis, df_steatosis, type = "prob")
+)
+
+
+rf.predicted.steatosis
+
+#RF plots
+
+autoplot(roc_curve(rf.predicted.steatosis, 
+                   truth, .pred_Case))
+
+roc_auc(rf.predicted.steatosis, 
+                   truth, .pred_Case)
 
 
 
