@@ -1,5 +1,5 @@
 ---
-title: "determinants of liver fibrosis"
+title: "determinants of liver steatosis"
 subtitle: "BMIN503/EPID600 Final Project"
 author: "Samiran Mukherjee"
 format: html
@@ -30,11 +30,11 @@ The study plan will comprise of
 
 2\) Use logistic regression models to identify variables that are associated with cases
 
-3\) Using parnsip to pass logistic regression through an engine to create a supervised machine learning model to predict the occurence of cirrhosis
+3)create a supervised machine learning model to predict the occurence of steatosis
 
 4\) Plotting AUC curves for the same
 
-6\) Next, we will use tSNE and PCA to identify possible clustering in an unsupervised approach
+6\) create an unsupervised machine model (Kmeans clustering) and plot cases vs controls
 
 Install packages
 
@@ -51,6 +51,7 @@ Install packages
 #install.packages("tidymodels")
 #install.packages("dotwhisker")
 #install.packages("vip")
+#install.packages("Rtsne")
 
 ```
 
@@ -72,6 +73,7 @@ library(tidymodels)
 tidymodels_prefer()
 library(dotwhisker)
 library(vip)
+library(Rtsne)
 ```
 
 ```{r}
@@ -180,13 +182,13 @@ merged_df$demo_education <- as.factor(merged_df$demo_education)
 
 ***Cases:***
 
-[1) Cirrhosis]{.underline}
+[1) Steatosis]{.underline}
+
+Steatosis cut offs using fibroscan (https://pubmed.ncbi.nlm.nih.gov/30689971/) CAP value \> 288
+
+[2) Cirrhosis]{.underline}
 
 We will use a fibroscan mean liver stiffness measurement of \>20 kPA for the definition of cirrhosis https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1856085/ https://journals.lww.com/hep/Fulltext/2023/05000/AASLD_Practice_Guidance_on_the_clinical_assessment.31.aspx\>
-
-[2) Steatosis]{.underline}
-
-Steatosis cut offs using fibroscan (https://pubmed.ncbi.nlm.nih.gov/30689971/) CAP value \> 302
 
 ***Controls:***
 
@@ -230,16 +232,15 @@ df <- na.omit(df)
 
 ```
 
-
 ## Identifying variables associated with Steatosis
 
-As a binary variable
+```{r}
 
-model_steatosis_binary \<- glm(fibroscan_steatosis \~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df, family = binomial)
+model_steatosis_binary <- glm(fibroscan_steatosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c + insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df, family = binomial)
 
 summary(model_steatosis_binary)
 
-significant_results_steatosis_binary \<- tidy(model_steatosis_binary)\|\> filter(p.value \< 0.05) \|\> arrange(p.value) \|\> mutate(Odds_Ratio = exp(estimate))
+significant_results_steatosis_binary <- tidy(model_steatosis_binary)|> filter(p.value < 0.05) |> arrange(p.value) |> mutate(Odds_Ratio = exp(estimate))
 
 #How does the strongest variable associate with the outcome? \# BMI
 
@@ -250,6 +251,8 @@ ggplot(data=subset(df, !is.na(fibroscan_steatosis)), aes(x = fibroscan_steatosis
 geom_violin(aes(fill = fibroscan_steatosis)) +
 
 geom_boxplot(width = 0.1, alpha = 0.2)
+
+```
 
 ```{r}
 model_steatosis_binary <- glm(fibroscan_steatosis ~ alt + alb + alp + ast + urea + cr + ggt + ldh + na + tbil + chol + tg + etoh + ha1c +  insurance_covered + demo_gender + demo_age + demo_race + demo_education + body_bmi, data = df, family = binomial)
@@ -290,7 +293,7 @@ ggplot(df, aes(x = body_bmi, y = fibroscan_cap)) + geom_point()+
 
 Supervised Machine Learning using Random Forest Model to assess the most important factors To Assess GINI
 
-For this we will have to convert the cases to 1 and controls to 0 as the "truth" argument of the predictor variable regonizes "Cases" and "Controls" best 
+For this we will have to convert the cases to 1 and controls to 0 as the "truth" argument of the predictor variable regonizes "Cases" and "Controls" best
 
 ```{r}
 #We will convert 1-> Cases and 0-> Controls
@@ -303,8 +306,6 @@ table(df$fibroscan_steatosis)
 df$fibroscan_steatosis <-  as.factor(df$fibroscan_steatosis)
 
 ```
-
-
 
 ```{r}
 #Random forest model
@@ -356,8 +357,7 @@ roc_auc(rf.predicted.steatosis,
 
 ```
 
-
-For obtaining 10-fold cross validation classification vectors for the model 
+For obtaining 10-fold cross validation classification vectors for the model
 
 ```{r}
 set.seed(1234)
@@ -372,7 +372,8 @@ data.train <- training(data.split)
 data.test <- testing(data.split)
 ```
 
-Training based on RF model 
+Training based on RF model
+
 ```{r}
 
 rf_cls_fit_train<- rf_cls_spec |>
@@ -383,6 +384,7 @@ rf_cls_fit_train
 ```
 
 Testing based on RF model
+
 ```{r}
 data.rf.pred.values.test <-  bind_cols(
   truth = data.test$fibroscan_steatosis,
@@ -407,13 +409,28 @@ roc_auc(data.rf.pred.values.test,
 
 ```
 
-
-Unsupervised Machine Learning using Hierarchical Clustering 
+Unsupervised Machine Learning using K-means clustering
 
 ```{r}
+set.seed(1234)
+
+df.kmeans <- kmeans(df[ , 1:24], 2)
+df.kmeans
+table(df$fibroscan_steatosis, df.kmeans$cluster)
+centers <- as.data.frame(df.kmeans$centers)
 
 
+ggplot(data = df) +
+    geom_point(aes(body_bmi, ha1c, 
+                        color = factor(df.kmeans$cluster))) +
+    geom_point(data = centers, aes(body_bmi, ha1c), 
+               color = "purple", size = 2)
 
+```
+
+```{r}
+target_column_name <-  "body_bmi"
+column_number <- which(names(df) == target_column_name)
 
 
 ```
@@ -485,8 +502,6 @@ df<- df |>
 
 
 ```
-
-
 
 ```{r}
 
