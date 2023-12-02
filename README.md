@@ -1,5 +1,48 @@
 # BMIN503/EPID600 Final Project
 
+## Project Overview
+Final Project Introduction: This final project aims to look at how health system factors may contribute to subconscious bias towards pregnant individuals based on their health status.
+
+This repository contains a qmd of my code, and an html output. I am still working on my introduction and background.My analysis is done though I am still looking for ways to improve the visualizations of models and plots so that they are easily interpreted. I appreciate any and all feedback. Thank you!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
