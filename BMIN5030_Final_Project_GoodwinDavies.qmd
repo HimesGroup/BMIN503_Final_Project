@@ -18,7 +18,7 @@ execute:
 ------------------------------------------------------------------------
 
 ::: callout-caution
-This report is still under construction, but ready for peer feedback.
+This report is still under construction
 :::
 
 ```{r packages}
@@ -34,9 +34,12 @@ library(RColorBrewer)
 library(kableExtra)
 library(broom.mixed)
 library(modelsummary)
+library(gtsummary)
 options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
+
+# Functions
 
 ```{r functions}
 # from https://rdrr.io/github/bradisbrad/olfatbones/src/R/get_tri.R
@@ -60,6 +63,68 @@ get_tri <- function(cormat, lower = T){
   }
   cormat
 }
+
+
+get_corr_plot <- function(df) {
+  combined_corrs <- df |>
+    cor(use = "complete.obs", method = "spearman") |>
+    as.matrix() %>%
+    get_tri() %>%
+    reshape2::melt(na.rm = TRUE) |>
+    rename(variable_1 = Var1,
+           variable_2 = Var2)
+  
+  combined_corrs |>
+    ggplot(aes(x = variable_2, y = variable_1, fill = value)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "blue",
+      high = "red",
+      mid = "grey100",
+      # midpoint = 0.5,
+      limit = c(-1, 0.999),
+      space = "Lab",
+      name = "Spearman\nCorrelation"
+    ) +
+    theme_minimal() + # minimal theme
+    theme(
+      axis.text.x = element_text(
+        angle = 45,
+        vjust = 1,
+        size = 10,
+        hjust = 1
+      ),
+      axis.text.y = element_text(size = 10)
+    ) +
+    coord_fixed() +
+    coord_flip()
+
+}
+
+get_mmsa_survey_means <- function(smart_df,
+                                  smart_survey,
+                                  variable_name){
+  # get unweighted means by mmsa (uw_)
+  uw_mmsa_tbl <- smart_df %>%
+    select(d_mmsa, mmsaname, {{variable_name}}) |>
+    group_by(d_mmsa, mmsaname) |>
+    summarise(across(starts_with(variable_name), ~ mean(.x, na.rm = TRUE), .names = "uw_{.col}"))
+  
+  # get weighted means by mmsa using svyby (w_)
+  w_mmsa_tbl <- svyby(
+    ~ temp_var_name,
+    ~ d_mmsa,
+    design = smart_survey |> rename(temp_var_name = {{variable_name}}),
+    FUN = svymean,
+    na.rm = TRUE
+  ) |>
+    rename_with( ~ str_replace(.x, "temp_var_name", paste0("w_", variable_name)))
+  # combine
+  ever_smoker_mmsa_tbl <- uw_mmsa_tbl |>
+    inner_join(w_mmsa_tbl, by = "d_mmsa") |>
+    rename_with( ~ str_replace(.x, "w_d_", "w_")) |> 
+    select(- se)
+}
 ```
 
 <!-- Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, although this is not required. -->
@@ -80,11 +145,17 @@ For SVI, the most recent available dataset is from 2020. For this project, natio
 
 As Rollings et al 2023 discuss, there exist several area-level socioeconomic deprivation indices without consensus within healthcare research and policy fields about which indices should be used for a variety of analyses. In comparing two frequently used indices, SVI and ADI, in their associations with SMART BRFSS dataset, this project has the potential to inform selection of the appropriate index for future work. This project is interdisciplinary in that it spans data science, social science, and biomedical informatics.
 
-A challenge for this project, as with many projects which incorporate geospatial variables, is differing geographic units. For this project, SVI is at the county level, ADI is at the census block group level, and the BRFSS outcomes are at the CBSA level. Fortunately, all of these geographic units are census-defined and are supersets or subsets of each other. The current plan is to link these datasets at the county level. Based on guidance from Dr. Sherrie Xie, ADI will be aggregated to the county-level using a weighted average that incorporates census counts for census block groups. The BRFSS smoking and asthma outcomes will be aggregated at the CBSA level. CBSAs and CBSA level smoking and asthma outcomes will be mapped to counties. An alternative approach uses weighted averages to aggregate both SVI and ADI to the CBSA level, which can also be explored.
+A challenge for this project, as with many projects which incorporate geospatial variables, is differing geographic units. For this project, SVI is at the county level, ADI is at the census block group level, and the BRFSS outcomes are at the CBSA level. Fortunately, all of these geographic units are census-defined and are supersets or subsets of each other. For area-level analyses, datasets will be linked by county. Based on guidance from Dr. Sherrie Xie, ADI will be aggregated to the county-level using a weighted average that incorporates census counts for census block groups. The BRFSS smoking and asthma outcomes will be aggregated at the CBSA level. CBSAs and CBSA level smoking and asthma outcomes will be mapped to counties.
 
-Once the linked dataset is prepared, regression models will be used to compare SVI and ADI as predictors of the aggregated smoking and asthma outcomes. Spatial autoregressive regression, as used by Tipirneni et al 2022 will also be considered. For smoking, the smoking status variable `_SMOKER3` will be aggregated at the CBSA level. For asthma, the variable for lifetime asthma prevalence `_LTASTH1` will be aggregated at the CBSA level. More information about the smoking and asthma variables available in the SMART BRFSS dataset is provided in @sec-app.
+The smoking status variable `_SMOKER3` and the variable for lifetime asthma prevalence `_LTASTH1` will be aggregated at the CBSA level using survey weights. More information about the smoking and asthma variables available in the SMART BRFSS dataset is provided in @sec-app.
 
-There are several limitations of the project. One clear limitation is that the analyses will be restricted to areas of the US which are included in a CBSA grouping included in the SMART BRFSS dataset.
+For individual-level analyses, datasets will be linked at the CBSA-level. ADI and SVI can be aggregated to the CBSA-level using weighted averages that incorporate census counts for census block groups and counties, respectively. The smoking status variable `_SMOKER3` and the variable for lifetime asthma prevalence `_LTASTH1`are provided at the individual-level.
+
+Once the linked datasets are prepared, regression models will be used to compare SVI and ADI as predictors of the aggregated smoking and asthma outcomes.
+
+There are several limitations of the project. One clear limitation is that the analyses will be restricted to areas of the US which are included in a CBSA grouping included in the SMART BRFSS dataset. As well as posing a methodological challenge, the differing geographic units introduce limitations for interpretation.
+
+For example, for the individual-level analyses, aggregating at the CBSA level collapses across variation that may be predictive Interesting question of whether area-level predict individual-level, discussed a Xie reference
 
 <!-- Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview. -->
 
@@ -184,6 +255,7 @@ mmsa_county_mapping <- mmsa_county_mapping_cbsa |>
 
 ```{r dqmmsatocounty}
 #| eval: FALSE
+# check mmsas retained
 smart_2021 |> summarize(n_distinct(d_mmsa)) |> pull() == mmsa_county_mapping |> summarize(n_distinct(d_mmsa)) |> pull()
 
 # check for issues with leading zeros
@@ -199,14 +271,17 @@ delin_2020 |>
 ```
 
 ```{r plotmmsacounties}
+# download US counties shapefile 
 tigris_counties <- counties() 
 
+# join mmsa county mapping with  counties shapefile
 mmsa_county_mapping_geoid <- mmsa_county_mapping |>
   mutate(smart = TRUE) |> 
   inner_join(tigris_counties, by = c("fips_state_code"= "STATEFP", "fips_county_code" = "COUNTYFP")) |>
   mutate(smart = replace_na(smart, FALSE))
 
-mmsa_county_mapping_geoid |> filter(smart == TRUE) |> nrow() == mmsa_county_mapping |> nrow()
+# check mmsas retained
+# mmsa_county_mapping_geoid |> filter(smart == TRUE) |> nrow() == mmsa_county_mapping |> nrow()
 
 mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |>
   filter(!fips_state_code %in% c("02",
@@ -214,19 +289,11 @@ mmsa_county_mapping_geoid_sf <- mmsa_county_mapping_geoid |>
                          "66", "69",
                          "72", "78")) |> # limit to contiguous states and DC
   st_as_sf()
-
-# simple map
-# mmsa_county_mapping_geoid_sf |>
-#   st_simplify(dTolerance = 1e3) |>
-#   ggplot(aes(fill = smart)) +
-#   geom_sf()
 ```
 
 ```{r convertsmart1}
 #| eval: false
-# Before we create the leaflet maps, we will change the CRS (Coordinate Reference System) to 4326 because leaflet expects the data provided to it to be in WGS84, which is EPSG:4326. We can do the transformation with st_transform.
-# This is slow so I did it once and saved the RDS
-
+# Change the CRS (Coordinate Reference System) to 4326 because leaflet expects the data provided to it to be in WGS84 (EPSG:4326)
 mmsa_county_mapping_geoid_sf_4326 <- st_transform(mmsa_county_mapping_geoid_sf, crs = 4326)
 mmsa_county_mapping_geoid_sf_4326 |> saveRDS("data/intermediate_data/mmsa_county_mapping_geoid_sf_4326.rds")
 ```
@@ -236,32 +303,20 @@ mmsa_county_mapping_geoid_sf_4326 <- readRDS("data/intermediate_data/mmsa_county
 ```
 
 ```{r smartleaflet}
-pal_fun <- colorFactor(topo.colors(2), mmsa_county_mapping_geoid_sf_4326$smart)
+pal_fun <- colorFactor("orange", mmsa_county_mapping_geoid_sf_4326$smart)
 
+# leaflet plot of of counties within mmsas included in smart brfss
 mmsa_county_mapping_geoid_sf_4326  |>
   st_simplify(dTolerance = 1e3)  |>
   leaflet() |>
   addPolygons(
-    stroke = FALSE,
-    # remove polygon borders
+    stroke = FALSE,# remove polygon borders
     fillColor = ~ pal_fun(smart),
     fillOpacity = 0.5,
     smoothFactor = 0.5,
-    # increase opacity and resolution
     popup = mmsa_county_mapping_geoid_sf_4326$county_county_equivalent
   ) |>
   addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
-  addLegend(
-    "bottomright",
-    # location of legend
-    pal = pal_fun,
-    # palette function
-    values = ~ smart,
-    # variable to pass to palette function
-    title = 'Included in SMART BRFSS dataset',
-    # legend title
-    opacity = 1 # legend opacity (1 = completely opaque)
-  ) |>
   addScaleBar()
 ```
 
@@ -270,7 +325,9 @@ mmsa_county_mapping_geoid_sf_4326  |>
 ```{r addsmokingasthma}
 smart_2021 <- smart_2021 |>
   mutate(
+    # categorize as 1 for ever smoker is smoking status is current or former smoke, else 0 (including don't know/refused/missing) 
     d_ever_smoker = if_else(d_smoker3 %in% c(1, 2, 3), 1, 0),
+        # categorize as 1 for yes for lifetime prevalence, else 0 (including don't know/refused/missing) 
     d_ever_asthma = if_else(d_ltasth1 == 2, 1, 0)
   )
 ```
@@ -285,6 +342,7 @@ library(srvyr)
 options(survey.adjust.domain.lonely=TRUE)
 options(survey.lonely.psu="adjust")
 # TODO check this
+# use provided survey weights
 smart_2021_surv <- smart_2021 %>%
   as_survey_design(ids = 1,
                    strata = d_ststr,
@@ -295,30 +353,12 @@ smart_2021_surv <- smart_2021 %>%
 #| eval: FALSE
 # Investigate survey weighting use wtkg3 as can apply general expectations about distributions
 
-# WEIGHT IN KG
-# [2 implied decimal places]
-smart_2021 %>%
-  filter(!is.na(d_mmsawt)) |>
-  ggplot(aes(x = wtkg3 / 100)) + # divide by 100 for 2 implied decimal places
-  geom_density() +
-  theme_minimal()
+# WEIGHT IN KG [2 implied decimal places]
 
-uw_wtkg3_mmsa_tbl <- smart_2021 %>%
-  filter(!is.na(d_mmsawt)) |>
-  group_by(d_mmsa, mmsaname) |>
-  summarize(uw_wtkg3 = mean(wtkg3, na.rm = TRUE))
-
-w_wtkg3_mmsa_tbl <- svyby( ~ wtkg3,
-                           ~ d_mmsa,
-                           design = smart_2021_surv,
-                           FUN = svymean,
-                           na.rm = TRUE) |> 
-  rename(w_wtkg3 = wtkg3)
 # TODO investigate "only one PSU at stage 1" warnings / confirm approach
-
-wtkg3_mmsa_tbl <- w_wtkg3_mmsa_tbl |>
-  inner_join(uw_wtkg3_mmsa_tbl, by = "d_mmsa") |>
-  select(-se)
+wtkg3_mmsa_tbl <- get_mmsa_survey_means(smart_df = smart_2021,
+                                        smart_survey = smart_2021_surv,
+                                        variable_name = "wtkg3")
 
 wtkg3_mmsa_tbl |>
   pivot_longer(cols = c("w_wtkg3", "uw_wtkg3"),
@@ -367,22 +407,10 @@ mmsa_county_mapping_geoid_sf_4326  |>
 ```
 
 ```{r eversmoker}
-# TODO make function
-uw_ever_smoker_mmsa_tbl <- smart_2021 %>%
-  group_by(d_mmsa, mmsaname) |>
-  summarize(uw_ever_smoker = mean(d_ever_smoker))
-
-w_ever_smoker_mmsa_tbl <- svyby(
-  ~ d_ever_smoker,
-  ~ d_mmsa,
-  design = smart_2021_surv,
-  FUN = svymean,
-  na.rm = TRUE) |>
-  rename(w_ever_smoker = d_ever_smoker)
-
-ever_smoker_mmsa_tbl <- w_ever_smoker_mmsa_tbl |>
-  inner_join(uw_ever_smoker_mmsa_tbl, by = "d_mmsa") |>
-  select(-se)
+#| warning: false
+ever_smoker_mmsa_tbl <- get_mmsa_survey_means(smart_df = smart_2021,
+                                        smart_survey = smart_2021_surv,
+                                        variable_name = "d_ever_smoker")
 ```
 
 ```{r eversmoker2}
@@ -398,8 +426,8 @@ ever_smoker_mmsa_tbl |>
 
 ```
 
-```{r smokerleaflet}
-pal_fun_smoker <- colorNumeric("inferno", NULL) 
+```{r eversmokerleaflet}
+pal_fun_smoker <- colorNumeric("plasma", NULL, reverse = TRUE) 
 
 mmsa_county_mapping_geoid_sf_4326  |>
   left_join(ever_smoker_mmsa_tbl, by = "d_mmsa") |> 
@@ -432,22 +460,10 @@ mmsa_county_mapping_geoid_sf_4326  |>
 ##### `_LTASTH1`
 
 ```{r everasthma}
-# TODO make function
-uw_ever_asthma_mmsa_tbl <- smart_2021 %>%
-  group_by(d_mmsa, mmsaname) |>
-  summarize(uw_ever_asthma = mean(d_ever_asthma))
-
-w_ever_asthma_mmsa_tbl <- svyby(
-  ~ d_ever_asthma,
-  ~ d_mmsa,
-  design = smart_2021_surv,
-  FUN = svymean,
-  na.rm = TRUE) |>
-  rename(w_ever_asthma = d_ever_asthma)
-
-ever_asthma_mmsa_tbl <- w_ever_asthma_mmsa_tbl |>
-  inner_join(uw_ever_asthma_mmsa_tbl, by = "d_mmsa") |>
-  select(-se)
+#| warning: false
+ever_asthma_mmsa_tbl <- get_mmsa_survey_means(smart_df = smart_2021,
+                                        smart_survey = smart_2021_surv,
+                                        variable_name = "d_ever_asthma")
 ```
 
 ```{r everasthma2}
@@ -461,8 +477,8 @@ ever_asthma_mmsa_tbl |>
   head(5)
 ```
 
-```{r asthmaleaflet}
-pal_fun_asthma <- colorNumeric("magma", NULL) 
+```{r everasthmaleaflet}
+pal_fun_asthma <- colorNumeric("viridis", NULL, reverse = TRUE) 
 
 mmsa_county_mapping_geoid_sf_4326  |>
   left_join(ever_asthma_mmsa_tbl, by = "d_mmsa") |> 
@@ -494,6 +510,56 @@ mmsa_county_mapping_geoid_sf_4326  |>
 
 ### SVI dataset
 
+<!-- 1 indicates highest vulnerability -->
+
+<!-- At county level -->
+
++--------------+------------------------------------------------------------------+
+| Field name   | Description                                                      |
++==============+==================================================================+
+| RPL_THEME1   | Socioeconomic Status, incorporating information such as          |
+|              |                                                                  |
+|              | -   Below 150% Poverty                                           |
+|              |                                                                  |
+|              | -   Unemployed                                                   |
+|              |                                                                  |
+|              | -   Housing Cost Burden                                          |
+|              |                                                                  |
+|              | -   No High School Diploma                                       |
+|              |                                                                  |
+|              | -   No Health Insurance                                          |
++--------------+------------------------------------------------------------------+
+| RPL_THEME2   | Household Characteristics, incorporating information such as     |
+|              |                                                                  |
+|              | -   Aged 65 & Older                                              |
+|              |                                                                  |
+|              | -   Aged 17 & Younger                                            |
+|              |                                                                  |
+|              | -   Civilian with a Disability                                   |
+|              |                                                                  |
+|              | -   Single-Parent Households                                     |
+|              |                                                                  |
+|              | -   English Language Proficiency                                 |
++--------------+------------------------------------------------------------------+
+| RPL_THEME3   | Racial & Ethnic Minority Status                                  |
++--------------+------------------------------------------------------------------+
+| RPL_THEME4   | Housing Type & Transportation, incorporating information such as |
+|              |                                                                  |
+|              | -   Multi-Unit Structures                                        |
+|              |                                                                  |
+|              | -   Mobile Homes                                                 |
+|              |                                                                  |
+|              | -   Crowding                                                     |
+|              |                                                                  |
+|              | -   No Vehicle                                                   |
+|              |                                                                  |
+|              | -   Group Quarters                                               |
++--------------+------------------------------------------------------------------+
+| RPL_THEMES   | Overall summary ranking                                          |
++--------------+------------------------------------------------------------------+
+
+: SVI measures, from [CDC/ATSDR SVI 2020 Documentation - 8/5/2022](https://www.atsdr.cdc.gov/placeandhealth/svi/documentation/pdf/SVI2020Documentation_08.05.22.pdf)
+
 ```{r loadsvi}
 # retrieved from https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html
 # documentation here https://www.atsdr.cdc.gov/placeandhealth/svi/documentation/pdf/SVI2020Documentation_08.05.22.pdf
@@ -503,18 +569,24 @@ svi2020 <- read_csv("data/input_data/svi/SVI_2020_US_county.csv")
 ```{r glimpsesvi}
 #| eval: FALSE
 svi2020 |> glimpse()
+
+svi2020 |>
+  select(starts_with("RPL")) |>
+  summary()
+
+svi2020 |>
+  select(starts_with("RPL")) |>
+  get_corr_plot()
 ```
 
 ```{r mapsvi1}
 #| eval: FALSE
 svi2020_sf <- svi2020 |>
-  select(RPL_THEME1,
-         RPL_THEME2,
-         RPL_THEME3,
-         RPL_THEME4,
-         RPL_THEMES,
-         FIPS) |>
-  left_join(tigris_counties, by = c("FIPS" = "GEOID"))
+  # select summary theme ranking variables
+select(starts_with("RPL_"), FIPS)
+  # join with county shapefile
+  left_join(tigris_counties, by = c("FIPS" = "GEOID")) |> 
+  # convert to sf
   st_as_sf()
 
 svi2020_sf_4326 <- st_transform(svi2020_sf, crs = 4326)
@@ -560,7 +632,138 @@ svi2020_sf_4326  |>
   addScaleBar()
 ```
 
+#### SVI at MMSA level
+
+<!-- SVI is provided at the county level. For individual-level analyses, we aggregate at MMSA level. -->
+
+```{r}
+#| eval: false
+# get 2020 census counts by county for computing weighted average
+county_cts <- get_decennial(
+  geography = "county",
+  variables = "P1_001N",
+  year = 2020,
+  output = "wide"
+) |>
+  rename(county_ct = P1_001N)
+county_cts |> saveRDS("data/intermediate_data/county_cts.RDS")
+
+# computed county mmsa weights for county level
+county_mmsa_wts <- tigris_counties |>
+  select(STATEFP, COUNTYFP , GEOID) |>
+  st_drop_geometry() |>
+  inner_join(county_cts, by = "GEOID") |>
+  right_join(
+    mmsa_county_mapping,
+    by = c("STATEFP" = "fips_state_code",
+           "COUNTYFP" = "fips_county_code")
+  ) |>
+  group_by(d_mmsa) |>
+  # mmsa_pop
+  mutate(mmsa_pop = sum(county_ct)) |> 
+  ungroup() |> 
+  # county_ct pop / mmsa_pop
+  mutate(county_mmsa_wt = county_ct/mmsa_pop) |>
+  arrange(GEOID)
+
+county_mmsa_wts |> saveRDS("data/intermediate_data/county_mmsa_wts.RDS")
+```
+
+```{r cbg_mmsacounts3}
+#| eval: false
+county_mmsa_wts <- readRDS("data/intermediate_data/county_mmsa_wts.RDS")
+svi2020_sf_4326 <- readRDS("data/intermediate_data/svi2020_sf_4326.rds")
+
+# compute weighted average for svi at county level
+mmsa_svi1 <- svi2020_sf_4326 |>
+  st_drop_geometry() |>
+  select(starts_with("RPL"), FIPS) |>
+  inner_join(county_mmsa_wts, by = c("FIPS" = "GEOID")) |> 
+  mutate(across(starts_with("RPL"), as.numeric)) |>
+  # RPL theme ranking * county_mmsa_wt
+  mutate(across(starts_with("RPL"), ~ (.x * county_mmsa_wt), .names = "{.col}_wts"))
+# unique(mmsa_svi1$RPL_THEME1 * mmsa_svi1$county_mmsa_wt == mmsa_svi1$RPL_THEME1_wts) # check matches 
+# unique(mmsa_svi1$RPL_THEMES * mmsa_svi1$county_mmsa_wt == mmsa_svi1$RPL_THEMES_wts) # check matches  
+mmsa_svi2 <- mmsa_svi1 |> 
+  group_by(d_mmsa) |>
+  # weighted average sum of weighted svis
+  summarize(across(ends_with("_wts"), sum, .names = "mmsa_{.col}")) |>
+  rename_with(~ str_remove(.x, "_wts"))
+  
+mmsa_svi2 |> saveRDS("data/intermediate_data/mmsa_svi.RDS")
+```
+
+```{r cbg_mmsa_mmsacounts4}
+#| eval: FALSE
+mmsa_svi <- readRDS("data/intermediate_data/mmsa_svi.RDS")
+
+# join mmsa county mapping with mmsa level svi
+svi2021_mmsa_sf_4326 <- mmsa_county_mapping_geoid_sf_4326 |> 
+  left_join(mmsa_svi, by = "d_mmsa")
+
+svi2021_mmsa_sf_4326 |> saveRDS("data/intermediate_data/svi2021_mmsa_sf_4326.rds")
+```
+
+```{r leafletsvi2}
+svi2021_mmsa_sf_4326 <- readRDS("data/intermediate_data/svi2021_mmsa_sf_4326.rds")
+
+pal_svi <- colorNumeric("inferno", NULL, reverse = TRUE)
+
+svi2021_mmsa_sf_4326  |>
+  st_simplify(dTolerance = 1e3)  |>
+  leaflet() |>
+  addPolygons(
+    stroke = FALSE,
+    # remove polygon borders
+    fillColor = ~ pal_svi(mmsa_RPL_THEMES),
+    fillOpacity = 0.5,
+    smoothFactor = 0.5
+    # increase opacity and resolution
+  ) |>
+  addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
+  addLegend(
+    "bottomright",
+    # location of legend
+    pal = pal_svi,
+    # palette function
+    values = ~ mmsa_RPL_THEMES,
+    # variable to pass to palette function
+    title = 'svi',
+    # legend title
+    opacity = 1 # legend opacity (1 = completely opaque)
+  ) |>
+  addScaleBar()
+```
+
 ### ADI dataset
+
+<!-- https://www.neighborhoodatlas.medicine.wisc.edu/ -->
+
+<!-- About the Area Deprivation Index (ADI) -->
+
+<!-- The Area Deprivation Index (ADI) is based on a measure created by the Health Resources & Services Administration (HRSA) over three decades ago, and has since been refined, adapted, and validated to the Census block group neighborhood level by Amy Kind, MD, PhD and her research team at the University of Wisconsin-Madison. It allows for rankings of neighborhoods by socioeconomic disadvantage in a region of interest (e.g., at the state or national level). It includes factors for the theoretical domains of income, education, employment, and housing quality. It can be used to inform health delivery and policy, especially for the most disadvantaged neighborhood groups. -->
+
+<!-- "Neighborhood" is defined as a Census block group. -->
+
+<!-- Limitations -->
+
+<!-- The ADI is limited insofar as it uses American Community Survey (ACS) 5-Year Data for its construction. For example, the 2018 ADI uses the ACS Data for 2018, which represent a five-year "period" from 2014-2018. All limitations of the source data will persist throughout the ADI - results are subject to the accuracy and errors contained within the American Community Survey data release. -->
+
+<!-- The choice of geographic units will also influence the ADI value. In the case of the ADI the Census block group is the geographic unit of construction, as the Census block group is considered the closest approximation to a "neighborhood". As such, we can only recommend linking the ADI to census block groups as other geographic units (including 5-digit ZIP Codes, ZCTA, and others) will not be valid. Please see the FAQ below for additional download and linkage guidance. -->
+
+<!-- At census block group level -->
+
+<!-- 100 is highest deprivation -->
+
+-   ADI_NATRANK: National percentile of block group ADI score Numeric Ranking (1-100) or Suppression Codes:
+
+    -   GQ (Group Quarters) - Greater than 33.3% of Housing Units are Group Quarters
+
+    -   PH (Population/Housing) - Population less than 100 and/or fewer than 30 housing units
+
+    -   GQ-PH (Group Quarters and Population Housing) - Both GQ and PH conditions are met (see above)
+
+    -   QDI (Questionable Data Integrity) - Block Groups missing a key demographic factor for ADI construction
 
 ```{r loadadi}
 # retrieved from https://www.neighborhoodatlas.medicine.wisc.edu/
@@ -592,13 +795,11 @@ adi2021_cbg_sf_4326 |> saveRDS("data/intermediate_data/adi2021_cbg_sf_4326.rds")
 adi_no_cbg <- adi2021 |>
   anti_join(tigris_cbg, by = c("FIPS" = "GEOID"))
 
-
 cbg_no_adi <- tigris_cbg |>
   anti_join(adi2021, by = c("GEOID" = "FIPS"))
 
 # When a Census block group falls into one or more of the suppression criteria mentioned above the ADI rank is replaced with a code describing the suppression reason. Three possible codes will appear in the ADI field: "PH" for suppression due to low population and/or housing, "GQ" for suppression due to a high group quarters population, and "PH-GQ" for suppression due to both types of suppression criteria. A code of "QDI" designates block groups without an ADI due to Questionable Data Integrity, stemming from missing data in the source ACS data.
 ```
-
 
 ```{r cbgcounts1}
 #| eval: false
@@ -644,6 +845,7 @@ cbg_wts |> saveRDS("data/intermediate_data/cbg_wts.RDS")
 ```{r cbgcounts3}
 #| eval: false
 cbg_wts <- readRDS("data/intermediate_data/cbg_wts.RDS")
+adi2021_cbg_sf_4326 <- readRDS("data/intermediate_data/adi2021_cbg_sf_4326.rds")
 
 # compute weighted average for adi at county level
 county_adi <- adi2021_cbg_sf_4326 |>
@@ -656,7 +858,8 @@ county_adi <- adi2021_cbg_sf_4326 |>
   mutate(adi_wts = ADI_NATRANK * cbg_wt) |>
   group_by(STATEFP, COUNTYFP) |>
   # weighted average sum of weighted adis
-  summarize(county_adi_value = sum(adi_wts))
+  summarize(county_adi_value = sum(adi_wts)) |> 
+  ungroup()
 
 county_adi |> saveRDS("data/intermediate_data/county_adi.RDS")
 
@@ -668,8 +871,9 @@ county_adi |> saveRDS("data/intermediate_data/county_adi.RDS")
 ```{r cbgcounts4}
 #| eval: FALSE
 county_adi <- readRDS("data/intermediate_data/county_adi.RDS") |>
-  mutate(FIPS = paste0(STATEFP, COUNTYFP)) |> 
-  left_join(tigris_counties, by = c("FIPS" = "GEOID")) |> 
+  mutate(FIPS = paste0(STATEFP, COUNTYFP)) |>
+  select(-STATEFP,-COUNTYFP) |>
+  left_join(tigris_counties, by = c("FIPS" = "GEOID")) |>
   st_as_sf()
 
 adi2021_county_sf_4326 <- st_transform(county_adi, crs = 4326)
@@ -680,7 +884,7 @@ adi2021_county_sf_4326 |> saveRDS("data/intermediate_data/adi2021_county_sf_4326
 adi2021_county_sf_4326 <- readRDS("data/intermediate_data/adi2021_county_sf_4326.rds")
 
 
-pal_adi <- colorNumeric("magma", NULL)
+pal_adi <- colorNumeric("inferno", NULL, reverse = TRUE)
 
 adi2021_county_sf_4326  |>
   st_simplify(dTolerance = 1e3)  |>
@@ -708,44 +912,119 @@ adi2021_county_sf_4326  |>
   addScaleBar()
 ```
 
+#### ADI at MMSA level
+
+```{r adicbsarollup}
+#| eval: false
+cbg_counts <- readRDS("data/intermediate_data/cbg_counts.RDS") |> 
+  bind_rows()
+
+# computed cbg weights for mmsa level
+cbg_mmsa_wts <- tigris_cbg |> 
+  select(STATEFP, COUNTYFP, TRACTCE, BLKGRPCE, GEOID) |>
+  st_drop_geometry() |> 
+  inner_join(cbg_counts, by = "GEOID") |> 
+  right_join(mmsa_county_mapping, by = c("STATEFP" = "fips_state_code", 
+                                             "COUNTYFP" = "fips_county_code")) |> 
+  group_by(d_mmsa) |>
+  # mmsa pop
+  mutate(mmsa_pop = sum(P1_001N)) |> 
+  ungroup() |> 
+  # cbg pop / mmsa pop
+  mutate(cbg_mmsa_wt = P1_001N/mmsa_pop) |>
+  arrange(GEOID)
+
+cbg_mmsa_wts |> saveRDS("data/intermediate_data/cbg_mmsa_wts.RDS")
+```
+
+```{r cbgmmsacounts}
+#| eval: false
+cbg_mmsa_wts <- readRDS("data/intermediate_data/cbg_mmsa_wts.RDS")
+adi2021_cbg_sf_4326 <- readRDS("data/intermediate_data/adi2021_cbg_sf_4326.rds")
+
+# compute weighted average for adi at county level
+mmsa_adi <- adi2021_cbg_sf_4326 |>
+  st_drop_geometry() |> 
+  select(-STATEFP, -COUNTYFP, -TRACTCE, -BLKGRPCE, -NAME) |> 
+  inner_join(cbg_mmsa_wts, by = c("FIPS" = "GEOID")) |>
+  mutate(ADI_NATRANK = as.numeric(ADI_NATRANK)) |>
+  filter(!is.na(ADI_NATRANK)) |>
+  # national adi rank * cbg_mmsa wt
+  mutate(adi_wts = ADI_NATRANK * cbg_mmsa_wt) |>
+  group_by(d_mmsa) |>
+  # weighted average sum of weighted adis
+  summarize(mmsa_adi_value = sum(adi_wts, na.rm = TRUE))
+
+mmsa_adi |> saveRDS("data/intermediate_data/mmsa_adi.RDS")
+
+# cbg_mmsa_counts_comb <- cbg_mmsa_counts |> 
+#   bind_rows()
+# cbg_mmsa_counts_comb |> ggplot(aes(x = P1_001N)) + geom_histogram()
+```
+
+```{r cbgmmsacounts2}
+#| eval: FALSE
+mmsa_adi <- readRDS("data/intermediate_data/mmsa_adi.RDS")
+
+adi2021_mmsa_sf_4326 <- mmsa_county_mapping_geoid_sf_4326 |> 
+  left_join(mmsa_adi, by = "d_mmsa")
+
+adi2021_mmsa_sf_4326 |> saveRDS("data/intermediate_data/adi2021_mmsa_sf_4326.rds")
+```
+
+```{r leafletadimmsa}
+adi2021_mmsa_sf_4326 <- readRDS("data/intermediate_data/adi2021_mmsa_sf_4326.rds")
+
+
+pal_adi <- colorNumeric("inferno", NULL, reverse = TRUE)
+
+adi2021_mmsa_sf_4326  |>
+  st_simplify(dTolerance = 1e3)  |>
+  leaflet() |>
+  addPolygons(
+    stroke = FALSE,
+    # remove polygon borders
+    fillColor = ~ pal_adi(mmsa_adi_value),
+    fillOpacity = 0.5,
+    smoothFactor = 0.5
+    # increase opacity and resolution
+  ) |>
+  addProviderTiles(providers$CartoDB.Voyager) |> # add third party provider tile
+  addLegend(
+    "bottomright",
+    # location of legend
+    pal = pal_adi,
+    # palette function
+    values = ~ mmsa_adi_value,
+    # variable to pass to palette function
+    title = 'adi',
+    # legend title
+    opacity = 1 # legend opacity (1 = completely opaque)
+  ) |>
+  addScaleBar()
+```
+
 ### Combining datasets
 
+#### For area-level analyses
 
 ```{r combinedataset}
 #| eval: FALSE
-combined_dataset <- mmsa_county_mapping_geoid_sf_4326 |>
+# incorporate county counts for Poisson regression analyses
+county_cts <- readRDS("data/intermediate_data/county_cts.RDS")
+
+area_combined_dataset <- mmsa_county_mapping_geoid_sf_4326 |>
   select(d_mmsa, county_county_equivalent, fips_state_code, fips_county_code) |>
   left_join(select(ever_asthma_mmsa_tbl, -mmsaname), by = "d_mmsa") |> 
   left_join(select(ever_smoker_mmsa_tbl, -mmsaname), by = "d_mmsa") |>
+  mutate(GEOID = paste0(fips_state_code, fips_county_code)) |>
+  left_join(county_cts, by = "GEOID") |>
   st_join(select(svi2020_sf_4326, starts_with("RPL")),
           left = TRUE,
           join = st_equals) |> 
   st_join(select(adi2021_county_sf_4326, county_adi_value),
           left = TRUE,
-          join = st_equals)
-
-combined_dataset |> saveRDS("data/final_data/combined_dataset.rds")
-```
-
-```{r loadcomb}
-#| eval: false
-# add county counts for poisson regression
-combined_dataset <- readRDS("data/final_data/combined_dataset.rds")
-combined_dataset_no_geo <- combined_dataset |>
-  st_drop_geometry()
-
-
-county_cts <- get_decennial(
-  geography = "county",
-  variables = "P1_001N",
-  year = 2020,
-  output = "wide"
-) |>
-  rename(county_ct = P1_001N)
-
-combined_dataset_w_counts <- combined_dataset_no_geo |>
-  mutate(GEOID = paste0(fips_state_code, fips_county_code)) |>
-  left_join(county_cts, by = "GEOID") |>
+          join = st_equals) |>
   mutate(
     n_w_ever_smoker = floor(w_ever_smoker * county_ct),
     n_uw_ever_smoker = floor(uw_ever_smoker * county_ct),
@@ -753,19 +1032,94 @@ combined_dataset_w_counts <- combined_dataset_no_geo |>
     n_uw_ever_asthma = floor(uw_ever_asthma * county_ct)
   )
 
-combined_dataset_w_counts |> saveRDS("data/final_data/combined_dataset_w_counts.rds")
+area_combined_dataset |> saveRDS("data/final_data/area_combined_dataset.rds")
+```
+
+#### For individual-level analyses
+
+```{r combinedataset2}
+#| eval: FALSE
+mmsa_adi <- readRDS("data/intermediate_data/mmsa_adi.RDS")
+mmsa_svi <- readRDS("data/intermediate_data/mmsa_svi.RDS")
+
+indiv_combined_dataset <- smart_2021 |>
+  mutate(
+    # NA for missing ever smoker (different than area-level approach)
+    d_ever_smoker = case_when(d_smoker3 %in% c(1, 2, 3) ~ 1,
+                               d_smoker3 == 4 ~ 0,
+                               TRUE ~ NA),
+    d_ever_asthma = case_when(d_ltasth1 == 1 ~ 0,
+                               d_ltasth1 == 2 ~ 1,
+                               TRUE ~ NA),
+    # NA for missing ever asthma (different than area-level approach)
+    d_sex = factor(if_else(d_sex == 1, "male", "female")),
+    d_race_eth = factor(
+      case_when(
+        d_race == 1 ~ "White only, non-Hispanic",
+        d_race == 2 ~ "Black only, non-Hispanic",
+        d_race == 3 ~ "American Indian or Alaskan Native only",
+        d_race == 4 ~ "Asian only, non-Hispanic",
+        d_race == 5 ~ "Native Hawaiian or other Pacific Islander only",
+        d_race == 6 ~ "Other race only, non-Hispanic",
+        d_race == 7 ~ "Multiracial, non-Hispanic",
+        d_race == 8 ~ "Hispanic",
+        d_race == 9 ~ "Don’t know/Not sure/Refused",
+        TRUE ~ NA
+      ),
+      levels = c(
+        "White only, non-Hispanic",
+        "Black only, non-Hispanic",
+        "American Indian or Alaskan Native only",
+        "Asian only, non-Hispanic",
+        "Native Hawaiian or other Pacific Islander only",
+        "Other race only, non-Hispanic",
+        "Multiracial, non-Hispanic",
+        "Hispanic",
+        "Don’t know/Not sure/Refused"
+      )
+    ),
+    d_imput_age_group = factor(
+      case_when(
+        d_age_g == 1 ~ "18–24",
+        d_age_g == 2 ~ "25–34",
+        d_age_g == 3 ~ "35–44",
+        d_age_g == 4 ~ "45–54",
+        d_age_g == 5 ~ "55–64",
+        d_age_g == 6 ~ "65–99",
+        TRUE ~ NA
+      )
+    )
+  ) |>
+  select(d_ever_smoker,
+         d_ever_asthma,
+         d_sex,
+         d_race_eth,
+         d_imput_age_group,
+         d_mmsa) |>
+  left_join(mmsa_adi, by = "d_mmsa") |>
+  left_join(mmsa_svi, by = "d_mmsa")
+
+# check contrasts for intercepts
+contrasts(indiv_combined_dataset$d_sex)
+contrasts(indiv_combined_dataset$d_imput_age_group)
+contrasts(indiv_combined_dataset$d_race_eth)
+
+indiv_combined_dataset |> saveRDS("data/final_data/indiv_combined_dataset.rds")
 ```
 
 ## Results {#sec-results}
 
+### Area-level analyses
 
-### Analyses
+#### Correlations
 
 ```{r correlations}
-combined_dataset_w_counts <- readRDS("data/final_data/combined_dataset_w_counts.rds")
+area_combined_dataset <-
+  readRDS("data/final_data/area_combined_dataset.rds") |>
+  st_drop_geometry()
 
 # benefited from approach here https://rpubs.com/cqj_00/785193
-combined_corrs <- combined_dataset_w_counts |>
+area_combined_corr_plot <- area_combined_dataset |>
   select(
     w_ever_asthma,
     w_ever_smoker,
@@ -777,46 +1131,19 @@ combined_corrs <- combined_dataset_w_counts |>
     county_adi_value,
     county_ct
   ) |>
-  cor(use = "complete.obs", method = "spearman") |>
-  as.matrix() %>%
-  get_tri() %>%
-  reshape2::melt(na.rm = TRUE) |> 
-  rename(variable_1 = Var1,
-         variable_2 = Var2)
+  get_corr_plot()
 
-combined_corrs |>
-  ggplot(aes(x = variable_2, y = variable_1, fill = value)) +
-  geom_tile(color = "white") +
-  scale_fill_gradient2(
-    low = "blue",
-    high = "red",
-    mid = "grey100",
-    # midpoint = 0.5,
-    limit = c(-1, 0.999),
-    space = "Lab",
-    name = "Spearman\nCorrelation"
-  ) +
-  theme_minimal() + # minimal theme
-  theme(
-    axis.text.x = element_text(
-      angle = 45,
-      vjust = 1,
-      size = 10,
-      hjust = 1
-    ),
-    axis.text.y = element_text(size = 10)
-  ) +
-  coord_fixed() +
-  coord_flip()
+ggsave(filename = "local/area_combined_corr_plot.png",
+       width = 6, height = 4)
 ```
 
-#### Correlations between SVI and ADI
+#### Relationship between ADI and SVI at county level
 
 ```{r}
 svi_adi_model <-
   glm(county_adi_value ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_ct,
       family = gaussian(),
-      data = combined_dataset_w_counts)
+      data = area_combined_dataset)
 
 
 modelsummary(
@@ -832,30 +1159,54 @@ modelsummary(
 #### Smoking
 
 ```{r}
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_smoker)) +
   geom_density()  +
   theme_minimal()
 
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_smoker,
              y = county_adi_value)) +
   geom_point(alpha = 0.5) +
   theme_minimal()
 
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = RPL_THEME1)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+area_combined_dataset |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = RPL_THEME2)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_smoker,
              y = RPL_THEME3)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+area_combined_dataset |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = RPL_THEME4)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal()
+
+area_combined_dataset |> 
+  ggplot(aes(x = w_ever_smoker,
+             y = RPL_THEMES)) +
   geom_point(alpha = 0.5) +
   theme_minimal()
 ```
 
 ```{r}
 # remove outliers
-smoking_dataset_cleaned <- combined_dataset_w_counts |> 
+smoking_dataset_cleaned <- area_combined_dataset |> 
   filter(w_ever_smoker >= 0.2)
 # exploring modelling approaches..
-# benefitted from https://rpubs.com/kaz_yos/poisson
+# benefited from https://rpubs.com/kaz_yos/poisson
 smoking_quasibinom_adi_only <-
   glm(w_ever_smoker ~ county_adi_value,
       family = quasibinomial(),
@@ -870,13 +1221,13 @@ smoking_quasipoisson_adi_only <-
   )
 
 smoking_quasibinom <-
-  glm(w_ever_smoker ~ county_adi_value * RPL_THEME3,
+  glm(w_ever_smoker ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
       family = quasibinomial(),
       data = smoking_dataset_cleaned)
 
 smoking_quasipoisson <-
   glm(
-    n_w_ever_smoker ~ county_adi_value * RPL_THEME3,
+    n_w_ever_smoker ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = smoking_dataset_cleaned
@@ -896,21 +1247,28 @@ modelsummary(
 )
 ```
 
+```{r}
+tbl_regression(smoking_quasipoisson, exponentiate = TRUE) %>%
+  bold_p(t = 0.05) %>%
+  bold_labels() %>%
+  italicize_levels()
+```
+
 #### Asthma
 
 ```{r}
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_asthma)) +
   geom_density()  +
   theme_minimal()
 
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_asthma,
              y = county_adi_value)) +
   geom_point(alpha = 0.5) +
   theme_minimal()
 
-combined_dataset_w_counts |> 
+area_combined_dataset |> 
   ggplot(aes(x = w_ever_asthma,
              y = RPL_THEME3)) +
   geom_point(alpha = 0.5) +
@@ -919,17 +1277,17 @@ combined_dataset_w_counts |>
 
 ```{r}
 # remove outliers
-asthma_dataset_cleaned <- combined_dataset_w_counts
+asthma_dataset_cleaned <- area_combined_dataset
 # exploring modelling approaches..
 # benefitted from https://rpubs.com/kaz_yos/poisson
 asthma_quasibinom <-
-  glm(w_ever_asthma ~ county_adi_value * RPL_THEME3,
+  glm(w_ever_asthma ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
       family = quasibinomial(),
       data = asthma_dataset_cleaned)
 
 asthma_quasipoisson <-
   glm(
-    n_w_ever_asthma ~ county_adi_value * RPL_THEME3,
+    n_w_ever_asthma ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = asthma_dataset_cleaned
@@ -963,9 +1321,129 @@ modelsummary(
 ```
 
 
+```{r}
+tbl_regression(asthma_quasipoisson, exponentiate = TRUE) %>%
+  bold_p(t = 0.05) %>%
+  bold_labels() %>%
+  italicize_levels()
+```
 
+### Individual-level analyses
+
+Given the absence of some of the expected relationships with asthma, try analyzing at individual-level with area-level measurements rolled up to CBSA
+
+#### Correlations
+
+```{r}
+indiv_combined_dataset <- readRDS("data/final_data/indiv_combined_dataset.rds")
+# benefited from approach here https://rpubs.com/cqj_00/785193
+indiv_combined_corr_plot <- indiv_combined_dataset |>
+  select(-d_sex, -d_race_eth, -d_imput_age_group, -d_mmsa) |> 
+  get_corr_plot()
+ggsave(filename = "local/indiv_combined_corr_plot.png",
+       width = 6, height = 4)
+```
+
+#### Relationship between ADI and SVI at MMSA level
+
+```{r}
+svi_adi_model <-
+  glm(mmsa_adi_value ~ mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+      family = gaussian(),
+      data = indiv_combined_dataset)
+
+# TODO check these relationship hold across the US (not just MMSAs)
+modelsummary(
+  list(
+    "svi_adi_model" = svi_adi_model
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]"
+)
+```
+#### Smoking
+
+```{r}
+smoking_individual_dataset_cleaned <- indiv_combined_dataset |>
+  filter(!is.na(d_ever_smoker))
+
+smoking_binomial_adi_only <-
+  glm(
+    d_ever_smoker ~ mmsa_adi_value + d_sex + d_race_eth + d_imput_age_group,
+    family = binomial(),
+    data = smoking_individual_dataset_cleaned
+  )
+
+smoking_binomial <-
+  glm(
+    d_ever_smoker ~ mmsa_adi_value + mmsa_RPL_THEME3 + d_sex + d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+    family = binomial(),
+    data = smoking_individual_dataset_cleaned
+  )
+
+modelsummary(
+  list(
+    "smoking_binomial_adi_only" = smoking_binomial_adi_only,
+    "smoking_binomial" = smoking_binomial
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]",
+  exponentiate = TRUE
+)
+```
+
+
+```{r}
+tbl_regression(smoking_binomial, exponentiate = TRUE) %>%
+  bold_p(t = 0.05) %>%
+  bold_labels() %>%
+  italicize_levels()
+```
 
 <!-- Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required. -->
+
+
+#### Asthma
+
+```{r}
+asthma_individual_dataset_cleaned <- indiv_combined_dataset |>
+  filter(!is.na(d_ever_asthma))
+
+asthma_binomial_adi_only <-
+  glm(
+    d_ever_asthma ~ mmsa_adi_value + d_sex + d_race_eth + d_imput_age_group,
+    family = binomial(),
+    data = asthma_individual_dataset_cleaned
+  )
+
+asthma_binomial <-
+  glm(
+    d_ever_asthma ~ mmsa_adi_value + mmsa_RPL_THEME3 + d_sex + d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+    family = binomial(),
+    data = asthma_individual_dataset_cleaned
+  )
+
+modelsummary(
+  list(
+    "asthma_binomial_adi_only" = asthma_binomial_adi_only,
+    "asthma_binomial" = asthma_binomial
+  ),
+  coef_omit = "Intercept",
+  statistic = c("p = {p.value}"),
+  estimate = "{estimate} [{conf.low}, {conf.high}]",
+  exponentiate = TRUE
+)
+```
+
+```{r}
+tbl_regression(asthma_binomial, exponentiate = TRUE) %>%
+  bold_p(t = 0.05) %>%
+  bold_labels() %>%
+  italicize_levels()
+```
+
 
 ## Conclusion
 
@@ -1009,6 +1487,10 @@ mmsa_colnames_all |>
 ```
 
 ### Asthma and smoking BRFSS variables
+
+```{r}
+# TODO add race, sex, age to this table
+```
 
 The table below summarizes the variables of interest, combining information from <https://www.cdc.gov/brfss/annual_data/2021/summary_matrix_21.html> and <https://www.cdc.gov/brfss/annual_data/2021/pdf/2021-calculated-variables-version4-508.pdf>
 
