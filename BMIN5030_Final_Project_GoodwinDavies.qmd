@@ -35,6 +35,8 @@ library(kableExtra)
 library(broom.mixed)
 library(modelsummary)
 library(gtsummary)
+library(cowplot)
+library(lme4)
 options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
@@ -42,6 +44,51 @@ options(progress_enabled = FALSE)
 # Functions
 
 ```{r functions}
+my_theme <- function() {
+  theme_half_open() +
+    theme(
+      panel.grid = element_line(color = "white"),
+      legend.key.size = unit(0.4, "cm"),
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 12),
+      plot.title = element_text(size = 16)
+    )
+}
+
+my_point_plot <- function(df,
+                          variable_x,
+                          variable_y) {
+  df |>
+    ggplot(aes(x = {{variable_x}}, y = {{variable_y}})) +
+    geom_point(alpha = 0.8, colour = "darkgrey") +
+    geom_smooth(
+      method = 'lm',
+      formula = y ~ poly(x, 2),
+      aes(color = 'polynomial'),
+      se = FALSE
+    ) +
+    geom_smooth(
+      method = 'lm',
+      formula = y ~ x,
+      aes(color = 'linear'),
+      se = FALSE
+    ) +
+    my_theme() +
+    theme(legend.position = "none")
+}
+
+my_box_plot <- function(df,
+                        variable_x,
+                        variable_y){
+  df |>
+    ggplot(aes(x = {{variable_x}}, y = {{variable_y}})) +
+    my_theme() +
+    geom_violin(fill = "lightblue",
+                colour = NA,
+                alpha = 0.8) +
+    geom_boxplot(alpha = 0)
+}
+
 # from https://rdrr.io/github/bradisbrad/olfatbones/src/R/get_tri.R
 #' Triangularize a Correlation Matrix
 #' @description Takes a correlation matrix and removes the redundant information
@@ -68,8 +115,8 @@ get_tri <- function(cormat, lower = T){
 get_corr_plot <- function(df) {
   combined_corrs <- df |>
     cor(use = "complete.obs", method = "spearman") |>
-    as.matrix() %>%
-    get_tri() %>%
+    as.matrix() |>
+    get_tri() |>
     reshape2::melt(na.rm = TRUE) |>
     rename(variable_1 = Var1,
            variable_2 = Var2)
@@ -86,7 +133,8 @@ get_corr_plot <- function(df) {
       space = "Lab",
       name = "Spearman\nCorrelation"
     ) +
-    theme_minimal() + # minimal theme
+  geom_text(aes(label = round(value, 2))) +
+    my_theme() +
     theme(
       axis.text.x = element_text(
         angle = 45,
@@ -105,7 +153,7 @@ get_mmsa_survey_means <- function(smart_df,
                                   smart_survey,
                                   variable_name){
   # get unweighted means by mmsa (uw_)
-  uw_mmsa_tbl <- smart_df %>%
+  uw_mmsa_tbl <- smart_df |>
     select(d_mmsa, mmsaname, {{variable_name}}) |>
     group_by(d_mmsa, mmsaname) |>
     summarise(across(starts_with(variable_name), ~ mean(.x, na.rm = TRUE), .names = "uw_{.col}"))
@@ -183,7 +231,7 @@ MMSA2021 |> glimpse()
 
 ```{r mmsalabels}
 # construct table of variable names and labels
-mmsa_colname_labels <- MMSA2021 %>%
+mmsa_colname_labels <- MMSA2021 |>
   map_dfc(attr, "label") |>
   pivot_longer(everything(),
                names_to = "colname",
@@ -199,7 +247,7 @@ attr(MMSA2021[["_MMSA"]], "label") <- toupper("the code of metropolitan or micro
 attr(MMSA2021[["MMSANAME"]], "label") <- toupper("the MMSA name")
 attr(MMSA2021[["_MMSAWT"]], "label") <- toupper("the MMSA-level weight that is used when generating MMSA-level estimates for variables in the data set")
 attr(MMSA2021[["_resp_id"]], "label") <- toupper("respondent ID")
-mmsa_colnames_all <- MMSA2021 %>%
+mmsa_colnames_all <- MMSA2021 |>
   map_dfc(attr, "label") |>
   pivot_longer(everything(),
                names_to = "colname",
@@ -343,7 +391,7 @@ options(survey.adjust.domain.lonely=TRUE)
 options(survey.lonely.psu="adjust")
 # TODO check this
 # use provided survey weights
-smart_2021_surv <- smart_2021 %>%
+smart_2021_surv <- smart_2021 |>
   as_survey_design(ids = 1,
                    strata = d_ststr,
                    weights = d_mmsawt)
@@ -365,7 +413,7 @@ wtkg3_mmsa_tbl |>
                values_to = "wtkg3") |>
   ggplot(aes(x = wtkg3 / 100, colour = name)) + # divide by 100 for 2 implied decimal places
   geom_density() +
-  theme_minimal()
+  my_theme()
 
 wtkg3_mmsa_tbl |>
   arrange(desc(w_wtkg3)) |>
@@ -514,49 +562,55 @@ mmsa_county_mapping_geoid_sf_4326  |>
 
 <!-- At county level -->
 
-+--------------+------------------------------------------------------------------+
-| Field name   | Description                                                      |
-+==============+==================================================================+
-| RPL_THEME1   | Socioeconomic Status, incorporating information such as          |
-|              |                                                                  |
-|              | -   Below 150% Poverty                                           |
-|              |                                                                  |
-|              | -   Unemployed                                                   |
-|              |                                                                  |
-|              | -   Housing Cost Burden                                          |
-|              |                                                                  |
-|              | -   No High School Diploma                                       |
-|              |                                                                  |
-|              | -   No Health Insurance                                          |
-+--------------+------------------------------------------------------------------+
-| RPL_THEME2   | Household Characteristics, incorporating information such as     |
-|              |                                                                  |
-|              | -   Aged 65 & Older                                              |
-|              |                                                                  |
-|              | -   Aged 17 & Younger                                            |
-|              |                                                                  |
-|              | -   Civilian with a Disability                                   |
-|              |                                                                  |
-|              | -   Single-Parent Households                                     |
-|              |                                                                  |
-|              | -   English Language Proficiency                                 |
-+--------------+------------------------------------------------------------------+
-| RPL_THEME3   | Racial & Ethnic Minority Status                                  |
-+--------------+------------------------------------------------------------------+
-| RPL_THEME4   | Housing Type & Transportation, incorporating information such as |
-|              |                                                                  |
-|              | -   Multi-Unit Structures                                        |
-|              |                                                                  |
-|              | -   Mobile Homes                                                 |
-|              |                                                                  |
-|              | -   Crowding                                                     |
-|              |                                                                  |
-|              | -   No Vehicle                                                   |
-|              |                                                                  |
-|              | -   Group Quarters                                               |
-+--------------+------------------------------------------------------------------+
-| RPL_THEMES   | Overall summary ranking                                          |
-+--------------+------------------------------------------------------------------+
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| Field name   | Description                                                                                                                           |
++==============+=======================================================================================================================================+
+| RPL_THEME1   | Socioeconomic Status, incorporating information such as                                                                               |
+|              |                                                                                                                                       |
+|              | -   Below 150% Poverty                                                                                                                |
+|              |                                                                                                                                       |
+|              | -   Unemployed                                                                                                                        |
+|              |                                                                                                                                       |
+|              | -   Housing Cost Burden                                                                                                               |
+|              |                                                                                                                                       |
+|              | -   No High School Diploma                                                                                                            |
+|              |                                                                                                                                       |
+|              | -   No Health Insurance                                                                                                               |
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| RPL_THEME2   | Household Characteristics, incorporating information such as                                                                          |
+|              |                                                                                                                                       |
+|              | -   Aged 65 & Older                                                                                                                   |
+|              |                                                                                                                                       |
+|              | -   Aged 17 & Younger                                                                                                                 |
+|              |                                                                                                                                       |
+|              | -   Civilian with a Disability                                                                                                        |
+|              |                                                                                                                                       |
+|              | -   Single-Parent Households                                                                                                          |
+|              |                                                                                                                                       |
+|              | -   English Language Proficiency                                                                                                      |
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| RPL_THEME3   | Racial & Ethnic Minority Status                                                                                                       |
+|              |                                                                                                                                       |
+|              | *Percentile percentage minority (Hispanic or Latino (of any                                                                           |
+|              | race); Black and African American,Not Hispanic or                                                                                     |
+|              | Latino; American Indian and Alaska Native, Not Hispanic or Latino;                                                                    |
+|              | Asian, Not Hispanic or Latino; Native Hawaiian and Other Pacific Islander, Not Hispanic or Latino; Two or More Races, Not Hispanic or |
+|              | Latino; Other Races, Not Hispanic or Latino) estimate*                                                                                |
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| RPL_THEME4   | Housing Type & Transportation, incorporating information such as                                                                      |
+|              |                                                                                                                                       |
+|              | -   Multi-Unit Structures                                                                                                             |
+|              |                                                                                                                                       |
+|              | -   Mobile Homes                                                                                                                      |
+|              |                                                                                                                                       |
+|              | -   Crowding                                                                                                                          |
+|              |                                                                                                                                       |
+|              | -   No Vehicle                                                                                                                        |
+|              |                                                                                                                                       |
+|              | -   Group Quarters                                                                                                                    |
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| RPL_THEMES   | Overall summary ranking                                                                                                               |
++--------------+---------------------------------------------------------------------------------------------------------------------------------------+
 
 : SVI measures, from [CDC/ATSDR SVI 2020 Documentation - 8/5/2022](https://www.atsdr.cdc.gov/placeandhealth/svi/documentation/pdf/SVI2020Documentation_08.05.22.pdf)
 
@@ -612,7 +666,7 @@ svi2020_sf_4326  |>
   addPolygons(
     stroke = FALSE,
     # remove polygon borders
-    fillColor = ~ pal_svi(RPL_THEME1),
+    fillColor = ~ pal_svi(RPL_THEMES),
     fillOpacity = 0.5,
     smoothFactor = 0.5
     # increase opacity and resolution
@@ -1004,6 +1058,36 @@ adi2021_mmsa_sf_4326  |>
   addScaleBar()
 ```
 
+```{r}
+county_adi <- readRDS("data/intermediate_data/county_adi.RDS")
+# compare SVI and ADI across entire US
+svi_adi_county <- county_adi |>
+  mutate(FIPS = paste0(STATEFP, COUNTYFP)) |> 
+  select(FIPS, county_adi_value) |>
+  st_drop_geometry() |>
+  inner_join(svi2020_sf_4326 |> st_drop_geometry(),
+             by = "FIPS") |>
+  select(FIPS, county_adi_value, starts_with("RPL_"), NAME)
+
+svi_adi_county_corr_plot <- svi_adi_county |>
+  select(-NAME, -FIPS) |>
+  select(RPL_THEME1,
+         RPL_THEME2,
+         RPL_THEME3,
+         RPL_THEME4,
+         RPL_THEMES,
+         county_adi_value) |>
+  get_corr_plot()
+svi_adi_county_corr_plot
+ggsave(filename = "local/svi_adi_county_corr_plot.png",
+       width = 6,
+       height = 4)
+
+svi_adi_county |>
+  my_point_plot(RPL_THEME3, county_adi_value)
+
+```
+
 ### Combining datasets
 
 #### For area-level analyses
@@ -1045,12 +1129,12 @@ mmsa_svi <- readRDS("data/intermediate_data/mmsa_svi.RDS")
 indiv_combined_dataset <- smart_2021 |>
   mutate(
     # NA for missing ever smoker (different than area-level approach)
-    d_ever_smoker = case_when(d_smoker3 %in% c(1, 2, 3) ~ 1,
+    d_ever_smoker = factor(case_when(d_smoker3 %in% c(1, 2, 3) ~ 1,
                                d_smoker3 == 4 ~ 0,
-                               TRUE ~ NA),
-    d_ever_asthma = case_when(d_ltasth1 == 1 ~ 0,
+                               TRUE ~ NA)),
+    d_ever_asthma = factor(case_when(d_ltasth1 == 1 ~ 0,
                                d_ltasth1 == 2 ~ 1,
-                               TRUE ~ NA),
+                               TRUE ~ NA)),
     # NA for missing ever asthma (different than area-level approach)
     d_sex = factor(if_else(d_sex == 1, "male", "female")),
     d_race_eth = factor(
@@ -1097,7 +1181,8 @@ indiv_combined_dataset <- smart_2021 |>
          d_imput_age_group,
          d_mmsa) |>
   left_join(mmsa_adi, by = "d_mmsa") |>
-  left_join(mmsa_svi, by = "d_mmsa")
+  left_join(mmsa_svi, by = "d_mmsa") |> 
+  mutate(d_mmsa = factor(d_mmsa))
 
 # check contrasts for intercepts
 contrasts(indiv_combined_dataset$d_sex)
@@ -1119,6 +1204,7 @@ area_combined_dataset <-
   st_drop_geometry()
 
 # benefited from approach here https://rpubs.com/cqj_00/785193
+
 area_combined_corr_plot <- area_combined_dataset |>
   select(
     w_ever_asthma,
@@ -1132,9 +1218,25 @@ area_combined_corr_plot <- area_combined_dataset |>
     county_ct
   ) |>
   get_corr_plot()
-
+area_combined_corr_plot
 ggsave(filename = "local/area_combined_corr_plot.png",
        width = 6, height = 4)
+area_combined_corr_plot2 <- area_combined_dataset |>
+  select(
+    RPL_THEME1,
+    RPL_THEME2,
+    RPL_THEME3,
+    RPL_THEME4,
+    RPL_THEMES,
+    county_adi_value
+  ) |>
+  get_corr_plot()
+ggsave(filename = "local/area_combined_corr_plot2.png",
+       width = 6, height = 4)
+
+# area_combined_dataset |>
+#   my_point_plot(RPL_THEME3,
+#                 county_adi_value)
 ```
 
 #### Relationship between ADI and SVI at county level
@@ -1162,43 +1264,33 @@ modelsummary(
 area_combined_dataset |> 
   ggplot(aes(x = w_ever_smoker)) +
   geom_density()  +
-  theme_minimal()
+  my_theme()
 
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = county_adi_value)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = RPL_THEME1)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = RPL_THEME2)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = RPL_THEME3)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = RPL_THEME4)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_smoker,
-             y = RPL_THEMES)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
+plot_grid(
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  county_adi_value),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  RPL_THEME1),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  RPL_THEME2),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  RPL_THEME3),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  RPL_THEME4),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_smoker,
+                  RPL_THEME2)
+)
 ```
 
 ```{r}
@@ -1221,13 +1313,13 @@ smoking_quasipoisson_adi_only <-
   )
 
 smoking_quasibinom <-
-  glm(w_ever_smoker ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
+  glm(w_ever_smoker ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
       family = quasibinomial(),
       data = smoking_dataset_cleaned)
 
 smoking_quasipoisson <-
   glm(
-    n_w_ever_smoker ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
+    n_w_ever_smoker ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = smoking_dataset_cleaned
@@ -1248,9 +1340,9 @@ modelsummary(
 ```
 
 ```{r}
-tbl_regression(smoking_quasipoisson, exponentiate = TRUE) %>%
-  bold_p(t = 0.05) %>%
-  bold_labels() %>%
+tbl_regression(smoking_quasipoisson, exponentiate = TRUE) |>
+  bold_p(t = 0.05) |>
+  bold_labels() |>
   italicize_levels()
 ```
 
@@ -1260,19 +1352,33 @@ tbl_regression(smoking_quasipoisson, exponentiate = TRUE) %>%
 area_combined_dataset |> 
   ggplot(aes(x = w_ever_asthma)) +
   geom_density()  +
-  theme_minimal()
+  my_theme()
 
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_asthma,
-             y = county_adi_value)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
-
-area_combined_dataset |> 
-  ggplot(aes(x = w_ever_asthma,
-             y = RPL_THEME3)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal()
+plot_grid(
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  county_adi_value),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  RPL_THEME1),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  RPL_THEME2),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  RPL_THEME3),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  RPL_THEME4),
+  
+  area_combined_dataset |>
+    my_point_plot(w_ever_asthma,
+                  RPL_THEME2)
+)
 ```
 
 ```{r}
@@ -1281,13 +1387,13 @@ asthma_dataset_cleaned <- area_combined_dataset
 # exploring modelling approaches..
 # benefitted from https://rpubs.com/kaz_yos/poisson
 asthma_quasibinom <-
-  glm(w_ever_asthma ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
+  glm(w_ever_asthma ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
       family = quasibinomial(),
       data = asthma_dataset_cleaned)
 
 asthma_quasipoisson <-
   glm(
-    n_w_ever_asthma ~ county_adi_value + RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4,
+    n_w_ever_asthma ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = asthma_dataset_cleaned
@@ -1320,11 +1426,10 @@ modelsummary(
 )
 ```
 
-
 ```{r}
-tbl_regression(asthma_quasipoisson, exponentiate = TRUE) %>%
-  bold_p(t = 0.05) %>%
-  bold_labels() %>%
+tbl_regression(asthma_quasipoisson, exponentiate = TRUE) |>
+  bold_p(t = 0.05) |>
+  bold_labels() |>
   italicize_levels()
 ```
 
@@ -1338,8 +1443,9 @@ Given the absence of some of the expected relationships with asthma, try analyzi
 indiv_combined_dataset <- readRDS("data/final_data/indiv_combined_dataset.rds")
 # benefited from approach here https://rpubs.com/cqj_00/785193
 indiv_combined_corr_plot <- indiv_combined_dataset |>
-  select(-d_sex, -d_race_eth, -d_imput_age_group, -d_mmsa) |> 
+  select(-d_sex, -d_race_eth, -d_imput_age_group, -d_mmsa, -d_ever_smoker, -d_ever_asthma) |> 
   get_corr_plot()
+indiv_combined_corr_plot
 ggsave(filename = "local/indiv_combined_corr_plot.png",
        width = 6, height = 4)
 ```
@@ -1362,22 +1468,50 @@ modelsummary(
   estimate = "{estimate} [{conf.low}, {conf.high}]"
 )
 ```
+
 #### Smoking
 
 ```{r}
 smoking_individual_dataset_cleaned <- indiv_combined_dataset |>
   filter(!is.na(d_ever_smoker))
 
+plot_grid(smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_adi_value),
+  
+  smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_RPL_THEME1),
+  
+  smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_RPL_THEME2),
+  
+  smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_RPL_THEME3),
+  
+  smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_RPL_THEME4),
+  
+  smoking_individual_dataset_cleaned |>
+  my_box_plot(d_ever_smoker,
+              mmsa_RPL_THEMES)
+)
+```
+
+```{r}
 smoking_binomial_adi_only <-
   glm(
-    d_ever_smoker ~ mmsa_adi_value + d_sex + d_race_eth + d_imput_age_group,
+    d_ever_smoker ~  d_sex * d_race_eth + d_imput_age_group + mmsa_adi_value,
     family = binomial(),
     data = smoking_individual_dataset_cleaned
   )
 
 smoking_binomial <-
   glm(
-    d_ever_smoker ~ mmsa_adi_value + mmsa_RPL_THEME3 + d_sex + d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+    d_ever_smoker ~ d_sex * d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4  + mmsa_adi_value,
     family = binomial(),
     data = smoking_individual_dataset_cleaned
   )
@@ -1394,33 +1528,59 @@ modelsummary(
 )
 ```
 
-
 ```{r}
-tbl_regression(smoking_binomial, exponentiate = TRUE) %>%
-  bold_p(t = 0.05) %>%
-  bold_labels() %>%
+tbl_regression(smoking_binomial, exponentiate = TRUE) |>
+  bold_p(t = 0.05) |>
+  bold_labels() |>
   italicize_levels()
 ```
 
 <!-- Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required. -->
 
-
 #### Asthma
 
 ```{r}
 asthma_individual_dataset_cleaned <- indiv_combined_dataset |>
-  filter(!is.na(d_ever_asthma))
+  filter(!is.na(d_ever_asthma),!is.na(d_ever_asthma))
 
+plot_grid(
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_adi_value),
+  
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_RPL_THEME1),
+  
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_RPL_THEME2),
+  
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_RPL_THEME3),
+  
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_RPL_THEME4),
+  
+  asthma_individual_dataset_cleaned |>
+    my_box_plot(d_ever_asthma,
+                mmsa_RPL_THEMES)
+)
+```
+
+```{r}
 asthma_binomial_adi_only <-
   glm(
-    d_ever_asthma ~ mmsa_adi_value + d_sex + d_race_eth + d_imput_age_group,
+    d_ever_asthma ~ d_ever_smoker + d_sex * d_race_eth + d_imput_age_group + mmsa_adi_value,
     family = binomial(),
     data = asthma_individual_dataset_cleaned
   )
 
 asthma_binomial <-
   glm(
-    d_ever_asthma ~ mmsa_adi_value + mmsa_RPL_THEME3 + d_sex + d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+    d_ever_asthma ~ d_ever_smoker + d_sex * d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4  + mmsa_adi_value,
     family = binomial(),
     data = asthma_individual_dataset_cleaned
   )
@@ -1438,14 +1598,16 @@ modelsummary(
 ```
 
 ```{r}
-tbl_regression(asthma_binomial, exponentiate = TRUE) %>%
-  bold_p(t = 0.05) %>%
-  bold_labels() %>%
+tbl_regression(asthma_binomial, exponentiate = TRUE) |>
+  bold_p(t = 0.05) |>
+  bold_labels() |>
   italicize_levels()
 ```
 
-
 ## Conclusion
+
+<!-- area level race correlated with?? collapses across relationships in differing directions -->
+
 
 <!-- This the conclusion. The @sec-results can be invoked if you'd like. -->
 
