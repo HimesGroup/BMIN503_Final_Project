@@ -21,6 +21,8 @@ execute:
 This report is still under construction
 :::
 
+#### Packages
+
 ```{r packages}
 library(haven)
 library(tidyverse)
@@ -41,7 +43,7 @@ options(tigris_use_cache = TRUE)
 options(progress_enabled = FALSE)
 ```
 
-# Functions
+#### Functions
 
 ```{r functions}
 my_theme <- function() {
@@ -83,7 +85,7 @@ my_box_plot <- function(df,
   df |>
     ggplot(aes(x = {{variable_x}}, y = {{variable_y}})) +
     my_theme() +
-    geom_violin(fill = "lightblue",
+    geom_violin(fill = "#95ccbb",
                 colour = NA,
                 alpha = 0.8) +
     geom_boxplot(alpha = 0)
@@ -820,6 +822,7 @@ svi2021_mmsa_sf_4326  |>
     -   QDI (Questionable Data Integrity) - Block Groups missing a key demographic factor for ADI construction
 
 ```{r loadadi}
+# TODO scale ADI to match SVI
 # retrieved from https://www.neighborhoodatlas.medicine.wisc.edu/
 adi2021 <- read_csv("data/input_data/adi/adi-download/US_2021_ADI_Census_Block_Group_v4_0_1.csv")
 tigris_cbg <- block_groups(cb = TRUE)  |>
@@ -1113,8 +1116,19 @@ area_combined_dataset <- mmsa_county_mapping_geoid_sf_4326 |>
     n_w_ever_smoker = floor(w_ever_smoker * county_ct),
     n_uw_ever_smoker = floor(uw_ever_smoker * county_ct),
     n_w_ever_asthma = floor(w_ever_asthma * county_ct),
-    n_uw_ever_asthma = floor(uw_ever_asthma * county_ct)
-  )
+    n_uw_ever_asthma = floor(uw_ever_asthma * county_ct),
+    county_adi_value = county_adi_value/100 # divide by 100 to match scale of SVI
+  ) |> 
+  rename(svi_t1_ses = RPL_THEME1, # Socioeconomic Status - RPL_THEME1
+         svi_t2_household = RPL_THEME2, # Household Characteristics - RPL_THEME2
+         svi_t3_raceethnicity = RPL_THEME3, # Racial & Ethnic Minority Status - RPL_THEME3
+         svi_t4_housingtransport = RPL_THEME4, # Housing Type & Transportation - RPL_THEME4
+         svi_overall = RPL_THEMES)
+
+
+
+
+
 
 area_combined_dataset |> saveRDS("data/final_data/area_combined_dataset.rds")
 ```
@@ -1174,15 +1188,31 @@ indiv_combined_dataset <- smart_2021 |>
       )
     )
   ) |>
-  select(d_ever_smoker,
+  select(d_resp_id,
+         d_ever_smoker,
          d_ever_asthma,
          d_sex,
          d_race_eth,
          d_imput_age_group,
-         d_mmsa) |>
+         d_mmsa,
+         d_ststr,
+         d_mmsawt) |>
   left_join(mmsa_adi, by = "d_mmsa") |>
   left_join(mmsa_svi, by = "d_mmsa") |> 
-  mutate(d_mmsa = factor(d_mmsa))
+  mutate(d_mmsa = factor(d_mmsa),
+    mmsa_adi_value = mmsa_adi_value/100 # divide by 100 to match scale of SVI
+    ) |> 
+  rename(mmsa_svi_t1_ses = mmsa_RPL_THEME1, # Socioeconomic Status - RPL_THEME1
+         mmsa_svi_t2_household = mmsa_RPL_THEME2, # Household Characteristics - RPL_THEME2
+         mmsa_svi_t3_raceethnicity = mmsa_RPL_THEME3, # Racial & Ethnic Minority Status - RPL_THEME3
+         mmsa_svi_t4_housingtransport = mmsa_RPL_THEME4, # Housing Type & Transportation - RPL_THEME4
+         mmsa_svi_overall = mmsa_RPL_THEMES)
+
+# TODO should survey design be used here?
+indiv_combined_dataset_surv <- indiv_combined_dataset |>
+  as_survey_design(ids = 1,
+                   strata = d_ststr,
+                   weights = d_mmsawt)
 
 # check contrasts for intercepts
 contrasts(indiv_combined_dataset$d_sex)
@@ -1209,11 +1239,11 @@ area_combined_corr_plot <- area_combined_dataset |>
   select(
     w_ever_asthma,
     w_ever_smoker,
-    RPL_THEME1,
-    RPL_THEME2,
-    RPL_THEME3,
-    RPL_THEME4,
-    RPL_THEMES,
+    svi_t1_ses,
+    svi_t2_household,
+    svi_t3_raceethnicity,
+    svi_t4_housingtransport,
+    svi_overall,
     county_adi_value,
     county_ct
   ) |>
@@ -1223,11 +1253,11 @@ ggsave(filename = "local/area_combined_corr_plot.png",
        width = 6, height = 4)
 area_combined_corr_plot2 <- area_combined_dataset |>
   select(
-    RPL_THEME1,
-    RPL_THEME2,
-    RPL_THEME3,
-    RPL_THEME4,
-    RPL_THEMES,
+    svi_t1_ses,
+    svi_t2_household,
+    svi_t3_raceethnicity,
+    svi_t4_housingtransport,
+    svi_overall,
     county_adi_value
   ) |>
   get_corr_plot()
@@ -1235,7 +1265,7 @@ ggsave(filename = "local/area_combined_corr_plot2.png",
        width = 6, height = 4)
 
 # area_combined_dataset |>
-#   my_point_plot(RPL_THEME3,
+#   my_point_plot(svi_t3_raceethnicity,
 #                 county_adi_value)
 ```
 
@@ -1243,7 +1273,7 @@ ggsave(filename = "local/area_combined_corr_plot2.png",
 
 ```{r}
 svi_adi_model <-
-  glm(county_adi_value ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_ct,
+  glm(county_adi_value ~ svi_t1_ses + svi_t2_household + svi_t3_raceethnicity + svi_t4_housingtransport + county_ct,
       family = gaussian(),
       data = area_combined_dataset)
 
@@ -1273,23 +1303,23 @@ plot_grid(
   
   area_combined_dataset |>
     my_point_plot(w_ever_smoker,
-                  RPL_THEME1),
+                  svi_t1_ses),
   
   area_combined_dataset |>
     my_point_plot(w_ever_smoker,
-                  RPL_THEME2),
+                  svi_t2_household),
   
   area_combined_dataset |>
     my_point_plot(w_ever_smoker,
-                  RPL_THEME3),
+                  svi_t3_raceethnicity),
   
   area_combined_dataset |>
     my_point_plot(w_ever_smoker,
-                  RPL_THEME4),
+                  svi_t4_housingtransport),
   
   area_combined_dataset |>
     my_point_plot(w_ever_smoker,
-                  RPL_THEME2)
+                  svi_t2_household)
 )
 ```
 
@@ -1313,13 +1343,13 @@ smoking_quasipoisson_adi_only <-
   )
 
 smoking_quasibinom <-
-  glm(w_ever_smoker ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
+  glm(w_ever_smoker ~ svi_t1_ses + svi_t2_household + svi_t3_raceethnicity + svi_t4_housingtransport + county_adi_value,
       family = quasibinomial(),
       data = smoking_dataset_cleaned)
 
 smoking_quasipoisson <-
   glm(
-    n_w_ever_smoker ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
+    n_w_ever_smoker ~ svi_t1_ses + svi_t2_household + svi_t3_raceethnicity + svi_t4_housingtransport + county_adi_value,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = smoking_dataset_cleaned
@@ -1361,23 +1391,23 @@ plot_grid(
   
   area_combined_dataset |>
     my_point_plot(w_ever_asthma,
-                  RPL_THEME1),
+                  svi_t1_ses),
   
   area_combined_dataset |>
     my_point_plot(w_ever_asthma,
-                  RPL_THEME2),
+                  svi_t2_household),
   
   area_combined_dataset |>
     my_point_plot(w_ever_asthma,
-                  RPL_THEME3),
+                  svi_t3_raceethnicity),
   
   area_combined_dataset |>
     my_point_plot(w_ever_asthma,
-                  RPL_THEME4),
+                  svi_t4_housingtransport),
   
   area_combined_dataset |>
     my_point_plot(w_ever_asthma,
-                  RPL_THEME2)
+                  svi_t2_household)
 )
 ```
 
@@ -1387,13 +1417,13 @@ asthma_dataset_cleaned <- area_combined_dataset
 # exploring modelling approaches..
 # benefitted from https://rpubs.com/kaz_yos/poisson
 asthma_quasibinom <-
-  glm(w_ever_asthma ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
+  glm(w_ever_asthma ~ svi_t1_ses + svi_t2_household + svi_t3_raceethnicity + svi_t4_housingtransport + county_adi_value,
       family = quasibinomial(),
       data = asthma_dataset_cleaned)
 
 asthma_quasipoisson <-
   glm(
-    n_w_ever_asthma ~ RPL_THEME1 + RPL_THEME2 + RPL_THEME3 + RPL_THEME4 + county_adi_value,
+    n_w_ever_asthma ~ svi_t1_ses + svi_t2_household + svi_t3_raceethnicity + svi_t4_housingtransport + county_adi_value,
     offset = log(county_ct),
     family = quasipoisson(link = "log"),
     data = asthma_dataset_cleaned
@@ -1443,7 +1473,7 @@ Given the absence of some of the expected relationships with asthma, try analyzi
 indiv_combined_dataset <- readRDS("data/final_data/indiv_combined_dataset.rds")
 # benefited from approach here https://rpubs.com/cqj_00/785193
 indiv_combined_corr_plot <- indiv_combined_dataset |>
-  select(-d_sex, -d_race_eth, -d_imput_age_group, -d_mmsa, -d_ever_smoker, -d_ever_asthma) |> 
+  select(-d_sex, -d_race_eth, -d_imput_age_group, -d_mmsa, -d_ever_smoker, -d_ever_asthma, -d_resp_id) |> 
   get_corr_plot()
 indiv_combined_corr_plot
 ggsave(filename = "local/indiv_combined_corr_plot.png",
@@ -1454,7 +1484,7 @@ ggsave(filename = "local/indiv_combined_corr_plot.png",
 
 ```{r}
 svi_adi_model <-
-  glm(mmsa_adi_value ~ mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4,
+  glm(mmsa_adi_value ~ mmsa_svi_t1_ses + mmsa_svi_t2_household + mmsa_svi_t3_raceethnicity + mmsa_svi_t4_housingtransport,
       family = gaussian(),
       data = indiv_combined_dataset)
 
@@ -1477,28 +1507,135 @@ smoking_individual_dataset_cleaned <- indiv_combined_dataset |>
 
 plot_grid(smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_adi_value),
+              mmsa_adi_value) +
+    ylab("ADI"),
   
   smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_RPL_THEME1),
+              mmsa_svi_t1_ses) +
+    ylab("SVI 1 (SES)"),
   
   smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_RPL_THEME2),
+              mmsa_svi_t2_household) +
+    ylab("SVI 2 (Household)"),
   
   smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_RPL_THEME3),
+              mmsa_svi_t3_raceethnicity) +
+    ylab("SVI 3 (Race/Eth)"),
   
   smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_RPL_THEME4),
+              mmsa_svi_t4_housingtransport) +
+    ylab("SVI 4 (Housing/Transp)"),
   
   smoking_individual_dataset_cleaned |>
   my_box_plot(d_ever_smoker,
-              mmsa_RPL_THEMES)
+              mmsa_svi_overall) +
+    ylab("SVI Overall")
 )
+ggsave(filename = "local/smoking_plot_grid.png")
+```
+
+```{r}
+# smoking_individual_dataset_cleaned |> summarize(n_distinct(d_resp_id)) == smoking_individual_dataset_cleaned |> nrow()
+# smoking_individual_dataset_cleaned |> summarize(n_distinct(d_resp_id)) == smoking_individual_dataset_cleaned |> nrow()
+
+# smoking_individual_dataset_cleaned |>
+#   group_by(d_sex) |>
+#   summarize(n_ever_smoker = sum(d_ever_smoker == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_smoker / n_total) |>
+#   ggplot(aes(
+#     x = fct_reorder(d_sex, prop),
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     fill = d_sex)) +
+#   geom_col() +
+#   coord_flip() +
+#   my_theme() +
+#   theme(legend.position = "bottom")
+# 
+# smoking_individual_dataset_cleaned |>
+#   group_by(d_race_eth) |>
+#   summarize(n_ever_smoker = sum(d_ever_smoker == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_smoker / n_total) |>
+#   ggplot(aes(
+#     x = fct_reorder(d_race_eth, prop),
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     fill = d_race_eth)) +
+#   geom_col() +
+#   geom_label(fill = "white") +
+#   coord_flip() +
+#   my_theme() +
+#   theme(legend.position = "bottom")
+
+smoking_individual_dataset_cleaned |>
+  group_by(d_race_eth, d_sex) |>
+  summarize(n_ever_smoker = sum(d_ever_smoker == 1),
+  n_total = n_distinct(d_resp_id)) |>
+  ungroup() |>
+  mutate(prop = n_ever_smoker / n_total) |>
+  ggplot(aes(
+    x = fct_reorder(d_race_eth, prop),
+    y = prop,
+    label = round(prop, digits = 2),
+    fill = d_sex,
+    group = d_sex)) +
+  geom_col(position = position_dodge()) +
+  my_theme() +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  xlab("d_race_eth") +
+  ylab("proportion d_ever_smoker") +
+  scale_fill_manual(values = c("female" = "#eb6223", male = "#512892"))
+ggsave(filename = "local/smoking_sex_raceeth.png",
+       width = 6, height = 4)
+
+smoking_individual_dataset_cleaned |>
+  group_by(d_sex, d_imput_age_group) |>
+  summarize(n_ever_smoker = sum(d_ever_smoker == 1),
+  n_total = n_distinct(d_resp_id)) |>
+  ungroup() |>
+  mutate(prop = n_ever_smoker / n_total) |>
+  ggplot(aes(
+    x = d_imput_age_group,
+    y = prop,
+    label = round(prop, digits = 2),
+    colour = d_sex,
+    group = d_sex
+  )) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  my_theme() +
+  theme(legend.position = "none") +
+  xlab("d_imput_age_group") +
+  ylab("proportion d_ever_smoker") +
+  scale_colour_manual(values = c("female" = "#eb6223", male = "#512892"))
+ggsave(filename = "local/smoking_sex_age.png",
+       width = 8, height = 3)
+
+# smoking_individual_dataset_cleaned |>
+#   group_by(d_race_eth, d_imput_age_group) |>
+#   summarize(n_ever_smoker = sum(d_ever_smoker == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_smoker / n_total) |>
+#   ggplot(aes(
+#     x = d_imput_age_group,
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     colour = d_race_eth,
+#     group = d_race_eth
+#   )) +
+#   geom_line() +
+#   geom_point() +
+#   theme_minimal()
 ```
 
 ```{r}
@@ -1511,7 +1648,7 @@ smoking_binomial_adi_only <-
 
 smoking_binomial <-
   glm(
-    d_ever_smoker ~ d_sex * d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4  + mmsa_adi_value,
+    d_ever_smoker ~ d_sex * d_race_eth + d_imput_age_group + mmsa_svi_t1_ses + mmsa_svi_t2_household + mmsa_svi_t3_raceethnicity + mmsa_svi_t4_housingtransport  + mmsa_adi_value,
     family = binomial(),
     data = smoking_individual_dataset_cleaned
   )
@@ -1543,44 +1680,149 @@ tbl_regression(smoking_binomial, exponentiate = TRUE) |>
 asthma_individual_dataset_cleaned <- indiv_combined_dataset |>
   filter(!is.na(d_ever_asthma),!is.na(d_ever_asthma))
 
-plot_grid(
-  asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_adi_value),
+plot_grid(asthma_individual_dataset_cleaned |>
+  my_box_plot(d_ever_asthma,
+              mmsa_adi_value) +
+    ylab("ADI"),
   
   asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_RPL_THEME1),
+  my_box_plot(d_ever_asthma,
+              mmsa_svi_t1_ses) +
+    ylab("SVI 1 (SES)"),
   
   asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_RPL_THEME2),
+  my_box_plot(d_ever_asthma,
+              mmsa_svi_t2_household) +
+    ylab("SVI 2 (Household)"),
   
   asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_RPL_THEME3),
+  my_box_plot(d_ever_asthma,
+              mmsa_svi_t3_raceethnicity) +
+    ylab("SVI 3 (Race/Eth)"),
   
   asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_RPL_THEME4),
+  my_box_plot(d_ever_asthma,
+              mmsa_svi_t4_housingtransport) +
+    ylab("SVI 4 (Housing/Transp)"),
   
   asthma_individual_dataset_cleaned |>
-    my_box_plot(d_ever_asthma,
-                mmsa_RPL_THEMES)
+  my_box_plot(d_ever_asthma,
+              mmsa_svi_overall) +
+    ylab("SVI Overall")
 )
+ggsave(filename = "local/asthma_plot_grid.png")
+```
+
+```{r}
+# asthma_individual_dataset_cleaned |> summarize(n_distinct(d_resp_id)) == asthma_individual_dataset_cleaned |> nrow()
+
+# asthma_individual_dataset_cleaned |>
+#   group_by(d_sex) |>
+#   summarize(n_ever_asthma = sum(d_ever_asthma == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_asthma / n_total) |>
+#   ggplot(aes(
+#     x = fct_reorder(d_sex, prop),
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     fill = d_sex)) +
+#   geom_col() +
+#   coord_flip() +
+#   my_theme() +
+#   theme(legend.position = "bottom")
+# 
+# asthma_individual_dataset_cleaned |>
+#   group_by(d_race_eth) |>
+#   summarize(n_ever_asthma = sum(d_ever_asthma == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_asthma / n_total) |>
+#   ggplot(aes(
+#     x = fct_reorder(d_race_eth, prop),
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     fill = d_race_eth)) +
+#   geom_col() +
+#   geom_label(fill = "white") +
+#   coord_flip() +
+#   my_theme() +
+#   theme(legend.position = "bottom")
+
+asthma_individual_dataset_cleaned |>
+  group_by(d_race_eth, d_sex) |>
+  summarize(n_ever_asthma = sum(d_ever_asthma == 1),
+  n_total = n_distinct(d_resp_id)) |>
+  ungroup() |>
+  mutate(prop = n_ever_asthma / n_total) |>
+  ggplot(aes(
+    x = fct_reorder(d_race_eth, prop),
+    y = prop,
+    label = round(prop, digits = 2),
+    fill = d_sex,
+    group = d_sex)) +
+  geom_col(position = position_dodge()) +
+  my_theme() +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  xlab("d_race_eth") +
+  ylab("proportion d_ever_asthma") +
+  scale_fill_manual(values = c("female" = "#eb6223", male = "#512892"))
+ggsave(filename = "local/asthma_sex_raceeth.png",
+       width = 6, height = 4)
+
+asthma_individual_dataset_cleaned |>
+  group_by(d_sex, d_imput_age_group) |>
+  summarize(n_ever_asthma = sum(d_ever_asthma == 1),
+  n_total = n_distinct(d_resp_id)) |>
+  ungroup() |>
+  mutate(prop = n_ever_asthma / n_total) |>
+  ggplot(aes(
+    x = d_imput_age_group,
+    y = prop,
+    label = round(prop, digits = 2),
+    colour = d_sex,
+    group = d_sex
+  )) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  my_theme() +
+  theme(legend.position = "none") +
+  xlab("d_imput_age_group") +
+  ylab("proportion d_ever_asthma") +
+  scale_colour_manual(values = c("female" = "#eb6223", male = "#512892"))
+ggsave(filename = "local/asthma_sex_age.png",
+       width = 8, height = 3)
+
+# asthma_individual_dataset_cleaned |>
+#   group_by(d_race_eth, d_imput_age_group) |>
+#   summarize(n_ever_asthma = sum(d_ever_asthma == 1),
+#   n_total = n_distinct(d_resp_id)) |>
+#   ungroup() |>
+#   mutate(prop = n_ever_asthma / n_total) |>
+#   ggplot(aes(
+#     x = d_imput_age_group,
+#     y = prop,
+#     label = round(prop, digits = 2),
+#     colour = d_race_eth,
+#     group = d_race_eth
+#   )) +
+#   geom_line() +
+#   geom_point() +
+#   theme_minimal()
 ```
 
 ```{r}
 asthma_binomial_adi_only <-
   glm(
-    d_ever_asthma ~ d_ever_smoker + d_sex * d_race_eth + d_imput_age_group + mmsa_adi_value,
+    d_ever_asthma ~ d_ever_smoker + d_sex + d_race_eth + d_imput_age_group + d_sex:d_race_eth + d_sex:d_imput_age_group + mmsa_adi_value,
     family = binomial(),
     data = asthma_individual_dataset_cleaned
   )
 
 asthma_binomial <-
   glm(
-    d_ever_asthma ~ d_ever_smoker + d_sex * d_race_eth + d_imput_age_group + mmsa_RPL_THEME1 + mmsa_RPL_THEME2 + mmsa_RPL_THEME3 + mmsa_RPL_THEME4  + mmsa_adi_value,
+    d_ever_asthma ~ d_ever_smoker + d_sex + d_race_eth + d_imput_age_group + d_sex:d_race_eth + d_sex:d_imput_age_group + mmsa_svi_t1_ses + mmsa_svi_t2_household + mmsa_svi_t3_raceethnicity + mmsa_svi_t4_housingtransport  + mmsa_adi_value,
     family = binomial(),
     data = asthma_individual_dataset_cleaned
   )
@@ -1622,6 +1864,8 @@ tbl_regression(asthma_binomial, exponentiate = TRUE) |>
 *Centers for Disease Control and Prevention/ Agency for Toxic Substances and Disease Registry/ Geospatial Research, Analysis, and Services Program. CDC/ATSDR Social Vulnerability Index 2020 Database US. https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html. Accessed on 2023/11/04.*
 
 *Kind AJH, Buckingham W. Making Neighborhood Disadvantage Metrics Accessible: The Neighborhood Atlas. New England Journal of Medicine, 2018. 378: 2456-2458. DOI: 10.1056/NEJMp1802313. PMCID: PMC6051533.*
+
+*Lotfata A, Moosazadeh M, Helbich M, Hoseini B. Socioeconomic and environmental determinants of asthma prevalence: a cross-sectional study at the U.S. County level using geographically weighted random forests. Int J Health Geogr. 2023 Aug 10;22(1):18. doi: 10.1186/s12942-023-00343-6. PMID: 37563691; PMCID: PMC10413687.*
 
 *Rollings KA, Noppert GA, Griggs JJ, Melendez RA, Clarke PJ. Comparison of two area-level socioeconomic deprivation indices: Implications for public health research, practice, and policy. PLoS One. 2023 Oct 5;18(10):e0292281. doi: 10.1371/journal.pone.0292281. PMID: 37797080; PMCID: PMC10553799.*
 
