@@ -1,6 +1,8 @@
 # BMIN503/EPID600 Final Project: Using Childhood and Adulthood Stress Factors as Predictors for Nicotine Use
 
-## Katie Cardone
+Katie Cardone
+
+## Respository Organization
 
 This repository contains QMD, HTML, and README files for my final project for Data Science For Biomedical Informatics or BMIN 503 at the University of Pennsylvania. The course director is Dr. Blanca Himes.
 
