@@ -19,7 +19,7 @@ execute:
 
 ### Overview
 
-Nicotine use is a major health problem in the United States, as it is the leading cause of preventable death. Many family-related problems/stress have been associated with increased nicotine use individually, but this study considers whether the combination of these risk factors in a machine learning approach can better predict smoking. This study will leverage data from the Behavioral Risk Factor Surveillance System 2022 survey, as this provides data on both family risk factors and nicotine use.
+Cigarette smoking use is a major health problem in the United States, as it is the leading cause of preventable death. Many family-related problems/stress have been associated with smoking individually, but this study considers whether the combination of these risk factors using a machine learning approach can improve prediction. This study also investigates the individual relationships between the predictors and nicotine use status as well as correlations between the predictors to understand the mechanisms in which these predictors interact with each other or contribute to nicotine use. This study will leverage data from the Behavioral Risk Factor Surveillance System 2022 survey, as this provides data on both family risk factors and nicotine use.
 
 Link to github repository: [Github Repository](https://github.com/katiecardone26/BMIN503_Final_Project)
 
@@ -27,7 +27,7 @@ Link to github repository: [Github Repository](https://github.com/katiecardone26
 
 Cigarette smoking is the leading cause of preventable mortality^1^. 480,000 deaths per year in the United States are due to smoking^2^ and smokers die on average 10 years earlier compared to non-smokers^3^. Stress is a risk factor for smoking, as greater stress is associated with a higher odds of persistent smoking^4^. This includes family problems in the past year, which is particularly important as family problems doubles the odds of quitting failure^4^. Many studies have shown that a variety of family problems/stress factors in the home are associated with an increased prevalence of smoking. In one study, 81% of tobacco users had a family history of tobacco use^5^. Additionally, individuals with a history of child abuse are more likely to become smokers as adults^6^. More specifically, child sexual abuse predicted adolescent smoking frequency^7^. Maltreatment in childhood, including neglect and failure of caregivers to provide for child, is associated with smoking in adulthood^8^. Another study showed that substance use, including tobacco, was associated with past and present parental incarceration^9^. Parental divorce or separation in childhood was also associated with smoking in adulthood^10^.
 
-Evidently, smoking is a major health problem and family issues individually seem to predict it. However, the project assesses whether the combination of these factors can better predict nicotine use. To properly create a model that answers this question, an interdisciplinary approach is most beneficial. This is a public health issue, so epidemiologists will provide insight on factors to consider when answering this question. Additionally, the outcome of interest is substance use, so psychiatrists can also provide useful knowledge. Last, this project will use a machine learning method, so computational biologists can provide insight on how to optimize the model. Given the interdisciplinary nature of this project, I spoke to Dr. Marylyn Ritchie, a professor in the Department of Genetics and Director of the Institute for Biomedical Informatics at Penn, and Dr. Jim Guevera, a professor of Pediatrics in the Division of General Pediatrics at CHOP, for insight. From Dr. Ritchie, I learned about the importance of removing individuals with missing values in any variable from a machine learning model. I also learned that I should have as many predictors as I can in the machine learning model. Given this, I have 13 predictors because including much more would significantly drop the sample size when removing individuals with missing values. From Dr. Guevera, I learned that adverse childhood experiences are good predictors to answer my question, so I included many of them in my model. Additionally, to reduce missingness, I combined all adverse childhood experience questions relating to molestation into one variable, but Dr. Guevera suggested that I include these variables separately and together as that would improve the model, so I did that as well. He also suggested to include socioeconomic status in the model, so I added variable indicating if one's annual household income was less than \$25,000.
+Evidently, smoking is a major health problem and family issues individually seem to predict it. However, this project assesses whether the combination of these factors can better predict nicotine use. To properly create a model that answers this question, an interdisciplinary approach is most beneficial. This is a public health issue, so epidemiologists will provide insight on factors to consider when answering this question. Additionally, the outcome of interest is substance use, so psychiatrists can also provide useful knowledge. Last, this project will utilize a machine learning method, so computational biologists can provide insight on how to optimize the model. Given the interdisciplinary nature of this project, I spoke to Dr. Marylyn Ritchie, a professor in the Department of Genetics and Director of the Institute for Biomedical Informatics at Penn, and Dr. Jim Guevera, a professor of Pediatrics in the Division of General Pediatrics at CHOP, for insight. From Dr. Ritchie, I learned about the importance of removing individuals with missing values in any variable from a machine learning model. I also learned that I should have as many predictors as I can in the machine learning model. Given this, I have 16 predictors because including more would significantly drop the sample size when removing individuals with missing values. From Dr. Guevera, I learned that adverse childhood experiences are good predictors to answer my question, so I included many of them in my model. Additionally, to reduce missingness, I combined all adverse childhood experience questions relating to molestation into one variable, but Dr. Guevera suggested that I include these variables separately and together as that would improve the model, so I did that as well. He also suggested to include socioeconomic status in the model, so I added variable indicating if one's annual household income was less than \$25,000.
 
 ### Methods
 
@@ -47,10 +47,14 @@ library(modelr)
 library(randomForest)
 # VIP package
 library(vip)
-# tidymodels
+# tidymodels package
 library(tidymodels)
-# ggplot
+# ggplot package
 library(ggplot2)
+# model summary package
+library(modelsummary)
+# ggcorrplot package
+library(ggcorrplot)
 ```
 
 #### Downloading Data
@@ -65,9 +69,7 @@ head(brfss_raw)
 
 #### Cleaning Data
 
-The BRFSS dataframe will be subset to the variables that will used in the analysis. The outcome of interest is nicotine use status. If an individual uses cigarettes, e-cigarettes, or other forms of nicotine at all, they are considered a nicotine user. Predictors include:
-
--   adult status
+The BRFSS dataframe will be subset to the variables that will used in the analysis. Only adults (age \>=18) will be included in this study because I want to include both adulthood and childhood risk factors in the study. The outcome of interest is nicotine use status. If an individual uses cigarettes, e-cigarettes, or other forms of nicotine at all, they are considered a nicotine user. Predictors include:
 
 -   sex
 
@@ -121,15 +123,15 @@ brfss_clean <- rename(brfss_clean,adult_landline=LADULT1,
                       force_sex_freq=ACEHVSEX,
                       basic_needs_met_by_adult_amount_childhood=ACEADNED)
 
-# recode columns
-# combine landline and cell adult columns
-# 1 = adult, 0 = child, NA = missing
+
+# combine adult landline and adult cell columns
 brfss_clean <- brfss_clean %>%
   mutate(adult=paste0(adult_landline,adult_cell))
-brfss_clean$adult <- case_match(brfss_clean$adult,
-                             c('1NA','NA1',11) ~ 1,
-                             c('2NA','NA2',22) ~ 0,
-                             'NANA' ~ NA)
+# filter dataframe to only include adults
+brfss_clean <- brfss_clean %>%
+  filter(grepl('1NA|NA1|11',adult))
+  
+# recode columns
 # combine landline and cell sex columns
 # 1 = male, 0 = female, NA = missing
 brfss_clean <- brfss_clean %>%
@@ -330,12 +332,11 @@ brfss_clean$smoking <- case_match(brfss_clean$smoking,
 
 # remove unneeded columns
 brfss_clean <- brfss_clean %>%
-  select(-adult_landline,-sex_landline,-adult_cell,-sex_cell,-cigs_day_freq,-other_forms_tobacco_day_freq,-ecigs_day_freq)
+  select(-adult_landline,-sex_landline,-adult_cell,-sex_cell,-cigs_day_freq,-other_forms_tobacco_day_freq,-ecigs_day_freq,-adult)
 
 # drop nas
 brfss_clean_no_missing <- brfss_clean %>%
   drop_na()
-head(brfss_clean_no_missing)
 
 # convert smoking column (outcome) to factor
 brfss_clean_no_missing$smoking=as.factor(brfss_clean_no_missing$smoking)
@@ -344,11 +345,11 @@ brfss_clean_no_missing$smoking=as.factor(brfss_clean_no_missing$smoking)
 nrow(brfss_clean_no_missing)
 ```
 
-There are 6741 individuals in the model after cleaning, 1235 of which are nicotine users, and 5506 of which are non-nicotine users.
+There are 6741 individuals in the model after cleaning.
 
 #### Build and Run Random Forest Model
 
-I am using a random forest model to combine the predictors and predict the outcome. I will be comparing using the model with and without 10-fold cross validation.
+I am using a random forest model to combine the predictors and predict the outcome. I chose to use a random forest model because I am attempting to use the predictors to properly classify nicotine users vs. non-nicotine users. To test for overfitting, I will be building the model with and without 10-fold cross validation.
 
 ```{r}
 # set seed
@@ -394,23 +395,151 @@ brfss.rf.pred.values.nocrossval <-  bind_cols(
   predict(brfss.rf.predicted.nocrossval, brfss_clean_no_missing, type = "prob"))
 ```
 
+### Run Univariate Logistic Regressions Between Each Predictor and Nicotine Use Status to Assess Impacts of Individual Predictors
+
+To assess the impact of individual predictors and nicotine use status, I am going to run a univariate logistic regression between each predictor and nicotine use status. This will be a good comparison with the combination of all predictors in the random forest model.
+
+```{r}
+
+# logistic regression between days of bad mental health in the past month and nicotine use status
+mental_health_glm <- glm(smoking ~ days_mental_health_bad_past_month, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between annual household income less than $25,000 and nicotine use status
+income_less_25K_glm <- glm(smoking ~ income_less_25K, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between providing care to another person in the past month and nicotine use status
+caregiver_glm <- glm(smoking ~ caregiver_past_month, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between lived with someone who was depressed, mentall ill, or suicidal as a child and nicotine use status
+lived_with_depressed_mentally_ill_or_suicidial_glm <- glm(smoking ~ lived_with_depressed_mentally_ill_or_suicidial, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between lived with alcoholic or problem drinker as a child and nicotine use status
+lived_with_alcoholic_glm <- glm(smoking ~ lived_with_alcoholic, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between lived with an illicit substance user or prescription drug abuser as a child and nicotine use status
+lived_with_hard_drug_user_glm <- glm(smoking ~ lived_with_hard_drug_user, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between lived with someone who was incarcerated as a child and nicotine use status
+lived_with_convict_glm <- glm(smoking ~ lived_with_convict, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between parental separation or divorce as a child and nicotine use status
+parents_separated_or_divorced_glm <- glm(smoking ~ parents_separated_or_divorced, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between physical abuse as a child and nicotine use status
+parents_hurt_you_freq_glm <- glm(smoking ~ parents_hurt_you_freq, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between being sweared at by parents as a child and nicotine use status
+parents_swear_at_you_freq_glm <- glm(smoking ~ parents_swear_at_you_freq, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between being touched sexually as a child and nicotine use status
+sexual_touch_you_freq_glm <- glm(smoking ~ sexual_touch_you_freq, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between being forced to touch another person sexually as a child and nicotine use status
+force_touch_others_sexually_glm <- glm(smoking ~ force_touch_others_sexually, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between being forced to have sex as a child and nicotine use status
+force_sex_freq_glm <- glm(smoking ~ force_sex_freq, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between basic needs met by an adult as a child and nicotine use status
+basic_needs_met_by_adult_amount_childhood_glm <- glm(smoking ~ basic_needs_met_by_adult_amount_childhood, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between sex and nicotine use status
+sex_glm <- glm(smoking ~ sex, data = brfss_clean_no_missing, family = binomial())
+
+# logistic regression between all forms of molestation and nicotine use status
+molestation_glm <- glm(smoking ~ molestation, data = brfss_clean_no_missing, family = binomial())
+```
+
+### Assess Correlations Between Predictors
+
+To assess relationships between the predictors to understand how they may be interacting in the random forest model, I am going to calculate the correlations between all of them. I chose to use a Spearman correlation because some of the variables may not have a normal distribution.
+
+```{r}
+
+# create correlation matrix
+predictor_cor=cor(brfss_clean_no_missing[,c('sex',
+                                            'days_mental_health_bad_past_month',
+                                            'income_less_25K',
+                                            'caregiver_past_month',
+                                            'lived_with_depressed_mentally_ill_or_suicidial',
+                                            'lived_with_alcoholic',
+                                            'lived_with_hard_drug_user',
+                                            'lived_with_convict',
+                                            'parents_separated_or_divorced',
+                                            'parents_hurt_you_freq',
+                                            'parents_swear_at_you_freq',
+                                            'sexual_touch_you_freq',
+                                            'force_touch_others_sexually',
+                                            'force_sex_freq',
+                                            'molestation',
+                                            'basic_needs_met_by_adult_amount_childhood')], 
+                  use = "complete.obs", method = "spearman")
+
+# rename columns for plot
+colnames(predictor_cor) = c('sex', 
+                            'mental_health',
+                            'SES',
+                            'mentally_ill',
+                            'caregiver',
+                            'alcoholic',
+                            'hard_drug_user',
+                            'incarceration',
+                            'parental_separation',
+                            'physical_abuse',
+                            'sweared_at',
+                            'touched_sexually',
+                            'touched_another_sexually',
+                            'forced_sex',
+                            'combined_molestation',
+                            'maltreatment')
+
+# rename rows for plot
+rownames(predictor_cor) = c('sex', 
+                            'mental_health',
+                            'SES',
+                            'mentally_ill',
+                            'caregiver',
+                            'alcoholic',
+                            'hard_drug_user',
+                            'incarceration',
+                            'parental_separation',
+                            'physical_abuse',
+                            'sweared_at',
+                            'touched_sexually',
+                            'touched_another_sexually',
+                            'forced_sex',
+                            'combined_molestation',
+                            'maltreatment')
+```
+
 ### Results
 
 The following results will show:
 
--   Number of smokers and non-smokers
+-   Number of nicotine users and non-nicotine users.
 
--   Most important predictors
+-   Most important predictors in the random forest model.
 
--   Area under the curve for models with and without cross validation
+-   Area under the curve for models with and without cross validation.
 
--   ROC curve for models with and without cross validation
+-   ROC curve for models with and without cross validation.
+
+-   Odds ratios and p-values from univariate logistic regressions between each predictor and outcome.
+
+-   Correlation matrix which exhibits correlations between model predictors.
 
 ```{r}
 # get the number of smokers and non-smokers in the model
 brfss_clean_no_missing%>%
   group_by(smoking)%>%
   summarize(n())
+
+# show most important predictors table with Accuracy and Gini Scores
+brfss.rf.predicted.nocrossval  |>
+  extract_fit_engine() |>
+  importance() |>
+  as.data.frame() |>
+  select(MeanDecreaseAccuracy,MeanDecreaseGini)
 
 # plot most important predictors
 brfss.rf.predicted.nocrossval |>
@@ -448,11 +577,48 @@ brfss.rf.pred.values.crossval |>
   scale_color_manual(name='Models',
                      breaks=c('No Cross Validation', 'Cross Validation'),
                      values=c('No Cross Validation'='pink', 'Cross Validation'='blue'))
+
+# look at logistic regression results
+modelsummary(list("Sex"=sex_glm,
+                  "Mental Health"=mental_health_glm, 
+                  "Socioeconomic Status" = income_less_25K_glm,
+                  "Caregiver Status" = caregiver_glm,
+                  "Lived with Someone who was Depressed, Mentally Ill or Suicidal as a Child" = lived_with_depressed_mentally_ill_or_suicidial_glm,
+                  "Lived with an Alcoholic or Problem Drinker as a Child" = lived_with_alcoholic_glm,
+                  "Lived with an Illicit Substance User or Prescription Drug Abuser as a Child" = lived_with_hard_drug_user_glm,
+                  "Lived with Someone who was Incarcerated as a Child" = lived_with_convict_glm,
+                  "Parents Separated or Divorced as a Child" = parents_separated_or_divorced_glm,
+                  "Physical Abuse as a Child" = parents_hurt_you_freq_glm,
+                  "Sweared at by Parents as a Child" = parents_swear_at_you_freq_glm,
+                  "Touched Sexually as a Child" = sexual_touch_you_freq_glm,
+                  "Forced to Touch Another Individual Sexually as a Child" = force_touch_others_sexually_glm,
+                  "Forced to Have Sex as a Child" = force_sex_freq_glm,
+                  "All Forms of Molestation as a Child" = molestation_glm,
+                  "Basic Needs Met by an Adult as a Child" = basic_needs_met_by_adult_amount_childhood_glm),
+             coef_omit = "Intercept",
+             shape='rcollapse',
+             statistic = c("p-value = {p.value}"),
+             estimate = "odds ratio = {estimate}",
+             exponentiate = T,
+             coef_rename = coef_rename,
+             gof_omit="IC|Log|RMSE")
+
+# look at correlation matrix
+ggcorrplot(predictor_cor, hc.order = TRUE) + 
+  theme(axis.text.x=element_text(size=7), axis.text.y=element_text(size=7))
 ```
 
 ### Conclusion
 
-The method modestly predicts non-nicotine use status. Without cross-validation, the area under the curve was 0.75. However, this was subjective to over fitting, as the area under the curve decreased to 0.64 when doing 10-fold cross validation. The most important predictors in the model are days of bad mental health in the past month, lived with an illicit substance user or prescription drug abuser in childhood, being touched sexually as a child, sex, having basic needs met by an adult as a child, being forced to touch other sexually as a child, lived with an incarcerated adult in childhood, and being forced to have sex as a child. Based on previous studies, this makes sense. In summary, combining child and adult home stress factors in a random forest model modestly predicted non-nicotine use status.
+The method modestly predicts nicotine use status. Without cross-validation, the area under the curve was 0.75. However, this was subjective to over fitting, as the area under the curve decreased to 0.64 when doing 10-fold cross validation. The most important predictors in the model are days of lived with an illicit substance user or prescription drug abuser in childhood, annual household income less than \$25,000, days of bad mental health in the past month, lived with someone who was incaracerated in childhood, being forced to touch others sexually as a child, lived with an alcoholic or problem drinker in childhood, being touched sexually as a child, sex, experiencing one or more forms of molestation in childhood, and having basic needs met by an adult as a child. Based on previous studies, this makes sense. However, it is interesting that sex is a significant predictor, as this is not something I came across in the literature.
+
+In univariate logistic regressions, all predictors were significantly associated with nicotine use status except for caregiver status, replicating what is seen in the literature. Having lived with someone who was incarcerated as a child has the highest odds ratio, such that individuals who experienced this are 2.6x more likely to use nicotine as an adult.
+
+Additionally, most predictors are not strongly correlated. The only predictors that are strongly positively correlated are different forms of molestation, which makes sense. This indicates that individuals that experienced one form of molestation have a high likelihood of experiencing another form of molestation. Thus, it is likely that these predictors are interacting in the random forest model.
+
+I would have expected the random forest model to perform better but the study has some limitations. First, there is no way to validate whether people answered the survey questions truthfully. Additionally, annual household income \< \$25,000 may not be the best predictor of socioeconomic status because the cost of living varies across the country and it does not account for how many people the income is supporting. However, this predictor was the second most important predictor in the study. Last, I could only include 16 predictors in order to maintain a high sample size. A dataset with less missingness would have allowed for more predictors, which may have improved model performance.
+
+In summary, combining child and adult home stress factors in a random forest model modestly predicted non-nicotine use status. Given that all of the predictors were significantly associated with nicotine use status in the univariate regressions, it is probable that these variables better predict nicotine use *individually* rather than *in combination*. The weak correlations between most of the variables further supports that.
 
 ### References
 
