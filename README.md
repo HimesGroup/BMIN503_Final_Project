@@ -8,9 +8,9 @@ This project utilized mammography and MRI screening data from Penn Medicine to p
 The goal of this project was to use data from Penn Medicine to see if the proportion of high risk Black and White women who utilize supplemental breast cancer screening is similar, and whether the utilization differs by other factors such as family history of breast cancer and breast density.
 
 Description of Repo Files 
-FinalProject_Mahmoud.html - HTML document containing project information, code, and output
+blanca_final_project.html - HTML document containing project information, code, and output
 
-FinalProject_Mahmoud.qmd - qmd file containing project information, code, and output
+blanca_final_project.html - qmd file containing project information, code, and output
 
 
 [CSV file to be uploaded]
