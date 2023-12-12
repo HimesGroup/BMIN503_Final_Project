@@ -1,7 +1,7 @@
 ---
-title: "Your_Title"
+title: "Social Determinants of VOC Exposure in US Adults: NHANES Study"
 subtitle: "BMIN503/EPID600 Final Project"
-author: "First_Name Last_Name"
+author: "Jennifer Ko"
 format: html
 editor: visual
 embed-resources: true
@@ -13,22 +13,46 @@ embed-resources: true
 library("nhanesA")
 library("haven")
 library("dplyr")
+library("survey")
+library("srvyr")
+library("grid")
+library("Matrix")
+library("survival")
+library("tidyverse")
+library("cowplot")
+library("ggplot2")
+library("factoextra")
+library("gtsummary")
+library("magrittr")
+library("sandwich")
+library("lmtest")
+library("tidymodels")
+library("modelr")
+library("yardstick")
+library("stargazer")
+library("lattice")
+library("corrplot")
 ```
 
-### Overview
+## Overview
 
 Volatile Organic Compounds (VOC's) are a class of air pollutants present via environmental air and water systems with several health implications, including eye/nose/throat irritation, headache and loss of coordination, nausea, and liver, kidney, and central nervous system damage.^1^ This project will assess prominent social factors on VOC exposure, including socioeconomic status, locality, and occupation. To examine this relationship, I will assess the NHANES 2019 -- 2020 urine VOC metabolite data for three prominent classes: xylenes, acrylamides, and butanes. To develop this plan, I have met with Dr. Kelly Getz and Dr. John Holmes, who provided insights on classes of toxicants, limitations regarding the dose-response of toxicants, and potential analytic approaches for NHANES data, including k-means clustering. Materials for the final project can be [found in this Github repository.](https://github.com/jennko1230/BMIN503_Final_Project)
 
-### Introduction
+## Introduction
 
 VOCs are a classification of pollutants present in the atmosphere that are linked with poor health outcomes in humans. Many VOCs travel through air and water sources to travel through the human body and are associated with symptoms/diseases, including asthma, atopic dermatitis, neurological symptoms, and cancer.^1^ Up to 25% of all VOC's in our atmosphere are linked to anthropogenic sources, including petroleum and gas extraction, fossil fuel burning, chemical and industrial processes, mining, and agricultural practices.^1^ A method of quantifying VOC exposure in humans is to assess urine metabolites, a biomarker that has marked elevated concentrations for longer than their blood/exhaled air specimens.
 
 VOC exposure is a pressing that needs interdisciplinary collaboration to evaluate and combat alarming VOC emissions thoroughly. VOC exposure cutoffs and their determination of safety levels implement principles common in toxicology. Toxicologists and public health organizations must collaborate with prominent policy members to thoroughly address/minimize community exposures. Many social determinants of health can influence VOC exposure and substantially negatively influence individuals' health. Factors, including place of residence, occupation, and socioeconomic status, can impact one's exposure to pollutants. This data analysis will seek to evaluate a series of community factors and how these factors can influence one's exposure to VOCs. This analysis aims to build a predictive model to determine individuals' VOC exposure, which could support the development of public health programs tailored to factors that influence VOC exposure.
 
-### Methods
+## Methods
+
+We will focus on one specific class of VOC's: xylenes, using two of the most common metabolites found in urine: MHA2, and MHA34.
+
+### Data Import
 
 ```{r}
-varlist <- c("DEMO", "INQ", "UVOC", "OCQ") 
+# Creating NHANES Dataset
+varlist <- c("DEMO", "INQ", "OCQ", "UVOC", "UVOCS", "SMQ") 
 varlist_years <- paste0(rep(varlist, each = 2), c("_G", "_H"))
 
 #Load everything from varlist_years in nhanes as a list)
@@ -45,49 +69,456 @@ for (i in 1:length(varlist)) {
 } 
 rm(list = grep("_[GH]", ls(), value = T))
 
-#Create a single data.frame that combines all modules 
-for (i in 4:length(varlist)){
+nhanes.data <- full_join(get(varlist[1]), get(varlist[2]), by = "SEQN")
+for (i in 1:length(varlist)){
 nhanes.data <- full_join(nhanes.data, get(varlist[i]), by = "SEQN")
 } 
 
 rm(list = ls()[-which(ls() == "nhanes.data")])
-
-#Specific Exposure Interest is in Xylenes - 3 major metabolites
-#Pull variables of interest - age, gender, race, education, income, occupation
-nhanes.practice <- nhanes.data |>
-  select(id = SEQN, gender = RIAGENDR, age = RIDAGEYR, 
-           race = RIDRETH1, education = DMDEDUC2, income = INDHHIN2,
-           DPMA = URXDPM.x, MHA2 = URX2MH.x, MHA34 = URX34M.x, 
-           current_industry = OCD231.y) |>
-  mutate(gender = factor(gender, levels = c(1, 2), 
-                           labels = c("men", "women"))) |>
-  mutate(race = factor(race, levels = c(3, 1, 2, 4, 5),
-                         labels = c("White", "MexicanAmerican", 
-                                    "Hispanic", "Black", "Other"))) |>
-  filter(income %in% c(1:10, 14, 15)) |>
-  mutate(income.short = cut(income, breaks=c(0, 5, 10, 15),
-                              labels=c("<$25K", "$25-75K", ">$75K"))) |>
-  filter(age >= 18)
-
-
-#descriptive stats 
-#table 
-#distribution of VOC (general idea of all of them) 
 ```
 
-### Results
+### Data Cleaning
 
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+There are a number of considerations of note when processing our NHANES dataset: Our inclusion criteria restricts this analysis to US adults, so we will filter by age \> 18. Many studies have linked VOC exposure to smoking habits; therefore, this analysis is restricted to nonsmoking participants. Lastly, we will use NHANES data from 2011 - 2014 to assess categories of occupations by industry in the US.
 
 ```{r}
-d1 <- ggplot(data = nhanes.practice, aes(x = race)) +
-        geom_bar()
-d2 <- ggplot(data = nhanes.practice, aes(x = education)) +
-        geom_bar()
-d3 <- ggplot(data = nhanes.practice, aes(x = income.short)) +
-        geom_bar()
-d4 <- ggplot(data = nhanes.practice, aes(x = current_industry)) +
-        geom_bar()
-plot_grid(d1, d2, d3, d4, labels = "AUTO")
+nhanes <- nhanes.data |>
+  select(id = SEQN, gender = RIAGENDR.x, age = RIDAGEYR.x, 
+           race = RIDRETH1.x, education = DMDEDUC2.x, income = INDHHIN2.x,
+           MHA2 = URX2MH.x, MHA34 = URX34M.x, industry = OCD231, psu = SDMVPSU.x, 
+           strata = SDMVSTRA.x, weights = WTINT2YR.x, current.smoke = SMQ040) |>
+   mutate(industry.cat = cut(industry,
+      breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22),
+      labels = c("Agriculture, Forestry, Fishing", "Mining", "Utilities", "Construction",
+        "Manufacturing: Durable", "Manufacturing: Non-Durable Goods", "Wholesale Trade",
+        "Retail Trade", "Transportation/Warehousing", "Information", "Finance, Insurance",
+        "Real Estate, Rental, Leasing", "Professional, Technical Services",
+        "Management, Business, Cleaning/Waste Services", "Education Services",
+        "Health Care, Social Assistance", "Arts, Entertainment, Recreation",
+        "Accommodation, Food Services", "Other Services", "Private Households",
+        "Public Administration", "Armed Forces"),
+      include.lowest = TRUE
+    ),
+  )|>
+  mutate(industry.inout = case_match(industry.cat, 
+        c("Agriculture, Forestry, Fishing", "Mining", "Construction") ~ "Outdoor",
+        c("Wholesale Trade", "Retail Trade", "Information", "Finance, Insurance", "Real Estate, Rental, Leasing", "Professional, Technical Services", "Management, Business, Cleaning/Waste Services", "Education Services", "Other Services", "Private Households") ~ "Indoor",
+        c("Utilities", "Manufacturing: Durable", "Manufacturing: Non-Durable Goods", "Transportation/Warehousing", "Professional, Technical Services", "Health Care, Social Assistance", "Arts, Entertainment, Recreation", "Accommodation, Food Services", "Armed Forces") ~ "Hybrid"))|>
+  mutate(gender = factor(gender, levels = c(1, 2), 
+        labels = c("men", "women"))) |>
+  mutate(race = factor(race, levels = c(3, 1, 2, 4, 5),
+        labels = c("White", "MexicanAmerican", "Hispanic", "Black", "Other"))) |>
+  mutate(education = factor(education, levels = c(1, 2, 3, 4, 5, 7, 9),
+        labels = c("Less Than 9th Grade", "9-11th Grade", "High School Grad", "Some College", "College Grad", "Refused", "Don't Know"))) |>
+  mutate(current.smoke = factor(current.smoke, levels=c(1, 2, 3, 7, 9), 
+        labels = c("Every day", "Some days", "Not at all", "Refused", "Don't know")) ) |>
+  mutate(income.short = cut(income, breaks=c(0, 5, 10, 15),
+        labels = c("<$25K", "$25-75K", ">$75K"))) |>
+  mutate(MHA2.med = cut(MHA2, 
+      breaks = c(0, 28.6, Inf),
+      labels = c("Below 50th MHA2", "Above 50th MHA2"))) |> 
+  mutate(MHA34.med = cut(MHA34, 
+      breaks = c(0, 199, Inf),
+      labels = c("Below 50th MHA34", "Above 50th MHA34"))) |>
+  filter(income %in% c(1:10, 14, 15)) |>
+  filter(current.smoke == "Not at all")|> 
+  filter(age >= 18)
+```
 
+### Survey Weighting
+
+NHANES is a national survey assessing the health and nutritional status of many communities of US adults and children, and relies on complex sampling techniques to accurately weight their data to be representative of all communities. We will use svydesign to create a survey design object to analyze our associations.
+
+```{r}
+#NHANES Survey Weights
+nhanesDesign <- svydesign(id = ~psu, 
+                          strata = ~strata, 
+                          weights = ~weights, 
+                          nest = TRUE, 
+                          data = nhanes,
+                          na.action = na.omit)
+#Specific Exposure Interest is in Xylenes - 2 major metabolites: MHA2, and MHA3+4
+```
+
+### Distribution of VOC exposures
+
+```{r}
+#Descriptive Stats for VOC exposures
+#MHA2
+  MHA2.stats <- cbind(
+    "wMEAN" = svymean(~MHA2, nhanesDesign, na.rm=TRUE),
+    "wSD"= sqrt(svyvar(~MHA2, nhanesDesign, na.rm=TRUE)[1]),
+          confint(svymean(~MHA2, nhanesDesign, na.rm=TRUE), df = degf(nhanesDesign)))
+  MHA2.quantiles <- svyquantile(x = ~MHA2, design = nhanesDesign, na.rm = TRUE, quantiles = c(0.25, 0.5, 0.75))
+  xrange.MHA2 <- range(nhanes$MHA2, finite=TRUE, na.rm=TRUE)
+  MHA2.hist <- svyhist(~MHA2, nhanesDesign, xlim=xrange.MHA2, xlab = "MHA2 Dist", breaks = 80, main = "Weighted Dist of MHA2")
+#Median MHA2: 28.6
+  
+MHA2.stats <- cbind(
+  "wMEAN" = svymean(~MHA2, nhanesDesign, na.rm=TRUE),
+  "wSD" = sqrt(svyvar(~MHA2, nhanesDesign, na.rm=TRUE)[1]),
+  confint(svymean(~MHA2, nhanesDesign, na.rm=TRUE), df = degf(nhanesDesign))
+)
+
+# Calculate weighted quantiles
+MHA2.quantiles <- svyquantile(x = ~MHA2, design = nhanesDesign, na.rm = TRUE, quantiles = c(0.25, 0.5, 0.75))
+
+# Create a boxplot using bwplot
+MHA2.box <- bwplot(MHA2 ~ 1, data = nhanes, xlim=xrange.MHA2, weights = weights(nhanesDesign),
+       main = "Boxplot of MHA2", xlab = "MHA2", ylab = "Values")
+
+  
+#MHA34
+   MHA34.stats <- cbind(
+    "wMEAN" = svymean(~MHA34, nhanesDesign, na.rm=TRUE),
+    "wSD"= sqrt(svyvar(~MHA34, nhanesDesign, na.rm=TRUE)[1]),
+          confint(svymean(~MHA34, nhanesDesign, na.rm=TRUE), df = degf(nhanesDesign)))
+  MHA34.quantiles <- svyquantile(x = ~MHA34, design = nhanesDesign, na.rm = TRUE, quantiles = c(0.25, 0.5, 0.75))
+  xrange.MHA34 <- range(nhanes$MHA34, finite=TRUE, na.rm=TRUE)
+  MHA34.hist <- svyhist(~MHA34, nhanesDesign, xlim=xrange.MHA34, xlab = "MHA34 Dist", breaks = 80, main = "Weighted Dist of MHA34")
+#Median MHA34: 199
+```
+
+#### Descriptive Summary Table
+
+We will assess key demographic and social variables of interest, including age, gender, education, race, industry category, income bracket, and urine metabolite concentrations (MHA2 and MHA3/4).
+
+```{r}
+#Summary Descriptive Table
+ table1 <- tbl_svysummary(nhanesDesign, missing=NULL, missing_text="Missing",
+    include = c(age, gender, education, race, industry.cat, income.short, MHA2, MHA34),
+    statistic = list(all_continuous()  ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n}    ({p}%)"),
+    digits = list(age ~ c(1, 1),
+                  all_categorical() ~ c(0, 1))
+  ) |>
+  modify_header(label = "**Variable**") |>
+  modify_caption("Weighted descriptive statistics") |>
+  bold_labels()
+table1
+```
+
+### VOC Exposure by Socio/Economic Factors
+
+We will create a plot to assess the proportion of above/below median VOC levels by industry category and by type of environment for the job (whether it is indoors, hybrid, or outdoors).
+
+#### Race
+
+```{r}
+nhanes.complete <- na.omit(nhanes)
+#MHA2 Distribution by Race - 
+  #Barplot (proportion)
+    MHA2.ggplot.race <- ggplot(data = nhanes.complete, aes(x = race, fill = MHA2.med)) +
+    geom_bar(position = "fill") +
+    ylab("Percent") +
+    xlab("Industry of Occupation") + 
+    ggtitle("Proportion of below/above median VOC levels by Race") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.5))
+  print(MHA2.ggplot.race)
+  #Boxplot (MHA2 as continuous)
+  y_limit <- c(-10, 200)
+  MHA2.boxplot.race <- ggplot(data = nhanes.complete, aes(x = race, y = MHA2, weight = weights)) +
+    geom_boxplot(outlier.shape = NA) +
+    labs(x = "Race", y = "MHA2", title = "Weighted Boxplot by Race") + 
+  ylim(y_limit)
+  print(MHA2.boxplot.race)
+```
+
+#### Industry 
+
+```{r}
+#MHA2 Distribution by Industry
+  #Barplot by Industry
+    MHA2.ggplot.industry <- ggplot(data = nhanes.complete, aes(x = industry.cat, fill = MHA2.med)) +
+    geom_bar(position = "fill") +
+    ylab("Percent") +
+    xlab("Industry of Occupation") + 
+    ggtitle("Proportion of below/above median VOC levels by industry of occupation") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5))
+  print(MHA2.ggplot.industry)
+  #Boxplot (MHA2 as continuous)
+  y_limit <- c(-10, 250)
+  MHA2.boxplot.industry <- ggplot(data = nhanes.complete, aes(x = industry.cat, y = MHA2, weight = weights)) +
+    geom_boxplot(outlier.shape = NA) +
+    labs(x = "Industry", y = "MHA2", title = "Weighted Boxplot by Industry") + 
+  ylim(y_limit) +
+  theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.1))
+  print(MHA2.boxplot.industry)
+  
+#MHA2 Distribution by Industry (Indoor vs. Outdoor)
+  #Barplot by Indoor vs. Outdoor Industry
+    MHA2.ggplot.industry.inout <- ggplot(data = nhanes.complete, aes(x = industry.inout, fill = MHA2.med)) +
+    geom_bar(position = "fill") +
+    ylab("Percent") +
+    xlab("Industry of Occupation - Indoor vs. Outdoor") + 
+    ggtitle("Prop. of below/above median VOC - Occupation Indoor vs. Outdoor") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5))
+  print(MHA2.ggplot.industry.inout)
+  #Boxplot (MHA2 as continuous)
+  y_limit <- c(-10, 175)
+  MHA2.boxplot.industry.inout <- ggplot(data = nhanes.complete, aes(x = industry.inout, y = MHA2, weight = weights)) +
+    geom_boxplot(outlier.shape = NA) +
+    labs(x = "Industry", y = "MHA2", title = "Weighted Boxplot by Indoor vs. Outdoor Occupation") + 
+  ylim(y_limit) +
+  theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.5))
+  print(MHA2.boxplot.industry.inout
+  )
+```
+
+#### Education
+
+```{r}
+#MHA2 Distribution by Education
+  #Barplot by Education
+    MHA2.ggplot.education <- ggplot(data = nhanes.complete, aes(x = education, fill = MHA2.med)) +
+    geom_bar(position = "fill") +
+    ylab("Percent") +
+    xlab("Education") + 
+    ggtitle("Proportion of below/above median VOC levels by Education") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.5))
+  print(MHA2.ggplot.education)
+  #Boxplot (MHA2 as continuous)
+  y_limit <- c(-10, 200)
+  ggplot(data = nhanes.complete, aes(x = education, y = MHA2, weight = weights)) +
+    geom_boxplot(outlier.shape = NA) +
+    labs(x = "Education", y = "MHA2", title = "Weighted Boxplot by Education") + 
+  ylim(y_limit) +
+  theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.1))
+```
+
+#### Income Bracket 
+
+```{r}
+#MHA2 Distribution by Income Bracket
+  #Barplot by Income Bracket
+  MHA2.ggplot.income <- ggplot(data = nhanes.complete, aes(x = income.short, fill = MHA2.med)) +
+  geom_bar(position = "fill") +
+  ylab("Percent") +
+  xlab("Income Bracket") + 
+  ggtitle("Proportion of below/above median VOC levels by Income Bracket") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.5))
+print(MHA2.ggplot.income)
+  #Boxplot (MHA2 as continuous)
+    y_limit <- c(-10, 175)
+    ggplot(data = nhanes.complete, aes(x = income.short, y = MHA2, weight = weights)) +
+      geom_boxplot(outlier.shape = NA) +
+      labs(x = "Income Bracket", y = "MHA2", title = "Weighted Boxplot by Income Bracket") + 
+    ylim(y_limit) +
+    theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.1))
+```
+
+#### Gender
+
+```{r}
+#MHA2 Distribution by Gender
+  MHA2.ggplot.gender <- ggplot(data = nhanes.complete, aes(x = gender, fill = MHA2.med)) +
+  geom_bar(position = "fill") +
+  ylab("Percent") +
+  xlab("Gender") + 
+  ggtitle("Proportion of below/above median VOC levels by Gender") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5))
+  print(MHA2.ggplot.gender)
+   #Boxplot (MHA2 as continuous)
+    y_limit <- c(-10, 175)
+    MHA2.boxplot.gender <- ggplot(data = nhanes.complete, aes(x = gender, y = MHA2, weight = weights)) +
+      geom_boxplot(outlier.shape = NA) +
+      labs(x = "Gender", y = "MHA2", title = "Weighted Boxplot by Gender") + 
+    ylim(y_limit) +
+    theme(axis.text.x = element_text(angle = 45), plot.title = element_text(hjust = 0.1))
+  print(MHA2.boxplot.gender)
+```
+
+#### Evaluation of SES Factors and MHA2 Concentration
+
+We initially ran Chi-Square tests for all categorical variables included, but our results determined that some of the assumptions may have been violated. Therefore, we used a Fisher's exact test to determine out specific results.
+
+```{r}
+#Gender
+fisher.mha2.gender <- fisher.test(table(nhanes$MHA2.med, nhanes$gender))
+#Education
+fisher.mha2.education.sim <- table(nhanes$MHA2.med, nhanes$education)
+fisher.mha2.education <- fisher.test(fisher.mha2.education.sim, simulate.p.value = TRUE)
+#Race
+fisher.mha2.race.sim <- table(nhanes$MHA2.med, nhanes$race)
+fisher.mha2.race <- fisher.test(fisher.mha2.race.sim, simulate.p.value = TRUE)
+#Industry Category 
+fisher.mha2.industry.cat.sim <- table(nhanes$MHA2.med, nhanes$industry.cat)
+fisher.mha2.industry.cat <- fisher.test(fisher.mha2.industry.cat.sim, simulate.p.value = TRUE)
+#Income Bracket
+fisher.mha2.income.short <- fisher.test(table(nhanes$MHA2.med, nhanes$income.short))
+```
+
+#### Single Logistic Regression Model
+
+In order to evaluate factors to include in the logistic regression model, we evaluated a series of predictors and their individual associations.
+
+```{r}
+#Age
+glm.MHA2.age <- svyglm(MHA2.med ~ age, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Gender
+glm.MHA2.gender <- svyglm(MHA2.med ~ gender, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Education
+glm.MHA2.education <- svyglm(MHA2.med ~ education, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Race
+glm.MHA2.race <- svyglm(MHA2.med ~ race, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Industry Category 
+glm.MHA2.industry.cat <- svyglm(MHA2.med ~ industry.cat, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Industry Category - Indoor vs. Outdoor 
+glm.MHA2.industry.inout <- svyglm(MHA2.med ~ industry.inout, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+#Income Bracket 
+glm.MHA2.income.short <- svyglm(MHA2.med ~ income.short, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+```
+
+Next, we conducted a multinomial logistic regression with all significant factors included in the single logistic regression model.
+
+#### MHA2 - Demographic Characteristics Multinomial Logistic Regression
+
+```{r}
+glm.MHA2.demo <- svyglm(MHA2.med ~ age + gender + race, family = quasibinomial(), data = nhanes.complete, design = nhanesDesign)
+robust_se <- sqrt(diag(vcovHC(glm.MHA2.demo, type = "HC0")))
+coeftest(glm.MHA2.demo, vcov = vcovHC, type = "HC0")
+
+
+
+nhanesDesign <- svydesign(id = ~1, weights = ~weights, data = nhanes.complete)
+
+# Fit logistic regression model using svyglm
+glm.MHA2.demo <- svyglm(MHA2.med ~ age + gender + race, family = quasibinomial(), design = nhanesDesign)
+
+# View the model summary
+summary(glm.MHA2.demo)
+```
+
+#### MHA2 - Occupational Characteristics Multinomial Logistic Regression
+
+```{r}
+glm.MHA2.occ.cat <- svyglm(MHA2.med ~ education + income.short + industry.cat , family = quasibinomial(), data = nhanes, design = nhanesDesign)
+robust_se <- sqrt(diag(vcovHC(glm.MHA2.occ.cat, type = "HC0")))
+coeftest(glm.MHA2.occ.cat, vcov = vcovHC, type = "HC0")
+glm.MHA2.occ.inout <- svyglm(MHA2.med ~ education + income.short + industry.inout, family = quasibinomial(), data = nhanes, design = nhanesDesign)
+robust_se <- sqrt(diag(vcovHC(glm.MHA2.occ.inout, type = "HC0")))
+coeftest(glm.MHA2.occ.inout, vcov = vcovHC, type = "HC0")
+```
+
+#### MHA2 - Total Multinomial Logistic Regression
+
+```{r}
+glm.MHA2.total <- svyglm(MHA2.med ~ gender + race + education + industry.cat , family = quasibinomial(), data = nhanes, design = nhanesDesign)
+robust_se <- sqrt(diag(vcovHC(glm.MHA2.occ.cat, type = "HC0")))
+coeftest(glm.MHA2.occ.cat, vcov = vcovHC, type = "HC0")
+```
+
+#### Fishers Exact Test - MHA2
+
+Our Fishers Exact Test Results show a significant association between gender (p \<0.0001) and MHA2, education and MHA2 (p \< 0.0001), race and MHA2 (p=0.01), industry category and MHA2 (p = 0.0004), and income and MHA2 (p = 0.006).
+
+```{r}
+print(fisher.mha2.gender)
+print(fisher.mha2.education)
+print(fisher.mha2.race)
+print(fisher.mha2.industry.cat)
+print(fisher.mha2.income.short)
+```
+
+### Logistic Regression
+
+#### Single Logistic Regression Model
+
+In order to assess the relationship between MHA2/MHA34 urine concentrations and socio/demographic features, we will conduct a logistic regression incorporating surveying design. We determined that for every one year increase in age, the odds of MHA2 metabolite levels being below the median decreased by 0.27%. For race, when compared to White participants, the odds of low MHA2 were 0.55 times the odds for white participants. Black participants were 1.25 times as likely for low MHA2 levels. Women were 0.55 times as likely to have below median levels when compared to men.
+
+```{r}
+#MHA2
+tbl_age <- tbl_regression(glm.MHA2.age)
+tbl_gender <- tbl_regression(glm.MHA2.gender)
+tbl_education <- tbl_regression(glm.MHA2.education)
+tbl_race <- tbl_regression(glm.MHA2.race)
+tbl_industry_cat <- tbl_regression(glm.MHA2.industry.cat)
+tbl_industry_inout <- tbl_regression(glm.MHA2.industry.inout)
+tbl_income_short <- tbl_regression(glm.MHA2.income.short)
+
+combined_tbl <- tbl_stack(
+  list(tbl_age, tbl_gender, tbl_race, tbl_education, tbl_industry_cat, tbl_industry_inout, tbl_income_short))
+combined_tbl
+```
+
+#### Multinomial Logistic Regression with just Demographic Variables
+
+```{r}
+glm.MHA2.demo |>
+  tbl_regression(
+    intercept = TRUE,
+    estimate_fun = ~style_sigfig(.x, digits = 3),
+    pvalue_fun = ~style_pvalue(.x, digits = 3),
+    label = list(
+      age ~ "Education",
+      gender ~ "Gender",
+      race ~ "Race",
+      `(Intercept)` ~ "Intercept"
+    )
+  ) |>
+  add_global_p(keep = TRUE, test.statistic = "F") |>
+  modify_caption("Weighted logistic regression results for MHA2 Exposure")
+#Gender and Race are significant factors
+```
+
+#### Multinomial Logistic Regression with Occupational Factors
+
+```{r}
+glm.MHA2.occ.inout |>
+  tbl_regression(
+    intercept = TRUE,
+    estimate_fun = ~style_sigfig(.x, digits = 3),
+    pvalue_fun = ~style_pvalue(.x, digits = 3),
+    label = list(
+      education ~ "Education",
+      income.short ~ "Income Bracket",
+      industry.inout ~ "Industry (Indoor vs. Outdoor)",
+      `(Intercept)` ~ "Intercept"
+    )
+  ) |>
+  add_global_p(keep = TRUE, test.statistic = "F") |>
+  modify_caption("Weighted logistic regression results for MHA2 Exposure - Occupational Exposures (Indoor vs. Outdoor)")
+
+glm.MHA2.occ.cat |>
+  tbl_regression(
+    intercept = TRUE,
+    estimate_fun = ~style_sigfig(.x, digits = 3),
+    pvalue_fun = ~style_pvalue(.x, digits = 3),
+    label = list(
+      education ~ "Education",
+      income.short ~ "Income Bracket",
+      industry.cat ~ "Industry",
+      `(Intercept)` ~ "Intercept"
+    )
+  ) |>
+  add_global_p(keep = TRUE, test.statistic = "F") |>
+  modify_caption("Weighted logistic regression results for MHA2 Exposure - Occupational Exposures")
+#Gender and Race are significant factors
+```
+
+#### Total Multinomial Model
+
+```{r}
+glm.MHA2.total |>
+  tbl_regression(
+    intercept = TRUE,
+    estimate_fun = ~style_sigfig(.x, digits = 3),
+    pvalue_fun = ~style_pvalue(.x, digits = 3),
+    label = list(
+      gender ~ "Gender", 
+      race ~ "Race",
+      education ~ "Education",
+      industry.cat ~ "Industry",
+      `(Intercept)` ~ "Intercept"
+    )
+  ) |>
+  add_global_p(keep = TRUE, test.statistic = "F") |>
+  modify_caption("Weighted logistic regression results for MHA2 Exposure - Occupational Exposures")
+#Gender and Race are significant factors
 ```
