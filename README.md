@@ -1,5 +1,7 @@
 # BMIN503/EPID600 Final Project
 
+Welcome to my GitHub repository. 
+
 This is my README file.
 
 My qmd file is final_project_WONG.qmd.
