@@ -16,6 +16,7 @@ execute:
   message: false
 ---
 
+
 ------------------------------------------------------------------------
 
 ## Overview {#sec-overview}
@@ -52,6 +53,7 @@ The primary objective of this study is to investigate how the relative risks of 
 
 1.  My first step was to identify and access the NCPP data within the NIH electronic records. This involved using the National Archives' website to pinpoint the specific datasets related to my research. The URL is https://www.archives.gov/research/electronic-records/nih.html. Navigating the National Archives required an understanding of its archival system. This step was crucial in filtering through the vast array of data to pinpoint the specific datasets relevant to my study. It involved familiarizing myself with the indexing methods and search tools provided by the archives. I used the National Archives Identifier (606622) for the NCPP files. After locating the NCPP files, I reviewed the three main components of the NCPP files: the Master File, a Variables File, and 30 special topic Work Files. After downloading the master file, I obtained the codebooks associated with the NCPP datasets. These codebooks provided detailed descriptions of the data collection methods and instruments used, which was essential for accurate data interpretation. I also collected manuals detailing the derivation of variables within the NCPP data. These manuals offered insights into the transformation processes from raw data to research-ready variables, clarifying the data structure and analytical approaches. Finally, I retrieved text recognition forms that detailed the various stages and visits of the NCPP. These forms provided context and sequence to the data collection, enhancing my understanding of the longitudinal nature of the study. The NCPP data was stored in a SAS dataset (.sas7bdat file). To work with this data in R, I used a combination of packages from the tidyverse, notably dplyr and haven. The process was straightforward. I started by setting the working directory in R to the location of the downloaded SAS file using setwd(). Using read_sas() function from the haven package, I loaded the ncppbasa.sas7bdat file into R. This function seamlessly reads SAS files and converts them into a format that R can manipulate.
 
+
 ```{r}
 #| message: false
 #| warning: false
@@ -70,6 +72,7 @@ htn_data <- read_sas("cpp_htn_20231031.sas7bdat") %>%
 diabetes_data <- read_sas("cpp_diabetes_20231026.sas7bdat") %>% 
   select(MOMID, PREGID, DM)
 ```
+
 
 2.  On October 31st, I met with Dr. Hinkle to establish a well-defined hypertension variable. To achieve this, we created a dedicated file specifically for this variable. This variable has five distinct levels:
 
@@ -125,6 +128,7 @@ diabetes_data <- read_sas("cpp_diabetes_20231026.sas7bdat") %>%
 
 5.  Once all the variables had been identified, I initiated the data processing steps. I began by creating a new data frame named "mice_covariate" using the "data.frame()" function. The initial columns of this data frame, namely "MOMID," "PREGID," and "CHILDID," were set as unique identifiers for each record, linking them to the mother's ID, pregnancy ID, and child's ID, respectively. My next focus was on incorporating two covariates into this data frame: "weight_lb" and "height_in." To ensure consistency and prepare for multiple imputation of missing covariate data, I converted both "weight_lb" and "height_in" variables to numeric using the "as.numeric()" function. In addressing missing data within these two variables, I employed the "replace()" function. Specifically, I replaced instances of ".u" or ".U" in the original \`ncppbasa\` dataset with "NA." It's worth noting that I cross-referenced this replacement process with the relevant manuals to ensure that the frequency of values aligned appropriately. I repeated this process for the "age" and "smoking" variables, systematically handling and standardizing missing data to prepare the data frame for further analysis.
 
+
 ```{r}
 mice_covariate <- data.frame(
   MOMID = ncppbasa$MOMID,
@@ -143,6 +147,7 @@ mice_covariate <- merge(mice_covariate, ncppbasa[c("MOMID", "PREGID", "CHILDID",
 names(mice_covariate)[names(mice_covariate) == "C52"] <- "Smoking"
 ```
 
+
 5.  The 'parity' variable posed an initial challenge during the SAS to R conversion due to non-numeric values becoming NA. This occurred because the categories of parity were encoded in a less intuitive manner in the codebook. In this coding scheme, '0' indicated that the mother had a prior pregnancy that was not viable, while 'p' signified no prior pregnancy at all. The conversion from 'p' to NA happened during the SAS to R conversion process. To address this issue, I took the following steps:
     -   I converted the 'parity' variable (represented as 'C50' in the dataset) to a character type since 'parity' contained non-numeric values that required different processing compared to purely numeric data.
 
@@ -151,6 +156,7 @@ names(mice_covariate)[names(mice_covariate) == "C52"] <- "Smoking"
     -   I applied the 'na_tag' function to identify rows with NA values to facilitate further processing.
 
     -   I recoded 'p' as '0' in alignment with the original coding scheme of the dataset, ensuring that all values in the 'parity' variable became numeric.
+
 
 ```{r}
 ncppbasa$parity <- as.character(ncppbasa$C50)
@@ -180,9 +186,11 @@ mice_covariate$parity[mice_covariate$parity == 'u'] <- NA
 mice_covariate$parity <- as.numeric(mice_covariate$parity)
 ```
 
+
 6.  I followed a similar process for handling covariates, including plurality, income, education, marital status, infant sex, and vascular nevi outcomes. Additionally, I addressed the ethnicity covariate. Dr. Hinkle advised me to combine categories '3' (oriental) and '8' (other) for the 'race_of_mother' variable. This consolidation of less populous categories simplifies the analysis, as these categories had small sample sizes. I utilized the replace() function to change all instances where 'race_of_mother' was '3' (oriental) to '8' (other).
 
     Subsequently, we introduced a datafile for diabetes status, considering that this study took place in the 1950s, when the prevalence of obesity was relatively low, implying that diabetes cases were likely type 1. To create a comprehensive dataset for analysis, I conducted a series of data merges. Firstly, I merged the 'diabetes_data' (related to diabetes) with 'htn_data' (related to hypertension) using the 'merge()' function, specifying 'by = c("MOMID", "PREGID")' and setting 'all = TRUE' to ensure the inclusion of all records from both datasets, even in cases of mismatches or missing values. Secondly, I integrated the combined diabetes and hypertension data with the 'mice_covariate' dataset, which contains the selected covariates. After successfully merging all the necessary data, I implemented an inclusion criterion based on the participants' survival status, specifically up to the age of 1 year. To achieve this, I incorporated the 'C1092' variable from the 'ncppbasa' dataset, which denotes the survival status of the children in the study. To select participants who had survived up to 1 year, I filtered the data using the conditions '(C1092 == 0 \| (C1092 \>= 51 & C1092 \<= 58))'. The exclusion criteria variable has been removed from the dataset in preparation for the upcoming imputation process, as it is not required for imputation.
+
 
 ```{r}
 ncppbasa$C10 <- as.numeric(replace(as.character(ncppbasa$C10), ncppbasa$C10 %in% c(".u", ".U"), NA))
@@ -229,7 +237,9 @@ master_file_exposure <- master_file_exposure %>%
   select(-C1092)
 ```
 
+
 7.  In the codebook, "1" signifies definiteness, "0" represents absence, and "2" indicates suspicion for vascular nevi. To create a new variable, 'combovascnevi_1y,' that combines these values based on these rules, I have also renamed 'master_file_exposure' to 'mice_data' for organizational purposes.
+
 
 ```{r}
 mice_data <- master_file_exposure
@@ -238,7 +248,9 @@ mice_data$combovascnevi_1y[mice_data$PWS_1y == 1 | mice_data$IH_1y == 1] <- 1
 mice_data$combovascnevi_1y[mice_data$PWS_1y == 2 | mice_data$IH_1y == 2] <- 2
 ```
 
+
 8.  I performed descriptive analyses to present the results for Table 1, which displays participant characteristics based on various covariates. For this purpose, I established a distinct data file. This separation was necessary because these variables needed to be converted into character format, and the variables employed for multiple imputation did not seamlessly accommodate categorized data. The procedure I followed for creating this dataset paralleled the process of extracting variables from the master file. However, it involved additional steps such as the creation of the BMI variable, renaming of variables, and releveling them to align with the specific requirements of the analysis.
+
 
 ```{r}
 category_covariates <- data.frame(
@@ -462,7 +474,9 @@ category_covariates_full <- category_covariates_full %>%
   filter(C1092 == 0 | (C1092 >= 51 & C1092 <= 58))
 ```
 
+
 9.  To address missing data, I utilized multiple imputation, a statistical technique that allows for the handling of missing data in a way that minimizes bias and preserves statistical power. My approach involved using R programming, specifically the mice, VIM, and dplyr packages, which provided the necessary tools for this complex process. I began by aggregating the data using the aggr function from the VIM package to visualize the missing data patterns. This step was crucial to understand the extent and nature of the missing data in the NCPP dataset. I removed variables that do not require imputation or inclusion in the analysis for better clarity and efficiency.
+
 
 ```{r}
 aggr(mice_data, col=c('navyblue', 'yellow'), numbers=TRUE, sortVars=TRUE,
@@ -470,9 +484,11 @@ aggr(mice_data, col=c('navyblue', 'yellow'), numbers=TRUE, sortVars=TRUE,
       ylab=c("Histogram of missing data", "Pattern"))
 ```
 
+
 Next, I created a binary matrix imp_where to identify the locations of the missing values. For the imputation methods, I carefully selected techniques appropriate for each variable type. Continuous variables were imputed using normal linear regression, ensuring that the inherent continuous nature of these data was preserved. Binary categorical variables were imputed using logistic regression. This method was ideal for modeling the probability of one category over another. For other categorical variables without a natural order, I chose polynomial regression imputation. This approach allowed for flexible modeling of relationships among unordered categories, which was essential for variables like hypertension during pregnancy, parity, plurality, income, education level, marital status, and the race of the mother. An initial empty imputation (maxit = 0) was performed to establish the default predictor matrix and methods.
 
 I modified the predictor matrix to reflect the study's design, ensuring that certain variables were not used as predictors. I clearly defined which variables were treated as outcomes and covariates. Hypertension during pregnancy was the primary exposure variable, and it was included in the list of covariates. This distinction was important to examine its relationship with other covariates accurately. Adjustments to the predictor matrix were made to ensure that covariates predicted each other, as well as the outcome variables predicting each other. This step was crucial for a coherent and integrated imputation process. After saving the predictor matrix and imputation methods to disk, I proceeded with the final imputation. I used the specified imputation methods, predictor matrix, and parameters to generate multiple imputed datasets.
+
 
 ```{r}
 imp_where <- is.na(mice_data)
@@ -499,7 +515,9 @@ write.csv(predictor_matrix, "predictor_matrix.csv", row.names = FALSE)
 write.csv(imputation_methods, "imputation_methods.csv", row.names = FALSE)
 ```
 
+
 I am using the specified imputation methods, predictor matrix, and parameters to generate multiple imputed datasets. `imputation_methods` is a list that contains the chosen imputation methods for each variable. `predictor_matrix` defines how variables predict each other during the imputation process. `where = imp_where` uses a binary matrix to identify the locations of missing values. Setting `m = 5` generates multiple imputations. The `seed = 12345` parameter ensures reproducibility by fixing the random seed. A maximum iteration limit of `maxit = 50` controls the refinement of imputed values during each iteration. `nnet.MaxNWts = 5000` controls the maximum number of weights in the neural network model used for imputation when "logreg" or "polyreg" methods are employed.
+
 
 ```{r}
 final_imputation <- mice(mice_data, meth = imputation_methods, pred = predictor_matrix,
@@ -509,7 +527,9 @@ saveRDS(final_imputation, "final_imputation.RDS") # saving the imputed datasets
 comp <- complete(final_imputation, "long") # complete the imputed datasets
 ```
 
+
 10. Creating new variables in the pooled dataset: V1 when suspect is treated as absent, V2 when suspect is treated as present, and a composite variable that groups them together. These variables will be used for sensitivity analysis later in the project.
+
 
 ```{r}
 long <- mice::complete(final_imputation, "long", include = TRUE)
@@ -536,7 +556,9 @@ long$gp_VN_1y_V2 <- ifelse(long$gp_VN_1y == 2, 1, long$gp_VN_1y)
 imp.itt <- as.mids(long)
 ```
 
+
 11. I recategorized certain covariates to ensure their proper adjustment in the multivariable log binomial models.
+
 
 ```{r}
 long$Smoking_cov <- ifelse(long$Smoking >= 1 & long$Smoking <= 19, 1, 
@@ -553,9 +575,11 @@ long$race_of_mother_cov <- ifelse(long$race_of_mother == 3, 8, long$race_of_moth
 imp.itt <- as.mids(long)
 ```
 
+
 ## Results {#sec-results}
 
 1.  These are two summary tables presenting covariates stratified by hypertension level. The stratification is based on both historical and contemporary definitions of hypertension. The **`tbl_summary`** function is used to generate a summary table (**`Table 1`**) based on the dataset **`category_covariates_full`**. It includes the covariates specified in the **`covariates`** variable. The table summarizes various statistics for these covariates, such as means (average values), standard deviations (how much the values vary), counts, percentages, and missing data. The table is stratified or organized by the presence or absence of hypertensive disorders during pregnancy in the year 2023 (indicated by the **`by = HTN_PREG`** argument). Similar to Table 1, another summary table (**`Table 2`**) is created using the **`tbl_summary`** function. This time, the data is stratified by the presence or absence of hypertension, as it was defined in 1950 (**`by = HTN_PREG1950`**).
+
 
 ```{r}
 #| warning: false
@@ -600,7 +624,9 @@ bold_labels()
 
 ```
 
+
 3.  These are visualizations that describe the summary tables.
+
 
 ```{r}
 value <- abs(rnorm(12, 0, 15))
@@ -857,7 +883,9 @@ ggplot(merged_counts_df, aes(x = 1, y = Proportion, fill = Sex_Category)) +
 
 ```
 
+
 2.  This is stacked bar plot depicting the distribution of participants based on each hypertension definition to illustrate the differences in distribution. After merging and organizing the data, I calculated the proportions of diagnoses for each hypertension category and converted these proportions into percentages. To make the data suitable for visualization, I reshaped it into a long format and defined colors for the forthcoming bar chart. The resulting bar chart, created using the **`ggplot2`** package, effectively illustrates how the diagnosis of hypertension has transformed over this 73-year period, emphasizing shifts in diagnostic criteria and their impact on the distribution of hypertension categories.
+
 
 ```{r}
 HTN_PREG_counts <- table(category_covariates_full$HTN_PREG)
@@ -911,7 +939,9 @@ ggplot(merged_counts_long, aes(x = Group, y = Proportion, fill = Hypertension_Ca
 
 ```
 
+
 3.  I have generated tables to display the counts of the vascular nevi outcome. Initially, I created duplicate variables in the **`mice_data`** data frame for specific variables such as **`PWS_1y`**, **`IH_1y`**, **`combovascnevi_1y`**, and **`HTN_PREG1950`**. These duplicate variables have the "\_copy" suffix added to their names. Then, I categorized the values in the **`HTN_PREG_copy`** variable into different categories such as "Normotensive," "Chronic Hypertension," "Gestational Hypertension," "Preeclampsia," "Superimposed Preeclampsia," and "Missing Outcome Data." I also renamed variables in the **`mice_data`** data frame to provide more descriptive labels, making it easier to interpret the data. Lastly, I generated summary tables (**`mice_data_summary_2023`** and **`mice_data_summary_1950`**) that provide counts and percentages of specific variables, including "Strawberry Hemangioma \@ 1 Year," "Port-Wine Stain \@ 1 Year," and "Vascular Nevi \@ 1 Year (Combined)," categorized by hypertension levels.
+
 
 ```{r}
 #| message: false
@@ -1009,7 +1039,9 @@ mice_data_summary_1950
 
 ```
 
+
 4.  The following two code chunks contain log binomial models. In this code, I defined a function called `calculate_unadjusted_pooled_summary` that calculates unadjusted pooled summaries for different disease outcomes. The function takes as input a dataset (`data`), an outcome variable (`outcome`), and a disease name (`disease_name`). Inside the function, I first create a logistic regression model using the `glm` function to analyze the relationship between the outcome and a binary variable representing hypertension in 1950 (`HTN_PREG1950`). I extract summary statistics, including estimates, standard errors, and relative risks, from the model results. I then calculate confidence intervals for the relative risks based on a specified confidence level (in this case, 95%) and store these values in the summary dataframe. Additional columns such as "type," "disease," and "acog_year" are added to the summary dataframe to indicate the type of analysis, the disease name, and the year of ACOG guidelines being considered (1950 in this case). Next, I create an empty list called `result_list` to store the results of unadjusted pooled summaries. I define vectors of outcome variables and disease names to iterate through. For each outcome variable and disease name, I call the `calculate_unadjusted_pooled_summary` function, print the results, and append them to the `result_list`. After processing all the outcome variables, I combine the individual dataframes in `result_list` into a single dataframe named `unadj_PWSIH_1950`. Finally, I select and filter specific columns of interest, resulting in a refined dataframe that contains the relevant information for further analysis and presentation. The second chunk does the same thing but for 2023. The two chunks after the second chunk are also the same thing but covariates were adjusted for in the models.
+
 
 ```{r}
 calculate_unadjusted_pooled_summary <- function(data, outcome, disease_name) {
@@ -1105,7 +1137,9 @@ unadj_PWSIH_FULL <- bind_rows(unadj_PWSIH_1950, unadj_PWSIH_2023)
 
 ```
 
+
 5.  The next two code chunks are the same as the previous two code chunks, but they include additional covariates in the log-binomial models for adjustment.
+
 
 ```{r}
 calculate_adjusted_pooled_summary <- function(data, outcome, disease_name) {
@@ -1236,7 +1270,9 @@ mutate(display = paste(relative_risks, " (",ci_lower,",",ci_upper,")"))
 adj_and_unadj_PWSIH_FULL %>% knitr::kable()
 ```
 
+
 6.  I am preparing the data frames from the results section for a sensitivity analysis involving two versions, V1 and V2, of vascular nevi classification based on definiteness and suspicion. In my primary analysis, I use V1. However, in V2, suspected cases are classified as present. The aim is to assess the accuracy of these classifications for rare outcomes. Initially, I created a data frame called **`V1V2_df`** by filtering data from the **`adj_and_unadj_PWSIH_FULL`** dataset. Specifically, I selected data for the year 2023 and for specific diseases (PWS_1y_V1, IH_1y_V1, PWS_1y_V2, IH_1y_V2) that fall under the "Adjusted" category. Then, I used the **`pivot_wider`** function to transform this data into a wider format, creating a new data frame called **`V1V2_wider`**. Next, I created another data frame called **`historic_df`** by filtering data for the years 1950 and 2023, and specific diseases (PWS_1y_V1 and IH_1y_V1) from the **`adj_and_unadj_PWSIH_FULL`** dataset. Again, I used the **`pivot_wider`** function to reshape this data into a wide format, resulting in the **`historic_wider`** data frame. Lastly, I focused on data for the year 2023 and selected specific diseases (PWS_1y_V1, IH_1y_V1, gp_VN_1y_V1) from the **`adj_and_unadj_PWSIH_FULL`** dataset. I then used the **`pivot_wider`** function to transform this data into the 'wider' format, providing a structured representation of the information for further analysis and visualization.
+
 
 ```{r}
 V1V2_df <- adj_and_unadj_PWSIH_FULL %>%
@@ -1278,7 +1314,9 @@ wider <- main_2023 %>%
   )
 ```
 
+
 7.  The following four plots compare Relative Risk for Port Wine Stains (PWS) and Infantile Hemangiomas (IH) under two different hypertension definitions (1950 and 2023) and under misclassification. In the provided code, I first filtered the dataset **`adj_and_unadj_PWSIH_FULL`** to select specific data points based on criteria such as **`acog_year`** being either "1950" or "2023," **`disease`** being "IH_1y_V1," and **`type`** being "adjusted." This subset of data was then used to create a comparative plot using the **`ggplot2`** package in R. In this plot, I compared relative risks (**`relative_risks`**) for two different years (1950 and 2023) with corresponding confidence intervals (**`ci_lower`** and **`ci_upper`**). The plot utilizes distinct colors and shapes to differentiate between the years, providing a visual comparison of relative risks associated with hypertension definitions. Additionally, I customized the plot's appearance, including titles, axis labels, colors, shapes, and text sizes, to enhance its clarity and readability. The vertical dashed line at **`xintercept = 1`** serves as a reference point, and data labels are included to display the relative risks for each data point. The next three plots do the same exact thing.
+
 
 ```{r}
 filtered_data <- subset(adj_and_unadj_PWSIH_FULL,
@@ -1318,7 +1356,9 @@ theme(
   geom_text(aes(label = sprintf("%.2f", relative_risks)), hjust = -0.2, vjust = 0, size = 3.5, check_overlap = TRUE)
 ```
 
+
 The plot illustrates the relative risks of each hypertension disorder, with the reference group being normotensive. When applying the 1950s definitions, it becomes evident that all hypertensive disorders are linked to PWS. Notably, the most notable change occurs with preeclampsia, where the relative risk rises significantly, from 1.12 to 1.90, when transitioning from the 1950s criteria to the 2023 criteria. This shift reflects the less stringent criteria for diagnosing preeclampsia in 2023, allowing a broader range of cases to be included. Additionally, there's a noteworthy difference in the gestational age window for defining chronic hypertension. In the 1950s, this window was set at 24 weeks, compared to the current 20-week definition. Consequently, the RR using the 1950s definition is lower, as it encompasses a more diverse population. Furthermore, it's worth mentioning that the confidence intervals for the 2023 definitions are notably wider, indicating increased variability in the data. Among these associations, only the link between preeclampsia and PWS remains statistically significant.
+
 
 ```{r}
 filtered_data <- subset(adj_and_unadj_PWSIH_FULL,
@@ -1360,7 +1400,9 @@ theme(
   geom_text(aes(label = sprintf("%.2f", relative_risks)), hjust = -0.2, vjust = 0, size = 3.5, check_overlap = TRUE)
 ```
 
+
 There is a noticeable difference in how preeclampsia impacts infantile hemangiomas compared to Port Wine Stains. However, the most significant change is observed in cases of chronic hypertension. When applying the 1950s definition, the relative risk stands at 0.70, but with the 2023 definition, it increases to 1.17, surpassing the RR = 1 threshold. Additionally, it's important to note that the confidence intervals are considerably wider when using the 2023 definition. Superimposed preeclampsia demonstrates an additive effect due to the dose-dependent relationship it has, combining chronic hypertension and preeclampsia. This effect varies between different populations. However, this effect isn't as pronounced in PWS, which is likely attributed to the smaller sample size for PWS, as it is a rarer outcome compared to IH.
+
 
 ```{r}
   
@@ -1411,7 +1453,9 @@ ggplot(data = filtered_data, aes(x = relative_risks, y = term, color = `Outcome 
   geom_text(aes(label = sprintf("%.2f", relative_risks)), hjust = -0.2, vjust = 0, size = 3.5, check_overlap = TRUE)
 ```
 
+
 This plot illustrates how the relative risks change when employing different classification criteria. As previously mentioned, V1 denotes the classification where vascular nevi are deemed present only in the definite cases, while V2 extends this classification to include both definite and suspected cases. It's noteworthy that all the RRs for V2 tend to bias towards the null, indicating a tendency for attenuation to the null when a less precise classification occurs. This observation suggests that the classification of PWS was effectively executed during the 1950-1970s, with a stronger association seen in V1 compared to V2.
+
 
 ```{r}
 filtered_data <- subset(adj_and_unadj_PWSIH_FULL,
@@ -1461,6 +1505,7 @@ ggplot(data = filtered_data, aes(x = relative_risks, y = term, color = `Outcome 
   geom_text(aes(label = sprintf("%.2f", relative_risks)), hjust = -0.2, vjust = 0, size = 3.5, check_overlap = TRUE)
 ```
 
+
 The tendency for attenuation toward the null is also observed in the case of hemangiomas, with the exception of superimposed preeclampsia. However, the difference RR is minimal in this context.
 
 ## Conclusion
@@ -1490,3 +1535,4 @@ My primary focus was on calculating relative risks of vascular nevi using log-bi
 -   Combining definite and suspected cases into the variable for present vascular nevi revealed an attenuation toward the null.
 
 In the broader context, my study underscores the importance of historical perspectives in epidemiological research, as they provide valuable insights into the evolution of diagnostic criteria over time. This enhanced understanding of disease risk factors can contribute to more accurate risk assessments and better-informed healthcare decisions.
+
