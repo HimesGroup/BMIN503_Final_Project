@@ -1,5 +1,7 @@
 # BMIN503/EPID600 Final Project
 
+Hi there! My name is Jessica Wong. 
+
 Welcome to my GitHub repository. 
 
 This is my README file.
