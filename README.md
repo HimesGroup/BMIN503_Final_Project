@@ -10,6 +10,8 @@ My qmd file is final_project_WONG.qmd.
 
 My final project report can be reviewed at final_project_WONG.html.
 
+My final project examines the historic and contemporary diagnostic criteria for preeclampsia and its impact on the assessment of vascular nevi risk.
+
 Here is an overview of my project:
 
 While hypertension disorders are not typically considered a known risk factor for vascular nevi, several studies have suggested a potential association. In particular, conditions like preeclampsia, often linked to in utero hypoxic environments, have been explored for their potential impact on the relative risks of vascular nevi. However, the findings have been somewhat inconsistent, with some studies indicating an association and others showing little to no link. This project seeks to investigate how the relative risks of vascular nevi, specifically infantile hemangiomas and port wine stains, vary based on different definitions of hypertension, ranging from contemporary to historical definitions. 
