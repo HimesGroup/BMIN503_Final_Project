@@ -13,4 +13,3 @@ final_project_template.html - HTML document containing project information, code
 final_project_template.qmd - qmd file containing project information, code, and output
 
 
-[CSV file to be uploaded]
