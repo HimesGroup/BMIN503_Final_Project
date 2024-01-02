@@ -5,4 +5,5 @@ This repository contains my analysis for a study entitled: "Effects of repetitiv
 - "README.md": current file contains an overview of the project
 - "final_project_template.qmd": Quarto markdown file for final project
 - "final_project_template.html": HTML final project (prior to classmate feedback)
-- "Sarai_Garcia_TMS_Analysis.html": HTML final project submission
+- "Sarai_Garcia_TMS_Analysis.html": HTML final project submission prior to noticing a small error in the last two plots. I kept this file included to refer back to the error
+- "Sarai_Garcia_TMS_Analysis.html (1)": HTML final project submission
