@@ -30,15 +30,703 @@ To address these gaps, we conducted a hybrid implementation-effectiveness pilot 
 
 Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
 
-###Linkage to Tsepamo Study To assess the primary implementation outcome and all effectiveness outcomes of interest, we leveraged individual-level clinical data collected in the Tsepamo study, which has been conducting birth outcomes surveillance in Botswana since 2014. The Tsepamo study captures delivery data from government hospitals throughout Botswana, including hospitals in Gaborone, Molepolole, and Palapye, and covers up to 72% of births nationwide. Data are abstracted from maternity obstetric records at the time of delivery, including ANC clinic and visits, diagnoses, medications (including MMS), HIV status, and birth outcomes. We used the ANC clinic and date of the first ANC clinic visit (the booking date) recorded in Tsepamo to link our MMS intervention data with the Tsepamo database. To minimize the potential for oversampling shorter pregnancies and to ensure all individuals included in the analysis had the potential to be pregnant for 40 weeks, we restricted our analysis to individuals with an estimated start of pregnancy at least 40 weeks before the day we abstracted the data from Tsepamo (Sep 3, 2025).
+###Linkage to Tsepamo Study 
 
+To assess the primary implementation outcome and all effectiveness outcomes of interest, we leveraged individual-level clinical data collected in the Tsepamo study, which has been conducting birth outcomes surveillance in Botswana since 2014. The Tsepamo study captures delivery data from government hospitals throughout Botswana, including hospitals in Gaborone, Molepolole, and Palapye, and covers up to 72% of births nationwide. Data are abstracted from maternity obstetric records at the time of delivery, including ANC clinic and visits, diagnoses, medications (including MMS), HIV status, and birth outcomes. We used the ANC clinic and date of the first ANC clinic visit (the booking date) recorded in Tsepamo to link our MMS intervention data with the Tsepamo database. To minimize the potential for oversampling shorter pregnancies and to ensure all individuals included in the analysis had the potential to be pregnant for 40 weeks, we restricted our analysis to individuals with an estimated start of pregnancy at least 40 weeks before the day we abstracted the data from Tsepamo (Sep 3, 2025).
+
+```{r}
+# Load all neceaary packages
+install.packages("haven")
+library(haven)
+install.packages("dplyr")
+library(dplyr)
+install.packages("lubridate")
+library(lubridate)
+install.packages("tidyverse")
+library(tidyverse)
+
+#Read a SAS dataset (.sas7bdat)
+tsepamo <- read_sas("~/Desktop/tsepamo_updated_5sep25.sas7bdat")
+# View the data
+print(tsepamo)
+
+# Only keep data from the 13 intervention clinics
+mms <- tsepamo %>%         #=intervclinics
+  filter(
+    cliniccode %in% c(5302, 5303, 5323, 15312, 3319, 15325, 5306, 
+                      15331, 15341, 15329, 3201, 5318, 15335)
+  )
+
+# Separately, only keep data from the non-intervention clinics (all other clinics in gabs, moleps, palapye
+# Creating non-intervention clinics dataset
+nonintervclinics <- tsepamo %>%
+  mutate(flagtokeep = if_else((cliniccode >= 5000 & cliniccode < 6000) |
+                                (cliniccode >= 3000 & cliniccode < 4000) |
+                                (cliniccode >= 15000 & cliniccode < 16000), 1, 0))
+# Filter the non-intervention clinics based on the flag
+nonintervclinics <- nonintervclinics %>%
+  filter(flagtokeep == 1) %>%
+  filter(!(cliniccode %in% c(5302, 5303, 5323, 15312, 3319, 15325, 5306, 
+                             15331, 15341, 15329, 3201, 5318, 15335)))
+
+# Creating the MMS start date and end date based on clinic code T1
+mms_timeline <- mms %>%                                 # Has 158+2 variables here
+  mutate(
+    mmsstartdate = case_when(
+      cliniccode == 5302 ~ ymd("2024-08-23"),
+      cliniccode == 5303 ~ ymd("2024-08-23"),
+      cliniccode == 5323 ~ ymd("2024-08-23"),
+      cliniccode == 15312 ~ ymd("2024-08-13"),
+      cliniccode == 3319 ~ ymd("2024-09-06"),
+      cliniccode == 15325 ~ ymd("2024-08-16"),
+      cliniccode == 5306 ~ ymd("2024-08-23"),
+      cliniccode == 15331 ~ ymd("2024-08-21"),
+      cliniccode == 15341 ~ ymd("2024-08-16"),
+      cliniccode == 15329 ~ ymd("2024-08-19"),
+      cliniccode == 3201 ~ ymd("2024-09-06"),
+      cliniccode == 5318 ~ ymd("2024-08-23"),
+      cliniccode == 15335 ~ ymd("2024-08-16")
+    ),
+    mmsenddate = case_when(
+      cliniccode == 5302 ~ ymd("2025-02-13"),
+      cliniccode == 5303 ~ ymd("2025-03-17"),
+      cliniccode == 5323 ~ ymd("2025-02-13"),
+      cliniccode == 15312 ~ ymd("2025-02-20"),
+      cliniccode == 3319 ~ ymd("2025-04-15"),
+      cliniccode == 15325 ~ ymd("2025-02-20"),
+      cliniccode == 5306 ~ ymd("2025-02-13"),
+      cliniccode == 15331 ~ ymd("2025-02-20"),
+      cliniccode == 15341 ~ ymd("2025-02-20"),
+      cliniccode == 15329 ~ ymd("2025-02-20"),
+      cliniccode == 3201 ~ ymd("2025-04-15"),
+      cliniccode == 5318 ~ ymd("2025-02-13"),
+      cliniccode == 15335 ~ ymd("2025-02-20")
+    )
+  ) %>%
+  # Restriction step, 40 weeks before cut-off date Sep 03, 2025
+  filter(lmp <= ymd("2024-11-27"))
+
+# Filter mms data for women whose booking date is on or after the start of the pilot
+Interv_T1 <- mms_timeline %>%    #Rename from mms_T1 to Interv_T1, for intervention clincis during intervention period  
+  filter(bookdate >= mmsstartdate)       
+
+# Creating T0 for intervention clinics 
+Interv_timeline_T0 <- mms_timeline %>%             #List past three timelines 
+  mutate(
+    t0_start_1 = mmsstartdate - years(1),
+    t0_end_1   = mmsenddate - years(1),
+    t0_start_2 = mmsstartdate - years(2),
+    t0_end_2   = mmsenddate - years(2),
+    t0_start_3 = mmsstartdate - years(3),
+    t0_end_3   = mmsenddate - years(3)
+  ) %>%
+  distinct(cliniccode, .keep_all = TRUE) %>%
+  select(cliniccode, starts_with("t0_"))
+
+Interv_T0 <- mms %>%        #For intervention clincis during non-intervention period  
+  left_join(Interv_timeline_T0, by = "cliniccode") %>%
+  filter(
+    (bookdate >= t0_start_1 & bookdate <= t0_end_1) |
+      (bookdate >= t0_start_2 & bookdate <= t0_end_2) |
+      (bookdate >= t0_start_3 & bookdate <= t0_end_3)
+  )
+
+# Create start and end dates for non-intervention clinics
+nonintervclinics_timeline <- nonintervclinics %>%                          # Has 159+2 variables
+  mutate(
+    mmsstartdate = case_when(
+      cliniccode >= 5000 & cliniccode < 6000 ~ ymd("2024-08-23"),
+      cliniccode >= 15000 & cliniccode < 16000 ~ ymd("2024-08-16"),
+      cliniccode >= 3000 & cliniccode < 4000 ~ ymd("2024-09-06")
+    ),
+    mmsenddate = case_when(
+      cliniccode >= 5000 & cliniccode < 6000 ~ ymd("2025-02-13"),
+      cliniccode >= 15000 & cliniccode < 16000 ~ ymd("2025-02-20"),
+      cliniccode >= 3000 & cliniccode < 4000 ~ ymd("2025-04-15")
+    )
+  ) %>%
+
+  # Restriction step, 40 weeks before cut-off date Sep 03, 2025
+  filter(lmp <= ymd("2024-11-27"))
+
+# Filter non-intervention clinics for women whose booking date is on or after the start of the pilot
+noninterv_T1 <- nonintervclinics_timeline %>%
+  filter(bookdate >= mmsstartdate)
+
+# Creating T0 for nonintervention clinics 
+Noninterv_timeline_T0_ <- nonintervclinics_timeline %>%             #List past three timelines 
+  mutate(
+    t0_start_1 = mmsstartdate - years(1),
+    t0_end_1   = mmsenddate - years(1),
+    t0_start_2 = mmsstartdate - years(2),
+    t0_end_2   = mmsenddate - years(2),
+    t0_start_3 = mmsstartdate - years(3),
+    t0_end_3   = mmsenddate - years(3)
+  ) %>%
+  distinct(cliniccode, .keep_all = TRUE) %>%
+  select(cliniccode, starts_with("t0_"))
+
+noninterv_T0 <- nonintervclinics %>%   #use original nonintervention clinics dataset without T1 timeline
+  left_join(Noninterv_timeline_T0_, by = "cliniccode") %>%
+  filter(
+    (bookdate >= t0_start_1 & bookdate <= t0_end_1) |
+      (bookdate >= t0_start_2 & bookdate <= t0_end_2) |
+      (bookdate >= t0_start_3 & bookdate <= t0_end_3)
+  )# Create start and end dates for non-intervention clinics
+nonintervclinics_timeline <- nonintervclinics %>%                          # Has 159+2 variables
+  mutate(
+    mmsstartdate = case_when(
+      cliniccode >= 5000 & cliniccode < 6000 ~ ymd("2024-08-23"),
+      cliniccode >= 15000 & cliniccode < 16000 ~ ymd("2024-08-16"),
+      cliniccode >= 3000 & cliniccode < 4000 ~ ymd("2024-09-06")
+    ),
+    mmsenddate = case_when(
+      cliniccode >= 5000 & cliniccode < 6000 ~ ymd("2025-02-13"),
+      cliniccode >= 15000 & cliniccode < 16000 ~ ymd("2025-02-20"),
+      cliniccode >= 3000 & cliniccode < 4000 ~ ymd("2025-04-15")
+    )
+  ) %>%
+  # Restriction step, 40 weeks before cut-off date Sep 03, 2025
+  filter(lmp <= ymd("2024-11-27"))
+
+# Filter non-intervention clinics for women whose booking date is on or after the start of the pilot
+noninterv_T1 <- nonintervclinics_timeline %>%
+  filter(bookdate >= mmsstartdate)
+
+# Creating T0 for nonintervention clinics 
+Noninterv_timeline_T0_ <- nonintervclinics_timeline %>%             #List past three timelines 
+  mutate(
+    t0_start_1 = mmsstartdate - years(1),
+    t0_end_1   = mmsenddate - years(1),
+    t0_start_2 = mmsstartdate - years(2),
+    t0_end_2   = mmsenddate - years(2),
+    t0_start_3 = mmsstartdate - years(3),
+    t0_end_3   = mmsenddate - years(3)
+  ) %>%
+  distinct(cliniccode, .keep_all = TRUE) %>%
+  select(cliniccode, starts_with("t0_"))
+
+noninterv_T0 <- nonintervclinics %>%   #use original nonintervention clinics dataset without T1 timeline
+  left_join(Noninterv_timeline_T0_, by = "cliniccode") %>%
+  filter(
+    (bookdate >= t0_start_1 & bookdate <= t0_end_1) |
+      (bookdate >= t0_start_2 & bookdate <= t0_end_2) |
+      (bookdate >= t0_start_3 & bookdate <= t0_end_3)
+  )
+```
 ### Implementation Outcomes
 
 The implementation outcome was MMS penetration (often called “reach”),18 which is defined as the proportion of eligible individuals who participate in the intervention. We estimated penetration by calculating the proportion of deliveries for which there was documentation in the obstetric card that MMS was the first supplement prescribed during pregnancy. We used a difference-in-difference (DiD) approach to compare this proportion across time and clinic. We fit a linear probability model with indicators for the intervention group, the post-intervention period, and an interaction between the intervention group and post-intervention period. The coefficient for the interaction term quantifies the change in the proportion who received MMS from the pre-intervention to the post-intervention period, comparing the intervention clinics with the non-intervention clinics (a difference-in-difference). Each clinic had a unique intervention period, defined as the time between the first MMS distribution and 30 days after the sixth month of distribution. The pre-intervention period refers to the same calendar period in the three consecutive prior years. We included all clinics in Gaborone, Molepolole, and Palapye as non-intervention clinics in the primary analysis. Individuals were included in the analysis if they initiated ANC at one of the 13 intervention clinics or at a non-intervention clinic during either the intervention period or the corresponding pre-intervention period and delivered at a site included in Tsepamo. For non-intervention clinics, the intervention and pre-intervention periods were defined using the median intervention dates from clinics within the same geographic region.
 
+```{r}
+#Coding variable for MMNS, IFAS only, Iron only, No iron
+tsepamo <- tsepamo %>%
+  mutate(
+    mmns = case_when(
+      multivit == 1 ~ 3,                                      # MMNS
+      (iron == 1 & folate == 1) | (fefol == 1) ~ 2,            # Iron + folatic acid but no other micronutrients
+      (iron == 1 & folate == 0 & fefol == 0 & multivit == 0) ~ 1, # Iron only
+      (iron == 0 & fefol == 0 & multivit == 0) ~ 0             # Not on iron
+    )
+  )
+
+# Number MMS filled in Tsepamo among Women Presenting to ANC
+# During T1
+##Intervention
+Interv_MMS_T1 <- Interv_T1 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    multivit_count = sum(multivit == 1, na.rm = TRUE))
+##nonintervention
+noninterv_MMS_T1 <- noninterv_T1 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    multivit_count = sum(multivit == 1, na.rm = TRUE))
+
+# During T0
+##Intervention
+Interv_MMS_T0 <- Interv_T0 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    multivit_count = sum(multivit == 1, na.rm = TRUE))
+##nonintervention
+noninterv_MMS_T0 <- noninterv_T0 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    multivit_count = sum(multivit == 1, na.rm = TRUE))
+```
+
 ### Effectiveness Outcomes
 
 The primary effectiveness outcome was the mean change in hemoglobin during pregnancy, calculated as the difference between the second and first hemoglobin measurements recorded in the Tsepamo database. Specifically, the first hemoglobin must be measured before 24 weeks of gestation, and the second hemoglobin must be measured on or after 24 weeks of gestation. Secondary outcomes included the second hemoglobin value measured in pregnancy and a composite indicator of adverse birth outcomes, including stillbirth, preterm delivery (\<37 weeks of gestation), in-hospital neonatal death (\<28 days), and small-for-gestational-age (SGA). Preterm delivery, SGA, and low birth weight (\<2500 grams) were also examined individually. As above, analyses of the effectiveness outcomes were restricted to individuals who delivered at a site included in Tsepamo.
+
+Adverse Birth Outcome
+```{r}
+# Number any adverse birth outcome in Tsepamo among Women Presenting to ANC
+
+## SGA and VSGA calculation functions
+
+calculate_sga <- function(nga, bwt, gender, bwtgm) {
+  # Vectorized version using case_when
+  dplyr::case_when(
+    is.na(nga) | is.na(bwt) | is.na(gender) | is.na(bwtgm) ~ NA_real_,
+    bwt < bwtgm ~ 1L,  # Meets SGA criteria
+    TRUE ~ 0L          # Does not meet criteria
+  )
+}
+
+calculate_vsga <- function(nga, bwt, gender, bwtgm) {
+  # Identical structure since logic is the same, just different thresholds
+  dplyr::case_when(
+    is.na(nga) | is.na(bwt) | is.na(gender) | is.na(bwtgm) ~ NA_real_,
+    bwt < bwtgm ~ 1L,  # Meets VSGA criteria
+    TRUE ~ 0L          # Does not meet criteria
+  )
+}
+
+# Correct SGA and VSGA weight thresholds
+sgawham <- setNames(c(530,600,690,780,880,1000,1130,1270,1430,1550,1820,2050,2270,2470,2640,2800,2940,3060,3170),
+                    24:42)
+sgawhaf <- setNames(c(500,570,650,740,830,940,1070,1200,1350,1530,1790,2020,2230,2410,2570,2710,2830,2930,3010),
+                    24:42)
+
+vsgawham <- setNames(c(470,540,610,690,790,890,1000,1130,1270,1300,1560,1800,2020,2220,2390,2550,2690,2820,2920),
+                     24:42)
+vsgawhaf <- setNames(c(440,510,580,660,740,840,950,1070,1200,1320,1570,1800,2000,2180,2340,2480,2600,2690,2770),
+                     24:42)
+
+calculate_growth_status <- function(bwt, bwtgm) {
+  dplyr::case_when(
+    is.na(bwt) | is.na(bwtgm) ~ NA_real_,  # Handle missing data
+    bwt < bwtgm ~ 1L,                     # Meets criteria
+    TRUE ~ 0L                              # Does not meet criteria
+  )
+}
+
+
+## For Intervention period
+
+# Intervention clinics 
+Interv_BD_T1 <- Interv_T1 %>%
+  # First create prerequisite variables
+  mutate(
+    
+    # Set implausible values to NA
+    nga_clean = if_else(nga %in% 24:42, nga, NA_real_),
+    
+    # Flag outliers for review
+    nga_flag = case_when(
+      nga < 24 ~ "Below viability threshold",
+      nga > 42 ~ "Post-term error",
+      is.na(nga) ~ "Missing GA",
+      TRUE ~ NA_character_
+    ),
+    
+    # Stillbirth calculation
+    stillbirth = case_when(
+      infantstat %in% c(2, 3) ~ 1L,
+      infantstat == 1 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Preterm calculations
+    preterm = case_when(
+      nga_clean %in% 24:36 ~ 1L,  # WHO preterm definition
+      nga_clean >= 37 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    verypreterm = case_when(
+      nga_clean %in% 24:31 ~ 1L,  # WHO very preterm
+      nga_clean >= 32 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Low birth weight calculations
+    lowbirthweight = case_when(
+      bwt < 2500 ~ 1L,
+      bwt >= 2500 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Neonatal death recoding
+    nndeath_old = case_when(
+      nndeath == 1 ~ 1L,
+      nndeath == 0 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    nndeath_new = case_when(
+      nndeath_old == 1 & alivebaby == 1 ~ NA_integer_,
+      nndeath_old == 0 & alivebaby == 0 ~ NA_integer_,
+      TRUE ~ nndeath_old
+    ),
+    
+    # SGA/VSGA thresholds
+    nga_char = as.character(round(nga_clean)),  # Handle decimal weeks if needed
+    bwtgm_sga = case_when(
+      gender == 0 ~ sgawham[nga_char],
+      gender == 1 ~ sgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    bwtgm_vsga = case_when(
+      gender == 0 ~ vsgawham[nga_char],
+      gender == 1 ~ vsgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    
+    # SGA/VSGA statuses (assuming these are sgawho_all/vsgawho_all)
+    sgawho_all = case_when(
+      bwt <= bwtgm_sga ~ 1L,
+      bwt >= bwtgm_sga ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    vsgawho_all = case_when(
+      bwt <= bwtgm_vsga ~ 1L,
+      bwt >= bwtgm_vsga ~ 0L,
+      TRUE ~ NA_integer_
+    )
+  ) %>%
+  
+  # Now create composite outcomes
+  mutate(
+    composite = case_when(
+      sgawho_all == 1 | preterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(sgawho_all, preterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    ),
+    severe_composite = case_when(
+      vsgawho_all == 1 | verypreterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(vsgawho_all, verypreterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    )
+  ) %>%
+  select(-nga_char)
+
+Interv_BD_clinics_T1 <- Interv_BD_T1 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    n_total = sum(!is.na(composite)),                #n_total is the number of non-missing composite observations per clinic
+    n_events = sum(composite == 1, na.rm = TRUE),    #n_events is the number of cases where composite == 1
+    percent = mean(composite, na.rm = TRUE) * 100
+  )
+
+
+# Non-intervention clincis
+noninterv_BD_T1 <- noninterv_T1 %>%
+  # First create prerequisite variables
+  mutate(
+    # Stillbirth calculation
+    stillbirth = case_when(
+      infantstat %in% c(2, 3) ~ 1L,
+      infantstat == 1 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Preterm calculations
+    preterm = case_when(
+      nga >= 24 & nga < 37 ~ 1L,
+      nga >= 37 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    verypreterm = case_when(
+      nga >= 24 & nga < 32 ~ 1L,
+      nga >= 32 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Low birthweight calculations
+    lowbirthweight = case_when(
+      bwt < 2500 ~ 1L,
+      bwt >= 2500 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Neonatal death recoding
+    nndeath_old = case_when(
+      nndeath == 1 ~ 1L,
+      nndeath == 0 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    nndeath_new = case_when(
+      nndeath_old == 1 & alivebaby == 1 ~ NA_integer_,
+      nndeath_old == 0 & alivebaby == 0 ~ NA_integer_,
+      TRUE ~ nndeath_old
+    ),
+    
+    # SGA/VSGA thresholds
+    nga_char = as.character(nga),
+    bwtgm_sga = case_when(
+      gender == 0 & nga %in% 24:42 ~ sgawham[nga_char],
+      gender == 1 & nga %in% 24:42 ~ sgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    bwtgm_vsga = case_when(
+      gender == 0 & nga %in% 24:42 ~ vsgawham[nga_char],
+      gender == 1 & nga %in% 24:42 ~ vsgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    
+    # SGA/VSGA statuses (assuming these are sgawho_all/vsgawho_all)
+    sgawho_all = case_when(
+      bwt < bwtgm_sga ~ 1L,
+      bwt >= bwtgm_sga ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    vsgawho_all = case_when(
+      bwt < bwtgm_vsga ~ 1L,
+      bwt >= bwtgm_vsga ~ 0L,
+      TRUE ~ NA_integer_
+    )
+  ) %>%
+  
+  # Now create composite outcomes
+  mutate(
+    composite = case_when(
+      sgawho_all == 1 | preterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(sgawho_all, preterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    ),
+    severe_composite = case_when(
+      vsgawho_all == 1 | verypreterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(vsgawho_all, verypreterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    )
+  ) %>%
+  select(-nga_char)
+
+noninterv_BD_clinics_T1 <- noninterv_BD_T1 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    n_total = sum(!is.na(composite)),                #n_total is the number of non-missing composite observations per clinic
+    n_events = sum(composite == 1, na.rm = TRUE),    #n_events is the number of cases where composite == 1
+    percent = mean(composite, na.rm = TRUE) * 100
+  )
+
+## For Non-interventnion period
+#Intervenetion clincis
+Interv_BD_T0 <- Interv_T0 %>%
+  # First create prerequisite variables
+  mutate(
+    
+    # Set implausible values to NA
+    nga_clean = if_else(nga %in% 24:42, nga, NA_real_),
+    
+    # Flag outliers for review
+    nga_flag = case_when(
+      nga < 24 ~ "Below viability threshold",
+      nga > 42 ~ "Post-term error",
+      is.na(nga) ~ "Missing GA",
+      TRUE ~ NA_character_
+    ),
+    
+    # Stillbirth calculation
+    stillbirth = case_when(
+      infantstat %in% c(2, 3) ~ 1L,
+      infantstat == 1 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Preterm calculations
+    preterm = case_when(
+      nga_clean %in% 24:36 ~ 1L,  # WHO preterm definition
+      nga_clean >= 37 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    verypreterm = case_when(
+      nga_clean %in% 24:31 ~ 1L,  # WHO very preterm
+      nga_clean >= 32 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Low birthweight calculations
+    lowbirthweight = case_when(
+      bwt < 2500 ~ 1L,
+      bwt >= 2500 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Neonatal death recoding
+    nndeath_old = case_when(
+      nndeath == 1 ~ 1L,
+      nndeath == 0 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    nndeath_new = case_when(
+      nndeath_old == 1 & alivebaby == 1 ~ NA_integer_,
+      nndeath_old == 0 & alivebaby == 0 ~ NA_integer_,
+      TRUE ~ nndeath_old
+    ),
+    
+    # SGA/VSGA thresholds
+    nga_char = as.character(round(nga_clean)),  # Handle decimal weeks if needed
+    bwtgm_sga = case_when(
+      gender == 0 ~ sgawham[nga_char],
+      gender == 1 ~ sgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    bwtgm_vsga = case_when(
+      gender == 0 ~ vsgawham[nga_char],
+      gender == 1 ~ vsgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    
+    # SGA/VSGA statuses (assuming these are sgawho_all/vsgawho_all)
+    sgawho_all = case_when(
+      bwt <= bwtgm_sga ~ 1L,
+      bwt >= bwtgm_sga ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    vsgawho_all = case_when(
+      bwt <= bwtgm_vsga ~ 1L,
+      bwt >= bwtgm_vsga ~ 0L,
+      TRUE ~ NA_integer_
+    )
+  ) %>%
+  
+  # Now create composite outcomes
+  mutate(
+    composite = case_when(
+      sgawho_all == 1 | preterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(sgawho_all, preterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    ),
+    severe_composite = case_when(
+      vsgawho_all == 1 | verypreterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(vsgawho_all, verypreterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    )
+  ) %>%
+  select(-nga_char)
+
+Interv_BD_clinics_T0 <- Interv_BD_T0 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    n_total = sum(!is.na(composite)),                #n_total is the number of non-missing composite observations per clinic
+    n_events = sum(composite == 1, na.rm = TRUE),    #n_events is the number of cases where composite == 1
+    percent = mean(composite, na.rm = TRUE) * 100
+  )
+
+# Non-interverntion clinics
+noninterv_BD_T0 <- noninterv_T0 %>%
+  # First create prerequisite variables
+  mutate(
+    # Stillbirth calculation
+    stillbirth = case_when(
+      infantstat %in% c(2, 3) ~ 1L,
+      infantstat == 1 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Preterm calculations
+    preterm = case_when(
+      nga >= 24 & nga < 37 ~ 1L,
+      nga >= 37 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    verypreterm = case_when(
+      nga >= 24 & nga < 32 ~ 1L,
+      nga >= 32 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Low birthweight calculations
+    lowbirthweight = case_when(
+      bwt < 2500 ~ 1L,
+      bwt >= 2500 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Neonatal death recoding
+    nndeath_old = case_when(
+      nndeath == 1 ~ 1L,
+      nndeath == 0 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    nndeath_new = case_when(
+      nndeath_old == 1 & alivebaby == 1 ~ NA_integer_,
+      nndeath_old == 0 & alivebaby == 0 ~ NA_integer_,
+      TRUE ~ nndeath_old
+    ),
+    
+    # SGA/VSGA thresholds
+    nga_char = as.character(nga),
+    bwtgm_sga = case_when(
+      gender == 0 & nga %in% 24:42 ~ sgawham[nga_char],
+      gender == 1 & nga %in% 24:42 ~ sgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    bwtgm_vsga = case_when(
+      gender == 0 & nga %in% 24:42 ~ vsgawham[nga_char],
+      gender == 1 & nga %in% 24:42 ~ vsgawhaf[nga_char],
+      TRUE ~ NA_real_
+    ),
+    
+    # SGA/VSGA statuses (assuming these are sgawho_all/vsgawho_all)
+    sgawho_all = case_when(
+      bwt < bwtgm_sga ~ 1L,
+      bwt >= bwtgm_sga ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    vsgawho_all = case_when(
+      bwt < bwtgm_vsga ~ 1L,
+      bwt >= bwtgm_vsga ~ 0L,
+      TRUE ~ NA_integer_
+    )
+  ) %>%
+  
+  # Now create composite outcomes
+  mutate(
+    composite = case_when(
+      sgawho_all == 1 | preterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(sgawho_all, preterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    ),
+    severe_composite = case_when(
+      vsgawho_all == 1 | verypreterm == 1 | stillbirth == 1 | nndeath_new == 1 ~ 1L,
+      if_any(c(vsgawho_all, verypreterm, stillbirth, nndeath_new), is.na) ~ NA_integer_,
+      TRUE ~ 0L
+    )
+  ) %>%
+  select(-nga_char)
+
+noninterv_BD_clinics_T0 <- noninterv_BD_T0 %>%
+  group_by(cliniccode) %>%
+  summarise(
+    n_total = sum(!is.na(composite)),                #n_total is the number of non-missing composite observations per clinic
+    n_events = sum(composite == 1, na.rm = TRUE),    #n_events is the number of cases where composite == 1
+    percent = mean(composite, na.rm = TRUE) * 100
+  )
+```
+
+Hemoglobins
+```{r}
+# Number deliveries in Tsepamo among Women Presenting to ANC with 2 hemoglobins
+#During T1
+
+##Interventnion
+Interv_2hb_T1 <- Interv_T1 %>%
+  filter(!is.na(firsthb) & !is.na(secondhb)) %>%
+  group_by(cliniccode) %>%
+  summarise(n_with_2_hb = n())
+##Non~
+noninterv_2hb_T1 <- noninterv_T1 %>%
+  filter(!is.na(firsthb) & !is.na(secondhb)) %>%
+  group_by(cliniccode) %>%
+  summarise(n_with_2_hb = n())
+
+# During T0
+
+##Interventnion
+Interv_2hb_T0 <- Interv_T0 %>%
+  filter(!is.na(firsthb) & !is.na(secondhb)) %>%
+  group_by(cliniccode) %>%
+  summarise(n_with_2_hb = n())
+##Non~
+noninterv_2hb_T0 <- noninterv_T0 %>%
+  filter(!is.na(firsthb) & !is.na(secondhb)) %>%
+  group_by(cliniccode) %>%
+  summarise(n_with_2_hb = n())
+
+```
 
 ## Results {#sec-results}
 
