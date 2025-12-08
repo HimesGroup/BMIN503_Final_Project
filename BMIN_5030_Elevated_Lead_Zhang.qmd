@@ -1,0 +1,859 @@
+---
+title: "Follow-Up of Elevated Blood Lead Levels in CHOP Primary Care"
+subtitle: "BMIN5030 Final Project"
+author: "Peter Zhang"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+---
+
+------------------------------------------------------------------------
+
+## Overview {#sec-overview}
+
+In early 2025, CHOP shifted toward universal lead screening which is expected to substantially increase the volume of patients requiring monitoring. This study analyzes adherence to venous follow-up testing guidelines within the CHOP Primary Care Network to assess baseline data on how the system is managing follow-up, and if there are any disparities in care.
+
+Using a retrospective cohort of 5,688 patients, we examined the influence of demographic, geographic, and operational factors on appropriate follow-up. By employing survival analysis and Cox proportional hazards models, this project identifies specific barriers to care such as insurance type and geography to inform quality improvement interventions and reduce the number of children who are overdue to follow-up of elevated lead levels.
+
+## Introduction {#sec-introduction}
+
+Childhood lead exposure is a critical public health issue with lifelong consequences. Elevated blood lead levels (EBLLs) are associated with cognitive impairment, behavioral problems, and impaired growth and development. In October 2021, the Centers for Disease Control and Prevention (CDC) lowered the reference value for EBLL to ≥3.5 µg/dL to better identify children at highest risk. In Philadelphia, 11% of children had a documented EBLL in 2022 according to city health department reports. This high prevalence, combined with variation in clinical workflows and regional differences in guidance, prompted the Children’s Hospital of Philadelphia (CHOP) to develop an [*institutional lead management pathway*](https://www.chop.edu/clinical-pathway/elevated-venous-blood-lead-levels-clinical-pathway) integrating national, state, and local recommendations followed by universal lead screening during well-child visits.
+
+Ensuring timely venous follow-up for elevated results is essential both for management and for distinguishing true elevations from false positive capillary results. However, little is known about the regional, demographic, or operational factors associated with delayed or absent follow-up within the CHOP Primary Care Network. Understanding these gaps is crucial for both quality improvement and health equity efforts.
+
+## Methods {#sec-methods}
+
+### Study design and population
+
+We conducted a retrospective cohort study of children with EBLLs identified in the CHOP Primary Care Network. Data were extracted from Clarity at the patient level and included all patients with an elevated capillary or venous result (≥3.5 µg/dL) between October 28, 2021, and November 25, 2025. The analytic dataset used for this project was fully deidentified prior to analysis.
+
+### **Data elements and cleaning**
+
+The dataset included demographic, clinical, and operational variables relevant to follow-up workflows. Demographic variables included sex, ethnicity, insurance type, and mailing county and zip codes. Operational predictors included clinical department, MyCHOP (CHOP's MyChart patient portal) activation, and text-notification opt-in status, all of which may influence communication and care coordination.
+
+Clinical data elements captured the most recent elevated blood lead level, its source (capillary or venous), and the date of the result. When available, we extracted a preceding lead result (value, date, source) to determine whether the child’s lead pattern reflected an initial elevation, improvement, or worsening. We also captured data on subsequent venous follow-up tests (value, date, and source). Based on the most recent EBLL and [*CHOP’s pathway logic*](https://www.chop.edu/clinical-pathway/elevated-venous-blood-lead-levels-clinical-pathway), each patient received a recommended follow-up interval (“lead due days”) and a calculated lead due date according to institutional guidance. Lead results were further grouped into clinically meaningful categories based on level and trajectory to align with CHOP’s clinical decision support.
+
+Data cleaning steps included standardizing date formats to allow calculation of intervals, harmonizing categorical variables (e.g., ethnicity, insurance) to consistent levels, creating indicators for whether a follow-up venous test occurred, calculating time-to-follow-up and overdue status, and defining a three-level follow-up outcome (appropriate, late, never). These steps were necessary to ensure the accuracy of downstream time-to-event and classification models. Missing follow-up values were handled explicitly and interpreted as no venous follow-up, consistent with the clinical question.
+
+### Outcomes
+
+The primary outcome was the time from an elevated EBLL result to a venous follow-up test. Children were censored at the end of data availability or last documented CHOP encounter if no follow-up occurred.
+
+A secondary categorical outcome described follow-up status:
+
+1.  Appropriate: Follow-up completed within guideline-recommended time frames.
+
+2.  Overdue: Follow-up performed after the recommended interval.
+
+3.  Pending: Follow-up not yet due at the time of data pull.
+
+Cases still within the recommended follow-up window (pending at time of data extraction) were excluded from overdue analyses.
+
+### **Predictor variables and justification**
+
+Predictors included age, sex, ethnicity, insurance type, CHOP department, MyCHOP activation, text notification activation, patient county and patient ZIP code. Laboratory variables included the most recent EBLL blood lead value, prior lead values, and test source. Some variables were excluded due to small sample sizes in order to run regressions or models.
+
+### **Analytic approach**
+
+Descriptive statistics summarized cohort characteristics. Time-to-event analysis used Kaplan–Meier curves and Cox proportional hazards models to evaluate factors associated with follow-up timing and follow-up status.
+
+For the categorical overdue outcome, we fit a multinomial logistic regression model, comparing appropriate vs late vs never follow-up, and calculating an AUC for the model.
+
+## Results {#sec-results}
+
+### Descriptive Characteristics
+
+```{r install packages, message=FALSE, warning=FALSE}
+# Install packages
+
+```
+
+```{r load packages, message=FALSE, warning=FALSE}
+# Load packages
+library(dplyr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(stringr)
+library(forcats)
+library(ggplot2)
+library(scales)
+library(janitor)
+library(survival)
+library(survminer)
+library(broom)
+library(nnet)
+library(ranger)    
+library(caret)  
+library(pROC)       
+library(tableone)   
+library(knitr)
+library(kableExtra)
+library(leaflet)
+library(zipcodeR)
+```
+
+```{r import data, message=FALSE, warning=FALSE}
+
+# Import data
+lead_csv <- read_csv("/Users/zhangpw/Downloads/lead.csv")
+lead_csv <- lead_csv %>% 
+  janitor::clean_names()
+
+data_pull_date <- as.Date("2025-11-25")
+
+lead <- lead_csv %>%
+  mutate(across(c(current_date, next_date, previous_date, lead_due_date), mdy)) %>%
+  mutate(
+    has_followup = !is.na(next_date),
+    diff_days_raw = as.numeric(if_else(has_followup, next_date, data_pull_date) - current_date),
+    time_to_event = diff_days_raw,
+    event = as.integer(has_followup),
+    days_to_followup = if_else(has_followup, diff_days_raw, NA_real_),
+    
+# Categorical follow-ups
+    followup_3cat = case_when(
+      followup_category == "Appropriate" ~ "Appropriate",
+      followup_category == "Overdue" & has_followup ~ "Late",
+      followup_category == "Overdue" & !has_followup ~ "Never",
+      TRUE ~ NA_character_
+    ),
+    overdue = if_else(followup_category == "Overdue", 1L, 0L)
+  ) %>%
+  
+  mutate(
+    my_chop = factor(my_chop, levels = c(0,1), labels = c("No","Yes")),
+    texting = factor(texting, levels = c(0,1), labels = c("No","Yes")),
+    across(c(sex, ethnicity, insurance, department, county, zip, 
+             lead_category, lead_trend), factor),
+    followup_category = factor(followup_category, levels = c("Appropriate", "Overdue", "Pending")),
+    followup_3cat     = factor(followup_3cat, levels = c("Appropriate", "Late", "Never"))
+  )
+```
+
+```{r full descriptive statistics, message=FALSE, warning=FALSE}
+
+# Full descriptive stats
+vars <- c("sex", "ethnicity", "insurance", "department", 
+          "county", "my_chop", "texting", 
+          "current_value", "lead_categroy", "lead_trend", 
+          "followup_category")
+
+cat_vars <- c("sex","ethnicity","insurance","department", 
+              "county","my_chop","texting", 
+              "lead_categroy","lead_trend","followup_category")
+
+table1 <- CreateTableOne(vars = vars, data = lead, factorVars = cat_vars)
+table1_mat <- print(table1, showAllLevels = TRUE, printToggle = FALSE)
+kable(table1_mat, caption = "Full Descriptive Statistics") %>%
+  kable_styling(full_width = FALSE, 
+                latex_options = c("scale_down", "hold_position"))
+```
+
+```{r summary table, message=FALSE, warning=FALSE}
+# Table summarizing the number of patients in each lead overdue category and distribution of follow-up %. The way these are organized is relevant because it mirrors the different follow up intervals in the CHOP pathway
+
+lead <- lead %>%
+  mutate(
+    lead_category = factor(
+      lead_category,
+      levels = c(
+        "Capillary Level 3.5 to <10",
+        "Capillary Level 10 to <20",
+        "Capillary Level 20 to <45",
+        "Capillary Level >=45",
+        "Venous Level 3.5 to <10",
+        "Venous Level 10 to <20",
+        "Venous Level 20 to <45",
+        "Venous Level >=45",
+        "Total"
+      )))
+
+stats_by_cat <- lead %>%
+  group_by(lead_category, followup_category) %>%
+  summarise(n = n(), .groups = "drop")
+stats_total <- lead %>%
+  group_by(followup_category) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(lead_category = "Total")
+lead_category_summary <- bind_rows(stats_by_cat, stats_total) %>%
+  group_by(lead_category) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup() %>%
+  mutate(pct = scales::percent(pct, accuracy = 0.1)) %>%
+  pivot_wider(
+    names_from = followup_category,
+    values_from = c(n, pct),
+    names_glue = "{followup_category}_{.value}",
+    values_fill = list(n = 0, pct = "0.0%") 
+  ) %>%
+  select(
+    lead_category,
+    Appropriate_n, Appropriate_pct,
+    Overdue_n, Overdue_pct,
+    Pending_n, Pending_pct
+  )
+
+lead_category_summary %>%
+  kable(
+    format = "html",
+    caption = "Patients in Each Lead Category with Distribution of Follow-Up"
+  ) %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(nrow(lead_category_summary), bold = TRUE, background = "lightgray")
+```
+
+A total of 5,688 children had an elevated blood lead level during the study period. 56% were male, and most prevalent ethnicity was Non-Hispanic Black (45%) followed by Non-Hispanic White (23%) . A majority of patients were insured through Medicaid ("Medical Assistance", 55%). 92% of patients activated MyCHOP (MyChart patient portal) and 91% opted for text notifications.
+
+3,412 (60%) patients with an EBLL were overdue for follow-up; 24% patients had a decreasing lead level compared to the previous level.
+
+```{r histogram, message=FALSE, warning=FALSE}
+
+# Histogram of current venous lead levels
+ggplot(lead, aes(x = current_value)) +
+  geom_histogram(bins = 30) +
+  labs(
+    x = "Blood lead level (µg/dL)",
+    y = "Number of patients",
+    title = "Distribution of most recent elevated lead levels"
+  )
+```
+
+The majority of patients who have an elevated blood lead level had a value below 10 µg/dL.
+
+```{r map}
+
+# creating a map to show hot spots without having to use an API key for google maps or shamen
+lead <- lead %>% mutate(zip = as.character(zip))
+zip_counts <- lead %>% group_by(zip) %>% summarise(n = n(), .groups = "drop")
+
+zip_data <- zipcodeR::zip_code_db %>% select(zipcode, lat, lng, state)
+zip_map <- zip_counts %>%
+  left_join(zip_data, by = c("zip" = "zipcode")) %>%
+  filter(!is.na(lat), !is.na(lng),
+         state %in% c("PA","NJ","DE"))
+
+# filtered to ounly zip codes in the tristate area to keep it clean, there are counties all over the northeasy
+
+leaflet(zip_map) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~lng, lat = ~lat,
+    radius = ~sqrt(n)*2,
+    color = ~colorNumeric("YlOrRd", domain = zip_map$n)(n),
+    fillOpacity = 0.7,
+    stroke = FALSE,
+    popup = ~paste0("ZIP: ", zip, "<br>",
+                    "Patients: ", n)
+  ) %>%
+  setView(lng = -75.1652, lat = 39.9526, zoom = 9)
+```
+
+The geographic distribution of patients with elevated blood lead levels reveals distinct "hot spots" within the CHOP Primary Care Network. The highest concentration of patients resides in West Philadelphia, with significant clusters identified in outlying areas such as Norristown, Pottstown, and Coatesville. This distribution may highlights the intersection of older housing stock and lead exposure risk in these specific zip codes.
+
+### **Follow-Up Completion and Timeliness**
+
+```{r follow-up by insurance, message=FALSE, warning=FALSE}
+
+# Follow-up distribution by insurance
+ggplot(lead, aes(x = insurance, fill = followup_category)) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(
+    values = c(
+      "Appropriate" = "green",
+      "Overdue"      = "red",
+      "Pending"      = "lightblue"
+    )
+  ) +
+  labs(
+    x = "Insurance type",
+    y = "Proportion of patients",
+    fill = "Follow-up category",
+    title = "Follow-up Status by Insurance Type"
+  )
+```
+
+Initial unadjusted analysis suggests a disparity in follow-up completion based on payer. Children with Commercial insurance demonstrated the highest proportion of "Appropriate" follow-up, whereas those with Medical Assistance (Medicaid) or Government (Medicare) had a higher proportion of "Overdue" status. Note from earlier that "Charity Care" only had two patients, and "NA," "Unassigned," and "Other" all have small sample sizes. The big three insurance carries accounted for 97.5% of all patients.
+
+```{r KM all, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+
+# Time to follow-up KM
+surv_obj <- with(lead, Surv(time = time_to_event, event = event))
+fit_overall <- survfit(surv_obj ~ 1, data = lead)
+
+ggsurvplot(
+  fit_overall,
+  conf.int = TRUE,
+  risk.table = TRUE,
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous lead follow-up for elevated lead levels",
+  legend = "none"
+)
+```
+
+One of the primary metrics is time-to-venous blood test follow-up. The overall Kaplan Meier curve indicates a sharp drop-off immediately following the elevated result followed by a plateau. Approximately 40% of the cohort remained without venous follow-up at the end of the study period. This suggests that if follow-up does not occur shortly after the initial result, the likelihood of it occurring later diminishes significantly.
+
+```{r KM insurance, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+
+# KM by insurance. Only comparing major insurance groups due to small samples sizes for other groups. The big cover 97.5% of patients
+lead_ins <- lead %>%
+  filter(insurance %in% c("MEDICAL ASSISTANCE", "GOVERNMENT", "COMMERCIAL"))
+
+surv_obj_ins <- with(lead_ins, Surv(time_to_event, event))
+
+fit_ins <- survfit(surv_obj_ins ~ insurance, data = lead_ins)
+
+ggsurvplot(
+  fit_ins,
+  data = lead_ins,
+  risk.table = TRUE,
+  risk.table.height = 0.30,
+  risk.table.fontsize = 3,
+  risk.table.y.text = FALSE,
+  pval = TRUE,
+  conf.int = FALSE,
+  legend.title = "Insurance Type",
+  legend.labs = c(
+    "Commercial",
+    "Medicare",
+    "Medicaid"
+  ),
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous follow-up by insurance type"
+)
+```
+
+Stratified survival analysis confirms the trend observed in the bar charts. Patients with Commercial insurance had a significantly faster time to follow-up compared to those with Medicaid or Medicare plans (p\<0.0001). While Commercial patients followed up faster initially, all three groups eventually approached a similar rates of non-completion over extended periods.
+
+```{r KM ethnicity, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+# Km for ethnicity
+lead_eth <- lead
+lead_filtered <- lead_eth %>%
+  group_by(ethnicity) %>%
+  filter(n() >= 20) %>%
+  ungroup()
+
+lead_filtered$ethnicity <- droplevels(lead_filtered$ethnicity)
+
+fit_eth_filtered <- survfit(Surv(time_to_event, event) ~ ethnicity, data = lead_filtered)
+
+ggsurvplot(
+  fit_eth_filtered,
+  data = lead_filtered,        
+  risk.table = FALSE,
+  pval = TRUE,
+  conf.int = FALSE,
+  legend.title = "Ethnicity",
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous follow-up by ethnicity",
+  legend.labs = levels(lead_filtered$ethnicity),
+  legend = "right"
+)
+
+```
+
+There are significant disparities in appropriate follow-up by ethnicity (p\<0.0001). Asian and Non-Hispanic White children demonstrated the fastest time to follow-up. In contrast, Non-Hispanic Black and Hispanic/Latino children showed slower follow-up rates.
+
+```{r sex, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+# KM for sex
+lead_sex <- lead
+
+surv_obj_sex <- with(lead_sex, Surv(time_to_event, event))
+
+fit_sex <- survfit(surv_obj_sex ~ sex, data = lead_sex)
+
+ggsurvplot(
+  fit_sex,
+  data = lead_sex,
+  risk.table = TRUE,
+  risk.table.height = 0.30,
+  risk.table.fontsize = 3,
+  risk.table.y.text = FALSE,
+  pval = TRUE,
+  conf.int = FALSE,
+  legend.title = "Sex",
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous follow-up by sex",
+  legend.labs = levels(lead_sex$sex)
+)
+```
+
+Biological sex revealed no statistically significant difference in time to follow-up between male and female patients (p=0.66).
+
+```{r mychop, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+#Km for MyCHOP opt in
+lead_chop <- lead
+surv_obj_chop <- with(lead_chop, Surv(time_to_event, event))
+fit_chop <- survfit(surv_obj_chop ~ my_chop, data = lead_chop)
+
+ggsurvplot(
+  fit_chop,
+  data = lead_chop,
+  risk.table = TRUE,
+  risk.table.height = 0.30,
+  risk.table.fontsize = 3,
+  risk.table.y.text = FALSE,
+  pval = TRUE,
+  conf.int = FALSE,
+  legend.title = "Opt-In",
+  legend.labs = c("No", "Yes"),
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous follow-up by MyCHOP status"
+)
+```
+
+```{r text, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+#Km for text opt in
+lead_text <- lead
+surv_obj_text <- with(lead_text, Surv(time_to_event, event))
+fit_text <- survfit(surv_obj_text ~ texting, data = lead_text)
+
+ggsurvplot(
+  fit_text,
+  data = lead_text,
+  risk.table = TRUE,
+  risk.table.height = 0.30,
+  risk.table.fontsize = 3,
+  risk.table.y.text = FALSE,
+  pval = TRUE,
+  conf.int = FALSE,
+  legend.title = "Opt-In",
+  legend.labs = c("No", "Yes"),
+  xlab = "Days since elevated lead result",
+  ylab = "Proportion without follow-up",
+  title = "Time to venous follow-up by texting opt-in status"
+)
+```
+
+Patient engagement with digital health technology proved to be a strong differentiator. Patients with an active MyCHOP portal account were significantly more likely to follow-up compared to those without (p\<0.0001). Similarly, families who opted into text notifications demonstrated better follow-up adherence (p\<0.001). These findings validate the utility of digital health tools in managing asymptomatic screening results.
+
+```{r forest department 90, message=FALSE, warning=FALSE, fig.height=12, fig.width=8}
+
+# Compliance rate by 90 days plot with departments with over 20 patients. Eliminated small departments to reduce variability
+lead_dept <- lead %>%
+  add_count(department) %>% 
+  filter(n > 20) %>%
+  mutate(department = droplevels(as.factor(department)))
+
+fit_dept <- survfit(Surv(time_to_event, event) ~ department, data = lead_dept)
+
+timepoint <- 90
+summ <- summary(fit_dept, times = timepoint, extend = TRUE)
+
+df_at_time <- data.frame(
+  department = sub("department=", "", summ$strata),
+  pct_followup = 1 - summ$surv,
+  pct_lower    = 1 - summ$upper,
+  pct_upper    = 1 - summ$lower
+)
+
+ggplot(df_at_time, aes(x = pct_followup, y = reorder(department, pct_followup))) +
+  geom_point(size = 3, color = "forestgreen") +
+  geom_errorbarh(aes(xmin = pct_lower, xmax = pct_upper), height = 0.2, color = "grey") +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = paste0("Proportion of patients with follow-up by Day ", timepoint),
+    subtitle = "Ranked by compliance rate (departments with >20 patients)",
+    x = "Follow-up Rate",
+    y = NULL
+  ) +
+  theme_minimal()
+
+```
+
+A KM curve with all departments is useful but difficult to interpret due to visual clutter. Hence, this compliance plot shows the percentage of patients who have a venous lead follow-up at 90 days, which is a common follow-up time point. You could also plot this at 270 days, which is the longest period of follow-up possible.
+
+```{r cox department, message=FALSE, warning=TRUE, fig.height=14, fig.width=10}
+
+# Cox proportional hazards model using Karabots as reference
+lead_dept$department <- relevel(as.factor(lead_dept$department), ref = "KARABOTS CARE NTWK")
+cox_fit <- coxph(Surv(time_to_event, event) ~ department, data = lead_dept)
+
+ggforest(cox_fit, data = lead_dept, 
+         main = "Relative Speed of Follow-up (Reference - Karabots)",
+         fontsize = 0.7)
+```
+
+We analyzed the time to venous follow-up using a Cox proportional hazards model with Karabots Care Ntwk as the baseline reference. This forest plot visualizes the HR for various departments. Departments to the right of the dashed line demonstrated faster follow-up speeds, while those to the left were slower. For example, Broomall and Flourtown Care Networks showed significantly faster follow-up, whereas the Main Emergency Department, Coatesville and Norristown showed significantly slower follow-up.
+
+```{r forest county 90, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+# Filter counties without with at least 20 patients
+lead_county <- lead %>%
+  add_count(county) %>% 
+  filter(n > 20) %>%
+  mutate(county = droplevels(as.factor(county)))
+
+fit_dept <- survfit(Surv(time_to_event, event) ~ county, data = lead_county)
+
+timepoint <- 90
+summ <- summary(fit_dept, times = timepoint, extend = TRUE)
+
+df_at_time <- data.frame(
+  department = sub("county=", "", summ$strata),
+  pct_followup = 1 - summ$surv,
+  pct_lower    = 1 - summ$upper,
+  pct_upper    = 1 - summ$lower
+)
+
+ggplot(df_at_time, aes(x = pct_followup, y = reorder(department, pct_followup))) +
+  geom_point(size = 3, color = "forestgreen") +
+  geom_errorbarh(aes(xmin = pct_lower, xmax = pct_upper), height = 0.2, color = "grey") +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = paste0("Proportion of patients with follow-up by Day ", timepoint),
+    subtitle = "Ranked by compliance rate (counties with >20 patients)",
+    x = "Follow-up Rate",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+```{r cox county, message=FALSE, warning=TRUE, fig.height=8, fig.width=8}
+
+# Cox proportional hazards model using philly as the reference county
+lead_county$county <- relevel(as.factor(lead_county$county), ref = "PHILADELPHIA")
+cox_fit <- coxph(Surv(time_to_event, event) ~ county, data = lead_county)
+
+ggforest(cox_fit, data = lead_county, 
+         main = "Relative Speed of Follow-up (Reference - Philadelphia)",
+         fontsize = 0.7)
+```
+
+Compared to Philadelphia county as a reference, patients residing in surrounding counties such as Atlantic, Bucks and Burlington exhibited significantly faster follow-up times (HR\>2). In fact, almost all other counties had faster follow-up. This suggests there may be geographic disparity where urban center patients face higher barriers to timely venous testing than their suburban counterparts.
+
+```{r overdue by county, fig.height=12, fig.width=8}
+
+# Calculate the % overdue for each dept with more than 20 patients. different way to visualize data
+plot_data <- lead %>%
+  filter(!is.na(overdue)) %>%
+  group_by(department) %>%
+  summarize(
+    total = n(),
+    overdue_count = sum(overdue),
+    pct_overdue = overdue_count / total
+  ) %>%
+  filter(total > 20)
+
+ggplot(plot_data, aes(x = pct_overdue, 
+                      y = reorder(department, pct_overdue))) +
+  geom_segment(aes(x = 0, xend = pct_overdue, yend = department),
+               color = "lightgrey") +
+  geom_point(size = 4, color = "green") +
+    geom_text(aes(label = percent(pct_overdue, accuracy = 0.1),
+                x = pct_overdue + 0.015), 
+            size = 3.7, hjust = 0) +
+  
+  scale_x_continuous(labels = percent_format()) +
+  
+  labs(
+    title = "Which Departments are Most Likely to be Overdue?",
+    x = "Percent of Patients Overdue",
+    y = ""
+  ) +
+  
+  theme_minimal(base_size = 12)
+```
+
+```{r overdue county, fig.height=6, fig.width=8}
+# Calculate the % overdue for each county with more than 20 patients
+plot_data <- lead %>%
+  filter(!is.na(overdue)) %>%
+  group_by(county) %>%
+  summarize(
+    total = n(),
+    overdue_count = sum(overdue),
+    pct_overdue = overdue_count / total
+  ) %>%
+  filter(total > 20)
+
+ggplot(plot_data, aes(x = pct_overdue, 
+                      y = reorder(county, pct_overdue))) +
+    geom_segment(aes(x = 0, xend = pct_overdue, yend = county),
+               color = "lightgrey") +
+    geom_point(size = 4, color = "green") +
+  geom_text(aes(label = percent(pct_overdue, accuracy = 0.1),
+                x = pct_overdue + 0.015), 
+            size = 3.7, hjust = 0) +
+  
+  scale_x_continuous(labels = percent_format()) +
+  
+  labs(
+    title = "Which Counties are Most Likely to be Overdue?",
+    x = "Percent of Patients Overdue",
+    y = ""
+  ) +
+  
+  theme_minimal(base_size = 12)
+```
+
+These lollipop plots rank locations by the raw percentage of overdue patients. The Main Emergency Department and urban-focused clinics like South Philadelphia and Karabots have the highest overdue rates. Geographically, Philadelphia County has the highest overdue rate at 64.8%, while outlying counties are significantly lower.
+
+```{r heatmap ethincity x insurance, message=FALSE, warning=FALSE}
+
+#heatmap overlaying ethnicity and insurance out of curiosity, can cross map other variables as well but this one was the most intereseting and visually appealing
+lead %>%
+  filter(!is.na(overdue)) %>%
+  group_by(ethnicity, insurance) %>%
+  summarize(
+    pct_overdue = mean(overdue),
+    count = n(),
+    .groups = 'drop'
+  ) %>%
+  filter(count >= 20) %>%
+  
+  ggplot(aes(x = ethnicity, y = insurance, fill = pct_overdue)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "magma", labels = percent_format(), direction = -1) +
+  labs(
+    title = "Overdue Risk Based on Insurance and Ethnicity",
+    fill = "% Overdue"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+This heatmap visualizes the interaction between insurance and ethnicity. The darkest purple blocks indicating high overdue rates are generally concentrated in the Government (Medicare) insurance rows. Conversely, the lighter areas (higher overdue rates) cluster around Commercial insurace, particularly intersecting with Non-Hispanic, White and Multi-Racial ethnicities.
+
+```{r Cox, message=FALSE, warning=FALSE}
+# Cox Proportional Hazards Model
+drop_small_levels <- function(df, vars, min_n = 20) {
+  for (v in vars) {
+    if (is.factor(df[[v]])) {
+      counts <- table(df[[v]])
+      keep_levels <- names(counts[counts >= min_n])
+      df <- df %>% filter(.data[[v]] %in% keep_levels)
+      df[[v]] <- droplevels(df[[v]])
+    }
+  }
+  return(df)
+}
+
+# filtering out rows with less than 20 patients to have a better cox fit
+to_filter <- c("insurance", "ethnicity", "my_chop", "texting", "lead_category")
+lead_cox <- lead %>%
+  drop_na(time_to_event, event) %>%
+  drop_small_levels(vars = to_filter, min_n = 20)
+
+cox_fit <- coxph(
+  Surv(time_to_event, event) ~ 
+    sex + ethnicity + insurance + my_chop + texting + lead_category + lead_trend,
+  data = lead_cox
+)
+
+# limit to top 20 for sack of space
+cox_df <- tidy(cox_fit, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    clean_term = term,
+    clean_term = str_replace_all(clean_term, "_", " "),
+    log_hr = abs(log(estimate))
+  ) %>%
+  arrange(desc(log_hr)) %>%
+  slice_head(n = 20) %>%
+  mutate(clean_term = fct_rev(factor(clean_term)))
+
+
+ggplot(cox_df, aes(y = clean_term, x = estimate)) +
+  geom_point(size = 3, color = "forestgreen") +
+  geom_errorbarh(
+    aes(xmin = conf.low, xmax = conf.high),
+    height = 0.25,
+    color = "forestgreen",
+    linewidth = 0.7
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray") +
+  scale_x_log10(
+    name = "Hazard Ratio (log)",
+    breaks = c(0.5, 1, 2, 3, 5)
+  ) +
+  labs(
+    y = "",
+    title = "Top 20 Predictors of Time to Venous Follow-up",
+    subtitle = "From multivariable Cox proportional hazards model"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 12),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.margin = margin(t = 10, r = 10, b = 30, l = 10)
+  )
+```
+
+Having a high capillary lead level leads to faster venous test follow-up, which makes sense as elevated capillary levels must be confirmed by a venous level, leading to more urgent action. Interestingly, high venous levels are negative predictors for follow-up. Patients who have high levels may shift towards monitoring per the pathway or treatments. Activation of MyCHOP and text notifications were also strong predictors for follow-up.
+
+Controlling for all variables, this model identifies the top 20 independent predictors of follow-up.
+
+-   High capillary lead levels (10−20 μg/dL) are strong predictors of fast follow-up (HR\>2), likely reflecting the urgent clinical workflow to confirm these screens. Conversely, venous elevations generally predicted slower follow-up. While there may be some clinically appropriate delays due to longer monitoring intervals, the slow rate to follow-up for high venous levels is concerning, hinting non-compliance/loss to follow-up for these high-risk cases.
+
+-   An increasing level lead to faster follow-up, which is clinically appropriate.
+
+-   Compared to the Non-Hispanic White and Hispanic patients, Non-Hispanic Black patients showed slower follow-up.
+
+-   Use of MyCHOP and texting opt-on were some of the few factors that predicted faster follow-up.
+
+```{r multinomial, message=FALSE, warning=FALSE}
+
+lead <- lead %>%
+  mutate(
+    followup_3cat = case_when(
+      followup_category == "Appropriate" ~ "Appropriate",
+      followup_category == "Overdue" & has_followup ~ "Late",
+      followup_category == "Overdue" & !has_followup ~ "Never",
+      TRUE ~ NA_character_
+    ),
+    followup_3cat = factor(followup_3cat,
+                           levels = c("Appropriate", "Late", "Never"))
+  )
+
+lead_multi <- lead %>%
+  filter(!is.na(followup_3cat)) %>%
+  select(
+    followup_3cat,
+    sex, ethnicity, insurance, my_chop, texting
+  )
+
+# filtering out less than 20 again
+to_filter <- c("ethnicity")
+
+lead_multi <- drop_small_levels(
+  df   = lead_multi,
+  vars = to_filter,
+  min_n = 20
+)
+
+# Multnomial log
+multi_fit <- multinom(
+  followup_3cat ~ sex + ethnicity + insurance + my_chop + texting,
+  data = lead_multi,
+  trace = FALSE
+)
+```
+
+```{r stacked bar, message=FALSE, warning=FALSE}
+
+# stacked stacked bar plots for major predictors
+multi_long <- lead_multi %>%
+  pivot_longer(
+    cols = c(sex, ethnicity, insurance, my_chop, texting),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+ggplot(multi_long, aes(x = value, fill = followup_3cat)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = percent) +
+  facet_wrap(~ variable, scales = "free_x") +
+  scale_fill_manual(
+    values = c(
+      "Appropriate" = "green",
+      "Late"        = "red",
+      "Never"       = "gray"
+    )
+  ) +
+  labs(
+    title = "Follow-Up Distribution Across Predictors",
+    x = "Category",
+    y = NULL,
+    fill = "Follow-up Category"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+This multinomial breakdown distinguishes between patients who followed up as Appropriate, Late, or Never. Patients who activated MyCHOP or texting were less likley to never follow-up. Similary, patients with commercial insurance were less likely to never follow-up. This plot suggests that demographic factors may not only driving delayed follow-up but complete loss to follow-up.
+
+```{r rf most important and ROC, message=FALSE, warning=FALSE}
+
+#ROC for random forest to see what variables predict never following up
+rf_vars <- c("sex", "ethnicity", "insurance", "my_chop", "texting",
+             "department", "county", "zip", "current_source", 
+             "lead_category", "lead_trend")
+
+rf_data <- lead %>%
+  filter(!is.na(followup_3cat)) %>%
+  mutate(
+    never_followup = factor(
+      if_else(followup_3cat == "Never", "1", "0"), 
+      levels = c("0", "1")
+    ),
+    across(all_of(rf_vars), as.factor)
+  ) %>%
+  select(all_of(rf_vars), never_followup)
+
+set.seed(1)
+train_index <- createDataPartition(rf_data$never_followup, p = 0.7, list = FALSE)
+rf_train <- rf_data[train_index, ]
+rf_test  <- rf_data[-train_index, ]
+
+rf_model <- ranger(
+  never_followup ~ .,
+  data = rf_train,
+  num.trees = 500,
+  mtry = floor(sqrt(length(rf_vars))),
+  importance = "impurity",
+  probability = TRUE,
+  respect.unordered.factors = "order"
+)
+
+rf_pred <- predict(rf_model, data = rf_test)
+rf_probs <- rf_pred$predictions[, "1"]
+
+roc_obj <- roc(rf_test$never_followup, rf_probs)
+
+#Most important variables
+importance_df <- data.frame(
+  variable = names(rf_model$variable.importance),
+  importance = as.numeric(rf_model$variable.importance)
+) %>%
+  arrange(desc(importance))
+
+ggplot(importance_df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    x = "",
+    y = "Variable Importance",
+    title = "Random Forest Variable Importance for Never Following Up"
+  )
+```
+
+```{r rf-never-followup roc, message=FALSE, warning=FALSE}
+#ROC with AUC
+plot(roc_obj, print.auc = TRUE, main = "ROC: Predicting Never Following Up")
+```
+
+A Random Forest model attempted to predict Never follow-up status based on all variables. The resulting AUC was 0.6 indicating limited predictive power. While Department and Zip Code were the most important variables in the model, the overall performance suggests that Never follow-up status cannot be accurately predicted by the available demographic data alone. This indicates that unmeasured factors such as transportation access and other social determinants may be the primary drivers of non-adherence.
+
+### Results Summary
+
+1.  The study included 5,688 patients with elevated blood lead levels (≥ 3.5μg/dL). The cohort was predominantly male (56%) and insured via Medicaid (55%). The most common racial/ethnic demographics were Non-Hispanic Black (45%) and Non-Hispanic White (23%). Geographically, the burden of elevated lead levels was concentrated in West Philadelphia and out Philadelphia in Norristown and Coatesville.
+2.  Overall adherence to venous follow-up was disappointing. At the time of data extraction, 60% of patients were classified as "Overdue," while only 27% had completed "Appropriate" follow-up. Time-to-event analysis revealed that the majority of successful follow-ups occur shortly after the initial elevation; if a patient does not return quickly, the probability of future follow-up declines rapidly. A large percentage of patients never follow-up.
+3.  Multivariable analyses identified significant disparities in care.
+    -   Patients with Commercial insurance followed up significantly faster than those with Medicare or Medicaid (p\<0.0001).
+    -   Non-Hispanic Black and Hispanic patients exhibited significantly slower time-to-follow-up compared to Asian and White patients (p\<0.0001).
+    -   Digital health tool engagement was a protective factor. Activation of MyCHOP and opting into text notifications were independently associated with improved follow-up rates.
+    -   Patients with initial capillary blood lead levels in the 10−20μg/dL range showed the fastest follow-up, reflecting successful adherence to confirmatory testing protocols. However, patients with elevated venous levels showed slower subsequent follow-up. This disparity suggests that while the system effectively drives urgent confirmation, it struggles with the long-term monitoring of confirmed cases, potentially due to a mix of clinically appropriate spacing and loss to follow-up.
+
+## Conclusion
+
+This retrospective analysis of 5,688 children within the CHOP Primary Care Network identifies a critical gap in the management of childhood lead exposure. Despite institutional protocols, 60% of children with elevated blood lead levels are overdue for venous confirmatory or monitoring tests.
+
+The data reveals a "tale of two cities": patients with Commercial insurance and those residing in suburban counties experience significantly faster and more complete follow-up than those with Medicaid or those living in urban Philadelphia. Furthermore, while the system effectively drives urgent confirmation of high capillary screens, there is a notable lag in the ongoing monitoring of venous elevations. This may be partially explained by clinically appropriate spacing for venous levels, but the data suggests that there are other issues affecting venous follow that should be investigated further.
+
+The poor predictive power of the Random Forest model (AUC 0.6) is a significant negative finding. Non-adherence cannot be accurately predicted by the discrete data within the EHR alone. This suggests that other barriers may exist such as access to transportation, distance to lab testing/lab access, low health literacy, and the asymptomatic nature of elevated lead that may contribute to the observed 60% overdue rate, rather than characteristics analyzed in this project.
