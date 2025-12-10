@@ -1,0 +1,407 @@
+---
+title: "Platelet Dosing Models"
+subtitle: "BMIN503/EPID600 Final Project"
+author: "Narek Israelyan"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+execute:
+  eval: false
+---
+
+------------------------------------------------------------------------
+
+## Overview {#sec-overview}
+
+This project analyzes pediatric platelet transfusion data to determine if a new dosing model can better predict post-transfusion platelet counts. The primary goal is to compare the efficacy of the current weight-based dosing strategy against a new, combined model that incorporates both the patient's weight and the absolute platelet count of the transfused product. I am working with Dr. David Friedman (Clinical Informatics, Transfusion Medicine) and Dr. Stella Chou (Hematology, Transfusion Medicine).
+
+## Introduction {#sec-introduction}
+
+In transfusion medicine, particularly for pediatric patients who have much smaller total blood volumes, accurately dosing of blood products is important for achieving desired therapeutic outcomes. The current standard of care in pediatrics is to dose platelets based on the patient's weight, calculated as a specific volume-to-weight concentration (eg, 5-10 mL/kg). However, this method does not take into account the actual platelet count of the product, which can vary widely (between 2.5 - 4.5 x 10\^11 platelets/bag). This is a piece of a greater problem in transfusion medicine, where there is significant variability between blood products due to varying storage conditions and differences in donor characteristics that lead, ultimately, to two blood products never providing the same therapeutic dose to the patient. This project seeks to address this gap by developing a more robust model for pediatric platelet dosing.
+
+This challenge requires input from clinical informatics, transfusion medicine, pediatrics and hematology. Transfusion medicine will provide the laboratory context and blood products standards, clinical informatics will help to build the appropriate queries and data analysis, while pediatrics and hematology will provide the clinical context and help to narrow the scope appropriately. Discussions with Dr. David Friedman (clinical informatics and transfusion medicine) have helped to narrow the language of the query to extract the appropriate data and exclude unwanted outliers, while discussions with Dr. Stella Chou (hematology and pediatrics) have helped to determine the most commonly used dosing strategies and indications for transfusion, and which patient populations to focus on.
+
+## Methods {#sec-methods}
+
+The project was performed in two steps: data extraction and data analysis. For the first step, I utilized SQL to extract the relevant data from CHOP's clinical data warehouse (Helix; via Snowflake). MySQL Workbench was used for joining steps outside of Snowflake. Step 2 was done primarily using R. See below for steps.
+
+### Created a CTE to limit the platelet transfusions to a narrow scope for piloting (6 months).
+
+```{sql}
+WITH transfusions_in_scope AS (
+    SELECT *
+    FROM prod.semantic.blood_bank_transfusion_all
+    WHERE product_id = 'PLT'
+        AND order_datetime BETWEEN '2023-07-01' AND '2023-12-31'),
+```
+
+### Created CTEs to find the most recent pre-transfusion and post-transfusion platelet counts using Row Number functionality, limiting results to a 7 day window before and after transfusions.
+
+```{sql}
+pre_CBC_final AS (
+    SELECT
+        blood_bank_transfusion_key,
+        pre_specimen_taken_date,
+        pre_result_date,
+        pre_platelet
+    FROM (
+        SELECT
+            t.blood_bank_transfusion_key,
+            c.specimen_taken_date AS pre_specimen_taken_date,
+            c.result_date AS pre_result_date,
+            c.cbc_platelet_count_numeric AS pre_platelet,
+            ROW_NUMBER() OVER (
+                PARTITION BY t.blood_bank_transfusion_key
+                ORDER BY c.specimen_taken_date DESC
+            ) AS rn
+        FROM transfusions_in_scope t
+        INNER JOIN prod.semantic.procedure_order_result_cbc c
+            ON t.patient_key = c.patient_key
+        WHERE t.product_id = 'PLT'
+            AND c.result_date < t.order_datetime
+            AND c.specimen_taken_date >= t.order_datetime - INTERVAL '168 HOURS'
+            AND c.cbc_platelet_count_numeric IS NOT NULL
+    ) AS pre_candidates
+    WHERE rn = 1
+),
+post_CBC_final AS (
+    SELECT
+        blood_bank_transfusion_key,
+        post_specimen_taken_date,
+        post_result_date,
+        post_platelet
+    FROM (
+        SELECT
+            t.blood_bank_transfusion_key,
+            c.specimen_taken_date AS post_specimen_taken_date,
+            c.result_date AS post_result_date,
+            c.cbc_platelet_count_numeric AS post_platelet,
+            ROW_NUMBER() OVER(
+                PARTITION BY t.blood_bank_transfusion_key
+                ORDER BY c.specimen_taken_date ASC, c.result_date ASC
+            ) AS rn
+        FROM transfusions_in_scope t
+        INNER JOIN prod.semantic.procedure_order_result_cbc c
+            ON t.patient_key = c.patient_key
+        WHERE
+            t.product_id = 'PLT'
+            AND c.specimen_taken_date > t.transfusion_start_datetime
+            AND c.specimen_taken_date <= t.order_datetime + INTERVAL '168 HOURS'
+            AND c.cbc_platelet_count_numeric IS NOT NULL
+    ) AS post_candidates
+    WHERE rn = 1
+),
+```
+
+### Created CTE to obtain latest patient weight, which is to be used in dosing calculations.
+
+```{sql}
+latest_weight AS (
+    SELECT
+        patient_key,
+        medication_order_create_date,
+        dosage_weight_kg
+    FROM (
+        SELECT
+            patient_key,
+            medication_order_create_date,
+            dosage_weight_kg,
+            ROW_NUMBER() OVER(
+                PARTITION BY patient_key, CAST(medication_order_create_date AS DATE)
+                ORDER BY medication_order_create_date DESC
+            ) AS rn
+        FROM prod.core.fact_medication_order
+        WHERE dosage_weight_kg IS NOT NULL
+    ) AS weight_candidates
+    WHERE rn = 1
+),
+```
+
+### Created CTE to pull in contextual information regarding the transfusion and ensure that blood units are not associated with multiple encounters.
+
+```{sql}
+admin_details AS (
+    SELECT
+        b.blood_unit_number,
+        b.blood_admin_start_date,
+        b.department_name,
+        i.primary_dx,
+        i.primary_dx_snomed,
+        ROW_NUMBER() OVER(
+            PARTITION BY b.blood_unit_number, b.blood_admin_start_date
+            ORDER BY i.encounter_key DESC
+        ) as rn
+    FROM prod.semantic.blood_product_administration b
+    INNER JOIN prod.semantic.encounter_inpatient i 
+        ON b.encounter_key = i.encounter_key
+    WHERE EXISTS (
+        SELECT 1 FROM transfusions_in_scope t
+        WHERE t.unit_no = b.blood_unit_number
+          AND t.transfusion_start_datetime = b.blood_admin_start_date
+    )
+)
+```
+
+### Final select and join statements.
+
+```{sql}
+SELECT
+    t.product_name AS "Product Name",
+    t.blood_bank_transfusion_key AS "Transfusion Key",
+    t.unit_no AS "Product DIN",
+    t.ecode AS "Ecode",
+    ad.department_name AS "Department Transfused",
+    ad.primary_dx AS "Primary Dx",
+    ad.primary_dx_snomed AS "Primary Dx SNOMED",
+    pre.pre_specimen_taken_date AS "DateTime: Pre-Transfusion CBC Taken",
+    pre.pre_result_date AS "DateTime: Pre-Transfusion CBC Resulted",
+    pre.pre_platelet AS "Pre-Transfusion Platelet Count",
+    t.order_datetime AS "DateTime: PLT Ordered",
+    t.transfusion_start_datetime AS "DateTime: PLT Transfused",
+    t.available_quantity AS "Transfused PLT Volume",
+    w.dosage_weight_kg AS "Weight (kg)",
+    post.post_specimen_taken_date AS "DateTime: Post-Transfusion CBC Taken",
+    post.post_result_date AS "DateTime: Post-Transfusion CBC Resulted",
+    post.post_platelet AS "Post-Transfusion Platelet Count"
+FROM prod.semantic.blood_bank_transfusion_all t
+INNER JOIN admin_details ad
+    ON t.unit_no = ad.blood_unit_number
+    AND t.transfusion_start_datetime = ad.blood_admin_start_date
+    AND ad.rn = 1
+LEFT JOIN pre_CBC_final pre
+    ON t.blood_bank_transfusion_key = pre.blood_bank_transfusion_key
+LEFT JOIN post_CBC_final post
+    ON t.blood_bank_transfusion_key = post.blood_bank_transfusion_key
+LEFT JOIN latest_weight w
+    ON t.patient_key = w.patient_key
+    AND CAST(t.order_datetime AS DATE) = CAST(w.medication_order_create_date AS DATE)
+ORDER BY
+    t.order_datetime;
+```
+
+### Next, we had to transform hand-written absolute platelet counts to digital format, as they came on a small index card with the products. After these were completed, the tables were joined to create a final table.
+
+```{sql}
+SELECT * FROM PLT.`platelet sql query`
+LEFT JOIN PLT.`absolute platelet count`
+ON PLT.`platelet sql query`.`Product DIN` = PLT.`absolute platelet count`.UnitDin
+AND PLT.`platelet sql query`.Ecode = PLT.`absolute platelet count`.ECODE;
+```
+
+### Lastly, using this pilot data, I used R to create regression models and determine the efficacy of models. See below for steps.
+
+```{r eval=TRUE}
+# loading packages
+library(tidyverse) #for data manipulation and plotting
+library(modelsummary) #for regression tables
+library(gt) #for nice table formatting
+library(ggplot2) #for visualization
+library(patchwork) #for combining plots
+platelet_data <- read_csv("Platelet Dosing Project NXI v2.csv") #loading raw dataset
+```
+
+### Rename columns, ensure correct data type.
+
+```{r eval=TRUE}
+# renaming columns to shorter/coding-friendly names
+platelet_data <- platelet_data %>%
+  rename(
+    Pre_Plt_Count = `Pre-Transfusion Platelet Count`,
+    Post_Plt_Count = `Post-Transfusion Platelet Count`,
+    Weight_kg = `Weight (kg)`,
+    Volume_original = `Volume`,
+    Volume_transfused = `Transfused PLT Volume`,
+    AbsolutePLT = `Platelet_Count`
+  )
+
+# ensure all quantitative variables are numeric
+platelet_data <- platelet_data %>%
+  mutate(
+    Pre_Plt_Count = as.numeric(Pre_Plt_Count),
+    Post_Plt_Count = as.numeric(Post_Plt_Count),
+    Weight_kg = as.numeric(Weight_kg),
+    Volume_original = as.numeric(Volume_original),
+    Volume_transfused = as.numeric(Volume_transfused),
+    AbsolutePLT = as.numeric(AbsolutePLT)
+  )
+```
+
+### Calculate the key variables.
+
+This was a critical step to ensure that we had our variables in the appropriate format for model comparison.
+
+1.  To determine the platelet dose that patients were given (ml/kg), we divided the volume (ml) they received by the most recent weight of the patient (kg).
+2.  The platelet "delta" is the difference between the post-transfusion platelet count and the pre-transfusion platelet count.
+3.  The absolute platelet count metric was expanded to include the appropriate units.
+4.  We calculated the number of platelets per ml of transfused product (platelet/ml) by dividing the absolute platelet count (platelet/bag) by the volume in the unit (ml/bag).
+5.  To determine the dose of platelets given to the patient (platelets/patient), we multiplied the absolute platelets per ml in the product (platelet/ml) by the volume that the patient was transfused (ml/patient).
+6.  To standardize the product dose to the weight of the patient (platelets/kg), we divided the platelet dose given to the patient (platelets/patient) by the most recent weight (kg/patient).
+
+```{r eval=TRUE}
+platelet_data <- platelet_data %>%
+  mutate(
+    Dose_ml_kg = Volume_transfused / Weight_kg,
+    Delta_Plt = Post_Plt_Count - Pre_Plt_Count,
+    AbsolutePLT_expanded = AbsolutePLT * 10^11,
+    Plt_per_ml = AbsolutePLT_expanded / Volume_original,
+    Plt_ml_given = Plt_per_ml * Volume_transfused,
+    Dose_plt_kg = Plt_ml_given / Weight_kg
+  )
+```
+
+### Filter out rows with missing data.
+
+```{r eval=TRUE}
+model_data <- platelet_data %>%
+  filter(
+    !is.na(Post_Plt_Count),
+    !is.na(Pre_Plt_Count),
+    !is.na(Dose_ml_kg),
+    !is.na(AbsolutePLT)
+  )
+```
+
+### Remove outliers based on IQR method.
+
+After initial review of the data, we found many outliers with values that did not quite make sense clinically. Without having all the other independent variables hashed out, we decided to remove the top and bottom 15% of the data using an IQR method as outliers. The data trend looked much more clinically appropriate after doing this step.
+
+```{r eval=TRUE}
+remove_outliers <- function(df, column) {
+  Q1 <- quantile(df[[column]], 0.15, na.rm = TRUE)
+  Q3 <- quantile(df[[column]], 0.85, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  
+  df %>% filter(.data[[column]] > lower_bound & .data[[column]] < upper_bound)
+}
+
+# apply outlier removal to both outcome (delta) and predictors (dose method)
+model_data_no_outliers <- model_data %>%
+  remove_outliers("Delta_Plt") %>%
+  remove_outliers("Dose_ml_kg") %>%
+  remove_outliers("Dose_plt_kg")
+
+# check how many rows were removed
+print(paste("Rows before outlier removal:", nrow(model_data)))
+print(paste("Rows after outlier removal:", nrow(model_data_no_outliers)))
+```
+
+### Build regression models.
+
+```{r eval=TRUE}
+# Model 1: Weight-Based Algorithm (Predicting platelet delta with weight-based dosing)
+model_1 <- lm(Delta_Plt ~ Dose_ml_kg, data = model_data_no_outliers)
+
+# Model 2: Absolute Count Algorithm (Predicting platelet delta with absolute platelet count)
+model_2 <- lm(Delta_Plt ~ Dose_plt_kg, data = model_data_no_outliers)
+```
+
+## Results {#sec-results}
+
+```{r eval=TRUE}
+# combine models into a list
+models <- list(
+  "Weight-Based" = model_1,
+  "Absolute Count" = model_2
+)
+
+# generate formatted regression table
+modelsummary(
+  models, 
+  fmt = 2,
+  estimate = "{estimate} ({p.value})", 
+  statistic = NULL, 
+  gof_map = c("nobs", "r.squared", "adj.r.squared", "AIC"), 
+  notes = list("Values in parentheses denote p-values.")
+)
+```
+
+### Build visual representations
+
+```{r eval=TRUE}
+ggplot(model_data_no_outliers, aes(x = Dose_ml_kg, y = Delta_Plt)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Weight-Based Dosing vs Platelet Count Change",
+    x = "Dose (mL/kg)",
+    y = "Change in Platelet Count"
+  ) +
+  theme_minimal()
+
+```
+
+```{r eval=TRUE}
+eval = TRUE
+ggplot(model_data_no_outliers, aes(x = Dose_plt_kg, y = Delta_Plt)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Absolute Platelet Dosing vs Platelet Count Change",
+    x = "Dose (platelets/kg)",
+    y = "Delta Platelet Count"
+  ) +
+  theme_minimal()
+
+```
+
+```{r eval=TRUE}
+p1 <- ggplot(model_data_no_outliers, aes(x = Dose_ml_kg, y = Delta_Plt)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Model 1: Weight-Based Dosing",
+    x = "Dose (mL/kg)",
+    y = "Δ Platelet Count"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(model_data_no_outliers, aes(x = Dose_plt_kg, y = Delta_Plt)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Model 2: Absolute Count Dosing",
+    x = "Dose (platelet/kg)",
+    y = "Δ Platelet Count"
+  ) +
+  theme_minimal()
+p1 + p2
+```
+
+## Discussion
+
+The primary objective of this study was to determine if an absolute platelet count dosing strategy offers superior predictive power for post-transfusion platelet increments compared to the standard weight-based dosing strategy (mL/kg). The results of the regression analysis indicate that neither model currently explains a significant portion of the variance in platelet count changes.
+
+The coefficient of determination ($R^2$) for the standard weight-based model was 0.015, while the absolute count model performed only marginally better with an $R^2$ of 0.020. These values suggest that only up to 2% of the variability in the post-transfusion platelet count can be attributed to the dose administered, regardless of whether that dose is calculated by volume or absolute platelet number. While the absolute count model theoretically offers a more precise understanding of the product being administered, the signal is currently lost in the noise of clinical variability and data extraction limits. Several factors likely contribute to this noisy data and the lack of a clear correlation:
+
+### Clinical Complexity and Confounders
+
+The current models treat the patient as a closed system where input (transfusion) should equal output (increment). However, pediatric patients requiring transfusions often present with complex physiologies including active bleeding, sepsis, splenomegaly, or immune-mediated consumption. These factors cause rapid platelet consumption that weights and dosing volumes cannot account for. The current models did not control for diagnosis or severity of illness. A trauma patient with active hemorrhage has a fundamentally different transfusion response profile compared to a stable oncology patient receiving prophylactic platelet transfusion.
+
+### Timing of CBC Measurements
+
+A significant methodological limitation identified in this pilot was the time window for the pre- and post-transfusion CBC. The query allowed for a window of up to 7 days. In a clinical setting, a platelet count taken 6 days after a transfusion may not reflect than the efficacy of the specific transfusion event.
+
+### Variable Dosing Protocols
+
+In practice, many pediatric patients receive full units of platelets (similar to adult practice) due to multiple factors including patient age, amount of bleeding, and clinical scenarios, including transfusion in the operating room. This blurs the distinction between specific weight-based dosing and standard unit dosing.
+
+## Conclusion
+
+This project highlights the significant challenges inherent in using retrospective clinical data to model transfusion outcomes. While the absolute platelet count model ($R^2 = 0.020$) technically outperformed the weight-based model ($R^2 = 0.015$), both showed negligible predictive power in this pilot cohort. We conclude that platelet transfusion data is highly variable and that dosing strategy alone, without accounting for patient acuity and consumption, is a poor predictor of post-transfusion increments. To build a more robust predictive model, the following next steps are proposed:
+
+### Refine the Patient Cohort
+
+Future analyses should filter strictly for patients receiving true weight-based aliquots, excluding those who received full units, to isolate the effect of the dosing strategy.
+
+### Restrict the Time Window
+
+The definition of the platelet delta could be tightened. Restricting the window to 24-72 hours post-transfusion will provide a more accurate calculation of the platelet delta and will likely reduce the noise caused by physiological consumption over time.
+
+### Control for Clinical Context
+
+Future models must incorporate covariates for diagnosis and severity. Stratifying the analysis by order department (e.g., separating inpatient units, critical care, trauma, emergency, and surgical areas) or controlling for active bleeding could help identify subpopulations where precise dosing impacts outcomes more significantly.
+
+By addressing these variables, we can move closer to determining if knowing the absolute platelet count in a bag can truly improve clinical decision-making and resource utilization in pediatric transfusion medicine.

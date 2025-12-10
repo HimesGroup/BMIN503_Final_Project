@@ -1,19 +1,39 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for the final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+## Overview
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+This project evaluates whether dosing pediatric platelet transfusions based on absolute platelet count (platelets/kg) predicts post-transfusion increments better than the current standard of weight-based volume (mL/kg).
 
+**Hypothesis:** Accounting for the variability in platelet count per bag (2.5–4.5 x10\^11) will improve dosing accuracy compared to volume alone.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+## Methods
 
-DUE DATE FOR FINAL VERSION: 12/13/24 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+1.  **Data Extraction (SQL):** Queried CHOP’s clinical data warehouse (Helix/Snowflake) for pediatric transfusions (July–Dec 2023), including CBC results and patient weights.
 
+2.  **Data Processing (R):**
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+    -   Merged digital records with digitized hand-written absolute platelet counts.
 
+    -   Calculated dosing metrics (`Dose_ml_kg` vs `Dose_plt_kg`) and outcomes (`Delta_Plt`).
+
+    -   Removed outliers using the IQR method (15% cut-off).
+
+3.  **Analysis:** Linear regression comparing $R^2$ values of both dosing strategies.
+
+## Key Findings
+
+Both models demonstrated low predictive power, suggesting clinical acuity (sepsis, bleeding) outweighs dosing strategy in this pilot cohort.
+
+-   **Weight-Based Model** ($R^2$): 0.015
+
+-   **Absolute Count Model** ($R^2$): 0.020
+
+**Conclusion:** The absolute count model performed marginally better but remains a poor predictor without controlling for consumption factors.
+
+## Next Steps
+
+-   **Narrow Scope:** Filter for patients receiving weight-based aliquots only.
+
+-   **Tighten Window:** Reduce post-transfusion CBC window from 7 days to 24–72 hours.
+
+-   **Add Covariates:** Control for diagnosis, severity of illness, active bleeding, surgical cases, etc.
