@@ -17,3 +17,9 @@ DUE DATE FOR FINAL VERSION: 12/13/24 11:59PM. This is a hard deadline. Turn in w
 <!-- Links -->
 [forking]: https://guides.github.com/activities/forking/
 
+In this repository are:
+final_project_template.qmd which contains all of my code for the analyses and write-ups for the report sections
+Table1_30ferr.docx which contains table 1 (based on 30 microgram/L ferritin cutpoint)
+Table1_15ferr.docx which contains table 1 (based on 15 microgram/L ferritin cutpoint)
+Table2.docx which contains the results of the primary analysis
+Sensitivity_analyses.docx which contains the results from the sensitivity analyses using the WHO ferritin cutpoint, stratification by parity, and stratification by BMI
