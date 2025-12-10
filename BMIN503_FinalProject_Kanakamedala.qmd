@@ -1,0 +1,391 @@
+---
+title: "BMIN503_FinalProject_Kanakamedala"
+format: html
+editor: visual
+---
+
+## Abstract
+
+Pediatric headache is a common primary care complaint, yet only a subset of patients require neurology evaluation, and even fewer need expedited specialty care. To standardize evaluation and triage, a Headache SmartForm was deployed across a pediatric primary care network to capture structured “red flag” symptoms. This project evaluates whether a derived red-flag scoring system based on SmartForm inputs aligns with actual neurology referral behavior and appropriately distinguishes between primary-care management, standard referral, and expedited referral needs.
+
+1,451 headache encounters that utilized the smartform were analyzed and a red-flag score was constructed in which recurrent or persistent early morning vomiting and unsteady gait with headache were weighted as severe (1000 points each), whereas all other red flags were weighted as minor (1 point each). Scores of 0 recommended primary care management, 1–2 recommended standard neurology referral, and scores ≥3 recommended expedited referral. I compared score-based recommendations with clinicians’ actual orders and fit logistic regression models to examine whether severe and minor red flags predicted referral and concordance. The score aligned well with clinician behavior for low-risk encounters but overestimated the need for expedited referrals. Providers rarely followed expedited recommendations, indicating a need to recalibrate weights and thresholds before using this score as clinical decision support.
+
+## Introduction
+
+Headache is among the most frequent reasons for pediatric primary care visits. Although most headaches in children are benign, a subset may signal serious neurologic or systemic disease. Clinicians must balance avoiding unnecessary neurology referrals which contribute to long wait times and specialty clinic congestion against the risk of under-referring patients with high-risk features.
+
+To support more consistent evaluation and triage, a standardized Headache SmartForm was deployed across CHOP's large pediatric primary care network. The SmartForm captures “red flag” symptoms in discrete fields, including recurrent or persistent early morning vomiting, unsteady gait with headache, and several additional neurologic or systemic warning signs. These structured data elements enable derivation of a reproducible red-flag severity score that could ultimately inform decision support for neurology referrals.
+
+In this project, we use routinely collected SmartForm data from 1,451 headache encounters to:
+
+1.  Construct and justify a red-flag severity score that distinguishes severe red flags (recurrent/persistent early morning vomiting and unsteady gait with headache) from minor red flags (all remaining questions).
+
+2.  Map the score to three clinically meaningful recommendation categories:
+
+    -   Score 0 → primary care management / no neurology referral
+
+    -   Score 1–2 → standard neurology referral
+
+    -   Score ≥3 → expedited neurology referral
+
+3.  Compare score-based recommendations with actual provider behavior using descriptive statistics, cross-tabulations, and concordance metrics.
+
+4.  Model the relationship between red-flag variables and both referral decisions and concordance using logistic regression.
+
+5.  Visualize referral patterns and agreement between recommendations and clinical actions.
+
+## Methods
+
+### 1.1 Data Source
+
+I analyzed 1,451 pediatric headache encounters from a pediatric primary care network in which the Headache SmartForm was used. Each row corresponds to one encounter and includes:
+
+-   Encounter metadata: date (`encounter_date`), department (`department_name`)
+
+-   SmartForm headache red-flag indicators (binary \*\_ind fields)
+
+-   Neurology referral indicators: any neurologic referral, standard referral, expedited referral
+
+-   Educational material and ED referral indicators
+
+The dataset contains only structured, de-identified variables extracted from the EHR.
+
+### 1.2 Data Cleaning
+
+Data cleaning focused on making variables interpretable and analysis-ready. We:
+
+1.  **Standardized column names** using `janitor::clean_names()` to simplify reference in code.
+
+2.  **Converted encounter dates** with `mdy()` to allow temporal analyses if needed.
+
+3.  **Replaced missing values** in \*\_ind indicator fields with 0, reflecting that unchecked SmartForm options correspond to symptom absence or action not taken.
+
+4.  **Created consolidated referral variables** to reflect operationally meaningful outcomes: any neurology referral, standard referral, and expedited referral.
+
+```{r}
+#| echo: true
+
+# Load required libraries ----
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(janitor)
+library(broom)
+
+# Load data directly from a fixed path
+ha_raw <- read_csv("/Users/kanakamedl/Desktop/HA Neuro Referrals (2).csv")
+
+# Clean variable names
+ha <- ha_raw |> clean_names()
+
+# Convert and recode missing inidcator fields and create referral outcome variables
+ha <- ha |>
+mutate(
+  encounter_date = mdy(encounter_date),
+  across(ends_with("_ind"), ~replace_na(., 0)),
+  any_neuro_referral = referral_neuro_ind == 1,
+  standard_referral = standardreferral_ind == 1,
+  expedited_referral = expedited_ind == 1
+)
+
+```
+
+I treated missing values in indicator fields as 0 because these columns represent discrete SmartForm checkboxes or order indicators, where an unchecked field meaningfully represents “not present” or “not ordered.” Consolidating referral indicators into `any_neuro_referral`, `standard_referral`, and `expedited_referral` aligns my outcomes with the triage pathways of interest.
+
+### 1.3 Creating the Red-Flag Severity Score
+
+I categorized red flags into **severe** and **minor** based on their expected clinical implications:
+
+-   **Severe red flags (1000 points each):**
+
+    -   Recurrent or persistent early morning vomiting (`persistent_vomiting_ind`)
+
+    -   Unsteady gait with the headache (`unsteady_gait_ind`)
+
+These features are particularly concerning for increased intracranial pressure or focal neurologic pathology and may warrant urgent or expedited evaluation.
+
+-   **Minor red flags (1 point each):**
+    All other documented red flags, such as:
+
+    -   Persistent or continuous headache ≥2 weeks (`continuous_two_weeks_ind`)
+
+    -   Headache in the back of the head (`ha_back_head_ind`)
+
+    -   Weight loss (`weightloss_ind`)
+
+    -   Awakenings from sleep due to headache (`awakes_from_sleep_ind`)
+
+    -   Age ≤ 6 years (`sixoryounger_ind`)
+
+The total red-flag score was then mapped to score-based recommendations intended to simulate a triage decision support tool:
+
+| Score | Meaning                | CDS Recommendation      |
+|-------|------------------------|-------------------------|
+| 0     | No concerning findings | Primary care management |
+| 1–2   | Moderate concern       | Standard referral       |
+| ≥3    | High risk              | Expedited referral      |
+
+```{r}
+#| echo: true
+
+# Construct severe and minor red-flag components and total SmartForm score
+ha <- ha |>
+  mutate(
+
+# Severe red flags: recurrent/persistent early morning vomiting and unsteady gait with headache
+    rf_severe_vomiting = if_else(persistent_vomiting_ind == 1, 1000, 0),
+    rf_severe_unsteady = if_else(unsteady_gait_ind == 1, 1000, 0),
+
+# Minor red flags: all other symptoms
+    rf_minor = continuous_two_weeks_ind +
+      ha_back_head_ind +
+      weightloss_ind +
+      awakes_from_sleep_ind +
+      sixoryounger_ind,
+
+# Total red-flag score
+    redflag_score = rf_severe_vomiting + rf_severe_unsteady + rf_minor,
+
+# Map score to recommendation
+  recommended_action = case_when(
+      redflag_score == 0 ~ "Primary care management recommended",
+      redflag_score %in% c(1, 2) ~ "Standard neurology referral recommended",
+      redflag_score >= 3 ~ "Expedited referral recommended"
+    )
+  )
+
+
+```
+
+### 1.4 Categorizing Actual Provider Behavior
+
+```{r}
+#| echo: true
+#Create categorical variable representing actual clinician referral decisions
+ha <- ha |>
+mutate(
+actual_action = case_when(
+expedited_referral ~ "Expedited neurology referral placed",
+standard_referral ~ "Standard neurology referral placed",
+!any_neuro_referral ~ "No neurology referral placed",
+TRUE ~ "Other/unclear"
+)
+)
+
+```
+
+### 1.5 Concordance Variable
+
+```{r}
+#| echo: true
+#Define concordant = clinician action matches SmartForm recommendation
+ha <- ha |>
+mutate(
+concordant = case_when(
+recommended_action == "Primary care management recommended" &
+actual_action == "No neurology referral placed" ~ 1,
+recommended_action == "Standard neurology referral recommended" &
+actual_action == "Standard neurology referral placed" ~ 1,
+recommended_action == "Expedited referral recommended" &
+actual_action == "Expedited neurology referral placed" ~ 1,
+TRUE ~ 0
+)
+)
+
+```
+
+## Results
+
+### 1.1 Overall Referral Patterns
+
+```{r}
+#| echo: true
+overall_ref <- ha |>
+count(actual_action) |>
+mutate(pct = n / sum(n))
+
+overall_ref
+
+```
+
+A majority of encounters (76.9%) did not result in a neurology referral. Standard and expedited referrals were used in 12.0% and 11.1% of encounters, respectively. This baseline is essential for interpreting SmartForm effectiveness.
+
+### 1.2 Recommended vs. Actual Referral Behavior
+
+```{r}
+#| echo: true
+#Cross-tab of Smartform recommendations vs. actual provider actions
+rec_vs_actual <- ha |>
+tabyl(recommended_action, actual_action) |>
+adorn_percentages("row") |>
+adorn_pct_formatting(digits = 1)
+
+rec_vs_actual
+
+```
+
+The SmartForm accurately identifies low-risk children, with 78% concordance when recommending primary care management. However, when recommending expedited referral, providers only agreed in 13% of encounters, suggesting significant misalignment between scoring and clinician judgment.
+
+### 1.3 Concordance Summary
+
+```{r}
+#| echo: true
+ha |> summarise(overall_concordance = mean(concordant))
+
+```
+
+```{r}
+#| echo: true
+ha |> group_by(recommended_action) |>
+summarise(
+n = n(),
+pct_concordant = mean(concordant)
+)
+
+```
+
+### 1.4 Visualizations
+
+Figure 1: Stacked Bar Plot of Provider Actions vs. Recommendations
+
+```{r}
+#| echo: true
+ggplot(ha, aes(x = recommended_action, fill = actual_action)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = c(
+    "Primary care management recommended" = "Primary Care",
+    "Standard neurology referral recommended" = "Standard Referral",
+    "Expedited referral recommended" = "Expedited Referral"
+  )) +
+  labs(
+    title = "Provider Actions vs SmartForm Recommendations",
+    x = "SmartForm Recommendation",
+    y = "Proportion",
+    fill = "Actual Action"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 10))
+
+```
+
+Figure 2: Overall Referral Proportions
+
+```{r}
+#| echo: true
+ggplot(overall_ref, aes(x = actual_action, y = pct)) +
+geom_col() +
+scale_y_continuous(labels = scales::percent) +
+labs(
+title = "Overall Neurology Referral Patterns",
+x = "",
+y = "Percent of Encounters"
+) +
+theme_minimal()
+
+```
+
+Figure 3: Concordance Plot
+
+```{r}
+#| echo: true
+concord_plot <- ha |>
+group_by(recommended_action) |>
+summarise(pct_concordant = mean(concordant))
+
+ggplot(concord_plot, aes(x = recommended_action, y = pct_concordant)) +
+geom_col() +
+scale_y_continuous(labels = scales::percent, limits = c(0,1)) +
+labs(
+title = "Concordance Between SmartForm Recommendations and Provider Behavior",
+x = "Recommendation",
+y = "Percent Concordant"
+) +
+theme_minimal()
+
+```
+
+## Modeling
+
+For the modeling analyses, I treated expedited_referral and any_neuro_referral as primary outcomes because these represent key operational decisions for neurology. Predictors included any_severe_flag (presence of persistent vomiting or unsteady gait) and minor_flag_count (count of other symptoms). This reflects the clinical design of the SmartForm, where severe findings are expected to drive urgent action, and minor findings may refine risk without independently mandating referral.
+
+### 1.1 Severe vs. Minor Red Flags: Predicting Expedited Referral
+
+```{r}
+#| echo: true
+ha <- ha |>
+  mutate(
+
+# Any severe red flag present (persistent vomiting or unsteady gait)
+    any_severe_flag = if_else(
+      rf_severe_vomiting > 0 | rf_severe_unsteady > 0,
+      1, 0
+    ),
+# Count of minor red flags
+    minor_flag_count = rf_minor
+  )
+
+# Logistic regression: effect of severe and minor flags on EXPEDITED referrals
+model_expedited <- glm(
+  expedited_referral ~ any_severe_flag + minor_flag_count,
+  family = binomial,
+  data = ha
+)
+
+tidy(model_expedited, exponentiate = TRUE, conf.int = TRUE)
+
+```
+
+Patients with a severe red flag (persistent early-morning vomiting or unsteady gait) had higher odds of receiving an expedited neurology referral (OR ≈ 7), although this association was borderline significant. In contrast, each additional minor red flag was associated with lower odds of expedited referral (OR ≈ 0.66), indicating that clinicians do not treat an accumulation of minor symptoms as justification for urgent specialty evaluation. Overall, clinicians appear to reserve expedited referrals primarily for encounters involving clear severe neurological signs.
+
+### 1.2 Predicting Any Referral
+
+```{r}
+#| echo: true
+#Logistic regression: predictors of ANY neurology referral
+model_anyref <- glm(
+any_neuro_referral ~ any_severe_flag + minor_flag_count,
+family = binomial,
+data = ha
+)
+
+tidy(model_anyref, exponentiate = TRUE, conf.int = TRUE)
+
+```
+
+In this model, having at least one severe red flag (persistent early-morning vomiting or unsteady gait) was associated with about 10 times higher odds of receiving any neurology referral (OR ≈ 10.0, 95% CI 2.29–45.1, p = 0.002). In contrast, each additional minor red flag was associated with lower odds of any neurology referral (OR ≈ 0.58, 95% CI 0.42–0.80, p = 0.001), suggesting clinicians do not escalate referrals based on an accumulation of minor symptoms. Overall, neurology referral decisions in this dataset appear to be driven primarily by the presence of a severe neurologic sign rather than the total red-flag burden.
+
+### 1.3 Predicting Concordance
+
+I modeled concordant as a binary outcome to quantify how often clinical behavior matched the score’s recommendation and used recommended_action as the predictor to compare agreement rates across primary care, standard, and expedited recommendation categories.
+
+```{r}
+#| echo: true
+#Logistic regression: how SmartForm recommendations predicts clinician concordance
+model_concord <- glm(
+concordant ~ recommended_action,
+family = binomial,
+data = ha
+)
+
+tidy(model_concord, exponentiate = TRUE, conf.int = TRUE)
+
+```
+
+Clinicians were 17 times more likely to be concordant when the SmartForm recommended *standard* neurology referral compared with the baseline category (primary care management), a highly significant association (p \< 0.0001). In contrast, expedited referral recommendations did not significantly increase concordance (OR ≈ 0.87, p = 0.51), meaning clinicians were no more likely to follow expedited recommendations than to diverge from them. Overall, this indicates that clinician behavior aligns well with standard referral recommendations but does not align with expedited referral recommendations, reinforcing miscalibration at the high-risk end of the score.
+
+# Discussion
+
+This project evaluated whether a SmartForm-derived red-flag scoring system for pediatric headache encounters aligns with clinician neurology referral behavior. By weighting two clinically severe findings (recurrent or persistent early-morning vomiting and unsteady gait) with 1000 points each, and all other red flags with 1 point each, the scoring system was intentionally designed to identify children at risk for neurologic pathology who may warrant expedited neurology evaluation. The results demonstrate that while the score discriminates low-risk encounters effectively, it does not accurately capture clinician judgment at the high-risk end of the spectrum.
+
+The score showed strong performance for encounters in which no concerning symptoms were present. Primary care recommendations had the highest concordance with clinician behavior (≈76%), and logistic modeling confirmed that clinicians were unlikely to place any referral in the absence of severe red flags. This suggests that the SmartForm structure is well-aligned with provider decision-making for low-risk cases and may support safe reduction of unnecessary referrals.
+
+In contrast, the scoring system over-classified encounters into the expedited referral category, leading to poor concordance (≈11%). Logistic regression reinforced this pattern: severe red flags increased the odds of expedited referral, but the effect size was reduced and borderline significant, indicating clinicians did not treat all severe-flag combinations as requiring urgent specialty evaluation. Minor red flags were associated with lower odds of referral across models, suggesting clinicians view these features as nonspecific and not additive. Importantly, clinicians were significantly more likely to agree with standard referral recommendations, whereas expedited recommendations did not influence behavior, further demonstrating that the high-risk threshold is miscalibrated.
+
+Together, these findings indicate that clinician decision-making relies on clinical nuance not fully captured by the current weighted scoring system. The heavy weighting of severe symptoms guarantees that any child with a single severe red flag receives an expedited recommendation, even when the full clinical context may not support urgent referral. This design explains the high rate of discordance and highlights a critical area for redesign.
+
+# Conclusion
+
+The SmartForm-based red-flag scoring system successfully identifies encounters appropriate for primary care management but substantially overestimates the need for expedited neurology referrals. Clinicians reserve expedited referrals for only the most compelling neurologic concerns, whereas the scoring system classifies a larger proportion of children as high risk based solely on the presence of a single severe symptom. Logistic regression results support this interpretation: severe symptoms increase referral likelihood, but minor symptoms do not meaningfully contribute, and expedited referral recommendations do not align with actual provider behavior.
+
+To improve its utility as clinical decision support, the scoring system requires recalibration, specifically, moderating the extreme weighting of severe red flags, differentiating levels of risk within the high-severity group, and potentially integrating additional contextual factors. A more flexible or probabilistic scoring model may better reflect real-world clinician decision patterns and improve alignment with neurology referral workflows. Future iterations will need to be validated prospectively and evaluated for impact on referral volume, appropriateness, and patient outcomes.
