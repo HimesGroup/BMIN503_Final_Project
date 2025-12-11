@@ -1,0 +1,610 @@
+---
+title: "Prevalence of Gestational Diabetes by Race, Ethnicity, and Insurance at Beth Israel Hospital"
+subtitle: "BMIN5030 Final Project"
+author: "Ainsley Bradbury"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+---
+
+------------------------------------------------------------------------
+
+## Overview {#sec-overview}
+
+The purpose of my project is to compare compare Gestational Diabetes (GDM) pregnancy outcomes by race and insurance status at Beth Israel Hospital between 2008 and 2022. A study on GDM prevalence by race has not been conducted in Boston, where Beth Israel is located. There have also been few studies on the affect of insurance status on GDM prevalence. The goal of my project is to contribute to the existing literature on the affect of race and insurance status on GDM prevalence.
+
+## Introduction {#sec-introduction}
+
+About 9% of pregnant women are diagnosed with Gestational Diabetes (GDM) in the United States Annually (American Diabetes Association). Poorly controlled diabetes in pregnancy poses several risks to mothers and their babies. These adverse outcomes include fetal macrosomia, neonatal hypoglycemia, respiratory distress syndrome, gestational hypertension, preeclampsia, cesarean section, preterm birth, and long-term increased risk of metabolic disease for both mothers and babies (Malaza et al., 2022). Several studies have found that Black, Hispanic, and Asian women are more likely to be diagnosed with GDM than white women (DeSisto et al., 2014; Erbetta et al., 2022). Many of these studies, however, were conduced using data from 1995-2012. The goal of this project is to look at GDM diagnosis prevalence at Beth Israel Hospital in Boston Massachusetts using data from MIMIC-IV.
+
+This study will combine clinical knowledge of diabetes in pregnancy with biomedical informatics techniques to clean data and run several regression analyses. It requires an understanding of ICD procedure and diagnosis coding, data refinement, and statistical analyses.
+
+## Methods {#sec-methods}
+
+To complete the analysis on GDM diagnosis prevalence and pregnancy outcomes by race and insurance, the MIMIC-IV data set will be used. MIMIC-IV contains demographics, diagnoses, procedures, prescription, and lab data for patients admitted to Beth Israel Hospital from 2008 to 2022.
+
+#### Libraries
+
+```{r}
+#Libraries
+library(readr) 
+library(dplyr) 
+library(tidyr) 
+library(stringr) 
+library(stargazer) 
+library(ggplot2) 
+library(broom) 
+```
+
+#### Data Cleaning
+
+First, I created variables to identify patients who delivered at Beth Israel Hospital. I had to first create a variable for ICD codes related to a vaginal delivery or cesarean delivery because MIMIC-IV has a separate column for each ICD procedure code in a patient's chart. Once I created this variable indicating whether ICD codes of interest were present in any column, I created another variable to indicate whether a patient had a vaginal delivery or cesarean section. I then merged my has_vaginal_delivery variable with my has_cesarean variable to create one variable indicating whether a patient delivered at Beth Israel Hospital.
+
+Next, I created a variable named has_GDM to identify patients with a diagnosis code for gestational diabetes. I then merged the admissions data set with the patient data set to combine patient age with demographics. I created a table called Pregnancy_Summary which joined my demographics table with the variables I created for procedures and diagnoses. Finally, I filtered the pregnancy_summary table to only include patients who delivered at Beth Israel.
+
+For ease of analysis and to ensure none of my variables of interest were too small, I collapsed the variables for race and ethnicity to: White, Black, Asian, Hispanic, and Other/NA.
+
+```{r}
+
+#reading in MIMIC-IV datasets for diagnoses, patients, admissions, and procedures. 
+diagnoses_icd <- read_csv("/Users/ainsleybradbury1/Downloads/mimic-iv-3.1/hosp/diagnoses_icd.csv.gz")
+patients <- read_csv("/Users/ainsleybradbury1/Downloads/mimic-iv-3.1/hosp/patients.csv.gz")
+admissions <- read_csv("/Users/ainsleybradbury1/Downloads/mimic-iv-3.1/hosp/admissions.csv.gz")
+procedures_icd <- read_csv("/Users/ainsleybradbury1/Downloads/mimic-iv-3.1/hosp/procedures_icd.csv.gz")
+
+
+#creating variables for delivery procedures (vaginal delivery or cesarean delivery) and a variable for either delivery type to later filter by patients who delivered at Beth Israel. MIMIC-IV data has a column for each ICD code that is in a pts chart, so I first identified delivery codes then made a variable for any pt who had a column that aligned with one of the many delivery codes. 
+
+procedures_clean <- procedures_icd %>%
+  mutate(
+    # Vaginal delivery: ICD-9 72.x or ICD-10 10E0X
+    is_vaginal_delivery = case_when( 
+      icd_version == 9  & str_detect(icd_code, "^72")       ~ TRUE,
+      icd_version == 10 & str_detect(icd_code, "^10E0X")     ~ TRUE,
+      TRUE                                                   ~ FALSE
+    ),
+
+    # Cesarean delivery: ICD-9 74.x or ICD-10-PCS 10D00
+    is_csection = case_when(
+      icd_version == 9  & str_detect(icd_code, "^74")        ~ TRUE,
+      icd_version == 10 & str_detect(icd_code, "^10D00")     ~ TRUE,
+      TRUE                                                   ~ FALSE
+    )
+  ) %>%
+  group_by(subject_id, hadm_id) %>%
+  summarise(
+    has_Vaginal_Delivery = any(is_vaginal_delivery),
+    has_Cesarean         = any(is_csection),
+    .groups = "drop"
+  ) %>%
+  mutate(delivery_flag = has_Vaginal_Delivery | has_Cesarean) #creating a variable for pts who delivered at Beth Israel
+
+#Identify Gestational Diabetes Patients
+diagnosis_flags <- diagnoses_icd %>%
+  group_by(subject_id, hadm_id) %>%
+  summarise(
+    has_GDM = any(
+      str_detect(icd_code, "^6488") |      
+      str_detect(icd_code, "^O24[4]")       
+    ),
+    .groups = "drop"
+  )
+
+#Join admissions data with patient age
+demo <- admissions %>%
+  left_join(
+    patients %>% dplyr::select(subject_id, anchor_age),
+    by = "subject_id"
+  )
+
+#Join procedures and diagnosis data and filter so only patient seen for a delivery are included
+pregnancy_summary <- demo %>%
+  left_join(procedures_clean, by = c("subject_id", "hadm_id")) %>%
+  left_join(diagnosis_flags, by = c("subject_id", "hadm_id")) %>%
+  filter(delivery_flag == TRUE) %>%           
+  mutate(
+    has_GDM = replace_na(has_GDM, FALSE),
+    has_Vaginal_Delivery = replace_na(has_Vaginal_Delivery, FALSE),
+    has_Cesarean = replace_na(has_Cesarean, FALSE)
+  )
+
+#Race collapse
+pregnancy_summary <- pregnancy_summary %>%
+  mutate(
+    race_collapsed = case_when(
+      str_detect(race, "^WHITE")    ~ "White",
+      str_detect(race, "^BLACK")    ~ "Black",
+      str_detect(race, "^HISPANIC") ~ "Hispanic",
+      race %in% c("SOUTH AMERICAN", "PORTUGUESE") ~ "Hispanic",
+      str_detect(race, "^ASIAN")    ~ "Asian",
+      race %in% c(
+        "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER",
+        "AMERICAN INDIAN/ALASKA NATIVE"
+      )                             ~ "Other/NA",
+      TRUE                          ~ "Other/NA"
+    ),
+    race_collapsed = factor(
+      race_collapsed,
+      c("White", "Black", "Hispanic", "Asian", "Other/NA")
+    )
+  ) %>%
+  filter(
+    !is.na(race_collapsed),
+    !is.na(anchor_age),
+    !is.na(insurance)
+  )
+
+
+
+```
+
+#### Data Summary
+
+Stargazer was used to create a table displaying the total counts for my variables of interest. The populations for Medicare and Other Insurance were very small, so they will be excluded from further analysis.
+
+```{r}
+
+# Create summary stats for all patients
+all_summary <- pregnancy_summary %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(anchor_age, na.rm = TRUE), 2),
+    White = sum(race_collapsed == "White"),
+    Black = sum(race_collapsed == "Black"),
+    Hispanic = sum(race_collapsed == "Hispanic"),
+    Asian = sum(race_collapsed == "Asian"),
+    Other = sum(race_collapsed == "Other/NA"),
+    Private_Insurance = sum(insurance == "Private"),
+    Medicaid = sum(insurance == "Medicaid"),
+    Medicare = sum(insurance == "Medicare"),
+    Other_Insurance = sum(insurance== "Other"),
+    GDM = sum(has_GDM)
+  ) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "All") #creating columns
+
+# Summary stats for GDM-only patients
+gdm_summary <- pregnancy_summary %>%
+  filter(has_GDM == 1) %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(anchor_age, na.rm = TRUE), 2),
+    White = sum(race_collapsed == "White"),
+    Black = sum(race_collapsed == "Black"),
+    Hispanic = sum(race_collapsed == "Hispanic"),
+    Asian = sum(race_collapsed == "Asian"),
+    Other = sum(race_collapsed == "Other/NA"),
+    Private_Insurance = sum(insurance == "Private"),
+    Medicaid = sum(insurance == "Medicaid"),
+    Medicare = sum(insurance == "Medicare"),
+    Other_Insurance = sum(insurance== "Other"),
+    GDM = sum(has_GDM)
+  ) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "GDM_Only") #creating columns
+
+#Merge into a single table
+summary_table <- left_join(all_summary, gdm_summary, by = "Variable")
+
+
+#export using stargazer
+stargazer(summary_table,
+          type = "html",
+          summary = FALSE,
+          out = "summary_table.html",
+          title = "Pregnancy Data Summary",
+          rownames = FALSE)
+
+#the counts for meidcare and other insurance were very small compared to those for medicaid and private insurance, so they will be excluded from future analysis. 
+
+pregnancy_summary <- pregnancy_summary %>%
+  filter(insurance %in% c("Medicaid", "Private"))
+
+htmltools::includeHTML("summary_table.html")
+
+```
+
+## Results {#sec-results}
+
+#### Box Plots to Visualize Age Distribution Across Populations of Interest
+
+```{r}
+
+#Box plot of age by race/ethnicity
+
+gdm_age_box <- ggplot(pregnancy_summary, aes(x = race_collapsed, y = anchor_age, fill = race_collapsed)) +
+  geom_boxplot(alpha = 0.8) +
+  scale_fill_manual(values = c(
+    "White" = "#FA6300",
+    "Black" = "#2DAE84",
+    "Hispanic" = "#FFB9B8",
+    "Asian" = "#4C369F",
+    "Other/NA" = "#36453B"
+  )) +
+  labs(
+    title = "Maternal Age Distribution by Race/Ethnicity",
+    x = "Race",
+    y = "Age"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5)   
+  )
+
+
+gdm_age_box
+
+ggsave("gdm_age_box.png", plot = gdm_age_box, width = 8, height = 6, dpi = 300)
+
+#box plot of age by insurance type
+
+gdm_age_insurance_box <- ggplot(pregnancy_summary, aes(x = insurance, y = anchor_age, fill = insurance)) +
+  geom_boxplot(alpha = 0.8) +
+  scale_fill_manual(values = c(
+    "Private" = "#2DAE84",
+    "Medicaid" = "#FFB9B8"
+  )) +
+  labs(
+    title = "Maternal Age Distribution by Insurance",
+    x = "Insurance",
+    y = "Age"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5)   
+  )
+
+
+gdm_age_insurance_box
+
+ggsave("gdm_age_insurance_box.png", plot = gdm_age_insurance_box, width = 8, height = 6, dpi = 300)
+
+```
+
+#### Age Standardization
+
+Due to the differences in age distribution across populations of interest seen in the box plots above, the populations were age standardized for more accurate comparison.
+
+```{r}
+#Creating age groups to stratify the cohort
+pregnancy_summary <- pregnancy_summary %>%
+  mutate(age_group = cut(anchor_age,
+                         breaks = c(15, 20, 25, 30, 35, 40, 45, 50, 55),
+                         right = FALSE))
+
+#calculating the rate of each age group
+standard_pop <- pregnancy_summary %>%
+  group_by(age_group) %>%
+  dplyr::summarize(
+    N = n()
+  ) %>%
+  mutate(weight = N / sum(N))  
+
+
+#age standardization by race
+age_specific_rates <- pregnancy_summary %>%
+  group_by(race_collapsed, age_group) %>%
+  dplyr::summarize(
+    n = n(),
+    gdm_cases = sum(has_GDM, na.rm = TRUE),
+    rate = gdm_cases / n #rate of GDM by race and age group
+  ) %>%
+  ungroup()
+
+age_std_data <- age_specific_rates %>%
+  left_join(standard_pop, by = "age_group")
+
+age_standardized_prevalence <- age_std_data %>%
+  group_by(race_collapsed) %>%
+  dplyr::summarize(
+    age_standardized_prev = sum(rate * weight) * 100, #multiplying GDM prevalence by the weight of each age group to standardize the results
+    .groups = "drop" 
+  )
+
+age_standardized_prevalence
+
+#Age standardization by insurance
+age_specific_rates_insurance <- pregnancy_summary %>%
+  group_by(insurance, age_group) %>%
+  dplyr::summarize(
+    n = n(),
+    gdm_cases = sum(has_GDM, na.rm = TRUE),
+    rate = gdm_cases / n
+  ) %>%
+  ungroup()
+
+age_std_data_insurance <- age_specific_rates_insurance %>%
+  left_join(standard_pop, by = "age_group")
+
+age_standardized_prevalence_insurance <- age_std_data_insurance %>%
+  group_by(insurance) %>%
+  dplyr::summarize(
+    age_standardized_prev_insurance = sum(rate * weight) * 100   
+  )
+
+age_standardized_prevalence_insurance
+
+```
+
+#### GDM Prevalence by Race and Ethnicity Bar Graphs
+
+```{r}
+
+#GDM prevalence by race
+
+gdm_by_race_overall <- pregnancy_summary %>%
+  group_by(race_collapsed) %>%
+  dplyr::summarize(
+    n_deliveries = n(),
+    n_gdm = sum(has_GDM, na.rm = TRUE),
+    prevalence = n_gdm / n_deliveries *100
+  )
+
+#GDM prevalence by race graph
+gdm_by_race <- ggplot(gdm_by_race_overall, aes(x = race_collapsed, y = prevalence, fill = race_collapsed)) +
+  geom_col() +
+  geom_text(aes(label = sprintf("%.1f%%", prevalence)),
+            vjust = -0.5, size = 5) +
+  scale_fill_manual(values = c(
+    "White" = "#FA6300",
+    "Black" = "#2DAE84",
+    "Hispanic" = "#FFB9B8",
+    "Asian" = "#4C369F",
+    "Other/NA" = "#36453B"
+  )) +
+  labs(
+    title = "GDM Prevalence by Race/Ethnicity",
+    x = "Race",
+    y = "Prevalence (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5)   
+  )
+
+
+gdm_by_race
+
+gdm_by_race_overall
+
+
+ggsave("gdm_prevalence_by_race.png", plot = gdm_by_race, width = 8, height = 6, dpi = 300)
+
+#Age Standardized Prevalence by Race/Ethnicity Graph
+
+age_stand_prev_race <- ggplot(age_standardized_prevalence, aes(x = race_collapsed, y = age_standardized_prev, fill = race_collapsed)) +
+  geom_col() +
+  geom_text(aes(label = sprintf("%.1f%%", age_standardized_prev)),
+            vjust = -0.5, size = 5) +
+  scale_fill_manual(values = c(
+    "White" = "#FA6300",
+    "Black" = "#2DAE84",
+    "Hispanic" = "#FFB9B8",
+    "Asian" = "#4C369F",
+    "Other/NA" = "#36453B"
+  ))  +
+  labs(
+    title = "Age Adjusted GDM Prevalence by Race/Ethnicity",
+    x = "Race",
+    y = "Prevalence (%)"
+  ) +
+    theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5) 
+  )
+
+age_stand_prev_race
+
+ggsave("age_stand_prev_race.png", plot = age_stand_prev_race, width = 8, height = 6, dpi = 300)
+
+
+
+
+```
+
+When adjusting for age, the differences in the rate of GDM diagnosis across race and ethnicity appear to become larger. It will be important to include age as a control variable in future logistic regressions.
+
+#### GDM Prevalence by Insurance Bar Graphs
+
+```{r}
+
+#GDM prevalence by insurance
+
+gdm_by_insurance_overall <- pregnancy_summary %>%
+  filter(has_Vaginal_Delivery | has_Cesarean) %>%
+  group_by(insurance) %>%
+  dplyr::summarize(
+    n_deliveries = n(),
+    n_gdm = sum(has_GDM, na.rm = TRUE),
+    prevalence = n_gdm / n_deliveries *100
+  )
+
+gdm_by_insurance_overall
+
+
+#GDM prevalence by insurance graph
+
+prev_insurance <- ggplot(gdm_by_insurance_overall, aes(x = insurance, y = prevalence, fill = insurance)) +
+  scale_fill_manual(values = c(
+    "Private" = "#2DAE84",
+    "Medicaid" = "#FFB9B8"
+  )) +
+  geom_text(aes(label = sprintf("%.1f%%", prevalence)),
+            vjust = -0.5, size = 5)+
+  geom_col() +
+  labs(
+    title = "Overall GDM Prevalence by Insurance",
+    x = "Insurance",
+    y = "Prevalence (%)"
+  ) +
+ theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5)   
+  )
+  
+ggsave("prev_insurance.png", plot = prev_insurance, width = 8, height = 6, dpi = 300)
+
+prev_insurance
+  
+
+#Age Standardized Prevalence of GDM by Insurance Graph
+
+age_prev_insurance <- ggplot(age_standardized_prevalence_insurance, aes(x = insurance, y = age_standardized_prev_insurance, fill = insurance)) +
+  scale_fill_manual(values = c(
+    "Private" = "#2DAE84",
+    "Medicaid" = "#FFB9B8"
+  )) +
+   geom_text(aes(label = sprintf("%.1f%%", age_standardized_prev_insurance)),
+            vjust = -0.5, size = 5)+
+  geom_col() +
+  labs(
+    title = "Age Adjusted GDM Prevalence by Insurance",
+    x = "Insurance",
+    y = "Prevalence (%)"
+  ) +
+ theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, hjust = 0.5)   
+  )
+
+ggsave("age_prev_insurance.png", plot = age_prev_insurance, width = 8, height = 6, dpi = 300)
+
+age_prev_insurance
+
+```
+
+GDM prevalence across insurance types also appears to be heavily influenced by maternal age. This will be included as a control variable in future regressions.
+
+#### Logistic Regressions
+
+I ran several logistic regressions to test the significance of the differences in GDM prevalence among race, ethnicity, and insurance type. Models 1 and 3 function as base models, that is they examine only the relationship between odds of a GDM diagnosis and race/ethnicity and insurance type respectively. In Models 2 and 4, I expand upon the base models by controlling for maternal age. In Model 5, I combine the above models to examine the effects of race/ethnicity and insurance type while controlling for age. Based on feedback I received in class, I split the data into two subsets, one with only publicly insured patients and the other with only privately insured patients. I then ran the Model 2 regression on these data sets to examine the effects of race/ethnicity on the odds of GDM diagnosis controlling for maternal age in both populations independently.
+
+```{r}
+
+
+#base regression looking at the effects of race/ethnicity on odds of having a GDM diagnosis
+Model_1 <- glm(has_GDM ~ race_collapsed,
+    data = pregnancy_summary, family = binomial)
+
+#effects of race/ethnicity on odds of having a GDM diagnosis controlling for age
+Model_2 <- glm(has_GDM ~ race_collapsed + anchor_age,
+          data = pregnancy_summary,
+          family = binomial)
+
+#base regression looking at the effects of insurance type on odds of having a GDM diagnosis
+Model_3 <- glm(has_GDM ~ insurance,
+          data = pregnancy_summary,
+          family = binomial)
+
+#effects of insurance type on odds of having a GDM diagnosis controlling for age
+Model_4 <- glm(has_GDM ~ insurance + anchor_age,
+          data = pregnancy_summary,
+          family = binomial)
+
+#effects of race/ethnicity on odds of having a GDM diagnosis controlling for insurance type and age
+Model_5 <- glm(has_GDM ~ race_collapsed + insurance + anchor_age,
+          data = pregnancy_summary,
+          family = binomial)
+
+#data set containing only patients on public insurance (Medicaid)
+public_summary <- pregnancy_summary %>%
+  filter(insurance %in% c("Medicaid"))
+
+#regression for effects of race/ethnicity on odds of GDM diagnosis controlling for age for publically insured patients
+Model_6 <- glm(has_GDM ~ race_collapsed + anchor_age,
+               data = public_summary,
+               family = binomial)
+
+#data set containing only patients on private insurance
+private_summary <- pregnancy_summary %>%
+  filter(insurance %in% c("Private"))
+
+#regression for effects of race/ethnicity on odds of GDM diagnosis controlling for age for privately insured patients
+Model_7 <- glm(has_GDM ~ race_collapsed + anchor_age,
+               data = private_summary,
+               family = binomial)
+
+
+
+models <- list(Model_1, Model_2, Model_3, Model_4, Model_5, Model_6, Model_7)
+
+tidy(Model_1)
+
+#Stargazer was giving incorrect astericks for p-values, so I pulled them out of each model and inputted them manually
+extract_stargazer_inputs <- function(model) {
+  s <- summary(model)$coefficients
+  
+  coefs  <- exp(s[, "Estimate"]) #exponentiating coefficents to give odds ratio
+  ses    <- exp(s[, "Estimate"]) * s[, "Std. Error"]  
+  pvals  <- s[, "Pr(>|z|)"]
+  
+  list(coefs = coefs, ses = ses, pvals = pvals)
+}
+
+inputs <- lapply(models, extract_stargazer_inputs)
+
+coef_list <- lapply(inputs, function(x) x$coefs)
+se_list   <- lapply(inputs, function(x) x$ses)
+p_list    <- lapply(inputs, function(x) x$pvals)
+
+
+#stargazer table
+stargazer(
+  models,
+  coef = coef_list,
+  se   = se_list,
+  p    = p_list,
+  type = "html",
+  out = "regression_table.html",
+  title = "Regression Results",
+  dep.var.labels = "GDM Diagnosis (OR)",
+  covariate.labels = c("Black",
+                       "Hispanic",
+                       "Asian",
+                       "Other/NA",
+                       "Age",
+                       "Medicaid"),
+  keep.stat = c("n"),
+  star.cutoffs = c(0.05, 0.01, 0.001)
+)
+
+
+htmltools::includeHTML("regression_table.html")
+```
+
+Across patients who delivered at Beth Israel Hospital between 2008 and 2022, race and insurance type were both strongly associated with the odds of having a gestational diabetes (GDM) diagnosis. In the unadjusted race model (Model 1), Black, Hispanic, Asian, and Other/Unknown populations all had significantly higher odds of a GDM diagnosis compared to White patients. Asian patients showed the largest difference with an odds ratio of 2.723. After adjusting for age (Model 2), the odds ratios increased slightly across all populations compared to White patients.
+
+Insurance type was also associated with GDM, but not as strongly as race and ethnicity. In the unadjusted model (Model 3), publicly insured patients had about 1.09 times the odds of GDM compared with privately insured patients, but this result was not significant at the 95% confidence level. This relationship persisted and became statistically significant after adjusting for age (Model 4), with an odds ratio of 1.369.The combined model (Model 5) showed that race/ethnicity and insurance remained independent predictors of a GDM diagnosis. Asian patients continued to have the highest risk, and public insurance remained associated with GDM, even after adjusting for race and age.
+
+Stratified models showed that these racial disparities were present in both insurance groups. Among publicly insured patients (Model 6), Asian patients continued to have about twice the odds of developing GDM compared to White patients. Among privately insured patients (Model 7), the same racial pattern persisted, with Asian patients again showing the largest effect. It is important to note the reduced sample size in the stratified model due to splitting the population into two.
+
+## Conclusion
+
+Race and insurance status were both strong predictors of gestational diabetes for patients at Beth Israel. After adjusting for age, which is known to be associated with developing GDM, Asian, Hispanic, and Black patients had significantly higher odds of a GDM diagnosis compared to White patients. Public insurance, specifically Medicaid, was also independently associated with higher odds of GDM when adjusting for age. The racial disparities in GDM prevalence persisted within both publicly and privately insured populations, suggesting that differences in GDM prevalence are not explained solely by insurance type or age. Overall, the results point to real differences in GDM risk across demographic groups.
+
+There are several limitations to this analysis. The data set is limited to patients who delivered at Beth Israel, which is an urban hospital in Boston, and the results cannot be applied on a national level. Additionally, because the data was pulled directly from EPIC with no validation on accuracy, some of the variables may be incorrect including ICD codes and race/ethnicity values. Finally, the data set is limited to lab and diagnosis values collected during inpatient hospital stays, so the regression cannot include controls for clinically relevant values such as hemoglobin A1c, BMI, and family history of diabetes. In the future, more robust analyses including national data, validated data, and outpatient data would be important for validating these initial results.
+
+Again, this analysis demonstrates significant differences in GDM prevalence across patient populations at Beth Israel Hospital. These results point to future analyses of national GDM prevalence and on GDM delivery outcomes by race and insurance type.
+
+## References
+
+-   DeSisto CL, Kim SY, Sharma AJ. 2014. Prevalence Estimates of Gestational Diabetes Mellitus in the United States, Pregnancy Risk Assessment Monitoring System (PRAMS), 2007-2010. Prev Chronic Dis. 11:E104.
+
+-   Erbetta K, Almeida J, Waldman MR. 2022. Racial, ethnic and nativity inequalities in gestational diabetes mellitus: The role of racial discrimination. SSM - Population Health. 19:101176. 
+
+-   Goldberger, A., Amaral, L., Glass, L., Hausdorff, J., Ivanov, P. C., Mark, R., ... & Stanley, H. E. (2000). PhysioBank, PhysioToolkit, and PhysioNet: Components of a new research resource for complex physiologic signals. Circulation \[Online\]. 101 (23), pp. e215–e220. RRID:SCR_007345.
+
+-   Government of Canada, S.C. (2025) Age-standardized rates, Government of Canada, Statistics Canada. Available at: https://www.statcan.gc.ca/en/statistical-programs/document/3233_D6_V1 (Accessed: 03 December 2025). 
+
+-   Johnson AEW et al. 2023. MIMIC-IV, a freely accessible electronic health record dataset. Scientific Data. 10(1):1.
+
+-   Johnson, A., Bulgarelli, L., Pollard, T., Gow, B., Moody, B., Horng, S., Celi, L. A., & Mark, R. (2024). MIMIC-IV (version 3.1). PhysioNet. RRID:SCR_007345.
+
+-   Kunarathnam V, Vadakekut ES, Mahdy H. Gestational Diabetes. \[Updated 2025 Sep 15\]. In: StatPearls \[Internet\]. Treasure Island (FL): StatPearls Publishing; 2025 Jan-.
+
+-   Malaza N, Masete M, Adam S, Dias S, Nyawo T, Pheiffer C. A Systematic Review to Compare Adverse Pregnancy Outcomes in Women with Pregestational Diabetes and Gestational Diabetes. *International Journal of Environmental Research and Public Health*. 2022; 19(17):10846. https://doi.org/10.3390/ijerph191710846
