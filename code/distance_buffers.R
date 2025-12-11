@@ -1,7 +1,7 @@
 ### This collection of functions calculates pairwise distances from every clinic observation to every overdose point, and defines a set of buffers to count them within
 
 ####### 1) CREATE THE POINTS FOR ANALYSIS ###############
-create_changepoint <- function(clinics_df, ods_df) {
+create_changepoint <- function(clinics_df, crime_df) {
   clinics_changepoint <- clinics_df %>%
     group_by(group) %>%
     mutate(
@@ -71,9 +71,9 @@ create_changepoint <- function(clinics_df, ods_df) {
 
   clinics_changepoint <- clinics_changepoint %>%
     filter(
-      (year >= min(ods_df$year, na.rm = T)) &
-        (year <= max(ods_df$year, na.rm = T))
-    ) # Keep only the clinic observations which occur during the range of time we have OD data
+      (year >= min(crime_df$year, na.rm = T)) &
+        (year <= max(crime_df$year, na.rm = T))
+    ) # Keep only the clinic observations which occur during the range of time we have crime data
 
   return(clinics_changepoint)
 }
@@ -110,7 +110,10 @@ create_spatial_chunks <- function(points, chunk_size = 50) {
   return(points)
 }
 
-create_search_poly <- function(chunk, od_data, max_distance) {
+create_search_poly <- function(chunk, crime_data, max_distance) {
+  chunk <- st_as_sf(chunk)
+  crime_data <- st_as_sf(chunk)
+
   chunk_bbox <- st_bbox(chunk)
   units(max_distance) <- NULL
   # If we were not using a projected CRS, e.g. using EPSG 4269 / NAD83, we would need to calculate this in decimal degrees. I initially did this, but have changed to use EPSG:5070 for more consistent area calculations. I am keeping the code to do this in decimal degrees though, in case I need it in the future!
@@ -129,7 +132,7 @@ create_search_poly <- function(chunk, od_data, max_distance) {
 
   # return as sfc polygon in desired CRS
   search_poly <- st_as_sfc(chunk_bbox) %>%
-    st_transform(crs = st_crs(od_data))
+    st_transform(crs = st_crs(crime_data))
 
   return(search_poly)
 }
@@ -138,14 +141,14 @@ create_search_poly <- function(chunk, od_data, max_distance) {
 # Main function: calculate distances for each clinic year
 process_clinic_distances <- function(
   clinic_chunk,
-  nearby_ods,
+  nearby_crimes,
   city_years,
   buffers,
   max_distance
 ) {
-  nearby_ods <- nearby_ods %>% st_as_sf()
+  nearby_crimes <- nearby_crimes %>% st_as_sf()
 
-  if (nrow(nearby_ods) == 0) {
+  if (nrow(nearby_crimes) == 0) {
     # Return empty results structure
     empty_counts <- expand_grid(
       group = clinic_chunk$group,
@@ -153,12 +156,15 @@ process_clinic_distances <- function(
       buffer = buffers
     ) %>%
       mutate(
-        od_count = 0L
+        violent_count = 0L,
+        person_count = 0L,
+        property_count = 0L
       )
 
     empty_distances <- expand_grid(
       group = clinic_chunk$group,
-      year = city_years
+      year = city_years,
+      category = c("person", "property", "violent")
     ) %>%
       mutate(
         mean_distance = NA_real_,
@@ -176,21 +182,24 @@ process_clinic_distances <- function(
 
     # Calculate distances to all nearby crimes ONCE
     search_buffer <- st_buffer(clinic_point, max_distance)
-    clinic_ods <- st_filter(nearby_ods, search_buffer)
+    clinic_crimes <- st_filter(nearby_crimes, search_buffer)
 
-    if (nrow(clinic_ods) == 0) {
+    if (nrow(clinic_crimes) == 0) {
       empty_counts <- expand_grid(
         group = clinic_point$group,
         year = city_years,
         buffer = buffers
       ) %>%
         mutate(
-          od_count = 0L
+          violent_count = 0L,
+          person_count = 0L,
+          property_count = 0L
         )
 
       empty_distances <- expand_grid(
         group = clinic_point$group,
-        year = city_years
+        year = city_years,
+        category = c("person", "property", "violent")
       ) %>%
         mutate(
           mean_distance = NA_real_,
@@ -206,30 +215,33 @@ process_clinic_distances <- function(
     sf::sf_use_s2(TRUE)
 
     # keep everything in lon/lat WGS84
-    st_crs(clinic_point) # should be EPSG:4326
-    st_crs(clinic_ods) # same
+    st_crs(clinic_point) # should be EPSG:5070
+    st_crs(clinic_crimes) # same
 
     # SINGLE DISTANCE CALCULATION - this is our "source of truth"
-    all_distances <- as.numeric(st_distance(clinic_point, clinic_ods)[1, ])
+    all_distances <- as.numeric(st_distance(clinic_point, clinic_crimes)[1, ])
 
     # Add distances as column to crime data for easy processing
-    clinic_ods$distance <- all_distances
+    clinic_crimes$distance <- all_distances
 
     # Process by year to get both counts and distance stats
     year_results <- map(unique(city_years), function(yr) {
-      year_ods <- clinic_ods[clinic_ods$year == yr, ]
+      year_crimes <- clinic_crimes[clinic_crimes$year == yr, ]
 
-      if (nrow(year_ods) == 0) {
+      if (nrow(year_crimes) == 0) {
         empty_counts <- data.frame(
           group = clinic_point$group,
           year = yr,
           buffer = buffers,
-          od_count = 0L
+          violent_count = 0L,
+          person_count = 0L,
+          property_count = 0L
         )
 
         empty_distances <- data.frame(
           group = clinic_point$group,
           year = yr,
+          category = c("person", "property", "violent"),
           mean_distance = NA_real_,
           median_distance = NA_real_,
           min_distance = NA_real_,
@@ -242,27 +254,49 @@ process_clinic_distances <- function(
       # DERIVE BUFFER COUNTS from distances (no spatial operations!)
       buffer_counts <- map_dfr(buffers, function(buf) {
         units(buf) <- NULL
-        within_buffer <- year_ods$distance <= buf &
-          year_ods$distance > (buf - min(buffers)) # The second condition (buf-min(buffer)) means that we are only including crimes between the 200ft ring we are in, and not double-counting
-        ods_in_buffer <- year_ods[within_buffer, ]
+        within_buffer <- year_crimes$distance <= buf &
+          year_crimes$distance > (buf - min(buffers)) # The second condition (buf-min(buffer)) means that we are only including crimes between the 200ft ring we are in, and not double-counting
+        crimes_in_buffer <- year_crimes[within_buffer, ]
 
         data.frame(
           group = clinic_point$group,
           year = yr,
           buffer = buf,
-          od_count = nrow(ods_in_buffer)
+          person_count = sum(crimes_in_buffer$person, na.rm = TRUE),
+          property_count = sum(crimes_in_buffer$property, na.rm = TRUE),
+          violent_count = sum(crimes_in_buffer$violent, na.rm = TRUE)
         )
       })
 
       # DERIVE DISTANCE STATS from the same distance data
-      distance_stats <- data.frame(
-        group = clinic_point$group,
-        year = yr,
-        mean_distance = mean(year_ods$distance, na.rm = T),
-        median_distance = median(year_ods$distance, na.rm = T),
-        min_distance = min(year_ods$distance, na.rm = T),
-        count_within_max = length(year_ods$distance)
-      )
+      categories <- c("person", "property", "violent")
+      distance_stats <- map_dfr(categories, function(cat) {
+        cat_crimes <- year_crimes[year_crimes[[cat]] == 1, ]
+
+        if (nrow(cat_crimes) == 0) {
+          return(data.frame(
+            group = clinic_point$group,
+            year = yr,
+            category = cat,
+            mean_distance = NA_real_,
+            median_distance = NA_real_,
+            min_distance = NA_real_,
+            count_within_max = 0L
+          ))
+        }
+
+        cat_distances <- cat_crimes$distance
+
+        data.frame(
+          group = clinic_point$group,
+          year = yr,
+          category = cat,
+          mean_distance = mean(cat_distances, na.rm = T),
+          median_distance = median(cat_distances, na.rm = T),
+          min_distance = min(cat_distances, na.rm = T),
+          count_within_max = length(cat_distances)
+        )
+      })
 
       return(list(counts = buffer_counts, distances = distance_stats))
     })
@@ -276,20 +310,32 @@ process_clinic_distances <- function(
 
   # Combine all clinic results in this chunk
   chunk_counts <- map_dfr(results, ~ .x$counts)
-  chunk_distances <- map_dfr(results, ~ .x$distances)
+  chunk_distances <- map_dfr(results, ~ .x$distances) %>%
+    pivot_wider(
+      names_from = category,
+      values_from = c(ends_with("distance"), count_within_max),
+      names_glue = "{category}_{.value}"
+    )
 
   out <- left_join(chunk_counts, chunk_distances, by = join_by(group, year))
 
   # Set units, calculate area
   out$buffer <- set_units(out$buffer, m)
-  out$count_within_max <- set_units(out$count_within_max, overdoses)
-  out$od_count <- set_units(out$od_count, overdoses)
+  # out$count_within_max <- set_units(out$count_within_max, crimes)
+  # out$violent_count <- set_units(out$violent_count, crimes)
+  # out$person_count <- set_units(out$person_count, crimes)
+  # out$property_count <- set_units(out$property_count, crimes)
   out$area <- set_units(
     ((pi * out$buffer^2)) -
       ((pi * ((out$buffer - set_units(min(buffers), m))^2))),
     km^2
   )
   out <- out %>% mutate(across(ends_with("distance"), ~ set_units(.x, m)))
+  out <- out %>%
+    mutate(across(
+      ends_with("count") | ends_with("within_max"),
+      ~ set_units(.x, crimes)
+    ))
 
   return(out)
 }
@@ -300,17 +346,18 @@ merge_distance_changepoint <- function(changept_df, distances_df, clinics_df) {
     distinct(group, year, .keep_all = TRUE) %>% # This should already be one row per clinic per year, but just in case
     mutate(year = as.numeric(year)) %>%
     right_join(distances_df, by = c("group", "year")) %>%
-    left_join(
+    merge(
       clinics_df %>% # This is to bring back in the clinic address, names, keys, etc, for inclusion / exclusion and mapping info
         st_drop_geometry() %>%
         distinct(group, .keep_all = TRUE) %>%
         select(
           -c(
+            year,
             lat,
             lon,
             d
           )
         ),
-      by = c("group", "year")
+      by = c("group")
     )
 }

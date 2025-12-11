@@ -1,0 +1,739 @@
+---
+title: The Impact of Drug Treatment Center Openings and Closures on Neighborhood Violent Crime
+subtitle: "BMIN503/EPID600 Final Project"
+author:
+  - name: Jamie S. Benson
+    degrees:
+      - B.A.
+    orcid: 0000-0002-0709-4711
+    corresponding: true
+    email: jamie.benson@pennmedicine.upenn.edu
+    roles:
+      - investigation
+      - data curation
+    affiliation:
+      - ref: ggeb
+  - name: Nicholas J. Seewald
+    degrees:
+      - PhD
+    orcid: 0000-0002-8367-0522
+    corresponding: false
+    roles: []
+    affiliation:
+      - ref: ggeb
+  - name: Elizabeth K. Nesoff
+    degrees:
+      - PhD
+      - MPH
+    orcid: 0000-0001-8562-8646
+    corresponding: false
+    roles: []
+    affiliation:
+      - ref: ggeb
+affiliations:
+  - id: ggeb
+    name: University of Pennsylvania Perelman School of Medicine, Department of
+      Biostatistics, Epidemiology, and Informatics; 423 Guardian Drive,
+      Philadelphia, PA 19104
+    isni: 123012088
+keywords:
+  - Opioid
+  - Drug Treatment Center
+  - Difference-in-Difference
+  - GIS
+  - Crime
+abstract: |
+  **Purpose** Drug treatment centers (DTCs) frequently encounter opposition because of fear of subsequent increases in neighborhood crime rates. This study examines temporal and spatial associations between DTC operation and neighborhood crime rates over a 20-year period in nine major U.S. cities.
+  
+  **Methods** We geocoded listings from the National Survey of Substance Abuse Treatment Services, linking DTCs probabilistically on name, location, and service offerings (2004-2024) (n=942). GPS coordinates for crimes classified as "violent" by the Uniform Crime Reporting Program (murder, non-negligent manslaughter, rape, robbery, or aggravated assault) were obtained from public records from nine U.S. cities for 2004-2024.
+  
+  We estimated the effect of DTC operation using a staggered difference-in-differences model, comparing crime activity around a DTC after opening, compared to areas where DTCs had not yet opened. We defined crime activity by determining the median distance to any violent crime within an 800m (0.5mi) catchment for each clinic-year. Effects are estimated using a 10-year window (5 years pre/post) around DTC opening. Sensitivity analyses included varying the time window around opening and exclusion of DTCs near a city boundary for spillover effects.
+
+  **Results** We saw no statistically significant relationship between DTC opening and crime proximity within an 800m buffer. Trend analyses suggest a protective effect on opening, with a median annual increase of 16.5m to nearest violent crime (ATT= 16.46m, 95% CI=(-32.87m; 65.79m)), and an increase in violent crime on closure (ATT=-7.07m, 95% CI=(-11.06m; -3.08m)). There was variability in effect between cities.
+
+  **Conclusions** We observed no significant relationship between DTC opening and neighborhood violent crime rates and a potential increase in crime following DTC closure.
+plain-language-summary: |
+  This study's findings support the safety of DTC operation for surrounding communities and may provide evidence for policymakers in reducing barriers to clinic placement in high-need areas.
+key-points:
+  - Point 1
+  - Point 2
+date: last-modified
+bibliography: references.bib
+csl: jama.csl
+citation:
+  container-title: BMIN5030
+number-sections: true
+format:
+  html:
+    self-contained: true
+---
+
+# Environment Setup
+```{r}
+#| label: load-env
+#| echo: false
+#| 
+library(quartabs)
+library(targets)
+library(cols4all)
+library(tidyverse)
+library(tmap)
+library(flextable)
+library(kableExtra)
+library(dplyr)
+library(broom)
+library(panelView)
+library(ggplot2)
+library(purrr)
+library(visNetwork)
+library(ggeffects)
+library(stringr)
+library(widgetframe)
+library(ggthemes)
+library(sf)
+library(units)
+library(fixest)
+library(glmmTMB)
+library(modelsummary)
+
+units::install_unit("persons")
+units::install_unit("crimes")
+
+tar_load(c(
+  buffers,
+  cities,
+  clinics_sample,
+  clinics_open,
+  clinics_close,
+  bg_poly,
+  acs_sample,
+  #crime_geo,
+  cities_sample,
+  included_cities,
+  att_dist,
+  att_buffer,
+  att_dist_city,
+  att_buffer_city,
+  dist_forest,
+  dist_forest_city,
+  buffer_forest,
+  buffer_forest_city,
+  clinic_year_summary,
+  all_layer_map
+  #plot_clinic_year,
+  #plot_clinic_year_matrix
+))
+
+cb_palette <- c(
+  "#E69F00", # orange
+  "#56B4E9", # sky blue
+  "#009E73", # bluish green
+  "#F0E442", # yellow
+  "#0072B2", # blue
+  "#D55E00", # vermillion
+  "#CC79A7", # reddish purple
+  "#999999", # grey
+  
+  # extended set (similar luminance/saturation)
+  "#117733", # dark green
+  "#882255", # wine
+  "#44AA99", # teal
+  "#332288", # indigo
+  "#DDCC77", # sand
+  "#AA4499", # magenta
+  "#88CCEE", # light blue
+  "#661100"  # dark brown
+)
+
+tar_source(list.files("code", full.names = TRUE)) # Loads helper functions
+
+bg_polys <- st_filter(st_as_sf(bg_poly), st_as_sf(cities_sample)) %>%
+          left_join(acs_sample %>% as.data.frame(), by = "GEOID")
+
+clinics_open <- st_join(clinics_open, bg_polys, join = st_intersects)
+clinics_close <- st_join(clinics_close, bg_polys, join = st_intersects)
+
+```
+
+## Introduction
+
+Opioid use disorder (OUD) represents a persistent public health crisis in the United States, contributing substantially to national mortality, morbidity, and healthcare expenditure.1–3 Recent estimates found a 289% increase in unintentional opioid-related mortality between 2011 and 2021, with particularly pronounced effects observed during the COVID-19 pandemic. During this period, years of life lost (YLL) from opioid-related causes increased by 62.9%, from 1.5 to 3.9 years per 1,000 individuals.4 Recent surveillance data suggest potential moderation in these trends, with the Centers for Disease Control and Prevention (CDC) reporting 94,758 drug overdose deaths in the 12-month period ending May 2024, representing a 12.7% reduction from the previous year.5 However, sustainable reduction in opioid-related mortality requires continued expansion of prevention and treatment infrastructure, with modeling studies suggesting that a 30% increase in naloxone accessibility could prevent approximately 25% of opioid-related deaths.8
+
+Treatment approaches for OUD encompass both inpatient detoxification and outpatient services, including medications for OUD (MOUD)  such as buprenorphine, naltrexone, and methadone.9,10 Despite demonstrated efficacy, significant treatment gaps persist. Only 27.8% of people needing OUD treatment received MOUD in the past year as of 2019, and approximately 40% of U.S. counties lacked authorized buprenorphine providers as of 2018. 
+
+Establishment of new treatment facilities frequently encounters regulatory and community opposition, often centered on concerns regarding potential increases in neighborhood crime rates.14–16 However, county-level analyses suggest inverse relationships between treatment facility presence and criminal activity, with each additional facility associated with reductions in drug-related mortality (0.5%), intentional homicide (0.24%), and overall crime  (0.14%) annually.17 Similar protective associations have been observed with emergency department utilization, where facility openings and closures correspond with 6.5% decreases and 7.4% increases in drug-related visits, respectively.18 At the individual level, systematic reviews of the available trials (largely focusing on carceral programs) have demonstrated that treatment of incarcerated persons with OUD resulted in sustained reductions in recidivism by up to 15%.19,20 
+
+Spatial analyses present a more complex relationship between facility location and neighborhood-level outcomes. Cross-sectional research in urban environments has identified modest increases in crime rates within immediate facility proximity (3.2-6.6% higher density per 100 feet closer), though these effects are comparable to or lower than those observed near other community establishments such as convenience stores.21 However, significant gaps exist in understanding the temporal and spatial dynamics between facility operations and neighborhood-level outcomes, particularly regarding spillover effects and the influence of pre-existing community vulnerability factors.
+
+This study examines the temporal and spatial associations between drug treatment center operations and neighborhood crime rates over a 20-year time period in 15 major U.S. cities across the country. Specifically, we investigate: 1) the relationship between facility opening/closure events and changes in immediate areal crime rates, 2) spatial spillover effects on adjacent areas, and 3) the modifying effects of community social vulnerability indicators on these relationships. 
+
+We hypothesize that there is either a small negative or no spatiotemporal association between the incidence of violent crime in the geographic area surrounding a drug treatment center and the opening of such a center. Conversely, we expect a small positive or no relationship between center closures and areal crime density.
+
+## Data & Methods {#sec-data-methods}
+
+The analytic pipeline is summarized and visualized below:
+```{r}
+#| label: update-targets
+#| 
+tar_visnetwork()
+
+```
+
+This study was deemed not to be human subjects research by the University of Pennsylvania Institutional Review Board. Here we report our findings following the Strengthening the Reporting of Observational Studies in Epidemiology (STROBE) guidelines.
+
+### Data Sources
+#### Drug Treatment Centers (DTC) 
+
+The National Survey of Substance Abuse Treatment Services (N-SSATS) is conducted by the Substance Abuse and Mental Health Services Administration (SAMSHA) on an annual basis. Facilities which voluntarily responded and agreed to be represented are included in the directory. For each facility, information on their service offerings, licensure, payment forms and funding structure, street address, and contact information are collected. 
+
+We obtained N-SSATS directory listings in PDF format for the years 2005-2021, and CSV format for 2022-2023. Prior to 2005, the text was not directly embedded in each PDF document, and was instead created through optical character recognition, introducing significant barriers to data cleaning. Data ingestion from each PDF was performed using the R package readPDF.
+
+#### Crime Data
+
+We identified and accessed open data portals with geolocated, up-to-date crime incident records for medium and large US cities with populations above 300,000 (Atlanta, Austin, Baltimore, Chicago, Cincinnati, Dallas, Denver, Detroit, Los Angeles, New York City, Philadelphia, San Francisco, Seattle). We included records which contained complete date of incident, latitude and longitude where the incident occurred, and crime description data fields. 
+
+Incidents were subset into two groups: all crimes, and violent crimes. Per the U.S. Federal Bureau of Investigation (FBI) Uniform Crime Reporting (UCR) Program, any crime which was recorded as murder, non-negligent manslaughter (homicide), rape, robbery, or aggravated assault was considered to be “violent crime.”
+
+#### Neighborhood Data
+
+Community demographics for each block group in each city were taken from five-year American Community Survey (ACS) estimates. Shapefiles and source tables were retrieved from the IPUMS National Historical Geographic Information System (NHGIS). Variables including population totals and median household income in $10,000s,
+
+### Measures
+
+We calculated neighborhood deprivation with the formula {((c/10+d/10)-(a/10+b/10))/4} using census tract-level items from ACS: (a) adults ≥25 years with a college degree, (b) owner-occupied housing, (c) households with incomes below the federal poverty threshold, and (d) female-headed households with children (percentages are entered as whole numbers, not decimals); range=[-5 is very low/little deprivation, +5 is very severe deprivation]. 
+
+We assessed segregation using Index of Concentration at the Extremes (ICE) by subtracting the number of non-Latino Blacks from the number of non-Latino Whites in a census tract and dividing by census tract population; range=[-1 is 100% Black; 0 is 50% Black, 50% White; 1 is 100% White].
+
+### Analytic Approach
+
+Similar to other studies (Cantor 2022), we linked facilities longitudinally across years using geolocation (ArcGIS Pro, V.10.8.2; Esri) and probabilistic linkage. We conducted this "fuzzy" linkage by generating Jaro-Winkler string similarity scores for each field of each clinic-year observation (CITE). Pairwise comparisons were blocked within postal codes for computational efficiency. The sub-scores for geocoded X/Y coordinates, street address, and clinic name were weighted at 4,3, and 1 respectively, then summed into a total score. Pairwise comparisons with similarity scores above the 85th percentile were considered true matches. Matching was conducted using the reclin2 package in R. 
+
+DTCs were occasionally listed under two different entities providing different services, on different floors of the same street address. As our unit of analysis is the point location of each DTC, centers meeting these criteria were represented as a single site. We used ArcGIS’ spatial join tool to identify the census block group containing each DTC and assigned the corresponding block group measures.
+
+Our primary outcome of interest was the incidence of violent crime in the geographic area surrounding DTCs. Density calculations were performed using concentric rings centered around the point location of each DTC, with the density determined by dividing the count of crimes within each ring by the total area of the ring, for each year. Ring sizes were selected at even Euclidean 100ft radius increments, up to 0.25mi (0.4 km), generally considered walking distance in urban centers. Additionally, a larger catchment of 0.5mi (0.8 km) radius was assessed to capture larger neighborhood-level effects as most non-recreational urban walking trips are ≤0.5 miles. To explore XXX, we next calculated median Euclidean distance to a violent crime from each DTC. 
+
+[Currently approaching using difference in difference, filtering to the clinics with 5 years of data at a minimum, using the pre-treatment clinics at a given year as the control. All p-values reported are presented as raw, and Holm-Bonferroni corrected for multiple comparisons.]
+
+### Sensitivity Analysis 
+
+[We compare the discriminatory ability of these two measures in the sensitivity analysis.]
+[Debating adding in a knox test as sensitivity analysis]
+
+## Results {#sec-results}
+
+### Clinics Identified
+
+In total, we identified ```r length(unique(clinics_sample$clinic_id))``` clinics in ```r length(unique(included_cities))``` cities, across ```r max(clinics_sample$year)-min(clinics_sample$year)``` years:
+
+| City           | State                  |
+|----------------|------------------------|
+| Atlanta        | Georgia                |
+| Baltimore      | Maryland               |
+| Chicago        | Illinois               |
+| Denver         | Colorado               |
+| Los Angeles    | California             |
+| New York       | New York               |
+| Philadelphia   | Pennsylvania           |
+| San Francisco  | California             |
+| Seattle        | Washington             |
+
+```{r}
+clinic_year_summary[1] %>%
+  as.data.frame() %>%
+  pivot_longer(cols=c(counts_compare.n,counts_compare.official_count), names_to = "Count",values_to = "value") %>%
+  mutate(Count = factor(Count, levels = c("counts_compare.n","counts_compare.official_count"), labels = c("Respondent Facilities","Official Count"))) %>%
+  rename(Year = counts_compare.year) %>%
+  ggplot(aes(x=Year, y = value, group = Count, color = Count)) +
+    geom_point() +
+    geom_line() +
+    annotate("rect", xmin = 2021, xmax = 2025, ymin = 0, ymax = 19000, 
+           alpha = .2) +
+    ylim(0,19000) +
+    theme_minimal() +
+    scale_color_brewer(palette = "Dark2") +
+    labs(
+      x = "Year",
+      y = "Clinics (n)",
+      title = "Count of Clinics by Year\nSAMSHA Certified vs NSSATS Respondents"
+    )
+```
+
+### DTC & Crime Distribution: Philadelphia & Seattle
+
+```{r}
+#| label: philly-map
+#| fig-height: 10
+#| 
+all_layer_map[[12]]
+```
+```{r}
+#| label: seattle-map
+#| fig-height: 15
+#| 
+all_layer_map[[15]]
+```
+
+### Clinic Treatment Status
+
+```{r}
+#| label: panel-view
+#| fig-height: 5
+#| 
+
+panelview(violent_count ~ open, # Using the treatment var which allows treatment switching after initial assignment
+          data = clinics_open %>% 
+            filter(buffer==min(set_units(buffers,"m"))), 
+          index = c("group","year"), 
+          by.timing = TRUE,
+          main = "Treatment Status - Clinic Opening\nAll Clinics",
+          xlab = "Year", ylab = "Clinic ID")
+```
+
+### Unadjusted Differences: Clinic Opening
+
+::: {.panel-tabset}
+
+#### Crimes Against Persons
+```{r}
+clinics_open %>%
+  st_drop_geometry() %>%
+  filter(city == "Philadelphia") %>%
+  mutate(period = factor(period, levels = c(0,1), labels = c("Pre-Opening", "Post-Opening"))) %>%
+  ggplot(aes(x=person_median_distance, group = period, fill = period)) +
+  geom_density(alpha=.8) +
+  scale_fill_brewer(palette = 10) +
+  theme_minimal() +
+  labs(
+    x = "Median Distance to Crime",
+    y = "Density",
+    title = "Median Distance: DTC to Crimes Against Persons"
+  )
+
+```
+
+#### Crimes Against Property
+```{r}
+
+clinics_open %>%
+  st_drop_geometry() %>%
+  filter(city == "Philadelphia") %>%
+  mutate(period = factor(period, levels = c(0,1), labels = c("Pre-Opening", "Post-Opening"))) %>%
+  ggplot(aes(x=property_median_distance, group = period, fill = period)) +
+  geom_density(alpha=.8) +
+  scale_fill_brewer(palette = 10) +
+  theme_minimal() +
+  labs(
+    x = "Median Distance to Crime",
+    y = "Density",
+    title = "Median Distance: DTC to Crime Against Property"
+  )
+
+```
+
+:::
+
+### Unadjusted Differences: Clinic Closure
+::: {.panel-tabset}
+
+#### Crimes Against Persons
+```{r}
+clinics_close %>%
+  st_drop_geometry() %>%
+  filter(city == "Philadelphia") %>%
+  mutate(period = factor(period_closure, levels = c(0,1), labels = c("Pre-Closure", "Post-Closure"))) %>%
+  ggplot(aes(x=person_median_distance, group = period, fill = period)) +
+  geom_density(alpha=.8) +
+  scale_fill_brewer(palette = 10) +
+  theme_minimal() +
+  labs(
+    x = "Median Distance to Crime",
+    y = "Density",
+    title = "Median Distance: DTC to Crimes Against Persons"
+  )
+
+```
+
+#### Crimes Against Property
+```{r}
+
+clinics_close %>%
+  st_drop_geometry() %>%
+  filter(city == "Philadelphia") %>%
+  mutate(period = factor(period_closure, levels = c(0,1), labels = c("Pre-Closure", "Post-Closure"))) %>%
+  ggplot(aes(x=property_median_distance, group = period, fill = period)) +
+  geom_density(alpha=.8) +
+  scale_fill_brewer(palette = 10) +
+  theme_minimal() +
+  labs(
+    x = "Median Distance to Crime",
+    y = "Density",
+    title = "Median Distance: DTC to Crime Against Property"
+  )
+
+```
+:::
+
+### Unadjusted Differences: T-Tests & Parallel Trends
+
+::: {.panel-tabset}
+
+#### Clinic Opening
+```{r}
+
+clinics_open %>%
+  filter(time_point %in% seq(-3,3)) %>%
+  st_drop_geometry() %>%
+  group_by(buffer) %>%
+  do(tidy(t.test(units::drop_units(violent_count/area) ~ period, data = .))) %>%
+  ggplot() +
+  geom_line(aes(x=buffer,y=estimate*-1), color=cb_palette[1]) +
+  geom_ribbon(aes(x=buffer,ymin=conf.low*-1,ymax=conf.high*-1), alpha = 0.3, fill=cb_palette[1]) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  ylab("Violent Crime Count Change (t-test)") +
+  xlab("Buffer Size") +
+  labs(
+    title = "T-test: Unadjusted Violent Crime Counts - Opening",
+    subtitle = "2004-2024, Offers Treatment, Geolocation Score >95%, 5+ Years of Clinic Operation",
+    caption = "Data: U.S. Census Bureau, NHGIS, OpenStreetMap, SAMSHA"
+  ) +
+  theme_clean()
+```
+
+#### Clinic Closure
+```{r}
+clinics_close %>%
+  filter(time_point_closure %in% seq(-3,3)) %>%
+  st_drop_geometry() %>%
+  group_by(buffer) %>%
+  do(tidy(t.test(units::drop_units(violent_count/area) ~ period_closure, data = .))) %>%
+  ggplot() +
+  geom_line(aes(x=buffer,y=estimate*-1), color=cb_palette[1]) +
+  geom_ribbon(aes(x=buffer,ymin=conf.low*-1,ymax=conf.high*-1), alpha = 0.3, fill=cb_palette[1]) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  ylab("Violent Crime Count Change (t-test)") +
+  xlab("Buffer Size") +
+  labs(
+    title = "T-test: Unadjusted Violent Crime Counts - Closure",
+    subtitle = "2004-2024, Offers Treatment, Geolocation Score >95%, 5+ Years of Clinic Operation",
+    caption = "Data: U.S. Census Bureau, NHGIS, OpenStreetMap, SAMSHA"
+  ) +
+  theme_clean()
+
+```
+:::
+
+### OLS Model Results - **Opening**
+```{r}
+#| echo: false
+
+df <- clinics_open %>%
+  mutate(
+    crime_density = drop_units(violent_count / area),
+    buffer = drop_units(buffer)
+  ) %>%
+  select(
+    group,
+    city,
+    buffer,
+    violent_count,
+    property_count,
+    crime_density,
+    person_count,
+    area,
+    violent_median_distance,
+    person_median_distance,
+    property_median_distance,
+    tot_pop_estimate,
+    ice,
+    nds,
+    year,
+    time_point,
+    period
+  ) %>%
+  na.omit() %>%
+  drop_units()
+
+# Dictionary of regression coefficients for plotting / tables
+dict = c("ice"   = "ICE",
+"nds" = "NDS",
+"ice:nds" = "ICExNDS",
+"bufer" = "Buffer Radius",
+"i(time_point, ref = 0, keep = -3:3)-3" = "Open -3",
+"i(time_point, ref = 0, keep = -3:3)-2" = "Open -2",
+"i(time_point, ref = 0, keep = -3:3)-1" = "Open -1",
+"i(time_point, ref = 0, keep = -3:3)1" = "Open +1",
+"i(time_point, ref = 0, keep = -3:3)2" = "Open +2",
+"i(time_point, ref = 0, keep = -3:3)3" = "Open +3")
+
+m_nb_person_open <- glmmTMB(
+  person_count ~ 
+     i(time_point, ref=0, keep = -3:3) + ice*nds +
+    (1 | city),
+  offset = log(area),
+  family = gaussian(),
+  data = df %>% filter(buffer == 548.64)
+)
+
+m_nb_property_open <- glmmTMB(
+  property_count ~ 
+     i(time_point, ref=0, keep = -3:3) + ice*nds +
+    (1 | city),
+  offset = log(area),
+  family = gaussian(),
+  data = df %>% filter(buffer == 548.64)
+)
+
+models <- list(
+  Property = m_nb_property_open,
+  Person   = m_nb_person_open
+)
+```
+
+::: {.panel-tabset}
+#### Table: Density
+```{r}
+modelsummary(
+    setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict, stars = TRUE, statistic = 'conf.int',
+  gof_map = NA
+  )
+```
+
+#### Fig: Density
+```{r}
+modelplot(setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict) +
+    labs(x = 'Coef: Crime Density', 
+         y = 'Term',
+         title = 'Negative Binomial GLMM\nPre/Post Opening vs Crime Density') + 
+          geom_vline(xintercept = 0, color = 'orange', alpha = 0.6) +
+    scale_color_brewer(palette = "Dark2")
+
+```
+#### Table: Distance
+```{r}
+#| echo: false
+dist_nb_person_open <-  glmmTMB(
+  person_median_distance ~ 
+    i(time_point, ref = 0, keep =-3:3) + ice*nds +
+  (1 | city),
+  data = df %>% filter(buffer == min(buffers)),
+  family = gaussian()
+)
+
+dist_nb_property_open <-  glmmTMB(
+  property_median_distance ~ 
+    i(time_point, ref = 0, keep =-3:3) + ice*nds +
+  (1 | city),
+  data = df %>% filter(buffer == min(buffers)),
+  family = gaussian()
+)
+
+models <- list(
+  Property = dist_nb_property_open,
+  Person   = dist_nb_person_open
+)
+```
+
+```{r}
+modelsummary(
+    setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict, stars = TRUE, statistic = 'conf.int',
+  gof_map = NA
+  )
+```
+#### Fig: Distance
+```{r}
+modelplot(setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict) +
+    labs(x = 'Coef: Crime Distance', 
+         y = 'Term',
+         title = 'Negative Binomial GLMM\nPre/Post Opening vs Crime Distance') + 
+          geom_vline(xintercept = 0, color = 'orange', alpha = 0.6) +
+    scale_color_brewer(palette = "Dark2")
+
+```
+:::
+
+### OLS Model Results - **Closure**
+```{r}
+#| echo: false
+
+df <- clinics_close %>%
+  mutate(
+    time_point = time_point_closure,
+    crime_density = drop_units(violent_count / area),
+    buffer = drop_units(buffer)
+  ) %>%
+  select(
+    group,
+    city,
+    buffer,
+    violent_count,
+    property_count,
+    crime_density,
+    person_count,
+    area,
+    violent_median_distance,
+    person_median_distance,
+    property_median_distance,
+    tot_pop_estimate,
+    ice,
+    nds,
+    year,
+    time_point,
+    period
+  ) %>%
+  na.omit() %>%
+  drop_units()
+
+# Dictionary of regression coefficients for plotting / tables
+dict = c("ice"   = "ICE",
+"nds" = "NDS",
+"ice:nds" = "ICExNDS",
+"bufer" = "Buffer Radius",
+"i(time_point, ref = 0, keep = -3:3)-3" = "Close -3",
+"i(time_point, ref = 0, keep = -3:3)-2" = "Close -2",
+"i(time_point, ref = 0, keep = -3:3)-1" = "Close -1",
+"i(time_point, ref = 0, keep = -3:3)1" = "Close +1",
+"i(time_point, ref = 0, keep = -3:3)2" = "Close +2",
+"i(time_point, ref = 0, keep = -3:3)3" = "Close +3")
+
+m_nb_person_close <- glmmTMB(
+  person_count ~ 
+     i(time_point, ref=0, keep = -3:3) + ice*nds +
+    (1 | city),
+  offset = log(area),
+  family = gaussian(),
+  data = df %>% filter(buffer == 548.64)
+)
+
+m_nb_property_close <- glmmTMB(
+  property_count ~ 
+     i(time_point, ref=0, keep = -3:3) + ice*nds +
+    (1 | city),
+  offset = log(area),
+  family = gaussian(),
+  data = df %>% filter(buffer == 548.64)
+)
+
+models <- list(
+  Property = m_nb_property_close,
+  Person   = m_nb_person_close
+)
+```
+
+::: {.panel-tabset}
+#### Table: Density
+```{r}
+modelsummary(
+    setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict, stars = TRUE, statistic = 'conf.int',
+  gof_map = NA
+  )
+```
+
+#### Fig: Density
+```{r}
+modelplot(setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict) +
+    labs(x = 'Coef: Crime Density', 
+         y = 'Term',
+         title = 'Negative Binomial GLMM\nPre/Post Closure vs Crime Density') + 
+          geom_vline(xintercept = 0, color = 'orange', alpha = 0.6) +
+    scale_color_brewer(palette = "Dark2")
+
+```
+#### Table: Distance
+```{r}
+#| echo: false
+dist_nb_person_close <-  glmmTMB(
+  person_median_distance ~ 
+    i(time_point, ref = 0, keep =-3:3) + ice*nds +
+  (1 | city),
+  data = df %>% filter(buffer == min(buffers)),
+  family = gaussian()
+)
+
+dist_nb_property_close <-  glmmTMB(
+  property_median_distance ~ 
+    i(time_point, ref = 0, keep =-3:3) + ice*nds +
+  (1 | city),
+  data = df %>% filter(buffer == min(buffers)),
+  family = gaussian()
+)
+
+models <- list(
+  Property = dist_nb_property_close,
+  Person   = dist_nb_person_close
+)
+```
+
+```{r}
+modelsummary(
+    setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict, stars = TRUE, statistic = 'conf.int',
+  gof_map = NA
+  )
+```
+#### Fig: Distance
+```{r}
+modelplot(setNames(models, c("(1: Property)", "(2: Persons)")),
+  coef_map = dict) +
+    labs(x = 'Coef: Crime Distance', 
+         y = 'Term',
+         title = 'Negative Binomial GLMM\nPre/Post Closure vs Crime Distance') + 
+          geom_vline(xintercept = 0, color = 'orange', alpha = 0.6) +
+    scale_color_brewer(palette = "Dark2")
+
+```
+:::
+
+### Difference-in-Difference
+::: {.panel-tabset}
+#### Distance
+```{r}
+dist_forest
+```
+
+#### Distance - By City
+```{r}
+dist_forest_city
+```
+
+#### Density
+```{r}
+buffer_forest
+```
+
+#### Density - By City
+```{r}
+buffer_forest_city
+```
+:::
+
+## Conclusions
+### Primary Findings
+
+- Substantial growth in DTC availability in U.S. cities from 2004 to 2024
+- Neighborhoods with greater social disadvantage had higher levels of violent crime
+- In aggregate, across all cities and years, we found **no significant relationship** between DTC operation and violent crime, crimes against persons, or crimes against property
+
+City-level estimates are more varied: 
+
+- Most cities have no significant relationship by either measure
+- NYC and Atlanta showed protective associations with DTC opening
+- Denver and Philadelphia showed potential positive associations when measured via Euclidean distance, and negative to null associations when measured with buffered-density
+
+## Limitations, Future Directions
+
+- Causal inference is dependent upon assumed parallel trends
+- Correction for multiple comparisons in confidence interval selection is needed
+- Social covariates treated as uniform across time (2005 starting estimates)
+- Euclidean distance measurements do not reflect street-network based travel times
+- Spatial autocorrelation should be addressed using k-means clustered nearest neighbor crime values
+
+## References
+
+::: {#refs}
+:::
