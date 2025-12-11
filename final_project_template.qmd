@@ -1,7 +1,7 @@
 ---
-title: "Your Title"
+title: "Microbiology of"
 subtitle: "BMIN503/EPID600 Final Project"
-author: "FirstName LastName"
+author: "Jessica Johnson"
 format: html
 editor: visual
 number-sections: true
@@ -14,21 +14,254 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ## Overview {#sec-overview}
 
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+I am working with Dr. Michaela Anderson and Dr. Gabrielle Mezochow - both doctors in Pulmonary Medicine and Critical Care here at Penn. We are working with data from the Lung Transplant Outcomes Group (LTOG), a multi-center cohort study on the long term quality of life and survival of Lung Transplant patients. We are specifically examining the effect of bacterial pathogens on post-Lung Transplantation outcomes.
 
 ## Introduction {#sec-introduction}
 
-Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.
+Infection is the leading cause of morbidity and mortality after lung transplantation, particularly within the first year post-transplant, and remains the highest among all solid organ transplants. (1). Bacterial infections predominate in the first month of transplant, often due to Hospital-acquired and multi-drug resistant organisms. From then on, recurrent infections are often problematic, especially considering the profound presuppression drugs required to prevent organ rejections. (2)
 
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+We aim to address the following in this project: what are risk factors associated with infection and infection-related death? What kinds of pathogens are common? Are these infections recurrent? There exists a need for a large resource on microbial data to better under the epidemiology of these infections. This project is interdisciplinary, connecting to the field of biomedical research, informatics, and microbiology. In my experience working in lung transplant research, and certainly in Dr. Anderson’s and Dr. Mezochow’s experience, many unknowns in transplant medicine lead to frustration, hesitation and unease from patients. Our hope is to contribute an incremental amount towards breaking down the barriers to understanding these life-saving surgeries.
+
+Sources so far:
+
+1.  Immunopathology of lung transplantation: from infection to rejection and vice versa - PubMed
+
+2.  Lung Transplantation \| New England Journal of Medicine
 
 ## Methods {#sec-methods}
 
-Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+```{r}
+# DEMOGRAPHICS
+
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(purrr)
+
+# columns (case-insensitive)
+pid_col     <- find_col(df, c("pid","study_id","studyid","patient_id","subject_id"))
+group_col   <- find_col(df, c("GROUPING","grouping","group","Group"))
+dem4_col    <- find_col(df, c("Dem4","dem4"))
+dem6_col    <- find_col(df, c("Dem6","dem6"))
+age_cat_col <- find_col(df, c("Age_cat","age_cat","AgeCat","agecat"))
+bmi_cat_col <- find_col(df, c("bmi_cat","BMI_cat","bmicat","BMIcat"))
+txp_col     <- find_col(df, c("txp_type","txptype","Txp_Type","transplant_type","txp type"))
+
+age_cont_col <- find_col(df, c("age","Age","age_years","Age_Years"))
+bmi_cont_col <- find_col(df, c("bmi","BMI","bmi_value","bmi_cont"))
+
+# Unique pid + normalization
+dfu <- if (!is.na(pid_col)) df %>% distinct(.data[[pid_col]], .keep_all = TRUE) else df
+
+if (is.na(group_col)) {
+  dfu <- dfu %>% mutate(`__ALL__` = "All")
+  group_col <- "__ALL__"
+}
+group_names <- dfu %>% pull(.data[[group_col]]) %>% as.character() %>% unique() %>% sort()
+
+# Dem4 tidy
+if (!is.na(dem4_col)) {
+  dfu[[dem4_col]] <- dfu[[dem4_col]] |> as.character() |> stringr::str_trim() |> stringr::str_to_title()
+  dfu[[dem4_col]] <- factor(dfu[[dem4_col]], levels = c("Male","Female"))
+}
+
+# Dem6 recode for namesake
+race_map <- c(
+  "1"  = "Native American/Alaska Native",
+  "2"  = "Asian/Asian American",
+  "3"  = "Black/African American",
+  "4"  = "Native Hawaiian/Other Pacific Islander",
+  "5"  = "White/Caucasian",
+  "98" = "Other"
+)
+if (!is.na(dem6_col)) {
+  dem6_lab_col <- paste0(dem6_col, "_label")
+  dfu[[dem6_lab_col]] <- recode(as.character(dfu[[dem6_col]]), !!!race_map)
+  dfu[[dem6_lab_col]] <- factor(
+    dfu[[dem6_lab_col]],
+    levels = c(
+      "White/Caucasian",
+      "Black/African American",
+      "Asian/Asian American",
+      "Native American/Alaska Native",
+      "Native Hawaiian/Other Pacific Islander",
+      "Other"
+    )
+  )
+} else {
+  dem6_lab_col <- NA_character_
+}
+
+make_cat_section <- function(data, var_col, var_label, group_col, group_names) {
+  if (is.na(var_col)) return(NULL)
+  res <- data %>%
+    filter(!is.na(.data[[var_col]])) %>%
+    count(.data[[group_col]], .data[[var_col]], name = "n") %>%
+    group_by(.data[[group_col]]) %>%
+    mutate(denom = sum(n)) %>%
+    ungroup() %>%
+    mutate(value = sprintf("%d (%.0f%%)", n, 100 * n / pmax(denom, 1))) %>%
+    select(all_of(group_col), all_of(var_col), value) %>%
+    pivot_wider(names_from = all_of(group_col), values_from = value) %>%
+    arrange(.data[[var_col]]) %>%
+    transmute(
+      Variable = var_label,
+      Characteristic = as.character(.data[[var_col]]),
+      across(everything(), as.character)
+    )
+
+  for (g in group_names) if (!g %in% names(res)) res[[g]] <- NA_character_
+  res %>% select(Variable, Characteristic, all_of(group_names))
+}
+
+fmt_iqr <- function(x, digits = 0) {
+  x <- suppressWarnings(as.numeric(x))
+  x <- x[!is.na(x)]
+  if (!length(x)) return("NA")
+  q <- quantile(x, probs = c(.25, .5, .75), na.rm = TRUE)
+  paste0(
+    format(round(q[2], digits), nsmall = digits), " (",
+    format(round(q[1], digits), nsmall = digits), "–",
+    format(round(q[3], digits), nsmall = digits), ")"
+  )
+}
+
+make_cont_section <- function(data, cont_col, row_label, group_col, group_names, digits = 0) {
+  if (is.na(cont_col)) return(NULL)
+  res <- data %>%
+    group_by(.data[[group_col]]) %>%
+    summarise(val = fmt_iqr(.data[[cont_col]], digits = digits), .groups = "drop") %>%
+    pivot_wider(names_from = all_of(group_col), values_from = val) %>%
+    mutate(Variable = row_label, Characteristic = "") %>%
+    select(Variable, Characteristic, everything())
+
+  for (g in group_names) if (!g %in% names(res)) res[[g]] <- NA_character_
+  res %>% select(Variable, Characteristic, all_of(group_names))
+}
+
+add_separators <- function(tbl) {
+  if (!nrow(tbl)) return(tbl)
+  tbl %>%
+    group_split(Variable, .keep = TRUE) %>%
+    map_dfr(~ bind_rows(.x, tibble(Variable = "", Characteristic = "")))
+}
+
+blocks <- list(
+  # continuous rows (appear first like in poster tables)
+  make_cont_section(dfu, age_cont_col, "Age, median (IQR), years", group_col, group_names, digits = 0),
+  make_cat_section(dfu, dem4_col,          "Sex (Dem4)",             group_col, group_names),
+  make_cat_section(dfu, dem6_lab_col,      "Race/Ethnicity (Dem6)",  group_col, group_names),
+  make_cat_section(dfu, age_cat_col,       "Age Category",           group_col, group_names),
+  make_cat_section(dfu, bmi_cat_col,       "BMI Category",           group_col, group_names),
+  make_cont_section(dfu, bmi_cont_col, "Body mass index, median (IQR), kg/m²", group_col, group_names, digits = 1),
+  make_cat_section(dfu, txp_col,           "Transplant Type",        group_col, group_names)
+)
+blocks <- compact(blocks)  # drop N/A
+
+final_tab <- if (length(blocks)) bind_rows(blocks) else
+  tibble(Variable = "Info", Characteristic = "No variables found to summarize.")
+
+# insert blank separator rows by Variable)
+final_tab <- add_separators(final_tab)
+
+# Add N-per-group header row
+counts <- dfu %>% count(.data[[group_col]], name = "N") %>%
+  mutate(N = as.character(N)) %>%
+  pivot_wider(names_from = all_of(group_col), values_from = N)
+
+for (g in group_names) if (!g %in% names(counts)) counts[[g]] <- "0"
+counts <- counts %>% select(all_of(group_names))
+
+n_row <- tibble(Variable = "_Meta", Characteristic = "N per group") %>%
+  bind_cols(counts)
+
+# combine, ensuring same columns
+final_tab <- bind_rows(n_row, final_tab %>% select(Variable, Characteristic, all_of(group_names)))
+
+```{r}
+# RESPIRATORY SOURCES
+
+find_col <- function(d, options) {
+  nm <- names(d)
+  for (o in options) {
+    hit <- which(tolower(nm) == tolower(o))
+    if (length(hit)) return(nm[hit[1]])
+  }
+  NA_character_
+}
+
+# Identify columns (flexible names)
+pid_col    <- find_col(df, c("pid","study_id","studyid","patient_id","subject_id"))
+group_col  <- find_col(df, c("GROUPING","grouping","group","Group"))
+source_col <- find_col(df, c("source_label","source","respiratory_source","resp_source"))
+king_col   <- find_col(df, c("kingdom","genus"))
+months_col <- find_col(df, c("months_post_tx","months_post_txp","months_since_tx",
+                             "months_after_tx","months_post_transplant"))
+
+stopifnot(!is.na(pid_col), !is.na(group_col), !is.na(source_col), !is.na(king_col), !is.na(months_col))
+
+# Derive days from months (using 30.44 days/month)
+df <- df %>%
+  mutate(
+    .months = suppressWarnings(as.numeric(.data[[months_col]])),
+    days_post_tx = round(.months * 30.44)  # or floor(), your pick
+  )
+
+resp_sources <- c("BAL", "Sputum", "Lung Tissue", "ETA")
+
+df_bact <- df %>%
+  filter(
+    source_label %in% resp_sources |
+      .data[[source_col]] %in% resp_sources
+  ) %>%
+  filter(tolower(as.character(.data[[king_col]])) == "bacteria")
+
+# First positive respiratory bacterial culture per participant
+df_first <- df_bact %>%
+  filter(!is.na(days_post_tx)) %>%
+  arrange(.data[[pid_col]], days_post_tx) %>%
+  group_by(.data[[pid_col]]) %>%
+  slice(1) %>%
+  ungroup()
+
+# Totals per GROUPING (unique participants)
+group_totals <- df %>%
+  distinct(.data[[pid_col]], .data[[group_col]]) %>%
+  count(.data[[group_col]], name = "N_total") %>%
+  rename(GROUPING = !!group_col)
+
+# positives per GROUPING + median/IQR in *days* to first positive
+group_pos <- df_first %>%
+  distinct(.data[[pid_col]], .data[[group_col]], days_post_tx) %>%
+  group_by(.data[[group_col]]) %>%
+  summarise(
+    N_positive  = n(),
+    Median_days = median(days_post_tx, na.rm = TRUE),
+    Q1          = quantile(days_post_tx, 0.25, na.rm = TRUE),
+    Q3          = quantile(days_post_tx, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    IQR_days = paste0(round(Q1,0), "–", round(Q3,0))
+  ) %>%
+  select(-Q1, -Q3) %>%
+  rename(GROUPING = !!group_col)
+
+# FINALLY merge
+summary_table <- group_totals %>%
+  left_join(group_pos, by = "GROUPING") %>%
+  mutate(
+    N_positive       = replace_na(N_positive, 0L),
+    Median_days      = ifelse(is.na(Median_days), NA, round(Median_days, 0)),
+    Percent_positive = round(100 * N_positive / N_total, 1)
+  ) %>%
+  select(GROUPING, N_total, N_positive, Percent_positive, Median_days, IQR_days) %>%
+  arrange(GROUPING)
+```
 
 ## Results {#sec-results}
 
-Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+30,764 samples were analyzed, including 21,034 respiratory and 6,294 blood cultures, from 1,314 recipients (median 17, IQR 10-30 per recipient) over a median of 8.6 (IQR 1.7-32.1) months post-transplant. 1,061 (80.7%) had at least one positive bacterial respiratory culture, and 181 (13.7%) had at least one positive bacterial blood culture. The median time from transplant to first respiratory bacterial growth was 30 days (IQR 0–118). Notably, 94.3% of those with Cystic Fibrosis/Bronchiectasis had at least one positive respiratory bacterial culture post-transplant. The most common respiratory pathogens were Pseudomonas (47.5%), *Staphylococcus aureus (*37.1%), Stenotrophomonas (18.4%), and Mycobacterium (16.1%). Among those who grew each organism, the percentage with the same organism on ≥1 additional sample ≥30 days later was highest for Pseudomonas (68.4%), followed by Stenotrophomonas (43.4%), Mycobacterium (37.7%), and *Staphylococcus aureus* (32.9%).
 
 ## Conclusion
 
