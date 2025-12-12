@@ -1,0 +1,1870 @@
+---
+title: "Identifying Screening-Relevant Context in an OSA Study Using Clinical Note Metadata and LLM-Extracted Signals"
+subtitle: ""
+author: "Ashley Batugo"
+date: "December 12, 2025"
+format:
+  html:
+    df-print: paged
+    self-contained: true
+    embed-resources: true
+    css: "osa-report-theme.css"
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    smooth-scroll: true
+    page-layout: full
+    anchor-sections: true
+embed-resources: true
+include-in-header: |
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Source+Sans+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+---
+
+## Overview
+
+This project examined which note-level contextual and metadata features are associated with clinical research coordinator (CRC) exclusion decisions during screening for an NIH-funded Obstructive Sleep Apnea (OSA) study. CRCs rely on two categories of information found in unstructured Electronic Health Record (EHR) notes: true clinical contraindications such as active medical instability, and operational skip signals including recent surgery, hospitalization, or pending procedures. Using LLM extracted note-level evidence, I constructed a de-identified, note level analytic dataset and used multivariable logistic regression as an exploratory modeling approach to identify which metadata features were most associated with both informal and formal exclusionary contexts. Discussions with Dr. Danielle Mowery and Emily Schriver helped shape the dataset design and modeling strategy and Paula Salvador, the lead CRC for this study, provided insights into the pre-screening process and the reasons behind choosing not to reach out to certain patients. The materials for this project can be found in this [Github repository](https://github.com/ashbatu/BMIN503_Final_Project).
+
+## Introduction {#sec-introduction}
+
+Clinical research is essential for advancing medical knowledge, particularly for conditions that are often underrecognized and underdiagnosed, such as OSA ([Motamedi et al., 2009](https://pmc.ncbi.nlm.nih.gov/articles/PMC3096276/)). Similar to clinical trials, prospective clinical studies depend on many factors including strong study design, careful planning, timely recruitment, and sustained participation retention ([Lai et al., 2019](https://journals.sagepub.com/doi/full/10.1177/1740774519829709?casa_token=mm71iIUcfGkAAAAA%3AvRwJV3xTHnNLQ2-WsNICmuzN-IQLbLRioaR-lmo3lrqEWKBfZ-WFaB21-bRNLq34dCeeWsCGKWi9Yg)). However, identifying eligible patients remains one of the major challenges in clinical research ([Cai et al., 2021](https://acrjournals.onlinelibrary.wiley.com/doi/10.1002/acr2.11289#:~:text=The%20LiiRA%20study%20team%20incorporated,not%20screening%20out%20eligible%20patients.)). Although researchers increasingly rely on EHRs to support recruitment, determining whether a patient should be contacted still requires detailed manual review of unstructured EHR notes. This process is time-consuming, requires clinical judgement, and often incorporates not only formal contraindications but also operational 'skip signals', which affect whether initiating contact is appropriate. Because of this, chart review can occupy several hours of CRC time each day, slowing recruitment and adding substantial operational burden ([Etchberger, 2016](https://www.linkedin.com/pulse/chart-review-should-sponsors-pay-clinical-research-sites-etchberger#:~:text=Some%20trials%20remain%20very%20complicated,takes%20to%20find%20those%20patients.)). These challenges are particularly critical for milestone-driven NIH-funded projects, where delays in meeting recruitment goals can jeopardize continued funding. This project was motivated by an ongoing NIH-funded OSA clinical study in which our team has faced recruitment delays due to how resource-intensive the chart review process is for the CRCs.
+
+Addressing this problem requires collaboration with experts from different fields including medicine, informatics, and clinical research operations. Clinicians provide the judgement needed to determine which patients should be contacted, assist with recruitment within their own patient populations, and interpret the context of the notes and patient charts. Informatics and data science contribute the methods to extract, organize, and analyze unstructured EHR data to help more efficiently determine whether is it suitable to contact patients. In developing this project, conversations with Dr. Danielle Mowery, Director of Clinical Research Informatics Core (CIC), and Emily Schriver, a translational data scientist in the CIC, helped clarify how informatics can be applied to identify meaningful EHR features that support clinical teams in improving recruitment workflows. This problem is also closely tied to clinical research operations, since improving recruitment directly benefits those responsible for identifying, reaching out to, and enrolling participants.
+
+## Methods {#sec-methods}
+
+### Methods Overview
+
+This project involved two methodological phases.
+
+**Phase 1** focused on extracting note-level evidence related to the exclusion criteria using a Large Language Model (LLM) to classify unstructured notes in the EHR within a secure, HIPAA-compliant environment. This phase included identifying the study population, retrieving and de-identifying relevant notes, developing and freezing the LLM prompt, performing a light face-validity check on a small sample, and applying the prompt to assign each note to any of the three exclusion-context buckets.
+
+**Phase 2** used the LLM-generated labels with the note metadata to construct the analytic dataset and evaluate which combinations of EHR note metadata (specialty, note type, encounter type, and temporal window) most effectively reveal clinically relevant contexts that influence CRC outreach decisions. This phase involved categorical feature engineering, handling missing metadata, and fitting multivariable logistic regression models in R to examine both the overall exclusion-context signals and category-specific patterns. All R data for feature engineering and modeling are included in this report.
+
+### PHASE 1 - LLM-Based Evidence Extraction
+
+::: callout-important
+No functional code is included for Phase 1 because it involved protected health information (PHI) and was completed entirely within Penn Medicine's HIPAA-compliant environments (Databricks and the LPC cluster). All patient identification, note retrieval, de-identification, and LLM processing were completed using SQL, Python, and R inside these secure workspaces. Important code snippets used during this phase are included.
+:::
+
+#### Study Population
+
+Patients were identified from a CRC-maintained spreadsheet containing all individuals who had recent visits to a Penn Medicine Sleep Center and were automatically and manually reviewed during screening for the NIH-funded OSA clinical trial. For this project, patients were included if:
+
+1.  They underwent manual chart review by the CRC, and
+2.  They were not recruited due to an exclusion classified as "Medical Condition" or "Other"
+
+From this group, the cohort was further restricted to patients with non-administrative exclusion signals that are typically documented in unstructured clinical, pathology, and surgical notes (e.g. cancer, panic disorder, recent surgery, non-OSA sleep condition such as narcolepsy) which require substantial manual review.
+
+``` sql
+-- SQL
+-- filtering for exclusions due to 'Medical Condition' and 'Other' and conditions requiring looking at notes
+create or replace temporary view pts_for_note_extraction as
+select
+  *
+from
+  <obfuscated CRC list of all sleep medicine patients> ml
+where
+  exclusion_criteria in ('Other', 'Medical condition')
+  and notes in (
+    'COPD',
+    'stage 4 CKD',
+    'Heart attack',
+    'CAD',
+    'current chemotherapy',
+    'sarcoidosis',
+    'New diagnosis of systemic lupus',
+    'CKD',
+    'cancer',
+    'other sleep disorder without osa',
+    'Cancer',
+    'recent surgery',
+    'heart failure',
+    'panic disorder',
+    'Scheduled to have nerve stimulator implanted',
+    'Tongue cancer',
+    'recent encounters for IVF',
+    'sarcoidosis',
+    'narcolepsy without osa',
+    'Cancer',
+    'CSA',
+    'cancer, currently on chemotherapy',
+    'Panic disorder, may not be a good candidate for the MRI',
+    'epilepsy',
+    'quadriplegic',
+    'other sleep disorder w/o osa',
+    'cognitive impairment',
+    'heart attack',
+    'other sleep disorders without osa',
+    'cognitive impairment',
+    'heart attack on 6/26/25',
+    'Intellectual disability',
+    'Paroxysmal atrial fibrillation',
+    'recent ER and admission',
+    'thyroid cancer',
+    'Narcolepsy w/o OSA',
+    'Leukemia',
+    'blind',
+    'cerebral palsy',
+    'recent nasal surgery',
+    'sleep disorder without osa',
+    'Current hospitalization',
+    'leukemia',
+    'recent ER and hospitalization due to opioid abuse',
+    'respiratory failure',
+    'recent hospital visit',
+    'neurodevelopmental disorder',
+    'recent lung mass',
+    'Recent hospitalization',
+    'parkinsons',
+    'epilepsy with multiple recent seizures',
+    'cancer receiving chemotherapy',
+    "parkinson's",
+    'recent stroke',
+    'CHF',
+    'recent surgery 9/12',
+    'ckd, needs transplant',
+    'Stroke',
+    'blind',
+    'stroke',
+    'severe opioid use disorder',
+    'lung disease',
+    'disorder of the tongue',
+    'seizure disorder',
+    'Recent surgery',
+    'Experiencing memory/cognitive issues',
+    'multiple recent ER visits',
+    'osteoplasty facial bones augmentation',
+    'heart transplant',
+    'squamous cell carcinoma of the palate',
+    'surgery',
+    'Dr.X instructed CRC to exclude pt from study due to a significant stroke 9/11/25',
+    'Congenital anomalies of skull/face bones'
+  )
+```
+
+#### Data Sources and Note Retrieval
+
+Clinical notes were extracted from the Epic Clarity database on the Penn Medicine Azure Databricks environment. We included all clinical notes (e.g. progress notes, discharge summaries, ED notes) within one year prior to the CRC's pre-screening date, and all documented surgical and pathology notes to capture both operational skip signals and true clinical contraindications. Note-level metadata (note type, encounter specialty, and encounter type) were also retrieved. Finally, each note was assigned to one of four temporal windows (0--30, 31--90, 91--180, and \>180 days) in relation to proximity to pre-screening (a field documented in the CRC spreadsheet).
+
+``` {.r .R}
+# R
+# code applied to each surgical, clinical, and pathology notes dataframe to assign notes to temporal windows
+df %>%
+  mutate(
+    abs_days = abs(delta_days), # getting absolute values for date difference
+    window_bin = case_when(
+      abs_days <= 30                   ~ "0–30d",
+      abs_days > 30  & abs_days <= 90  ~ "31–90d",
+      abs_days > 90  & abs_days <= 180 ~ "91–180d",
+      abs_days > 180                   ~ ">180d"
+    ),
+    window_bin = factor(
+      window_bin,
+      levels = c("0–30d", "31–90d", "91–180d", ">180d")
+    )
+  )
+```
+
+Additionally, each note was prefixed with a standardized header indicating the temporal context of the note relative to the pre-screening date: `[TIME_RELATIVE_TO_PRESCREEN: <WINDOW_BIN> | DELTA_DAYS = <NUMBER>]`.
+
+``` r
+# R
+# code applied to each surgical, clinical, and pathology notes dataframe to prefix note with temporal header
+df %>%
+ # need to filter all notes after pre_screening_date 
+  filter(delta_days <= 0) %>% 
+  mutate(time_window = case_when(delta_days < -30 ~ "OUTSIDE_30",
+                                 delta_days <= 0 ~ "WITHIN_30")) %>% 
+  mutate(
+    note_with_prefix = str_c(
+      "[TIME_RELATIVE_TO_PRESCREEN: ", time_window, " | DELTA_DAYS = ", delta_days, "]",
+      "\n\n",
+      text
+    )
+  )
+```
+
+Empty notes and notes deemed sensitive by the Penn Medicine Privacy Office were removed.
+
+``` python
+# Python
+# code to remove empty notes 
+all_notes_final = all_notes_pdf[all_notes_pdf["note"].str.strip().ne("")].query("note.notna()")
+all_notes_final
+```
+
+The remaining notes were then de-identified using a Penn Medicine adapted version of [PHIlter](https://github.com/BCHSI/philter-ucsf) (Norgeot et al., 2020) installed on the LPC cluster.
+
+#### Exclusion Category Bucketing
+
+Exclusion reasons were consolidated into higher level exclusion buckets due to the sparsity of the individual exclusion signals after reviewing the exclusion notes assigned by the CRC. The buckets were then used to organize how the LLM identified exclusion signals in the notes. Exclusions were grouped into the following three buckets
+
++--------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Exclusion Bucket                                 | Description                                                                                                                                                                                |
++==================================================+============================================================================================================================================================================================+
+| Clinical Contraindications (`clinical_contra`)   | Major and current clinical conditions that are true exclusions in the IRB protocol and/or conditions that influence the decision to reach out to a patient because of medical instability. |
++--------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Procedural & Recent Events (`procedural_recent`) | Recent, ongoing, or upcoming procedures or clinical events that indicate current acute clinical episodes or need for recovery.                                                             |
++--------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Sleep-Specific Conditions (`sleep_specific`)     | Sleep-related diagnoses that indicate a patient has a non-OSA sleep disorder or condition.                                                                                                 |
++--------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+``` sql
+-- SQL
+-- consolidating exclusions to higher exclusion buckets
+select
+  pat_id,
+  pts_for_note_extraction_upd.*,
+  -- case when for higher level grouping
+  CASE
+    when
+      notes in (
+        'COPD',
+        'stage 4 CKD',
+        'Heart attack',
+        'CAD',
+        'current chemotherapy',
+        'sarcoidosis',
+        'New diagnosis of systemic lupus',
+        'CKD',
+        'cancer',
+        'Cancer',
+        'recent surgery',
+        'heart failure',
+        'panic disorder',
+        'Tongue cancer',
+        'sarcoidosis',
+        'Cancer',
+        'cancer, currently on chemotherapy',
+        'Panic disorder, may not be a good candidate for the MRI',
+        'epilepsy',
+        'quadriplegic',
+        'cognitive impairment',
+        'heart attack',
+        'cognitive impairment',
+        'heart attack on 6/26/25',
+        'Intellectual disability',
+        'Paroxysmal atrial fibrillation',
+        'thyroid cancer',
+        'Leukemia',
+        'blind',
+        'cerebral palsy',
+        'leukemia',
+        'respiratory failure',
+        'neurodevelopmental disorder',
+        'recent lung mass',
+        'parkinsons',
+        'epilepsy with multiple recent seizures',
+        'cancer receiving chemotherapy',
+        "parkinson's",
+        'recent stroke',
+        'CHF',
+        'ckd, needs transplant',
+        'Stroke',
+        'blind',
+        'stroke',
+        'severe opioid use disorder',
+        'lung disease',
+        'disorder of the tongue',
+        'seizure disorder',
+        'Experiencing memory/cognitive issues',
+        'heart transplant',
+        'squamous cell carcinoma of the palate',
+        'Dr.X instructed CRC to exclude pt from study due to a significant stroke 9/11/25',
+        'Congenital anomalies of skull/face bones'
+      )
+    then
+      'clinical_contra'
+    when
+      notes in (
+        'Scheduled to have nerve stimulator implanted',
+        'recent encounters for IVF',
+        'recent ER and admission',
+        'recent nasal surgery',
+        'Current hospitalization',
+        'recent ER and hospitalization due to opioid abuse',
+        'recent hospital visit',
+        'Recent hospitalization',
+        'recent surgery 9/12',
+        'Recent surgery',
+        'multiple recent ER visits',
+        'osteoplasty facial bones augmentation',
+        'surgery'
+      )
+    then
+      'procedural_recent'
+    when
+      notes in (
+        'other sleep disorder without osa',
+        'narcolepsy without osa',
+        'CSA',
+        'other sleep disorder w/o osa',
+        'other sleep disorders without osa',
+        'Narcolepsy w/o OSA',
+        'sleep disorder without osa'
+      )
+    then
+      'sleep_specific'
+  END AS excl_cat
+from
+  pts_for_note_extraction_upd -- used to get the mrn of the patient
+    left join source_sys.raw_clarity.patient
+      on pts_for_note_extraction_upd.mrn = patient.pat_mrn_id
+```
+
+#### LLM Prompt Development, Evaluation, and Note-Level Output
+
+The GPT-4o mini chat model available in Databricks was used to evaluate each note and assign a 0/1 decision for each of the three exclusion categories. The prompt instructed the LLM to read each note (with its temporal prefix) and determine, for each category, whether the note contained information meeting that category's exclusion criteria (1 = meets criteria, 0 = does not), along with a brief rationale and a confidence score.
+
+The prompt consisted of the following components:
+
+-   a brief description of the LLM's role and the overall classification task,
+
+-   clarification of the temporal prefix added to each note,
+
+-   definitions and examples of the exclusion categories and the constraints for assigning a 1 or 0,
+
+-   the required output elements for each category: a binary assignment, a short rationale, and a confidence score, and
+
+-   the standardized output format.
+
+The full prompt sent to the LLM is included [here](https://github.com/ashbatu/BMIN503_Final_Project/blob/master/llm_prompt/final_prompt.txt) in the Github repository.
+
+Abridged Python and SQL code used in Databricks were included below to illustrate how notes were submitted to the LLM and how resulting outputs were parsed for downstream use.
+
+The GPT-4o mini endpoint was invoked programatically and the LLM ran the prompt as shown below:
+
+``` python
+# Python
+# code to call the gpt endpoint for the classification task
+config = LLMClassificationConfig.for_inference(
+  text_column="note_text",
+  target_labels=[
+    "clinical_contra",
+    "procedural_recent",
+    "sleep_specific"
+  ]
+)
+predictor = LLMClassificationPredictor(
+  config=config,
+  client=client,
+  system_prompt=system_prompt,
+  task_prompt=prompt_text,
+  endpoint="openai-gpt-4o-mini-chat",
+  temperature=0.0 # set to 0.0 to get the most deterministic response
+)
+results = predictor.predict_batch(all_notes_final)
+```
+
+An synthetic example of the formatted note input sent to the LLM is shown here:
+
+| \[TIME_RELATIVE_TO_PRESCREEN: 31--90d \| DELTA_DAYS = 55\]
+| 
+| DATE OF SERVICE: \*\*DATE\*\*
+| PATIENT: \*\*NAME\*\*
+| Seen in ENT for evaluation of nasal obstruction.
+| Completed a home sleep study showing moderate OSA.
+| Scheduled for elective orthopedic procedure next month.
+| Reports persistent daytime fatigue and loud snoring.
+
+The model returned a structured JSON response containing three sets of binary labels, rationales, and confidence scores. A representative synthetic JSON output is shown below:
+
+``` json
+{
+  "clinical_contra": 0,
+  "procedural_recent": 1,
+  "sleep_specific": 1,
+  "rationale": {
+    "clinical_contra": "No evidence of active medical contraindication (e.g., unstable cardiac disease, cancer treatment, or neurologic disorder) was documented.",
+    "procedural_recent": "Patient has a scheduled orthopedic procedure next month, which may temporarily limit eligibility or require delayed outreach.",
+    "sleep_specific": "Sleep study confirms moderate OSA and persistent daytime fatigue, qualifying as sleep-related exclusion context."
+  },
+  "confidence": {
+    "clinical_contra": 0.82,
+    "procedural_recent": 0.91,
+    "sleep_specific": 0.93
+  }
+}
+```
+
+This JSON was then parsed into a dataframe for creating the analytic dataset with one row per note, including the predicted exclusion flags, rationales, confidence scores, and also token usage and note-level identifiers for joining with the note metadata.
+
+To assess the quality of the prompt, patients were split in 60/40 training and testing sets while also maintaining the proportion of the rolled up exclusion buckets. The prompt was first applied to all notes for patients in the training set. Performance of the prompt was evaluated based on (1) patient-level recall for each exclusion category, which was defined as the percent of CRC-excluded patients who had at least one note flagged by the LLM in the same category, and (2) a manual review of five patients per category to ensure that the LLM-generated rationales matched the note text and that the context made sense. Once ≥ 80% coverage was achieved, the prompt was frozen and then applied to the entire dataset (training and testing notes). Coverage was computed with the following code:
+
+``` sql
+# SQL
+# computing coverage per category
+with train_pred_true as (
+  SELECT
+    training_all_results.pat_id,
+    train_pts.exclusion_criteria,
+    train_pts.notes,
+    train_pts.excl_cat,
+    -- if ANY row has 1 → result = 1, else 0
+    MAX(pred_clinical_contra) AS clinical_contra_all,
+    MAX(pred_procedural_recent) AS procedural_recent_all,
+    MAX(pred_sleep_specific) AS sleep_specific_all
+  FROM
+    biomedicalinformatics_analytics.pack_osa_nlp.training_all_results
+      inner join train_pts -- joining to get actual assignments
+        on training_all_results.pat_id = train_pts.pat_id
+  GROUP BY
+    training_all_results.pat_id,
+    train_pts.exclusion_criteria,
+    train_pts.notes,
+    train_pts.excl_cat
+),
+
+-- string assignment to true exclusion captured or not
+train_pred_true_outcomes as (
+  select
+    *,
+    case
+      when
+        excl_cat = 'clinical_contra'
+        and clinical_contra_all = 1
+      then
+        'true exclusion captured'
+      when
+        excl_cat = 'clinical_contra'
+        and clinical_contra_all = 0
+      then
+        'true exclusion not captured'
+      when
+        excl_cat = 'procedural_recent'
+        and procedural_recent_all = 1
+      then
+        'true exclusion captured'
+      when
+        excl_cat = 'procedural_recent'
+        and procedural_recent_all = 0
+      then
+        'true exclusion not captured'
+      when
+        excl_cat = 'sleep_specific'
+        and sleep_specific_all = 1
+      then
+        'true exclusion captured'
+      when
+        excl_cat = 'sleep_specific'
+        and sleep_specific_all = 0
+      then
+        'true exclusion not captured'
+    end classification_decision
+  from
+    train_pred_true
+),
+
+# getting coverage by category (out of 1.0) 
+coverage_by_cat AS (
+  SELECT
+    'clinical_contra' AS category,
+    AVG(
+      CASE
+        WHEN classification_decision = 'true exclusion captured' THEN 1.0
+        ELSE 0.0
+      END
+    ) AS coverage
+  FROM
+    train_pred_true_outcomes
+  WHERE
+    clinical_contra_all = 1
+  UNION ALL
+  SELECT
+    'procedural_recent' AS category,
+    AVG(
+      CASE
+        WHEN classification_decision = 'true exclusion captured' THEN 1.0
+        ELSE 0.0
+      END
+    ) AS coverage
+  FROM
+    train_pred_true_outcomes
+  WHERE
+    procedural_recent_all = 1
+  UNION ALL
+  SELECT
+    'sleep_specific' AS category,
+    AVG(
+      CASE
+        WHEN classification_decision = 'true exclusion captured' THEN 1.0
+        ELSE 0.0
+      END
+    ) AS coverage
+  FROM
+    train_pred_true_outcomes
+  WHERE
+    sleep_specific_all = 1
+)
+SELECT
+  category,
+  coverage,
+  -- assigns as passing coverage threshold or not
+  CASE
+    WHEN coverage >= 0.8 THEN 1
+    ELSE 0
+  END AS passes_80
+FROM
+  coverage_by_cat;
+```
+
+##### LLM Prompt Evaluation Results
+
+The LLM prompt was evaluated using 1,735 notes from 97 patients in the training set. Patient-level recall was high across all exclusion categories from the first version of the prompt: 98.7% for clinical contraindications, 94.6% for recent procedures, and 95.2% for sleep-specific exclusions. This indicates that the model reliably identified patients who should be excluded.
+
+A manual review of 271 notes from 15 patients (5 patients per exclusion bucket) was also done to assess whether the LLM's explanations aligned with the context of each note. There were only two cases where the LLM's rationale differed from the CRC's exclusion reasons. However, both patients were still correctly excluded in the appropriate bucket.
+
+Because all exclusion buckets exceeded the 80% recall threshold and the rationales made sense, the prompt was frozen and applied to the entire dataset (training and testing notes) to complete the multi-classification task and generate the outcome variables (prediction flags) used for downstream modeling.
+
+### PHASE 2 - Regression Modeling and Interpretation of Note Metadata Predictors
+
+After Phase 1 produced note-level exclusion flags, the next step was to build the analytic dataset by performing feature engineering and preparing predictors for the regression modeling.
+
+#### Loading Required Packages
+
+To preprocess the analytic dataset and to conduct regression modeling, the following packages are loaded:
+
+```{r}
+require(tidyverse) # for tidy packages needed for data cleaning
+require(modelsummary) # for summary of model performance
+require(DescTools) # for data cleaning
+```
+
+#### Loading the De-Identified Note-Level Dataset
+
+The de-identified LLM results created in Phase 1 were exported from Databricks as a CSV and imported as a dataframe into R. Each row represents a single clinical note with its associated metadata and LLM-derived exclusion predictions. The data was loaded as follows:
+
+```{r}
+notes_metadata <- read_csv('../datasets/notes_data.csv')
+notes_metadata
+```
+
+#### Handling Null Values and Converting Metadata Fields to Factor Type
+
+Because Databricks exports missing character fields as the literal string 'null', these must be converted to proper NA values:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+notes_metadata <- notes_metadata %>% 
+  mutate(across(where(is.character), ~na_if(., "null")))
+notes_metadata
+```
+
+To prevent rows from being dropped during `glm()` due to missing factor levels, missing metadata was recoded as "Unknown" and the core note metadata fields were converted to factors:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+notes_metadata <- notes_metadata %>% 
+  mutate(across(c(ip_note_type, note_type, specialty,
+                  encounter_type, window_bin, source), 
+                ~ case_when(is.na(.x) ~ 'Unknown',
+                          T ~ .x))) %>% # recoding NA to unknown or keep value if not NA
+  mutate(across(c(ip_note_type, note_type, specialty,
+                  encounter_type, window_bin, source), 
+                ~ as.factor(.x))) # converting predictor variables to factors
+notes_metadata 
+```
+
+#### Creating New Overall Modeling Outcome
+
+In addition to the three note-level exclusion categories (`clinical_contra`, `procedural_recent`, and `sleep_specific`) that were created in Phase 1, a new combined "overall exclusion" was created. This new variable identifies whether any of the exclusion signals (clinical, procedural, or sleep-specific) was present in a note. This new outcome allows for conducting a more general analysis of note contexts that are associated with exclusion relevant signals regardless of the category.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+notes_metadata <- notes_metadata %>% 
+  mutate(pred_overall_excl = # if at least one pred_* field is flagged set pred_overall_excl to one
+           case_when(pred_clinical_contra == 1 | 
+                       pred_procedural_recent == 1 | 
+                       pred_sleep_specific == 1 ~ 1,
+                     T ~ 0)) %>% 
+  relocate(pred_overall_excl, .after = pred_sleep_specific) # relocating field
+notes_metadata
+```
+
+#### Inspecting Metadata Distributions Prior to Collapsing
+
+Since this dataset is a relatively small sample of notes (n = 2,911 notes), I checked to see the count of notes associated with each factor level to assess how smaller sample sizes can be collapsed and joined with other levels. This was done because sparse categories can destabilize logistic regression which may lead to potential overfitting, biased estimates, and overestimating odds ratios.
+
+```{r echo=TRUE, message=TRUE, warning=FALSE, paged.print=TRUE}
+# looking at counts at each factor level
+table(notes_metadata$ip_note_type)
+table(notes_metadata$note_type)
+table(notes_metadata$specialty)
+table(notes_metadata$encounter_type)
+table(notes_metadata$window_bin)
+
+# Factor Collapsing (after looking at counts above)
+notes_metadata <- notes_metadata %>% 
+  mutate(
+    ip_note_type = case_when(
+      ip_note_type %in% c("Brief Op Note", "Op Note", "OR PostOp", "OR PreOp") ~ "Operative Note",
+      ip_note_type %in% c("H&P", "Interval H&P Note") ~ "H&P Note",
+      ip_note_type %in% c("ED Notes", "ED Provider Notes") ~ "ED Note",
+      ip_note_type == "Progress Notes" ~ "Progress Note",
+      ip_note_type == "Discharge Summary" ~ "Discharge Summary",
+      ip_note_type == "Unknown" ~ "Unknown",
+      TRUE ~ ip_note_type
+    ),
+    ip_note_type = factor(ip_note_type),
+
+    note_type = case_when(
+      note_type == "SURGICAL PATHOLOGY REPORT" ~ "Pathology Report",
+      TRUE ~ note_type
+    ),
+
+    specialty = str_trim(specialty), # removing leading and trailing white space
+    specialty = if_else(is.na(specialty) | specialty == "", "Unknown", specialty),
+
+    specialty = case_when(
+      specialty %in% c("GYN", "Gynecology", "OB/Gyn") ~ "OB/Gyn",
+      specialty %in% c("GI", "GIS", "Gastroenterology", "GI Surgery") ~ "Gastroenterology/GI",
+      specialty %in% c("ORTHO", "Orthopaedics", "Orthopedics") ~ "Orthopedics",
+      specialty %in% c("Urology", "UROLOGY") ~ "Urology",
+      specialty %in% c('PMR', "Physical Medicine and Rehab") ~ 
+        'PM&R',
+      specialty %in% c('Hematology/Oncology', 'Oncology') ~ 'Heme/Onc',
+      specialty %in% c("ORL", "Otorhinolaryngology") ~ "ENT",
+      specialty %in% c(
+        "Colon and Rectal Surgery",
+        "Oral Maxillofacial Surgery",
+        "Plastic Surgery",
+        "PLASSURG",
+        "Thoracic Surgery",
+        "THORSURG",
+        "Transplant Surgery",
+        "VASCSURG",
+        "Vascular Surgery",
+        "EOS",
+        "CRS"
+      ) ~ "Surgery - Other",
+      TRUE ~ specialty
+    ),
+
+    # if any of the factor levels have less than 10 collapse to 'Other Specialty'
+    specialty = fct_lump_min(factor(specialty), min = 10, other_level = "Other Specialty"),
+    specialty = factor(specialty), # making sure the variable is still a factor
+    encounter_type = str_trim(encounter_type),
+
+    encounter_type = case_when(
+      encounter_type == "Office Visit" ~ "Office Visit",
+      encounter_type == "Telemedicine" ~ "Telemedicine",
+
+      encounter_type %in% c("Hospital Encounter",
+                            "Post Hospitalization",
+                            "Post Emergency") ~ "Hospital Encounter",
+
+      encounter_type %in% c("Procedure", "Procedure Visit",
+                            "Infusion Visit", "Medication Management",
+                            "Orders Only") ~ "Procedure/Treatment",
+
+      encounter_type == "Reconciled Outside Data" ~ "Reconciled Outside Data",
+
+      # Administrative / communication / scheduling
+      encounter_type %in% c(
+        "Care Management", "Allied Health Visit", "Allied Health Visit (Non-Chargeable)",
+        "Appointment", "Letter (Out)", "Telephone", "Out of Office Visit",
+        "Patient Outreach", "Transitions in Care", "No Show-No Charge",
+        "Psych Care Management", "Social Work (Non-Chargeable)",
+        "Enrollment", "CCBH Scheduled", "CCBH Unscheduled"
+      ) ~ "Ancillary Encounter",
+
+      encounter_type %in% c("Unknown", "Research",
+                            "Research Encounter", "Research (Non-Chargeable)") ~ "Other Encounter",
+
+      TRUE ~ "Other Encounter"
+    ),
+
+    encounter_type = factor(encounter_type)
+  ) 
+notes_metadata
+```
+
+#### Harmonizing Note Type Fields
+
+In the dataset, there are two fields that capture the note type: `ip_note_type` and `note_type`. As shown in the code below, these fields tend to overlap. To address this, I create one harmonized field called `note_type_final`. This field selects the non-Unknown value when one source is populated, collapses matching values, and assigns 'Unknown' when both fields are empty:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# showing distinct ip_note_type and note_type
+notes_metadata %>% 
+  distinct(ip_note_type, note_type)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+notes_metadata <- notes_metadata %>% 
+  # case when below used to get the non unknown value for note_type_final field
+  mutate(note_type_final = 
+           factor(case_when(
+             # keeps not unknown ip_note_type value
+             ip_note_type != 'Unknown' & note_type == 'Unknown' ~ ip_note_type, 
+             # keeps not unknown note_type value
+             ip_note_type == "Unknown" & note_type != 'Unknown' ~ note_type,
+             # assigns unknown because boths fields have an unknown value
+             ip_note_type == "Unknown" & note_type == "Unknown" ~ 'Unknown',
+             # collapses matching values
+             ip_note_type == note_type 
+             ~ note_type
+             ## NOTE: Conflicting cases is not addresses because based on the code above, 
+             ## this does not happen
+             ))) %>% 
+  relocate(note_type_final, .after = note_type)
+notes_metadata 
+```
+
+After pre-processing and collapsing factors, I performed final quality checks of the analytic dataset before modeling by assessing the distribution of notes based on each LLM-based exclusion prediction:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# looking at count for classes (exclusion present or not)
+table(notes_metadata$pred_overall_excl)
+table(notes_metadata$pred_clinical_contra)
+table(notes_metadata$pred_procedural_recent)
+table(notes_metadata$pred_sleep_specific)
+```
+
+Because the positive class counts for `pred_procedural_recent` and `pred_sleep_specific` were small, both categories were combined into a single indicator, `pred_other_excl`. This aggregation also reflects the CRC's real pre-screening workflow in which exclusions are grouped as 'Medical Condition' versus 'Other'. 'Medical Condition' exclusions are represented by `pred_clinical_contra` and 'Other' exclusions are represented by `pred_other_excl` (the union of procedural and sleep-related exclusion buckets). Doing this will help increase statistical stability:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+notes_metadata <- notes_metadata %>% 
+  mutate(pred_other_excl = # if any of the following pred_* field is 1, pred_other_excl = 1
+           case_when(pred_procedural_recent == 1 | 
+                       pred_sleep_specific == 1 ~ 1,
+                     T ~ 0)) %>% 
+  relocate(pred_other_excl, .after = pred_overall_excl)
+notes_metadata
+```
+
+Below is the new distribution with the `pred_other_excl` field:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+table(notes_metadata$pred_other_excl)
+```
+
+#### Building the final modeling dataset
+
+Finally, I created the model-ready dataset for regression. This includes the four outcome variables (`pred_overall_excl`, `pred_clinical_contra`, `pred_procedural_recent`, and `pred_sleep_specific`) and the note metadata predictors (`note_type_final`, `specialty`, `encounter_type`, and `window_bin`). A row identifier was also added to the dataset and `source` which indicates the type of note (clinical, pathology, or surgical note) for descriptive statistics and characterizing the dataset:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# getting only the necessary columns for the analytic dataset
+model_df <- notes_metadata %>% 
+  select(pred_overall_excl, pred_clinical_contra, 
+         pred_procedural_recent, pred_sleep_specific,
+         pred_other_excl,
+         note_type_final, 
+         specialty,
+         encounter_type, 
+         window_bin,
+         source) %>% 
+  mutate(row = row_number()) %>% 
+  relocate(row, .before = pred_overall_excl)
+model_df
+```
+
+#### Modeling Strategy
+
+To determine which note metadata features are most strongly associated with exclusion-relevant notes, multivariable logistic regression models were used. This method allows predictors to be evaluated simultaneously, which provide estimates of the direction and strength of the association between the metadata features and the binary exclusion indicators.
+
+For this project, three separate models were fit:
+
+1.  an overall exclusion model to identify the most influential metadata features associated with any exclusion content (outcome variable: `pred_overall_excl`)
+2.  a clinical exclusion model to identify metadata features associated with medical contraindications (outcome: `pred_clinical_contra`)
+3.  an other exclusion model to identify metadata features associated with recent procedural or sleep-specific exclusions (outcome: `pred_other_excl` )
+
+Because this project is exploratory and inferential (rather than predictive), models were fit using the full dataset to maximize statistical power and the certainty of the parameter estimates. Bootstrap resampling (1,000 samples per model) was then used to see if the direction and magnitude of the effects were stable across repeated samples.
+
+## Results {#sec-results}
+
+### Descriptive Summaries
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# code is used to create table for cohort/note summary
+require(kableExtra) # for generating pretty tables
+# total counts
+overall_counts <- notes_metadata %>%
+  summarize(
+    total_notes = n_distinct(note_id),
+    total_patients = n_distinct(pat_id),
+    total_encounters = n_distinct(pat_enc_csn_id),
+    
+  )
+
+# Notes per patient 
+notes_per_patient <- notes_metadata %>%
+  group_by(pat_id) %>%
+  summarise(n_notes = n())
+
+notes_per_patient_summary <- notes_per_patient %>%
+  summarise(
+    median_notes = median(n_notes),
+    IQR_notes = IQR(n_notes),
+    min_notes = min(n_notes),
+    max_notes = max(n_notes)
+  )
+
+# Min and Max Note Dates
+note_dates_min_max <- notes_metadata %>% 
+  mutate(min_note = min(note_service_dttm),
+         max_note = max(note_service_dttm)) %>% 
+  distinct(min_note, max_note)
+
+dataset_overview_table <- bind_cols(overall_counts, notes_per_patient_summary, note_dates_min_max) %>% 
+  mutate(note_date_range = paste0(format(min_note, "%m/%d/%Y"), ' to ', format(max_note, "%m/%d/%Y"))) %>% 
+  mutate(`Notes Per Patient` = paste0("Median: ", median_notes, ", (Min: ", min_notes, ", Max: ", max_notes, ")")) %>%
+  select(`Total Notes` = total_notes, `Total Patients` = total_patients, `Total Encounters` = total_encounters, `Notes Per Patient`, `Note Date Range` = note_date_range)
+  
+tibble::tibble(
+  `Cohort characteristic` = c(
+    "Total notes",
+    "Unique patients",
+    "Unique encounters",
+    "Notes per patient",
+    "Note Date Range"
+  ),
+  `Overall` = c(
+    dataset_overview_table$`Total Notes`,
+    dataset_overview_table$`Total Patients`,
+    dataset_overview_table$`Total Encounters`,
+    dataset_overview_table$`Notes Per Patient`,
+    dataset_overview_table$`Note Date Range`
+  )
+) %>% kable(
+    caption = "Table 1. Study cohort and note characteristics",
+    align = "l"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(gtsummary) # for generating pretty output tables
+
+# code below is used to get breakdown for each note metadata field
+table_2_notelevelmetadata <- model_df %>%
+  select(
+    note_type_final,
+    specialty,
+    encounter_type,
+    window_bin,
+    source
+  ) %>%
+  tbl_summary(        
+    percent  = "column",
+    missing  = "no",
+    statistic = all_categorical() ~ "{n} ({p}%)" # getting count, percent of total notes
+  ) %>%
+  modify_header(
+    label ~ "**Note-level metadata**"
+  ) %>%
+  modify_caption(
+    "**Table 2. Distribution of notes by note-level metadata**"
+  ) %>%
+  bold_labels()
+
+table_2_notelevelmetadata
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# theming for all the visualizations in this report
+theme_osa <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      plot.title      = element_text(face = "bold", size = 15),
+      axis.title      = element_text(face = "bold"),
+      axis.text.x     = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.text       = element_text(color = "gray20"),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.y = element_line(color = "#E5E7EB"),
+      axis.line       = element_line(color = "#111827"),
+      legend.position = "top",
+      legend.title    = element_text(face = "bold"),
+      legend.text     = element_text(size = 12),
+      # plot.margin     = margin(12, 14, 10, 14),
+      panel.background = element_rect(fill = "white", color = NA)
+    )
+}
+
+# color palette for graphs
+osa_palette <- c(
+  "#2C7FB8",  # muted blue
+  "#7FCDBB",  # soft teal
+  "#EDF8B1",  # pale yellow-green
+  "#FEC44F",  # warm amber
+  "#FC9272",  # blush coral
+  "#9ECAE1",  # light slate blue
+  "#A1D99B",  # mint
+  "#BCBDDC"   # soft lavender
+)
+# expanding color palette above
+osa_palette_expanded <- colorRampPalette(osa_palette)(50)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# distribution of notes by note type
+note_type_plot <- model_df %>% 
+  ggplot(aes(x = fct_infreq(note_type_final), fill = note_type_final)) +
+  
+  geom_bar(width = 0.75) +
+  
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.4,
+    size = 3,
+    color = "#1F2937"   # dark slate
+  ) +
+  
+  scale_fill_manual(values = osa_palette) +
+  
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  
+  labs(
+    title = "Distribution of All Notes by Note Type",
+    x = "Note type",
+    y = "Number of notes",
+    fill = "Note type"
+  ) +
+  
+  theme_osa() +
+  
+  theme(
+    legend.position = "none"   # remove legend 
+  )
+note_type_plot
+
+# for presentation slides
+# ggsave(
+#   "../figs/note_type_plot.png",
+#   plot = note_type_plot,
+#   width = 5.5,   # wide
+#   height = 3.0,  # short
+#   dpi = 300
+# )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# distribution of specialties
+specialties_plot <- model_df %>% 
+  ggplot(aes(x = fct_infreq(specialty), fill = specialty)) +
+  
+  geom_bar(width = 0.75) +
+  
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.4,
+    size = 3,
+    color = "#1F2937"   # dark slate
+  ) +
+  
+  scale_fill_manual(values = osa_palette_expanded) +
+  
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  
+  labs(
+    title = "Distribution of All Notes by Specialty",
+    x = "Specialty",
+    y = "Number of notes",
+    fill = "Specialty"
+  ) +
+  
+  theme_osa() +
+  
+  theme(
+    legend.position = "none"   # remove legend 
+  )
+specialties_plot
+
+# for presentation slides
+# ggsave(
+#   "../figs/specialties_plot.png",
+#   plot = specialties_plot,
+#   width = 5.5,   # wide
+#   height = 3.0,  # short
+#   dpi = 300
+# )
+```
+
+::: callout-note
+Many of the notes have an 'Unknown' specialty which is likely due to how the specialty field is populated during Extract-Transform-Load (ETL) into Epic Clarity. This does not indicate a problem with the analytic dataset itself.
+:::
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# distribution of encounter type
+encounter_type_plots <- model_df %>% 
+  ggplot(aes(x = fct_infreq(encounter_type), fill = encounter_type)) +
+  
+  geom_bar(width = 0.75) +
+  
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.4,
+    size = 3,
+    color = "#1F2937"   # dark slate
+  ) +
+  
+  scale_fill_manual(values = osa_palette_expanded) +
+  
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  
+  labs(
+    title = "Distribution of All Notes by Encounter Type",
+    x = "Encounter Type",
+    y = "Number of notes",
+    fill = "Encounter Type"
+  ) +
+  
+  theme_osa() +
+  
+  theme(
+    legend.position = "none"   # remove legend (redundant)
+  )
+encounter_type_plots
+
+# for presentation slides
+# ggsave(
+#   "../figs/encounter_type_plots.png",
+#   plot = encounter_type_plots,
+#   width = 5.5,   # wide
+#   height = 3.0,  # short
+#   dpi = 300
+# )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# distribution of time windows 
+time_windows_plot <- model_df %>% 
+  ggplot(aes(x = fct_infreq(window_bin), fill = window_bin)) +
+  
+  geom_bar(width = 0.75) +
+  
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.4,
+    size = 3,
+    color = "#1F2937"   # dark slate
+  ) +
+  
+  scale_fill_manual(values = osa_palette) +
+  
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  
+  labs(
+    title = "Distribution of All Notes by Time Window",
+    x = "Time Window Bin",
+    y = "Number of notes",
+    fill = "Time Window Bin"
+  ) +
+  
+  theme_osa() +
+  
+  theme(
+    legend.position = "none"   # remove legend (redundant)
+  )
+time_windows_plot
+
+# for presentation slides
+# ggsave(
+#   "../figs/time_windows_plot.png",
+#   plot = time_windows_plot,
+#   width = 5.5,   # wide
+#   height = 3.0,  # short
+#   dpi = 300
+# )
+```
+
+A total of 2,911 de-identified notes for 164 patients between September 2011 through November 2025 were included. As shown in the tables and figures above, the data was highly imbalanced across the different note-level metadata categories, reflecting real-world documentation patterns and nuances. Most notes were progress notes (79%), and nearly half of all notes occurred more than 180 days prior to pre-screening. Notes originated from over 20 different specialties with approximately 20% coming from unknown specialties due to limitations in data capture in the Epic Clarity database.
+
+### Regression Modeling
+
+#### Overall Model (All Exclusions)
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# reminder of the distribution --> pretty even distribution of notes with and without LLM-derived exclusion signals
+table(model_df$pred_overall_excl)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# glm for overall exclusions model
+overall.fit <- glm(pred_overall_excl ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = model_df, 
+                  family = binomial())
+summary(overall.fit) # getting summary stats for model
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# creating forest dot plot for overall exclusions model
+coef_pvalues <- 
+  # extracting summary data from above
+  as.data.frame(summary(overall.fit)$coefficients) %>% 
+  arrange(`Pr(>|z|)`) %>% 
+  filter(`Pr(>|z|)` < 0.05) %>% # only graphing results where p-value < 0.05
+  rownames_to_column("term") %>% 
+  rename(estimate = Estimate,
+         standard_error = `Std. Error`,
+         z_value = `z value`,
+         p_value = `Pr(>|z|)`) 
+
+or_ci <-
+  # getting only the odds ratio and confidence intervals
+  exp(cbind(OR = coef(overall.fit), CI = confint(overall.fit))) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("term") %>% 
+  rename(odds_ratio = OR,
+         ci_min = `2.5 %`,
+         ci_max = `97.5 %`)
+
+glm_overall <- coef_pvalues %>% 
+  # joining p-values with OR and CI
+  inner_join(or_ci, by='term') %>%
+  filter(
+    term != "(Intercept)", # filtering out inercept so that it doens't get included in the graph
+    !is.na(odds_ratio), # filtering only to odds rations that are not NA
+    p_value < 0.05 # filtering only to results with p-value < 0.05
+  )
+
+overall_model_odds_plot <- glm_overall %>%
+  # reordering terms based on odds ratios (for graphs)
+  mutate(term = fct_reorder(term, odds_ratio)) %>% 
+  ggplot(aes(x = term, y = odds_ratio)) +
+  geom_errorbar(
+    aes(ymin = ci_min, ymax = ci_max), # creating confidence intervals
+    width = 0.2,
+    size  = 0.6
+  ) +
+  geom_point(size = 1.8, color = osa_palette[1]) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  # making the axis into log base-10 so that it's more readaible 
+  scale_y_log10(breaks =scales::log_breaks(n = 10), # adjusting ticks
+                labels = scales::label_number()) + # added this because of wide confidence intervals
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Odds ratio (log10 scale)",
+    title = str_wrap(
+    "Predictors associated with any exclusion signal (p < 0.05)",
+    width = 50) # need to do this because the entire title does not fit on one line
+  ) +
+  theme_osa(base_size = 10) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+  )
+overall_model_odds_plot
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+##### for slides 
+# pick strongest 12 predictors
+# p_overall <- glm_overall %>%
+#   mutate(term = fct_reorder(term, odds_ratio)) %>%
+#   ggplot(aes(x = term, y = odds_ratio)) +
+#   geom_errorbar(
+#     aes(ymin = ci_min, ymax = ci_max),
+#     width = 0.2,
+#     size  = 0.6
+#   ) +
+#   geom_point(size = 1.8, color = osa_palette[1]) +
+#   geom_hline(yintercept = 1, linetype = "dashed") +
+#   scale_y_log10(
+#     breaks = scales::log_breaks(n = 10),
+#     labels = scales::label_number()
+#   ) +
+#   coord_flip() +
+#   labs(
+#     x = NULL,
+#     y = "Odds ratio",
+#     title = "Top metadata predictors for any exclusion signal"
+#   ) +
+#   theme_osa(base_size = 11) +
+#   theme(
+#     legend.position = "none",
+#     axis.text.x = element_text(angle = 0, hjust = 0.5),
+#     plot.title = element_text(size = 11, face = "bold")
+#   )
+# 
+# ggsave(
+#   "../figs/overall_model_odds_plot.png",
+#   p_overall,
+#   width = 8,      # inches
+#   height = 5,   # make it taller
+#   dpi = 320
+# )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# table view of of odds ratio, 95% CI, p_value < 0.05
+glm_overall %>% 
+  mutate(across(c(p_value, estimate, standard_error, odds_ratio, ci_min, ci_max))) %>%
+  select(term, p_value, odds_ratio, ci_min, ci_max) %>% 
+  mutate(`95% CI` = 
+           paste0("(", ci_min, "-", ci_max, ")")) %>% 
+  distinct(term, p_value, odds_ratio, `95% CI`)
+```
+
+#### Clinical Contraindications Model
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# reminder of the distribution --> 40/66  distribution of notes with and without LLM-derived exclusion signals. 
+table(model_df$pred_clinical_contra) 
+```
+
+Since the distribution of notes with and without exclusions are imbalanced (41% vs 59%) with more notes not having clinical contraindications, inverse-frequency weighting was applied to prevent the model from favoring the majority class (notes without exclusions) for predictions. Through Inverse class weighting, the minority class (notes with exclusions) gets a larger weight:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# getting sum of counts for majority and minority class
+majority_0 <- sum(model_df$pred_clinical_contra == 0)
+minority_1 <- sum(model_df$pred_clinical_contra == 1)
+
+# assigning larger weight to minority exclusion class
+model_df_clinical <- model_df %>%
+  mutate(class_weight = ifelse(pred_clinical_contra == 1, majority_0 / minority_1, minority_1 / majority_0))
+
+# checking class imbalance correction with weighting
+aggregate(class_weight ~ pred_clinical_contra, data = model_df_clinical, mean)
+with(model_df_clinical, tapply(class_weight, pred_clinical_contra, sum))
+
+# fitting glm
+clinical.fit <- glm(pred_clinical_contra ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = model_df_clinical, 
+                  family = binomial(),
+    weights = class_weight) # applying the weights to logistic regression
+summary(clinical.fit) # getting summary of model
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+coef_pvalues_clinical <- 
+  # getting coef results
+  summary(clinical.fit)$coefficients %>% 
+  as.data.frame() %>%
+  # getting only results with p < 0.05
+  arrange(`Pr(>|z|)`) %>% filter(`Pr(>|z|)` < 0.05) %>% 
+  # making the title of the first column 'terms'
+  rownames_to_column("term") %>% 
+  rename(estimate = Estimate,
+         standard_error = `Std. Error`,
+         z_value = `z value`,
+         p_value = `Pr(>|z|)`) 
+
+or_ci_clinical <- 
+  # getting odds ratios
+  exp(cbind(OR = coef(clinical.fit), CI = confint(clinical.fit))) %>% 
+  as.data.frame() %>% 
+  # making the title of the first column 'terms'
+  rownames_to_column("term") %>% 
+  rename(odds_ratio = OR,
+         ci_min = `2.5 %`,
+         ci_max = `97.5 %`)
+
+glm_model_clinical <- coef_pvalues_clinical %>% 
+  # joining OR and CI
+  inner_join(or_ci_clinical, by='term') %>%
+  filter(
+    term != "(Intercept)", # filter out intercept
+    !is.na(odds_ratio), # filtering out NA 
+    p_value < 0.05 # filtering out large p-values
+  )
+
+glm_model_clinical %>%
+  mutate(term = fct_reorder(term, odds_ratio)) %>% # reording by odds ratio column
+  ggplot(aes(x = term, y = odds_ratio)) +
+  geom_errorbar(
+    aes(ymin = ci_min, ymax = ci_max), # creating error bars
+    width = 0.2,
+    size  = 0.6
+  ) +
+  geom_point(size = 1.8, color = osa_palette[1]) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  # making the axis into log base-10 so that it's more readaible 
+  scale_y_log10(breaks =scales::log_breaks(n = 10), # adjusting ticks
+                labels = scales::label_number()) + # added this because of wide confidence intervals
+  coord_flip()  +
+  labs(
+    x = NULL,
+    y = "Odds ratio (log10 scale)",
+    title = str_wrap("Predictors associated with clinical contraindications exclusion signals (where p < 0.05)", width = 50
+  )) + # need to do this because the entire title does not fit on one line
+  theme_osa(base_size = 10) + # adjusting the size of the font for terms
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10) # plot margins
+  )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# table view of of odds ratio, 95% CI, p_value < 0.05
+glm_model_clinical %>% 
+  mutate(across(c(estimate, standard_error, odds_ratio, ci_min, ci_max), ~round(.x, digits = 2))) %>% 
+  select(term, p_value, odds_ratio, ci_min, ci_max) %>% 
+  mutate(`95% CI` = 
+           paste0("(", ci_min, "-", ci_max, ")")) %>% 
+  distinct(term, p_value, odds_ratio, `95% CI`) 
+```
+
+#### Other (Procedural & Recent Events, Sleep-Specific) Model
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+table(model_df$pred_other_excl) # reminder of the distribution --> very unevenly distributed
+```
+
+Because the distribution of notes without and with exclusions are also imbalanced (78%/22%) with more notes not having procedural & recent events and sleep-related exclusions, inverse-frequency weighting was applied to this model also:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# getting sum for majority and minority classes
+majority_0_other <- sum(model_df$pred_other_excl == 0)
+minority_1_other <- sum(model_df$pred_other_excl == 1)
+
+# assigning larger weight to minority exclusion class
+model_df_other <- model_df %>%
+  mutate(class_weight = ifelse(pred_other_excl == 1, majority_0_other / minority_1_other, minority_1_other / majority_0_other))
+
+# checking class imbalance correction with weighting
+aggregate(class_weight ~ pred_other_excl, data = model_df_other, mean)
+with(model_df_other, tapply(class_weight, pred_other_excl, sum))
+
+# fitting glm
+other.fit <- glm(pred_other_excl ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = model_df_other, 
+                  family = binomial(),
+    weights = class_weight) # applying the weights to logistic regression
+summary(other.fit) # getting summary of model
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# creating dot forest graph for other exclusions model 
+# all the same code as the previous models
+coef_pvalues_other <- summary(other.fit)$coefficients %>% 
+  as.data.frame() %>%
+  arrange(`Pr(>|z|)`) %>% filter(`Pr(>|z|)` < 0.05) %>% rownames_to_column("term") %>% 
+  rename(estimate = Estimate,
+         standard_error = `Std. Error`,
+         z_value = `z value`,
+         p_value = `Pr(>|z|)`) 
+
+or_ci_other <- exp(cbind(OR = coef(other.fit), CI = confint(other.fit))) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("term") %>% 
+  rename(odds_ratio = OR,
+         ci_min = `2.5 %`,
+         ci_max = `97.5 %`)
+
+glm_model_other <- coef_pvalues_other %>% 
+  inner_join(or_ci_other, by='term') %>%
+  filter(
+    term != "(Intercept)",
+    !is.na(odds_ratio),
+    p_value < 0.05
+  )
+
+glm_model_other %>%
+  mutate(term = fct_reorder(term, odds_ratio)) %>%
+  ggplot(aes(x = term, y = odds_ratio)) +
+  geom_errorbar(
+    aes(ymin = ci_min, ymax = ci_max),
+    width = 0.2,
+    size  = 0.6
+  ) +
+  geom_point(size = 1.8, color = osa_palette[1]) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  # making the axis into log base-10 so that it's more readaible 
+  scale_y_log10(breaks =scales::log_breaks(n = 10), # adjusting ticks
+                labels = scales::label_number()) + # added this because of wide confidence intervals
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Odds ratio (log10 scale)",
+    title = str_wrap("Predictors associated with 'Other' exclusion signals (where p < 0.05)",
+                     width = 45)
+  ) +
+  theme_minimal(base_size = 10) + # adjusting terms font size
+   theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10) # padding the graph
+  )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# table view of of odds ratio, 95% CI, p_value < 0.05
+glm_model_other %>% 
+  mutate(across(c(estimate, standard_error, odds_ratio, ci_min, ci_max), ~round(.x, digits = 2))) %>% 
+  select(term, p_value, odds_ratio, ci_min, ci_max) %>% 
+  mutate(`95% CI` = 
+           paste0("(", ci_min, "-", ci_max, ")")) %>% 
+  distinct(term, p_value, odds_ratio, `95% CI`) 
+```
+
+#### Model Interpretations
+
+##### Overall Exclusion Model
+
+Encounter type and temporal proximity to screening were the strongest predictors of exclusion-relevant context. Hospital encounters had very high odds (Odds Ratio (OR)=17.1, Confidence Interval (CI)=8.8-33.9, p-value\<0.05) and office visits were also strongly associated (OR=10.2, CI=6.7-16.0, p-value\<0.05). Notes written within 0-30 days of pre-screening had nearly four times higher odds (OR=4.20, CI=3.1-5.7, p-value\<0.05). Several specialties (e.g., Renal, Neurology, Cardiology, Hematology/Oncology, Sleep Medicine, and Physical Medicine and Rehabilitation (PM&R)) also showed higher odds (all ORs \> 5) but confidence intervals were wider because of sparse note counts. Note type contributed the least with several note types having odds ratios below 1 and wide confidence intervals. Overall, exclusion information is most strongly associated with encounter type and recency.
+
+##### Clinical Contraindications Model
+
+For clinical contraindications, encounter type and specialty were the main drivers. Office, Hospital, telemedicine, and reconciled outside data encounters were associated with higher odds of exclusion content (all ORs \> 6). However, procedure/treatment encounters were unlikely to contain clinical contraindication signals (OR=0.10, CI=0.03-0.3, p-value\<0.05). Renal, Cardiology, Hematology/Oncology, Psychiatry, and Neurology were statistically significant specialties, but with wide confidence intervals due to sparse notes (e.g. Renal OR=14.1, CI=3.2-63.8, p-value\<0.05). Recency was not significant in this model which is consistent with chronic conditions remaining relevant regardless of when the note was written. Finally, note types effects were smaller. Emergency Department (ED), operative, and History and Physical (H&P) notes still had lower odds of containing exclusion-relevant content (e.g. Operative Note OR=0.06, CI=0.01-0.2, p-value\<0.05). Additionally progress notes was no longer a statistically significant predictor (p-value = 0.1).
+
+##### Procedural and Sleep Related ('Other') Model
+
+For recent procedures and sleep-specific exclusions, encounter type and temporal proximity to pre-screening were again the stronger predictors. Hospital encounters had high odds (OR=9.9, CI=4.5-22.7, p-value\<0.05) and notes within 0-30 days from pre-screening had the highest odds of containing exclusion-related information (OR=11.4, CI=7.9-16.7, p-value\<0.05). At the same time, other time bins were statistically significant but with smaller effect sizes (e.g. 31-90 days OR=1.67, CI=1.3-2.2, p-value\<0..05). Specialty effects were limited with PM&R as positive and endocrinology as negative and with very wide confidence intervals for both predictor terms. Finally, note types remained a weak predictor (e.g. Operative Note OR=0.2, CI=0.04-0.5, p-value\<0.05). This model reinforces that recent notes in specific encounter settings and temporal recency is the main source of procedural and sleep-specific exclusion signals.
+
+### Stability Analysis (Bootstrap Resampling)
+
+Bootstrap resampling (1,000 times pre model) was used to assess how stable the effects were through repeating sampling.
+
+#### Overall
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(boot) # library to conduct boostrap resampling
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# function for overall bootstrap
+boot_overall <- function(data, indices) {
+  # d = resampled dataset
+  # indices is generated automatically by the boot() function
+  d <- data[indices, ]
+
+  # model
+  model <- glm(pred_overall_excl ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = d, 
+                  family = binomial())
+
+  # summary statistics of the model
+  return(coef(model))
+}
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# setting the seed to get the same results every time
+set.seed(123)
+
+# applying function to get bootstrap results
+boot_results <- boot(
+  data = model_df, # main dataframe 
+  statistic = boot_overall, 
+  R = 1000 # 1000 iterations 
+)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# getting bootstrap results
+boot_results
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+boot_df <- as.data.frame(boot_results$t) # coefficients from every bootstrap iteration (rows = resamples, columns = ter
+
+coef_names <- names(coef(overall.fit)) # getting the term names for the overall.fit model 
+colnames(boot_df) <- coef_names # using the terms from the overall.fit model as the column names for the coefficient results
+
+summary_overall_boot_results <- boot_df %>%
+  # pivoting longer to create a dataframe of col1 = feature, log odds 
+  # dataframe contains all the iteractions
+  pivot_longer(everything(), names_to = "term", values_to = "log_odds") %>%
+  group_by(term) %>%
+  # grouping by model term to get summary statistics of bootstrapping 
+  summarise(
+    median_log_odds = median(log_odds, na.rm = TRUE), # median log odds
+    # directional stability
+    posneg_sign_pct = mean(sign(log_odds) == 
+                             sign(median(median_log_odds, na.rm = TRUE))) * 100, 
+    median_OR = exp(median_log_odds), # median 
+    IQR_low = exp(quantile(log_odds, 0.25, na.rm = TRUE)), # IQR low from all iterations
+    IQR_high = exp(quantile(log_odds, 0.75, na.rm = TRUE)) # IQR high from all iterations
+  ) %>%
+  arrange(desc(posneg_sign_pct))
+
+summary_overall_boot_results 
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height = 12, fig.width=9}
+summary_overall_boot_results %>%
+  # specialtyPathology was removed because it did not have valid coefficient estimates due to 
+  # collinearity
+  filter(!term %in% c("specialtyPathology", "(Intercept)")) %>% 
+  mutate(term = fct_reorder(term, median_OR)) %>% # ordering by median OR
+  # coloring points by directional stability
+  ggplot(aes(x = term, y = median_OR, color = posneg_sign_pct)) + 
+  geom_errorbar(
+    aes(ymin = IQR_low, ymax = IQR_high), # error bars
+    width = 0.2, # size of vertical ends of error bars 
+    size  = 0.6 # thickness of error bars
+  ) +
+  geom_point(size = 1.8) + # point size
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  # making the axis into log base-10 so that it's more readaible 
+  scale_y_log10(breaks =scales::log_breaks(n = 10)) + # adjusting ticks
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Median Odds ratio (log10 scale)",
+    title = str_wrap("Stability of Note Metadata Effects Across Bootstrap Resampling",
+                     width = 50), # so that the title fits in the entire image
+    subtitle = str_wrap(
+      "Dots = median odds ratio; bars = bootstrap interquartile range (IQR)",
+      width = 50),
+    color = "% of Direction Stability"
+  ) +
+  theme_osa(base_size = 15) + # adjusting size of terms font size
+   theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+  ) +
+  # gradient for directional stability scale
+  scale_color_gradientn(
+    colors = c(
+      "#7FCDBB",  
+      "#2C7FB8"  
+    )
+  )
+```
+
+```{r eval=FALSE, include=FALSE}
+### for slides
+# p_boot <- summary_overall_boot_results %>%
+#   # drop intercept and any weird terms
+#   filter(!feature %in% c("(Intercept)", "specialtyPathology")) %>%
+#   # order by stability
+#   arrange(desc(posneg_sign_pct)) %>%
+#   slice(1:12) %>%                        # top 12 by directional stability
+#   mutate(term = fct_reorder(feature, median_OR)) %>%
+#   ggplot(aes(x = term, y = median_OR, color = posneg_sign_pct)) +
+#   geom_errorbar(
+#     aes(ymin = IQR_low, ymax = IQR_high),
+#     width = 0.2,
+#     size  = 0.6
+#   ) +
+#   geom_point(size = 1.8) +
+#   geom_hline(yintercept = 1, linetype = "dashed") +
+#   scale_y_log10(
+#     breaks = scales::log_breaks(n = 10),
+#     labels = scales::label_number()
+#   ) +
+#   coord_flip() +
+#   labs(
+#     x = NULL,
+#     y = "Median odds ratio",
+#     title = "Stability of effects across resampling (any exclusion model)",
+#     color = "Direction stability (%)"
+#   ) +
+#   theme_osa(base_size = 11) +
+#   theme(
+#     panel.grid.minor = element_blank(),
+#     plot.title = element_text(size = 11, face = "bold")
+#   ) + 
+#   # making sure the min and max color is maintained
+#   scale_color_gradientn(
+#   colors = c("#7FCDBB", "#2C7FB8"),
+#   limits = c(50, 100)
+# )
+# 
+# ggsave(
+#   "../figs/overall_model_bootstrap_plot.png",
+#   p_boot,
+#   width = 8,     # same as odds plot
+#   height = 5,    # taller = more readable y labels
+#   dpi = 320
+# )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# getting count of terms with directional stability >= 90%
+summary_overall_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  filter(posneg_sign_pct > 90.0) %>% summarize(count = n())
+# getting count of terms with directional stability <= 50%
+summary_overall_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  filter(posneg_sign_pct <= 50.0) %>% 
+  summarize(count = n())
+```
+
+#### Clinical Contraindications
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# same code from overall model
+boot_clinical <- function(data, indices) {
+  d <- data[indices, ]
+
+  # adjustment for overall model --> changing outcome variable to pred_clinical_contra
+  model <- glm(pred_clinical_contra ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = d, 
+                  family = binomial())
+
+  return(coef(model))
+}
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# same code from overall model
+set.seed(123)
+
+boot_results_clinical <- boot(
+  data = model_df,
+  statistic = boot_clinical, # using the bootstrapping function for the clinical model
+  R = 1000 # 1000 iterations
+)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# getting results for boostrapping for clinical contraindications model
+boot_results_clinical
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# same code as in other model to get table of boostrapping results
+boot_df_clinical <- as.data.frame(boot_results_clinical$t)
+
+coef_names <- names(coef(clinical.fit))
+colnames(boot_df_clinical) <- coef_names
+
+summary_clinical_boot_results <- boot_df_clinical %>%
+  pivot_longer(everything(), names_to = "term", values_to = "log_odds") %>%
+  group_by(term) %>%
+  summarise(
+    median_log_odds = median(log_odds, na.rm = TRUE),
+    posneg_sign_pct = mean(sign(log_odds) == 
+                             sign(median(median_log_odds, na.rm = TRUE))) * 100,
+    median_OR = exp(median_log_odds),
+    IQR_low = exp(quantile(log_odds, 0.25, na.rm = TRUE)),
+    IQR_high = exp(quantile(log_odds, 0.75, na.rm = TRUE))
+  ) %>%
+  arrange(desc(posneg_sign_pct))
+
+# outputting dataframe of boostrap results
+summary_clinical_boot_results 
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height = 12, fig.width=9}
+# same code as in overall model to get dot forest plot for clinical contraindications model bootstrapping
+summary_clinical_boot_results %>%
+  filter(!term %in% c("specialtyPathology", "(Intercept)")) %>% 
+  mutate(term = fct_reorder(term, median_OR)) %>%
+  ggplot(aes(x = term, y = median_OR, color = posneg_sign_pct)) +
+  geom_errorbar(
+    # IQR = range of log odds from bootstrapp iterations
+    aes(ymin = IQR_low, ymax = IQR_high),
+    width = 0.2,
+    size  = 0.6   
+  ) +
+  geom_point(size = 1.8) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_y_log10(breaks =scales::log_breaks(n = 10)) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Median Odds ratio (log10 scale)",
+    title = str_wrap(
+      "Stability of Note Metadata Effects Across Bootstrap Resampling (Clinical Model)", 
+      width = 50),
+    subtitle = str_wrap(
+      "Dots = median odds ratio; bars = bootstrap interquartile range (IQR)",
+      width = 50),
+    color = "% of Direction Stability"
+  ) +
+  theme_osa(base_size = 15) +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+  )  +
+  scale_color_gradientn(
+    colors = c(
+      "#7FCDBB",  
+      "#2C7FB8"  
+    )
+  )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# same code as for overall model
+summary_clinical_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  filter(posneg_sign_pct > 90.0) %>% summarize(count = n()) # terms with >= 90% stability
+summary_clinical_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  filter(posneg_sign_pct <= 50.0) %>% summarize(count = n()) # terms with <= 50% stability
+```
+
+#### Procedural and Sleep-Related ('Other')
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# same code as for overall and clinical contraindications model 
+boot_other <- function(data, indices) {
+  d <- data[indices, ]
+
+  # changes --> outcome variable is now pred_other_excl
+  model <- glm(pred_other_excl ~ note_type_final + specialty + 
+                     encounter_type + window_bin, 
+                  data = d, 
+                  family = binomial())
+
+  return(coef(model))
+}
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# same code as overall and clinical contraindications model to run boostrapping
+set.seed(123)
+
+boot_results_other <- boot(
+  data = model_df,
+  statistic = boot_other, # using boot_other function instead to get results 
+  R = 1000 # 1000 iterations
+)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# outputting other exclusions bootstrapping results
+boot_results_other
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# same code as overall and clinical contraindications model to output summary statistics of model
+boot_df_other <- as.data.frame(boot_results_other$t)
+
+coef_names <- names(coef(other.fit))
+colnames(boot_df_other) <- coef_names
+
+summary_other_boot_results <- boot_df_other %>%
+  pivot_longer(everything(), names_to = "term", values_to = "log_odds") %>%
+  group_by(term) %>%
+  summarise(
+    median_log_odds = median(log_odds, na.rm = TRUE),
+    posneg_sign_pct = mean(sign(log_odds) == 
+                             sign(median(median_log_odds, na.rm = TRUE))) * 100,
+    median_OR = exp(median_log_odds),
+    IQR_low = exp(quantile(log_odds, 0.25, na.rm = TRUE)),
+    IQR_high = exp(quantile(log_odds, 0.75, na.rm = TRUE))
+  ) %>%
+  arrange(desc(posneg_sign_pct))
+
+summary_other_boot_results
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height = 12, fig.width=9}
+# same code as clinical contraindications model and overall model to plot dot forest plot
+summary_other_boot_results %>%
+  filter(!term %in% c("specialtyPathology", "(Intercept)")) %>% 
+  mutate(term = fct_reorder(term, median_OR)) %>%
+  ggplot(aes(x = term, y = median_OR, color = posneg_sign_pct)) +
+  geom_errorbar(
+    aes(ymin = IQR_low, ymax = IQR_high),
+    width = 0.2,
+    size  = 0.6   
+  ) +
+  geom_point(size = 1.8) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_y_log10(breaks =scales::log_breaks(n = 10))  +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Median Odds ratio (log10 scale)",
+    title = str_wrap(
+      "Stability of Note Metadata Effects Across Bootstrap Resampling ('Other' Model)",
+      width = 50),
+    subtitle = str_wrap(
+      "Dots = median odds ratio; bars = bootstrap interquartile range (IQR)",
+      width = 50),
+    color = "% of Direction Stability"
+  ) +
+  theme_osa(base_size = 15) +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+  ) +
+  scale_color_gradientn(
+    colors = c(
+      "#7FCDBB",  
+      "#2C7FB8"  
+    )
+  )
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# same code as from overall and clinical contraindications model to get count of term directional stability and randomness
+summary_other_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  # terms with >= 90% directional stability
+  filter(posneg_sign_pct >= 90.0) %>% summarize(count = n()) 
+summary_other_boot_results %>% 
+  filter(!term %in% c('(Intercept)', 'specialtyPathology')) %>% 
+  # terms with <= 50% directional stability
+  filter(posneg_sign_pct <= 50.0) %>% summarize(count = n())
+```
+
+#### Bootstrapping Interpretation
+
+-   **Overall Model:** 29 of 41 predictors (71%) retained the same directional effect in ≥ 90% of bootstrap iterations and no predictors had random-looking effects (**≤** 50% consistency in directional effect). Encounter type (e.g. Hospital Encounter = Median OR=17.8, Interquartile range (IQR)=1.5-2.3) and time window (e.g. 0-30 days OR=4.3, IQR=3.9-4.8) also had relatively narrow bootstrap IQRs and high median ORs, which support stability in effect sizes.
+
+-   **Clinical Contraindications Model**: 20 of 41 terms (49%) showed ≥ 90% directional stability. Encounter type remained the strongest and most reliable predictor (e.g. Hospital Encounter OR=17.9, IQR=14.0-22.8) and several specialties (e.g. Heme/Onc OR=10.6, IQR=6.7-17.8) were directionally stable but effects are less certain because of wider IQRs (e.g. Heme/Onc OR=10.6, IQR=6.7-17.8). This uncertainty in magnitude is due to limited note counts.
+
+-   **'Other' Model (procedural + sleep):** Directional stability was lower (18 terms ≥ 90%), especially for specialty terms (average directional stability = 74.6%). One specialty (e.g. Reproductive Endocrinology and Infertility (REI)) switched signs in about half of the bootstrap resamples (50.6%). However, encounter type (e.g. Hospital Encounter OR=13.7, IQR=10.3-18.1) and recency remained stable with relatively narrow IQRs across resamples (0-30 days OR=9.3, IQR=8.3-10.6).
+
+In summary, these bootstrapping results show that encounter type and time window are the most robust features across all of the models, whereas specialty and note type are more variable. Because of this, the effects of specialty and note type should be interpreted more cautiously.
+
+Finally, the key findings from this project are summarized in the table below. Across all models, encounter type was the strongest and most reliable metadata feature for identifying exclusion-relevant content. Additionally, recency and temporal windows were also informative, especially for recent procedural exclusions. In contrast, note type was not a meaningful indicator of exclusion context.
+
++-----------------------------------------------------------+-------------------------------------------------------------------------+------------------------------------+-------------------------------------------------------------------------+
+| Category                                                  | Overall Exclusion Model                                                 | Clinical Contraindications Model   | Other (Recent Procedures + Sleep Exclusions) Model                      |
++===========================================================+=========================================================================+====================================+=========================================================================+
+| **Strongest Effect (Largest OR)**                         | Renal (specialty)                                                       | Hospital Encounter (encounte type) | 0--30 days (window bin)                                                 |
+|                                                           |                                                                         |                                    |                                                                         |
+|                                                           | OR = 19.5                                                               | OR = 16.5                          | OR = 11.4                                                               |
++-----------------------------------------------------------+-------------------------------------------------------------------------+------------------------------------+-------------------------------------------------------------------------+
+| **Most Statistically Significant (Lowest p-value)**       | Office Visit (encounter type)                                           | Office Visit (encounter type)      | 0-30 days (window bin)                                                  |
+|                                                           |                                                                         |                                    |                                                                         |
+|                                                           | p = 1.40 × 10⁻²⁵                                                        | p = 2.67 × 10⁻²⁴                   | p = 2.63 × 10⁻³⁷                                                        |
++-----------------------------------------------------------+-------------------------------------------------------------------------+------------------------------------+-------------------------------------------------------------------------+
+| **Most Important Features Overall That Signal Exclusion** | `encounter_type` and temporal recency from pre-screening (`window_bin`) | `encounter_type` and `specialty`   | `encounter_type` and temporal recency from pre-screening (`window_bin`) |
++-----------------------------------------------------------+-------------------------------------------------------------------------+------------------------------------+-------------------------------------------------------------------------+
+
+## Conclusion
+
+From this study, I was able to use LLM-based classification and multivariable logistic regression to identify metadata features that may help make pre-screening faster and more explainable for the clinical research study used in this project. Across the models, encounter type and temporal recency were consistently the most informative signals of exclusion-relevant content while note type did not contribute additional value.
+
+There were also several limitations. Although I manually spot-checked the reliability of LLM classification output, the note labels were not fully adjudicated by study coordinators or the clinical team. The cohort for this study was also small (164 patients and 2,911 notes) which may limit statistical power and increase uncertainty in the estimates. Finally, the results of this study may not be generalizable beyond this study population, sleep medicine, or even the Penn Medicine system.
+
+Even with these limitations, the proposed workflow of using LLMs to extract exclusion signals and regression analysis of note metadata could be beneficial for clinical research recruitment in general. Specifically, this would provide greater transparency and standardization in the pre-screening process by exposing the informal patterns that CRCs rely on when deciding who to skip, which may then help define informal screening rules that could minimize recruitment bias.
+
+For future directions, it will be important to validate the LLM output with CRC adjudication to determine whether the identified metadata predictors are plausible to the CRC. It will also be valuable to test whether the results from this project actually improve screening efficiency in practice.
+
+## References
+
+Cai, T., Cai, F., Dahal, K. P., Cremone, G., Lam, E., Golnik, C., Seyok, T., Hong, C., Cai, T., & Liao, K. P. (2021). Improving the efficiency of clinical trial recruitment using an ensemble machine learning to assist with eligibility screening. *ACR Open Rheumatology, 3*(10), 593--600. https://doi.org/10.1002/acr2.11289
+
+Etchberger, K. (2016, November 7). *Chart Review: Should Sponsors Pay for Clinical Research Sites to Review Charts?*. LinkedIn. https://www.linkedin.com/pulse/chart-review-should-sponsors-pay-clinical-research-sites-etchberger#:\~:text=Some%20trials%20remain%20very%20complicated,takes%20to%20find%20those%20patients.
+
+Lai, Y.S. & Afseth, J.D. (2019). A review of the impact of utilising electronic medical records for clinical research recruitment. *Clinical Trials, 16*(2):194-203. https://doi.org/10.1177/17407745198297
+
+Motamedi, K. K., McClary, A. C., & Amedee, R. G. (2009). Obstructive sleep apnea: a growing problem. *Ochsner journal*, *9*(3), 149--153.
+
+Norgeot, B., Muenzen, K., Peterson, T.A. et al. (2020). Protected Health Information filter (Philter): accurately and securely de-identifying free-text clinical notes. *npj Digit. Med. 3*:57. https://doi.org/10.1038/s41746-020-0258-y

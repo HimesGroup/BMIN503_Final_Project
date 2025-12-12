@@ -1,0 +1,461 @@
+---
+title: ""
+output:
+  xaringan::moon_reader:
+    self_contained: true
+    css: ["default", "default-fonts", "css/sleep-waves.css", "css/type-scale.css"]
+    seal: false
+    lib_dir: libs
+    nature:
+      ratio: "16:9"
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+
+```{r xaringanExtra, echo=FALSE}
+xaringanExtra::use_panelset()
+```
+
+
+class: title-slide
+
+<div class="title-card">
+  <h1>
+    Identifying Screening-Relevant Context in OSA Study Recruitment Using Clinical Note Metadata and LLM-Extracted Signals
+  </h1>
+
+  <p class="small-title-meta">
+    Ashley Batugo · BMIN503/EPID600 · December 4, 2025
+  </p>
+</div>
+
+---
+
+# Problem & Motivation
+
+.pull-left[
+
+### Clinical Reality
+
+- Recruitment is a major bottleneck  
+- Key information lives in free-text EHR notes
+- Chart review is time-intensive
+- Clinical Research Coordinators (CRC) recruitment decisions rely on:
+  - Formal exclusions  
+  - Informal skip signals  
+
+*Motivated by recruitment challenges in an OSA clinical study I'm part of*
+
+]
+
+.pull-right[
+
+### Informatics Opportunity
+
+- Use LLMs to extract exclusion context from notes
+- Use metadata to identify high-yield contexts
+- Reduce unnecessary chart review  
+- Support CRC workflows
+]
+
+---
+
+class: section-slide, middle, center
+
+<div class="section-card">
+  <h1>Central Project Question</h1>
+  <p class="section-subtitle">
+    Which note-level metadata are most associated with screening exclusions in a sleep study?
+  </p>
+</div>
+
+---
+
+# Study Cohort / Data Scope
+
+.pull-left[
+Study Cohort
+- Source: **CRC-maintained Excel screening report**
+- Population: patients already excluded by CRC
+
+Exclusion categories were defined by reviewing:
+- CRC notes for exclusion (in the excel report)
+
+Final analytic exclusion buckets:
+- Clinical contraindications
+- Procedural / recent events
+- Sleep-specific exclusions
+]
+
+.pull-right[
+
+Unit of analysis: **clinical notes**
+- Clinic notes (≤ 1 year before pre-screening)
+- Surgical notes (all time)
+- Pathology reports (all time)
+]
+
+
+---
+
+class: llm-slide
+
+# Phase 1 — LLM-Based Evidence Extraction
+
+.panelset[
+
+.panel[.panel-name[Objective]
+
+- **LLM task:** For each note, detect whether it contains exclusion-relevant information  
+- **Purpose of Phase 1:** Convert free-text notes into structured labels  
+- **Outputs:** Three binary flags per note  
+  (clinical, procedural, sleep-related)  
+- These labels become the **outcomes** for Phase 2 modeling
+
+]
+
+.panel[.panel-name[Sample Input]
+
+Input: De-identified notes (excl. sensitive notes) 
+
+```text
+[TIME_RELATIVE_TO_PRESCREEN: 0-30d | DELTA_DAYS = 12]
+
+NAME reports worsening daytime fatigue and loud snoring.
+History of recent surgery for nasal obstruction.
+```
+
+]
+
+.panel[.panel-name[Prompt Snapshot]
+
+.pull-left[
+```text
+Role: OSA screening assistant
+
+Input: one note + time header
+
+Task: Is there CURRENT evidence of:
+  1) Clinical contraindication
+  2) Procedural / recent event
+  3) Sleep-specific exclusion
+
+Rules:
+- Use explicit text only
+- Respect temporal context
+- Do not infer missing information
+
+Output: JSON with labels, rationale, confidence
+```
+]
+
+.pull-right[
+Returned per note (in JSON):
+  - 3 exclusion flags for presence (1) or absence (0) clinical contraindications, recent procedural events, and sleep-specific exclusions
+  - Rationale
+  - Confidence scores
+]
+
+]
+
+.panel[.panel-name[Code Snapshot]
+
+.pull-left[
+~~~python
+config = LLMClassificationConfig.for_inference(
+  text_column="note_text",
+  target_labels=[
+    "clinical_contra",
+    "procedural_recent",
+    "sleep_specific"
+  ]
+)
+
+predictor = LLMClassificationPredictor(
+  config=config,
+  client=client,
+  system_prompt=system_prompt,
+  task_prompt=prompt_text,
+  endpoint="openai-gpt-4o-mini-chat",
+  temperature=0.0
+)
+
+results = predictor.predict_batch(all_notes_final)
+~~~
+]
+
+.pull-right[
+- Sent each note to GPT-4o mini (programatically)
+- Executed in HIPAA-compliant Databricks.
+]
+]
+
+]
+---
+
+# LLM Performance 
+Tested the prompt first against all the notes for 60% of the patients
+
+Of the patients excluded within each bucket by the CRC, what percent had ≥1 note flagged by the LLM in the same category?
+
+.pull-left[
+
+- Clinical contraindications  
+  - Coverage: **98.7 percent**
+
+- Procedural / recent care  
+  - Coverage: **94.6 percent**
+
+- Sleep-specific  
+  - Coverage: **95.2 percent**
+
+]
+
+.pull-right[
+
+> All categories exceeded the  
+> 80% threshold  
+> Prompt frozen and applied to full cohort.
+
+]
+
+---
+
+# Phase 2 — Modeling & Interpretation
+
+.panelset[
+
+.panel[.panel-name[Objective]
+
+Final Result (Phase 1) : JSON → converted to dataframe → table in Databricks → joined with metadata → modeling dataset
+
+Translate LLM outputs and note metadata into:
+
+- Interpretable statistical models  
+- Quantified screening signals   
+- Goal: Identify which notes matter most and when they matter.
+
+]
+
+.panel[.panel-name[Outcomes + Predictors]
+
+.pull-left[
+.interpretation-2[
+
+Three outcomes — each studied separately (obtained from Phase 1):
+
+1. **Overall Exclusion**  
+   Where does any exclusion-relevant information tend to appear?  
+   - 50.2% of notes contained ≥1 exclusion signal.
+
+2. **Clinical Contraindications**  
+   Where are medical exclusions usually documented?  
+   - 41.0% of notes contained clinical exclusion signals.
+
+3. **Procedural / Sleep-Related (modeled together as “Other” due to small class sizes)**  
+   Where do procedural and sleep-related exclusions appear?  
+   - 22.0% of notes contained procedural or sleep-related signals.
+   ]
+]
+
+.pull-right[ 
+.interpretation-2[
+Structured metadata inputs:
+
+- Note type  
+- Clinical specialty  
+- Encounter type  
+- Time window before screening
+
+All predictors were converted to categorical factors.
+]
+
+]
+]
+
+.panel[.panel-name[Design Decisions]
+
+.pull-left[
+Feature preparation:
+
+- Collapsed spare groups 
+- Missing values → `"Unknown"`  
+- Harmonized the inpatient and outpaient note type fields 
+]
+
+.pull-right[
+Imbalance handling:
+
+- Inverse class weighting for:
+  - Clinical model  
+  - Other model  
+]
+
+]
+
+.panel[.panel-name[Modeling]
+
+.pull-left[
+Modeling approach:
+
+- Multivariable Logistic regression (`glm()`)
+- Odds ratios for interpretation 
+- Fit on full dataset to maximize statistical power for signal discovery (bc this is inferential modeling)
+]
+  
+.pull-right[
+
+Validation:
+
+- Bootstrap resampling 
+- Checked: (1) Directional stability; (2) Signal robustness
+
+Model Function:
+
+- ```glm(yes/no flags for excl. content ~ Note Type + Clinical specialty + Encounter Type + Time from Pre-Screening)```
+]
+
+]
+
+]
+---
+
+# Results: Cohort & Notes Landscape
+
+.panelset[
+
+.panel[.panel-name[Cohort Summary]
+
+### Study Cohort
+
+- **2,911** de-identified notes  
+- **164** screened patients  
+- Median notes per patient: **11** (range: 1–99)  
+- Note date range: **Sep 2011 – Nov 2025**  
+
+]
+
+.panel[.panel-name[Documentation Shape]
+
+.pull-left[
+![](../figs/note_type_plot.png)
+]
+
+.pull-right[
+![](../figs/time_windows_plot.png)
+]
+
+]
+
+.panel[.panel-name[Care Context]
+
+.pull-left[
+![](../figs/specialties_plot.png)
+]
+
+.pull-right[
+![](../figs/encounter_type_plots.png)
+]
+
+]
+
+]
+---
+
+class: results-slide
+
+# Results — Which metadata signals exclusion? 
+
+.panelset[
+
+.panel[.panel-name[Main Result]
+
+.pull-left[
+![](../figs/overall_model_odds_plot.png)
+]
+
+.pull-right[
+.interpretation[
+
+**Main takeaways**
+
+- Odds > 1 = higher chance of exclusion  
+- Bars = uncertainty in effect size  
+- **Encounter type + recency are the strongest signals** 
+  - Office Visit show ~ 10x higher odds of exclusion
+  - Notes within 0-30 days show 4x higher odds
+- Specialty has mixed strength 
+- Note type contributes little (effects near OR < 1)
+
+**Across models**
+
+- *Clinical*: encounter + specialty; recency less important  
+- *Other*: encounter + timing; specialty weaker  
+
+]
+]
+
+]
+
+.panel[.panel-name[Stability through Boostrapping]
+
+.pull-left[
+![](../figs/overall_model_bootstrap_plot.png)]
+
+.pull-right[
+.interpretation[
+**What this shows**
+- Effects are directionally stable 
+  - **29 of 41 predictors (71%)** kept the same direction in ≥ 90% of bootstrap runs 
+- Encounter type + timing = most reliable and dominant features 
+- Note type & specialty = less stable 
+- No predictors behave randomly 
+
+**How other models compare**
+- **Clinical Model**: Directionally stable effects in ~1/2 of features; encounter type and specialty = main drivers
+- **'Other' Model**: Directionally stable effects in ~1/2 of features; Encounter Type and time window are most stable and still main drivers
+]
+]
+]
+
+]
+
+---
+
+# Conclusion 
+
+.pull-left[
+Main Takeaways
+- LLMs plus metadata help surface high-yield notes  
+- Encounter type and recency dominate screening context
+  (e.g., office visits ≈10x higher odds; recent notes ≈4x higher odds)
+- Screening becomes faster and more explainable  
+
+Ethical Considerations
+- Greater transparency  
+- Fewer subjective skips   
+]
+
+.pull-right[
+Limitations
+- Limited validation  
+- Small cohort  
+- Sparse specialties  
+
+Future Directions
+- CRC validation  
+- Prospective testing  
+]
+
+---
+
+class: end-slide, middle
+
+# Thanks! 
+## (and special thanks to Danielle Mowery, Emily Schriver, and Paula Salvador for their assistance with this project!)
+
+
+.small[
+Questions or comments?
+]
