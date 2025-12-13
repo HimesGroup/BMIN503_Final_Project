@@ -1,0 +1,1131 @@
+---
+title: "BMIN5030_FinalProject_Ballard"
+format: html
+engine: knitr
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Mapping the Pallidothalamic Tract for Focused Ultrasound Therapy in Parkinson’s Disease: A Neuroimaging Quantitative Analysis
+
+Hatcher Ballard
+
+## Outline
+
+- [Overview](#overview)
+- [Introduction](#introduction)
+- [Methods](#methods)
+- [Pre-Processing](#pre-processing)
+- [Results and Analysis](#results-and-analysis)
+- [Limitations](#limitations)
+- [Conclusion and Future Directions](#conclusion-and-future-directions)
+
+
+
+## Overview
+Parkinson’s Disease (PD) affects more than 10 million people worldwide and incidence continues to grow as the population ages. Despite available medications and deep brain stimulation, many patients still struggle with disabling motor symptoms, highlighting the need for less invasive, targeted therapies. This project examines neuroimaging before and after focused ultrasound ablation of the pallidothalamic tract in patients with PD to better understand predictors of symptom improvement. Specifically, we have analyzed ablation fields, or lesions, to quantify overlap with the ansa lenticularis and lenticular fasciculus, two major output pathways that make up the pallidothalamic tract. We hypothesize that coverage of these tracts results in improved postoperative symptom reduction or resolution.
+
+## Introduction
+PD is a progressive neurodegenerative disorder characterized by disabling motor symptoms that can become refractory to medication over time. For patients who cannot tolerate or do not benefit from medication and/or deep brain stimulation, focused ultrasound (fUS) ablation has emerged as an effective alternative. Ablation of the pallidothalamic tract (PTT) can provide relief of severe motor symptoms, yet clinical outcomes remain variable, suggesting that subtle anatomic factors within the pallidal outflow pathways may influence response to treatment. Recent literature suggests that targeting the ansa lenticularis and lenticular fasciculus, two downstream tracts, which carry inhibitory outputs through the globus pallidus (GPi) toward thalamic relay nuclei may enhance therapeutic benefit, but these relationships have not been heavily studied. Understanding the impact of ablation of these tracts on patient outcomes may refine fUS targeting and optimize care for PD patients with severe movement symptoms. This problem, and potential solution, involves neurosurgery, radiology, movement disorders neurology, neuroanatomy, and biomedical engineering. High-resolution neuroimaging and tractographic analysis provide the anatomical framework for characterizing ablation lesions, while clinical neuroscience and movement disorders expertise are required to interpret change in symptoms and functional outcomes. By combining anatomical tract analysis, clinical outcome measures, and imaging-driven targeting strategies, this project advances our understanding of fUS ablation impact on basal ganglia circuitry, and how specific white matter tract involvement may drive therapeutic efficacy.
+
+## Methods
+We analyzed pre-operative and post-operative magnetic resonance imaging (MRI) scans from patients with PD who underwent MR-guided focused ultrasound ablation targeting the pallidothalamic region. Pre-operative imaging was aligned with the corresponding post-treatment lesion mask, generated through manual segmentation. The Dystonia Response Tract Atlas (Horn 2022) was used to define the PTT and its major components: the ansa lenticularis (AL) and lenticular fasciculus (LF), after transformation into each subject’s anatomical space. Lesion and tract masks were re-sampled onto a common grid to enable voxel-wise quantification of tract involvement.
+
+For each subject, we computed lesion volume, tract volumes, and the degree of lesion–tract overlap. Motor outcomes were assessed using changes in UPDRS-III scores before and after treatment. Imaging pre-processing, and all visualization and quality checks were performed using FSL, FSLeyes, ITK-SnAP, and Python on the laboratory processing computer, while final quantitative analyses and modeling were performed in RStudio.
+
+## Pre-processing
+Prior to subject treatment, the Dystonia Response Tract Atlas (Horn 2022) is registered to the subject's pre-operative MRI in order to plan the ablation target. This planning is performed using custom in-house software that sets many of the main paths and directories that our research-specific Python scripts reference. It is not appropriate to share the tool that supports clinical planning for the purposes of this assignment (especially as it is being shared to github). 
+
+Next, intra-operative and post-operative MRI scans were obtained for each subject, including T1-weighted, T2-weighted, and/or FLAIR sequences depending on clinical protocol. All images were visually inspected in FSLeyes to confirm adequate quality and to verify the ablation lesion.
+
+Pre-operative structural scans were then non-linearly normalized to the MNI152 standard space to enable cross-subject comparison. All available MRI sequences were aligned with the post-operative scan using the Python script shown here, with annotations.
+
+I found RStudio constantly trying to execute my chunks of Python code when rendering and was able to prevent this with "eval: false" and "python.reticulate: false" lines at the top of each Python code chunk.
+```{python}
+#| eval: false
+#| python.reticulate: false
+
+import os
+import glob
+import sys
+
+#subjects = list(glob.glob("/home/halpernlab/Targeting/FUS/subjects/preop_immPost/sub*")) # CHANGE PATH
+subj = sys.argv[1]
+subjects = list(subj.split(",")) # CHANGE PATH if needed, this separates subjects into elements
+dpSub = subjects  # each element has a directory path
+
+for i in range (len(subjects)):
+# define registration directory for subjects
+    RegDir = str('%s/' + 'preop/ANTS_09c/') %dpSub[i]
+    dpReg = str(RegDir)
+    mkreg_cmd = 'mkdir %s' %dpReg
+    # create registration directory if non-existent
+    if not os.path.exists(dpReg):
+	    os.system(mkreg_cmd)
+    
+    # Path to post-op imaging used as reference for all registrations
+    subj_postop = str('%s/' + 'immPost/t2.nii.gz') %dpSub[i]
+    
+    #------------------------
+    # PRE-OP T2 -> POST-OP T2
+    #------------------------
+    subj_t2w = str('%s/' + 'preop/t2.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_t2w):
+        print('NO T2 AVAILABLE TO MERGE')
+    if os.path.exists(subj_t2w):
+      # set naming convention for ANTs output (transform + warped image)
+        header_t2 = str('%s/' + "preop/ANTS_09c/t2_to_postop_") %dpSub[i]
+        xfm_filename_t2 = header_t2 + "Warped.nii.gz"
+        # command to run ANTs registration for T2 -> post-op rigid registration. Could revise to one helper function for future use
+        
+        # Defining each ANTs command below:
+        # dimensionality defines 3D space for registration
+        # float controls computational use of 32-bit floats (1) or double precision (0), which is more precise and slower
+        # output defines where ANTs saves transformation + warped files
+        # interpolation sets interpolation type; NearestNeighbor preserves exact values in the masks
+        # winsorize-image-intensities trims intensities below 0.5th percentile and 99.5th percentile; aka removes noise
+        # use-histogram-matching: 0 = Off (for multimodal registration like this); 1 = On (for alignment of same-modality images, e.g., T1 -> T1)
+        # initial-moving-transform provides starting transformation [fixed, moving, 1 = "use center of mass alignment first"]
+        # transform Rigid sets gradient step size to control ANTs optimization; if optimization is too aggressive, you may deform anatomy
+        # metric MI (mutual information) defines cost function to evaluate alignment: MI[fixed, moving, weight, nbins, sampling, sampling_param]
+        # shrink-factors controls multi-resolution pyramid; starts coarse and then refines
+        # convergence sets stopping criteria for each pyramid level = stop early if improvement becomes so small to meet threshold.
+        # smoothing-sigmas controls Gaussian smoothing at each resolution level, improving stability at coarse stages
+        command_t2 = "antsRegistration 
+        --dimensionality 3
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_t2, xfm_filename_t2, subj_postop, subj_t2w, subj_postop, subj_t2w, subj_postop, subj_t2w)
+        # if output already exists, skip; otherwise run registration
+        if os.path.exists(xfm_filename_t2):
+            print('T2 already merged to postop')
+        if not os.path.exists(xfm_filename_t2):
+            os.system(command_t2)
+    
+    #------------------------
+    # PRE-OP T1 -> POST-OP T2
+    #------------------------
+    # command is repeated specific to MRI sequence being registered
+        subj_t1 = str('%s/' + 'preop/t1.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_t1):
+        print('NO t1 AVAILABLE TO MERGE')
+    if os.path.exists(subj_t1):
+        header_t1 = str('%s/' + "preop/ANTS_09c/t1_to_postop_") %dpSub[i]
+        xfm_filename_t1 = header_t1 + "Warped.nii.gz"
+        command_t1 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_t1, xfm_filename_t1, subj_postop, subj_t1, subj_postop, subj_t1, subj_postop, subj_t1)
+        if os.path.exists(xfm_filename_t1):
+            print('t1 already merged to postop')
+        if not os.path.exists(xfm_filename_t1):
+            os.system(command_t1)
+
+    # -------------------------
+    # PRE-OP fGATIR -> POST-OP T2
+    # ------------------------- 
+    subj_fgatir = str('%s/' + 'preop/fGATIR.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO fGATIR AVAILABLE TO MERGE')
+    if os.path.exists(subj_fgatir):
+        header_fgatir = str('%s/' + "preop/ANTS_09c/fgatir_to_postop_") %dpSub[i]
+        xfm_filename_fgatir = header_fgatir + "Warped.nii.gz"
+        command_fgatir = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_fgatir, xfm_filename_fgatir, subj_postop, subj_fgatir, subj_postop, subj_fgatir, subj_postop, subj_fgatir)
+        if os.path.exists(xfm_filename_fgatir):
+            print('fGATIR already merged to postop')
+        if not os.path.exists(xfm_filename_fgatir):
+            os.system(command_fgatir)
+
+    # -------------------------
+    # POST-OP fGATIR -> POST-OP T2
+    # -------------------------            
+    subj_postop_fgatir = str('%s/' + 'immPost/fGATIR.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO postop_fGATIR AVAILABLE TO MERGE')
+    if os.path.exists(subj_postop_fgatir):
+        header_postop_fgatir = str('%s/' + "preop/ANTS_09c/postop_fgatir_to_postop_") %dpSub[i]
+        xfm_filename_postop_fgatir = header_postop_fgatir + "Warped.nii.gz"
+        command_postop_fgatir = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_postop_fgatir, xfm_filename_postop_fgatir, subj_postop, subj_postop_fgatir, subj_postop, subj_postop_fgatir, subj_postop, subj_postop_fgatir)
+        if os.path.exists(xfm_filename_postop_fgatir):
+            print('postop_fGATIR already merged to postop')
+        if not os.path.exists(xfm_filename_postop_fgatir):
+            os.system(command_postop_fgatir)
+
+    # -------------------------
+    # INTRA-OP T2_1 -> POST-OP T2
+    # ------------------------- 
+    subj_intraop_T2_1 = str('%s/' + 'immPost/intraop_T2_1.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO intraop_T2_1 AVAILABLE TO MERGE')
+    if os.path.exists(subj_intraop_T2_1):
+        header_intraop_T2_1 = str('%s/' + "preop/ANTS_09c/intraop_T2_1_to_postop_") %dpSub[i]
+        xfm_filename_intraop_T2_1 = header_intraop_T2_1 + "Warped.nii.gz"
+        command_intraop_T2_1 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_intraop_T2_1, xfm_filename_intraop_T2_1, subj_postop, subj_intraop_T2_1, subj_postop, subj_intraop_T2_1, subj_postop, subj_intraop_T2_1)
+        if os.path.exists(xfm_filename_intraop_T2_1):
+            print('intraop_T2_1 already merged to postop')
+        if not os.path.exists(xfm_filename_intraop_T2_1):
+            os.system(command_intraop_T2_1)
+
+    # -------------------------
+    # INTRA-OP T2_2 -> POST-OP T2
+    # -------------------------
+    # only if a second intra-op scan was performed, typically not
+    subj_intraop_T2_2 = str('%s/' + 'immPost/intraop_T2_2.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO intraop_T2_2 AVAILABLE TO MERGE')
+    if os.path.exists(subj_intraop_T2_2):
+        header_intraop_T2_2 = str('%s/' + "preop/ANTS_09c/intraop_T2_2_to_postop_") %dpSub[i]
+        xfm_filename_intraop_T2_2 = header_intraop_T2_2 + "Warped.nii.gz"
+        command_intraop_T2_2 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995]         
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10]
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_intraop_T2_2, xfm_filename_intraop_T2_2, subj_postop, subj_intraop_T2_2, subj_postop, subj_intraop_T2_2, subj_postop, subj_intraop_T2_2)
+        if os.path.exists(xfm_filename_intraop_T2_2):
+            print('intraop_T2_2 already merged to postop')
+        if not os.path.exists(xfm_filename_intraop_T2_2):
+            os.system(command_intraop_T2_2)
+    
+    # -------------------------
+    # INTR-OP T2_3 → POST-OP T2
+    # -------------------------
+    # only if a third intra-op scan was performed, typically not
+    subj_intraop_T2_3 = str('%s/' + 'immPost/intraop_T2_3.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO intraop_T2_3 AVAILABLE TO MERGE')
+    if os.path.exists(subj_intraop_T2_3):
+        header_intraop_T2_3 = str('%s/' + "preop/ANTS_09c/intraop_T2_3_to_postop_") %dpSub[i]
+        xfm_filename_intraop_T2_3 = header_intraop_T2_3 + "Warped.nii.gz"
+        command_intraop_T2_3 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_intraop_T2_3, xfm_filename_intraop_T2_3, subj_postop, subj_intraop_T2_3, subj_postop, subj_intraop_T2_3, subj_postop, subj_intraop_T2_3)
+        if os.path.exists(xfm_filename_intraop_T2_3):
+            print('intraop_T2_3 already merged to postop')
+        if not os.path.exists(xfm_filename_intraop_T2_3):
+            os.system(command_intraop_T2_3)    
+
+    # -------------------------
+    # INTRA-OP T2_4 -> POST-OP T2
+    # -------------------------
+    # only if a fourth intra-op scan was performed, typically not
+    subj_intraop_T2_4 = str('%s/' + 'immPost/intraop_T2_4.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO intraop_T2_4 AVAILABLE TO MERGE')
+    if os.path.exists(subj_intraop_T2_4):
+        header_intraop_T2_4 = str('%s/' + "preop/ANTS_09c/intraop_T2_4_to_postop_") %dpSub[i]
+        xfm_filename_intraop_T2_4 = header_intraop_T2_4 + "Warped.nii.gz"
+        command_intraop_T2_4 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_intraop_T2_4, xfm_filename_intraop_T2_4, subj_postop, subj_intraop_T2_4, subj_postop, subj_intraop_T2_4, subj_postop, subj_intraop_T2_4)
+        if os.path.exists(xfm_filename_intraop_T2_4):
+            print('intraop_T2_4 already merged to postop')
+        if not os.path.exists(xfm_filename_intraop_T2_4):
+            os.system(command_intraop_T2_4)                   
+
+    # -------------------------
+    # POST-OP T1 -> POST-OP T2
+    # -------------------------
+    subj_postop_t1 = str('%s/' + 'immPost/t1.nii.gz') %dpSub[i]
+    if not os.path.exists(subj_fgatir):
+        print('NO postop_t1 AVAILABLE TO MERGE')
+    if os.path.exists(subj_postop_t1):
+        header_postop_t1 = str('%s/' + "preop/ANTS_09c/postop_t1_to_postop_") %dpSub[i]
+        xfm_filename_postop_t1 = header_postop_t1 + "Warped.nii.gz"
+        command_postop_t1 = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_postop_t1, xfm_filename_postop_t1, subj_postop, subj_postop_t1, subj_postop, subj_postop_t1, subj_postop, subj_postop_t1)
+        if os.path.exists(xfm_filename_postop_t1):
+            print('postop_t1 already merged to postop')
+        if not os.path.exists(xfm_filename_postop_t1):
+            os.system(command_postop_t1)
+
+    # -------------------------
+    # PRE-OP CT -> POST-OP T2
+    # -------------------------
+    # only if pre-op CT available
+    subj_ct = str('%s/' + 'preop/ct.nii.gz') %dpSub[i]
+    print(RegDir)
+    if not os.path.exists(subj_ct):
+        print('NO POSTOP CT AVAILABLE TO MERGE')
+    if os.path.exists(subj_ct):
+        header_ct = str('%s/' + "ANTS_09c/preop_ct_to_postop_") %dpSub[i]
+        xfm_filename_ct = header_ct + "Warped.nii.gz"
+        command_ct = "antsRegistration 
+        --dimensionality 3 
+        --float 0 
+        --output [%s, %s] 
+        --interpolation NearestNeighbor 
+        --winsorize-image-intensities [0.005, 0.995] 
+        --use-histogram-matching 0 
+        --initial-moving-transform [%s, %s,1] 
+        --transform Rigid[0.1] 
+        --shrink-factors 8x4x2x1 
+        --metric MI[%s, %s, 1, 32, Regular, 0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --shrink-factors 8x4x2x1 
+        --smoothing-sigmas 3x2x1x0vox 
+        --transform Rigid[0.1] 
+        --metric MI[%s,%s,1,32,Regular,0.25] 
+        --convergence [1000x500x250x100,1e-6,10] 
+        --smoothing-sigmas 3x2x1x0vox" % (header_ct, xfm_filename_ct, subj_postop, subj_ct, subj_postop, subj_ct, subj_postop, subj_ct)
+        if os.path.exists(xfm_filename_ct):
+            print('preop CT already merged to postop T2')
+        if not os.path.exists(xfm_filename_ct):
+            os.system(command_ct) 
+```
+
+
+Once a subject's available imaging is fully aligned, ablation lesions were segmented on post-operative MRI using ITK-SnAP. Hyperintense or hypointense signal changes consistent with thermal ablation were traced slice-by-slice using the random forest-based 'snake evolution' algorithm auto-segmentation tool to produce a binary lesion mask for each subject. This process is outlined below.
+
+::: {.figure}
+![Once a lesion is identified, ITK-SnAP is used to paint zone 1 of the lesion red: the true lesion (white in the scan) that is necrotic after the procedure.](figs/BR-11132025-screenshots/lesion-masking.png){width=70%}
+:::
+
+
+::: {.figure}
+![Zone 2 of the lesion is then painted green; this is the rim of the true lesion and the start of consequential edema, which should not be included in lesion volume calculations.](figs/BR-11132025-screenshots/lesion-masking-2.png){width=70%}
+:::
+
+
+::: {.figure}
+![Last, zone 3 of the lesion is painted blue; this informs ITK-SnAP to exclude everything beyond the lesion.](figs/BR-11132025-screenshots/lesion-masking-3.png){width=70%}
+:::
+
+
+::: {.figure}
+![Once the classifier is trained based on the three painted zones (see right panel of previous image), we set classification features to increase precision.](figs/BR-11132025-screenshots/lesion-masking-classification.png){width=30%}
+:::
+
+
+::: {.figure}
+![Then we run the auto-segmentation tool. We let it run for at least 1000 iterations to increase precision.](figs/BR-11132025-screenshots/lesion-masking-evolution.png){width=70%}
+:::
+
+
+::: {.figure}
+![Once completed, the lesion mask has been created. A clinician reviews the mask and is able to manually add or remove voxels from the mask using the brush tool.](figs/BR-11132025-screenshots/lesion-masking-final.png){width=70%}
+:::
+
+
+These masks were exported in NIfTI format for volumetric processing using Python. Lesion volumes were calculated by multiplying the number of voxels in the mask by the voxel volume. The annotated Python script is shown here:
+```{python}
+#| eval: false
+#| python.reticulate: false
+
+import nibabel as nib
+import numpy as np
+import os
+import fnmatch
+import glob
+import sys
+import subprocess
+
+os.system("export FSLPARALLEL=slurm")
+
+print("subject, voi, voi_voxel, voi_vol_mm3")
+
+# Set directories
+subjects_dir = list(glob.glob("/media/halpernlab/Expansion/Targeting_storage/FUS/subjects/preop_immPost/sub*/preop")) #CHANGE DIRECTORY
+
+for i in range (len(subjects_dir)):
+	voi_input = sys.argv[1] #lesion
+	voi = str("%s/" + "%s.nii.gz") %(subjects_dir[i], voi_input)
+	if os.path.exists(voi):
+		get_voi_vol_mm3 = 'fslstats %s -V' %(voi)
+		voi_voxel = subprocess.check_output(get_voi_vol_mm3, shell=True).decode('ascii')
+		voi_voxel = float(voi_voxel[:voi_voxel.find(' ')])
+		voi_vol_mm3 = subprocess.check_output(get_voi_vol_mm3, shell=True).decode('ascii')
+		voi_vol_mm3 = float(voi_vol_mm3[voi_vol_mm3.find(' '):])
+		print(subjects_dir[i], voi_input, voi_voxel, voi_vol_mm3, sep =",")
+```
+
+
+The two major components of the PTT, the ansa lenticularis and the lenticular fasciculus, were previously defined using the Dystonia Response Tract Atlas (Horn 2022). All tract masks were imported into Python and re-sampled to align with the subject’s anatomical space and lesion mask.
+```{python}
+#| eval: false
+#| python.reticulate: false
+
+import os
+import glob
+import fnmatch
+import sys
+
+# automatic subject discovery, see example:
+# subjects = list(glob.glob("/media/halpernlab/Expansion/Targeting_storage/FUS/subjects/082022/sub-ET_ET_08182022/preop"))
+
+# comma-separated list of subject base paths
+subj = sys.argv[1]
+subjects = list(subj.split(","))  # convert to Python list of subject directories
+dpSub = subjects                  
+
+# comma-separated list of ROI names (no .nii.gz)
+# e.g. "PTT_L,PTT_R,Ansa_L"
+rois = sys.argv[2]
+rois = list(rois.split(","))
+print(rois)
+
+for i in range(len(subjects)):
+    # registration directory for specific to subject
+    RegDir = str('%s/' + 'ANTS_09c/') % dpSub[i]
+    dpReg = str(RegDir)
+    mkreg_cmd = 'mkdir %s' % dpReg
+
+    # create ANTs registration directory if it doesn't exist
+    if not os.path.exists(dpReg):
+        os.system(mkreg_cmd)
+
+    # moving image = subject T1, here named "3d.nii.gz"
+    subj_t1w = str('%s/' + '3d.nii.gz') % dpSub[i]
+    # fixed image = postop scan
+    subj_postop = str('%s/' + 'postop.nii.gz') % dpSub[i]
+
+    # prefix for ANTs registration outputs
+    header = str('%s/' + "ANTS_09c/postop_to_t1w_") % dpSub[i]
+    # full path to expected warped output
+    xfm_filename = header + "Warped.nii.gz"
+
+    # antsRegistration command:
+    #   register postop -> T1 rigidly, using mutual information
+    #   save transforms with prefix `header` and warped image as `xfm_filename`
+    command = (
+        "antsRegistration "
+        "--dimensionality 3 --float 0 "
+        "--output [%s, %s] "
+        "--interpolation NearestNeighbor "
+        "--winsorize-image-intensities [0.005, 0.995] "
+        "--use-histogram-matching 0 "
+        "--initial-moving-transform [%s, %s,1] "
+        "--transform Rigid[0.1] "
+        "--shrink-factors 8x4x2x1 "
+        "--metric MI[%s, %s, 1, 32, Regular, 0.25] "
+        "--convergence [1000x500x250x100,1e-6,10] "
+        "--shrink-factors 8x4x2x1 "
+        "--smoothing-sigmas 3x2x1x0vox "
+        "--transform Rigid[0.1] "
+        "--metric MI[%s,%s,1,32,Regular,0.25] "
+        "--convergence [1000x500x250x100,1e-6,10] "
+        "--smoothing-sigmas 3x2x1x0vox"
+    ) % (header, xfm_filename,
+         subj_t1w, subj_postop,
+         subj_t1w, subj_postop,
+         subj_t1w, subj_postop)
+
+    # only run registration if:
+    #   registration directory exists AND
+    #   warped output does not already exist
+    if os.path.exists(dpReg) and not os.path.exists(xfm_filename):
+        os.system(command)
+    
+    #--------------            
+    ANTS 3             
+    #--------------
+    # path to affine transform from antsRegistration:
+    fnAff_MNIaff = str(dpReg + 'postop_to_t1w_0GenericAffine.mat')
+
+    # reference image for antsApplyTransforms
+    # Here: original postop image (we want ROIs in postop space)
+    fnTranBrainNii = str(dpSub[i] + '/postop.nii.gz')
+    # alternative: use warped postop in T1 space
+    # fnTranBrainNii = str(dpReg + 'postop_to_t1w_Warped.nii.gz')
+
+    # output directory for transformed ROI masks in postop space
+    OutDir = str('%s/' + 'seedmasksINpostop_9b') % dpSub[i]
+    mk_out = 'mkdir %s' % OutDir
+    if not os.path.exists(OutDir):
+        os.system(mk_out)
+
+    # directory containing ROI masks in T1/native space
+    MasksDir = str('%s/' + 'seedmasks_09b_T1') % dpSub[i]
+    Masks = rois  # ROI *names* are passed from CLI
+    
+    for j in range(len(Masks)):
+        # construct full path to this ROI mask in T1/native space:
+        #   <sub>/seedmasks_09b_T1/<ROI>.nii.gz
+        fnROImask = str('%s/' + '%s.nii.gz') % (MasksDir, Masks[j])
+
+        # output mask path in postop space:
+        #   <sub>/seedmasksINpostop_9b/<ROI>_postop.nii.gz
+        fnOutput = str('%s' + '/%s_postop.nii.gz') % (OutDir, Masks[j])
+
+        # antsApplyTransforms:
+        #   -d 3             : 3D images
+        #   -r fnTranBrainNii: reference image (postop)
+        #   -i fnROImask     : input ROI mask in T1 space
+        #   -o fnOutput      : output ROI in postop space
+        #   -n NearestNeighbor : preserve binary labels
+        #   -t [fnAff_MNIaff,1] : apply inverse of postop -> T1 affine
+        cmd_applyANTS = (
+            'antsApplyTransforms -d 3 -r %s -i %s -o %s '
+            '-n NearestNeighbor -t [%s,1]'
+        ) % (fnTranBrainNii, fnROImask, fnOutput, fnAff_MNIaff)
+
+        # print command for logging/debugging
+        print(cmd_applyANTS) 
+
+        # execute transform: warp ROI from T1 space into postop space
+        os.system(cmd_applyANTS)
+```
+
+
+Lesion–tract overlap was quantified in Python using voxel-wise logical operations. Overlap volume was defined as the number of voxels shared between the lesion mask and each tract mask, multiplied by voxel volume. 
+```{python}
+#| eval: false
+#| python.reticulate: false
+
+import nibabel as nib
+import numpy as np
+import os
+import fnmatch
+import glob
+import sys
+import subprocess
+
+# set FSL to use simple linux utility for resource management (SLURM) for parallelization
+os.system("export FSLPARALLEL=slurm")
+
+# print CSV header rows for results
+print("subject, mask, voi, volume_L_mask, volume_R_mask, volume_voi, voxel_overlap_L, voxel_overlap_R, weighted_voxel_overlap_L, weighted_voxel_overlap_R, coefficient_L, coefficient_R, weighted_coefficient_L, weighted_coefficient_R")
+
+# coefficient = (# of volume of interest (VOI) voxels overlapping with mask) / (total # of VOI voxels)
+# weighted coefficient = (sum of probability-weighted overlapping voxels) / (total # of VOI voxels)
+
+# discover subject directories:
+#   each "subjects_dir[i]" is a <subject>/preop folder
+subjects_dir = list(glob.glob("/media/halpernlab/Expansion2/Targeting_storage/FUS/subjects/preop_immPost/sub*/preop"))  # CHANGE DIRECTORY as needed
+
+for i in range(len(subjects_dir)):
+    # arguments:
+    #   sys.argv[1] = mask name base
+    #   sys.argv[2] = VOI filename base
+    mask = sys.argv[1]
+    voi_input = sys.argv[2]
+
+    # path where masks in postop space are stored:
+    #   <subject>/preop/seedmasksINpostop
+    mask_dir = str("%s/" + "seedmasksINpostop") % subjects_dir[i]
+
+    # path to VOI volume for a subject:
+    #   <subject>/preop/<voi_input>.nii.gz
+    voi = str("%s/" + "%s.nii.gz") % (subjects_dir[i], voi_input)
+
+    # only proceed if the VOI volume exists for the subject
+    if os.path.exists(voi):
+        # load LEFT hemisphere mask
+        mask_3d_l = str("%s/" + "%s" + "_L_T1_postop.nii.gz") % (mask_dir, mask)
+        # print(mask_3d_l)
+
+        vol_l = nib.load(mask_3d_l)          # load left mask NIfTI
+        vol_l_data = vol_l.get_fdata()       # get data as NumPy array
+        vol_l_nonzer = np.nonzero(vol_l_data)  # indices where mask >0
+        vol_l_nonzero = vol_l_nonzer[1]      # taking index array along axis 1
+        mask_l = len(vol_l_nonzero)          # number of nonzero voxels in L mask
+
+        # repeat for RIGHT hemisphere mask
+        mask_3d_r = str("%s/" + "%s" + "_R_T1_postop.nii.gz") % (mask_dir, mask)
+
+        vol_r = nib.load(mask_3d_r)
+        vol_r_data = vol_r.get_fdata()
+        vol_r_nonzer = np.nonzero(vol_r_data)
+        vol_r_nonzero = vol_r_nonzer[1]
+        mask_r = len(vol_r_nonzero)
+
+        # load VOI
+        voi_3d = nib.load(voi)
+        voi_data = voi_3d.get_fdata()
+        voi_nonzer = np.nonzero(voi_data)
+        voi_nonzero = voi_nonzer[1]
+        voi_vol = len(voi_nonzero)           # total number of nonzero VOI voxels
+
+        # calculate overlap via FSL: multiply VOI by mask to obtain overlapping voxels:
+        #   non-overlapping voxels become 0; overlapping voxels retain VOI intensity
+
+        # make overlap output directory:
+        #   <subject>/preop/overlap/
+        overlap_dir = str("%s/" + "overlap") % subjects_dir[i]
+        if not os.path.exists(overlap_dir):
+            mkoverlapdir = "mkdir %s" % overlap_dir
+            os.system(mkoverlapdir)
+
+        # LEFT hemisphere overlap
+        #   Output: <subject>/preop/overlap/<voi_input>_<mask>_L_T1_postop.nii.gz
+        mult_l_output = str("%s/%s_%s_L_T1_postop.nii.gz") % (overlap_dir, voi_input, mask)
+        # multiply VOI by LEFT mask
+        mult_l_cmd = 'fslmaths %s -mul %s %s' % (voi, mask_3d_l, mult_l_output)
+        os.system(mult_l_cmd)
+
+        mult_l = nib.load(mult_l_output)
+        mult_l_data = mult_l.get_fdata()
+        mult_l_nonzer = np.nonzero(mult_l_data)
+        mult_l_nonzero = mult_l_nonzer[1]
+        overlap_l = len(mult_l_nonzero)      # raw count of overlapping voxels (LEFT)
+
+        # RIGHT hemisphere overlap
+        #   Output: <subject>/preop/overlap/<voi_input>_<mask>_R_T1_postop.nii.gz
+        mult_r_output = str("%s/%s_%s_R_T1_postop.nii.gz") % (overlap_dir, voi_input, mask)
+        # For RIGHT: bin VOI first, then multiply by R mask
+        mult_r_cmd = 'fslmaths %s -bin -mul %s %s' % (voi, mask_3d_r, mult_r_output)
+        os.system(mult_r_cmd)
+
+        mult_r = nib.load(mult_r_output)
+        mult_r_data = mult_r.get_fdata()
+        mult_r_nonzer = np.nonzero(mult_r_data)
+        mult_r_nonzero = mult_r_nonzer[1]
+        overlap_r = len(mult_r_nonzero)      # raw count of overlapping voxels (RIGHT)
+
+        # weighted overlap (using mean intensity of overlap)
+        # for each overlap image, use fslstats:
+        #   -M = mean intensity of voxels >0
+        #   -V = "N_voxels volume_mm3": we only use N_voxels
+
+        # LEFT weighted overlap
+        get_avg_mult_l = 'fslstats %s -M' % mult_l_output
+        avg_mult_l = subprocess.check_output(get_avg_mult_l, shell=True).decode('ascii')
+        avg_mult_l = float(avg_mult_l)   # mean intensity in LEFT overlap
+
+        get_vol_mult_l = 'fslstats %s -V' % mult_l_output
+        vol_mult_l = subprocess.check_output(get_vol_mult_l, shell=True).decode('ascii')
+        # vol_mult_l returns "Nvoxels volume_mm3"; take Nvoxels
+        vol_mult_l = float(vol_mult_l[:vol_mult_l.find(' ')])
+        # Weighted overlap = sum(probabilities) ≈ Nvoxels * mean_intensity
+        wgt_overlap_l = vol_mult_l * avg_mult_l
+
+        # RIGHT weighted overlap
+        get_avg_mult_r = 'fslstats %s -M' % mult_r_output
+        avg_mult_r = subprocess.check_output(get_avg_mult_r, shell=True).decode('ascii')
+        avg_mult_r = float(avg_mult_r)
+
+        get_vol_mult_r = 'fslstats %s -V' % mult_r_output
+        vol_mult_r = subprocess.check_output(get_vol_mult_r, shell=True).decode('ascii')
+        vol_mult_r = float(vol_mult_r[:vol_mult_r.find(' ')])
+        wgt_overlap_r = vol_mult_r * avg_mult_r
+
+        # overlap coefficient = (# overlap voxels) / (total VOI voxels)
+        coeff_L = np.true_divide(overlap_l, voi_vol)
+        coeff_R = np.true_divide(overlap_r, voi_vol)
+
+        # weighted coefficient = (weighted overlap sum) / (total VOI voxels)
+        wgt_coeff_L = np.true_divide(wgt_overlap_l, voi_vol)
+        wgt_coeff_R = np.true_divide(wgt_overlap_r, voi_vol)
+
+        # CSV output line
+        print(
+            subjects_dir[i],
+            mask,
+            voi_input,
+            mask_l,
+            mask_r,
+            voi_vol,
+            overlap_l,
+            overlap_r,
+            wgt_overlap_l,
+            wgt_overlap_r,
+            coeff_L,
+            coeff_R,
+            wgt_coeff_L,
+            wgt_coeff_R,
+            sep=","
+        )
+```
+
+
+Percent tract coverage was calculated as overlap volume divided by total tract volume. Metrics were computed separately for the ansa lenticularis and the lenticular fasciculus.
+
+Motor function was assessed using the Unified Parkinson’s Disease Rating Scale, Part III (UPDRS-III). The primary clinical endpoint was change in motor severity, defined as:
+
+  ΔUPDRS-III = Post-operative score − Pre-operative score.
+
+Negative values indicate improvement, however this was then adjusted to percentage (absolute value) for analyses. 
+
+## Results and Analysis
+
+```{r}
+# libraries used for my analyses
+
+library(tidyverse)
+library(broom)
+library(randomForest)
+library(pROC)
+library(ggplot2)
+library(corrplot)
+```
+
+
+First the data was read in from csv files, one of clinical data and one of imaging data, stored in my project directory, before being cleaned and merged on Subject ID column. Because much of the clinical response data is collected at 6-months post-op timepoint, there are unfortunately missing datapoints for the most recent completed procedures in this dataset. The data for the first 11 subjects is previewed below.
+```{r}
+# read data
+clinical <- read_csv("clinical_data.csv")
+overlap  <- read_csv("combined_overlap.csv")
+
+# clean clinical data
+clinical_clean <- clinical %>%
+  rename(subject_id = ID) %>%
+  select(-matches("^Unnamed")) %>%   # drops unnamned column (there was at least one with extra clinical notes)
+  mutate(
+    subject_id = as.integer(subject_id),
+    Response = as.factor(Response)
+  )
+
+# clean overlap data
+overlap_clean <- overlap %>%
+  rename(subject_id = ID) %>%
+  mutate(
+    subject_id = as.integer(subject_id),
+
+    # convert percent strings like "7.30%" -> 7.30
+    pct_overlap_LF = as.numeric(str_remove(`% Overlap LF`, "%")),
+    pct_overlap_AL = as.numeric(str_remove(`% Overlap AL`, "%"))
+  ) %>%
+  select(
+    subject_id,
+    lesion_vol_mm3 = `Lesion Vol`,
+    overlap_LF_mm3 = `Overlap LF`,
+    overlap_AL_mm3 = `Overlap AL`,
+    pct_overlap_LF, 
+    pct_overlap_AL
+  )
+
+# merge datasets
+dat <- clinical_clean %>%
+  inner_join(overlap_clean, by = "subject_id")
+
+# check merge
+glimpse(dat)
+knitr::kable(
+  head(dat, 10),
+  caption = "Preview of Merged Dataset"
+)
+```
+
+
+Next, the clinical metric of response was calculated for each patient with available data and added as a new column.
+```{r}
+# calculate percent improvement based on UPDRS pre- and post- scores
+dat <- dat %>%
+  mutate(
+    score_change = Postop - Preop,
+    pct_improve = abs(100 * (Postop - Preop) / Postop) # abs() prevents negative values from being used
+  )
+
+glimpse(dat) # check data
+```
+
+
+Descriptive analyses were performed to visualize specific components of our dataset. This bar plot shows the number of patients with varying amounts (mm3) of ablation field overlap of the lenticular fasciculus (LF overlap).
+```{r}
+# distribution of LF overlap
+ggplot(dat, aes(x = overlap_LF_mm3)) +
+  geom_histogram(bins = 10, fill = "blue", color = "white") +
+  labs(
+    x = "LF overlap (mm³)",
+    y = "Count",
+    title = "Distribution of lenticular fasciculus overlap"
+  ) +
+  theme_minimal()
+```
+
+
+This plot shows binary clinical response or NA, plotted against LF overlap. The trend of response after LF overlap in treatment is apparent.
+```{r}
+# LF overlap and response
+ggplot(dat, aes(x = Response, y = overlap_LF_mm3, fill = Response)) +
+  geom_boxplot(alpha = 0.6) +
+  geom_jitter(width = 0.1, size = 2) + # add random spacing to the datapoints
+  labs(
+    x = "Clinical response",
+    y = "LF overlap (mm³)",
+    title = "LF overlap by response status"
+  ) +
+  theme_minimal() #simple, minimal theme
+```
+
+
+To get more granular, I plotted the relationship between LF overlap and the clinical improvement metric, percent improvement in UPDRS score from pre- to post-op. The trend is clear, however there are outliers.
+```{r}
+# LF overlap vs UPDRS % improvement
+ggplot(dat, aes(overlap_LF_mm3, pct_improve)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = TRUE) + # add linear regression line to summarize relationship and display 95% CIs around it
+  labs(
+    x = "LF overlap (mm³)",
+    y = "UPDRS Percent improvement",
+    title = "Relationship between LF overlap and clinical improvement"
+  ) +
+  theme_minimal()
+```
+
+
+
+To add another descriptive figure of variable correlations, I generated the heatmap below for our key variables. This visualizes some important relationships in our dataset: LF overlap and percent improvement have a positive correlation, and age and percent improvement have a negative correlation. 
+```{r}
+# descriptive heatmap of variable relationships
+vars <- dat %>%
+  select(overlap_LF_mm3, overlap_AL_mm3, pct_improve, Age, SDR, `Sonications (delivered)`, `MaxAv Temp`) # select variables
+
+cor_mat <- cor(vars, use = "complete.obs") #compute Pearson correlation matrix using only rows without missing values in variable pair
+
+corrplot( # visualize in a heatmap
+  cor_mat,
+  method = "color", # color gradient reflects correlation strength
+  type = "upper", # display only upper triangle of matrix
+  tl.col = "black" # text color
+)
+```
+
+
+I began analyses with a simple correlation test to determine if there is a linear association between our key variables: tract-lesion overlap and percent improvement. Given the small sample size, this cor value is encouraging, as it demonstrates positive associations for each tract overlap with percent improvement, though the magnitude is quite small. The additional results show that the correlation is not statistically significant (p-value), is underpowered (degrees of freedom), and that the true correlation could vary quite a bit from the result provided (confidence intervals). 
+
+The results were visualized in order to more easily keep our outliers in mind.
+```{r}
+# simple correlation analyses for LF and AL overlaps
+cor.test(dat$overlap_LF_mm3, dat$pct_improve, use = "complete.obs") # Pearson correlation test between two variables
+
+cor.test(dat$overlap_AL_mm3, dat$pct_improve, use = "complete.obs")
+
+ggplot(dat, aes(x = overlap_LF_mm3, y = pct_improve)) +
+  geom_point(size = 2) +    # scatter plot of observations
+  geom_smooth(method = "lm", se = FALSE) + # add linear regression trend line, no CI band
+  labs(
+    x = "Lenticular fasciculus overlap (mm³)",
+    y = "UPDRS III % improvement"
+  )
+
+ggplot(dat, aes(x = overlap_AL_mm3, y = pct_improve)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Ansa lenticularis overlap (mm³)",
+    y = "UPDRS III % improvement"
+  )
+```
+
+
+Next I performed a multi-variable exploratory linear regression. Again, not statistically significant. This regression suffered from the number of predictors included (overfitting), which explains the large drop in R-squared value after adjustment.
+
+Regardless, the model identified signals from our predictors (listed strongest to weakest t-values): 
+
+Lower SDR associates with worse outcomes
+  - This is interesting because a lower skull density ratio indicates   that more ultrasound energy will be absorbed or deflected by the      skull, reducing treatment effect. So biologically this makes sense.
+  
+Higher peak temperature associates with better outcomes
+  - This is clinically true, to an extent, because if the temperature   does not reach around 51 degrees Celsius, the tissue will not be      ablated and treatment will be less effective.
+  
+Higher LF overlap associates with better outcomes
+  - Encouraging to see agreement with our hypothesis again.
+  
+More sonications associates with better outcomes
+  - Probably heavily confounded by lesion size and treatment plan.
+
+AL overlap does not show a consistent independent association.
+  - This makes sense given the extremely small sample size of           evaluable patients with AL overlap (one).
+
+Increased age associates with worse outcomes.
+  - While not a strong signal this does make sense clinically.
+```{r}
+# multi-variable exploratory linear regression
+dat_scaled <- dat %>%
+  mutate(across(
+    c(overlap_LF_mm3, overlap_AL_mm3, Age, SDR, `Sonications (delivered)`, `MaxAv Temp`), # scale the dataset so that continuous predictors are standardized
+    ~ scale(.x) %>% as.numeric() # convert scaled matrix to numeric vector
+  ))
+
+model_lm_scaled <- lm(  # fit the model using scaled predictors
+  pct_improve ~ overlap_LF_mm3 + overlap_AL_mm3 +
+    Age + SDR + `Sonications (delivered)` + `MaxAv Temp`,
+  data = dat_scaled
+)
+
+summary(model_lm_scaled) # summarize output stats
+```
+
+
+Given these results I decided to repeat linear regressions with one predictor at a time to hopefully increase certainty of correlations when removing adjustments for the covariates. While the results are a bit more precise, they remain not statistically significant and carry a large amount of uncertainty. It is still encouraging to see results consistent with our previous analyses.
+```{r}
+predictors <- c(    # set predictors
+  "overlap_LF_mm3",
+  "overlap_AL_mm3",
+  "Age",
+  "SDR",
+  "`Sonications (delivered)`",
+  "`MaxAv Temp`"
+)
+
+lm_results <- lapply(predictors, function(var) {     # fit a separate linear model for each predictor, lapply loops the predictors and stores model summaries
+  formula <- as.formula(paste("pct_improve ~", var))  # model formula
+  model <- lm(formula, data = dat)   # fit linear regression
+  summary(model)  # return the summary
+})
+
+names(lm_results) <- predictors  # use predictor names for the list of model summaries
+
+lm_table <- lapply(predictors, function(var) {
+  formula <- as.formula(paste("pct_improve ~", var))
+  tidy(lm(formula, data = dat)) %>%    # convert model to tidy tibble
+    filter(term != "(Intercept)") %>%   # remove intercept row
+    mutate(predictor = var)    # add predictor name column
+}) %>%
+  bind_rows()     # combine results in one table
+
+lm_table_nice <- lm_table %>%   # rename columns for presentation
+  rename(
+    Predictor = predictor,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `t value` = statistic,
+    `p value` = p.value
+  )
+
+knitr::kable(   # render clean summary table
+  lm_table_nice,
+  digits = 3,
+  caption = "Univariable linear regression models predicting percent clinical improvement"
+)
+
+```
+
+
+Next, I attempted to fit a logistic regression to predict response outcome (binary), using the same variables used previously. The results make it clear that the data does not support this model. This model cannot handle separation, and the predictors separate responders from non-responders. This result is again a reflection of the limited sample size.
+```{r}
+# logistic regression
+model_glm <- glm(
+  Response ~ overlap_LF_mm3 + overlap_AL_mm3 +  # set binary outcome variable and predictors
+    Age + SDR + `Sonications (delivered)` + `MaxAv Temp`,
+  data = dat,
+  family = binomial
+)
+
+summary(model_glm)
+
+tidy(model_glm, exponentiate = TRUE, conf.int = TRUE)  # clean up the summary and convert Log-odds coefficients to odds ratios; add 95% CIs for them
+```
+
+
+
+Following the poor fit from above, I switched to a random forest model for a new approach using non-linear relationships.
+
+To review, the MeanDecreaseGini measures how much a variable increases node purity across trees, so a higher value is equal to a greater contribution to classification accuracy. The variables with the highest MeanDecreaseGini (SDR, max avg temp), contribute most strongly to separating responders from non-responders in the generated forest. While LF overlap is not among the highest variables, it still demonstrates some contribution to classification.
+
+MeanDecreaseAccuracy measures how much a variable contributes to predictive accuracy in a random forest. This shows max avg temp, age, and oddly AL overlap as the most important variables for prediction.
+
+The ROC curve with AUC = 0.667 indicates that the model has a meaningful but limited ability to discriminate responders from non-responders using all predictors. 
+
+I could not draw any strong conclusions from this analysis, but the trends remain encouraging given our very small sample size.
+```{r}
+# random forest classification
+
+rf_dat <- dat %>% #set binary response variable and predictors
+  select(
+    Response,
+    overlap_LF_mm3,
+    overlap_AL_mm3,
+    Age,
+    SDR,
+    `Sonications (delivered)`,
+    `MaxAv Temp`
+  ) %>%
+  drop_na() # drop incomplete cases
+
+rf_dat2 <- rf_dat %>% # I could not get random forest to work without changing the naming of the last two variables added to analysis
+  rename(
+    Sonications_delivered = `Sonications (delivered)`,
+    MaxAv_Temp = `MaxAv Temp`
+  )
+
+rf_dat2$Response <- as.factor(rf_dat2$Response)  # convert response variable to factor for classification RF model
+
+set.seed(42)
+rf_model <- randomForest(  # fit RF model 
+  Response ~ .,
+  data = rf_dat2,
+  ntree = 500,
+  importance = TRUE   # enable variable importance calculation
+)
+
+varImpPlot(rf_model) # plot variable importance metrics
+
+rf_dat2$rf_pred <- as.numeric(predict(rf_model, type = "prob")[, "1"])  # generate predicted probabilities for positive response ("1")
+roc_rf <- roc(rf_dat2$Response, rf_dat2$rf_pred)  # compute ROC curve using observed responses and predicted probabilities
+auc_rf <- auc(roc_rf) # calculate AUC
+
+plot(roc_rf, col = "blue", lwd = 2,  # plot ROC curve with diagonal reference line representing "chance"-level classification
+     main = sprintf("ROC curve (AUC = %.3f)", auc_rf))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+```
+
+
+For the last model, I performed a univariable generalized linear model just for LF overlap. This was a nice way to visualize the directional association between increased LF overlap and increased predicted response probability that our data indicates. Of course, this is not statistically significant, does not indicate causality, and comes with a good deal of uncertainty still.
+```{r}
+glm_lf <- glm(      # fit univariable logistic regression model; set binary variable and predictor
+  Response ~ overlap_LF_mm3,
+  data = dat,
+  family = binomial
+)
+
+dat$predicted_prob <- predict(glm_lf, newdata = dat, type = "response")  # generate predicted probabilities for each subject
+
+ggplot(dat, aes(x = overlap_LF_mm3, y = predicted_prob, color = Response)) +  # visualize predicted probability of resopnse as function of LF overlap
+  geom_point(size = 3) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE) +  # add fitted logistic regression curve; no CIs
+  labs(
+    x = "LF overlap (mm³)",
+    y = "Predicted probability of response",
+    title = "Predicted response probability vs LF overlap"
+  )
+```
+
+## Limitations
+This study has significant limitations. First, the sample size was small, reflecting the exploratory nature of focused ultrasound pallidotomy cohorts, which limited statistical power and prevented reliable inference in adjusted multivariable models. As a result, most analyses were underpowered to detect modest effect sizes, and confidence intervals were wide. Missing clinical or procedural data further reduced the number of complete cases available for modeling. We were surprised at the amount of missing UPDRS scores and found that some subjects were being marked as having responded due to their obvious reduction or resolution of symptoms, but they were not formally examined for a new UPDRS score. This was an important realization for this relatively new patient cohort, especially if the clinical team intends to eventually inform their practice with real-time data analyses from the provided pipeline.
+
+Second, overlap metrics were derived from post-hoc image registration and atlas-based tract masks, which are inherently sensitive to registration accuracy, image resolution, and atlas assumptions. While standard preprocessing pipelines were applied, small spatial errors could influence estimated tract overlap, particularly for narrow white matter pathways such as those involved in this project. We still are considering re-assessing overlap metrics using tractograms developed from patient-specific diffusion imaging rather than a standardized atlas, but this workflow needs to be investigated further before finalization and potential implementation.
+
+Third, clinical outcome measures were simplified to binary response and percent improvement metrics, which may not fully capture the multidimensional nature of Parkinson’s Disease symptom change. Potential confounders such as disease duration, medication state, and baseline symptom severity were not included in the present analyses, though they are intended to be explored in future analyses.
+
+Finally, predictive modeling results, particularly from random forest classification, reflect in-sample performance and exploratory signal detection rather than validated clinical prediction. Although machine learning approaches were robust to separation and small sample size, their outputs should be interpreted as hypothesis-generating rather than clinically actionable.
+
+
+## Conclusion and Future Directions
+In this exploratory neuroimaging analysis, greater overlap between focused ultrasound ablation fields and pallidal output pathways, specifically the lenticular fasciculus, was consistently associated with improved clinical outcomes across multiple analytic approaches. Although no single predictor reached statistical significance in models, the directional consistency observed across univariable regression, multivariable modeling, and random forest classification suggests that anatomical coverage of specific white matter pathways may contribute to treatment response.
+
+These findings support the hypothesis that symptom improvement following pallidothalamic tract ablation is influenced not only by lesion location but by coverage of functionally relevant fiber tracts. Importantly, nonparametric machine learning approaches demonstrated modest but above-chance discriminatory performance, highlighting their utility in small, heterogeneous clinical datasets where traditional regression models may fail.
+
+Future work will focus on expanding cohort size, increasing the availability of clinical outcomes data, and refining tract-specific targeting metrics using subject-specific diffusion imaging when available. Validation of these findings in independent datasets will be critical to determining whether tract overlap measures can inform focused ultrasound treatment targeting strategies for Parkinson’s disease.
+
+I would like to express enormous gratitude to Dr. Liming Qiu for her guidance and collaboration on this project, and to Dr. Casey Halpern and his lab for all of their support throughout. 
