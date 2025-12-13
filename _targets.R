@@ -59,11 +59,13 @@ tar_source(list.files("code", full.names = TRUE))
 
 # Set project coordinate reference system
 projcrs <- "EPSG:5070" # Choosing USGS Contiguous US Albers Equal Area, as we are doing density-based calculations and will want to preserve area comparisons
-#### Given that we are focusing on Chicago, it may also be appropriate to project to something specific to Cook County, IL, like EPSG:3435 (NAD83 / Illinois East (ftUS))
 
 units::install_unit("persons")
 units::install_unit("crimes")
 
+# You will note that we load and clean data for many more cities (16) than were ultimately included
+# in the analysis-- the cities which were excluded had VERY funky looking crime data with trends that
+# did not match their public portals, and/or I just could not estimate a model using their data
 crime_loaders <- list(
   atlanta = load_atlanta_crime,
   austin = load_austin_crime,
@@ -197,7 +199,7 @@ list(
   ### County Geography
   tar_target(
     counties_geo,
-    counties(cb = TRUE, resolution = "500k", year = 2000) %>%
+    counties(cb = TRUE, resolution = "500k", year = 2000) %>% # Simplifying geometries for efficiency
       st_transform(crs = projcrs) %>%
       mutate(
         st_fips = STATEFP,
@@ -232,10 +234,11 @@ list(
     county_sample_states,
     counties_sample$STATE
   ),
+  #TODO: Add additional ACS data from previous and future years, so that temporal homogeneity of community variables is not assumed
   tar_target(
     acs_data,
     load_acs(
-      vintage = 2015, # Using 2015 block group data as pre-2012 CBG data for ACS is not available from the govt at the moment
+      vintage = 2015, # Using 2015 block group data as pre-2012 CBG data for ACS is not available from the govt at the moment.
       countyname = county_sample_fips,
       stateabbrev = county_sample_states
     ),
@@ -257,7 +260,7 @@ list(
       county = county_sample_fips,
       year = 2015,
       geometry = TRUE,
-      variables = c(pop = "B01001_001")
+      variables = c(pop = "B01001_001") # This is just the total population
     ) %>%
       st_transform(crs = projcrs) %>%
       mutate(
@@ -275,7 +278,12 @@ list(
   ),
   tar_target(
     cenpop_sample,
-    command = st_intersection(bg_cenpop, cities_sample) # Filter the block group pop. centroids to only those contained in the block group polygons for Cook County
+    command = st_intersection(bg_cenpop, cities_sample) # Filter the block group pop. centroids to only those contained in the block group polygons for our counties dataset
+  ),
+  tar_target(
+    bg_acs_sample,
+    command = st_filter(st_as_sf(bg_poly), st_as_sf(cities_sample)) %>%
+      left_join(acs_sample %>% as.data.frame(), by = "GEOID")
   ),
 
   # ######################### SECTION 1: CLINIC DATA ############################
@@ -337,6 +345,7 @@ list(
   ),
 
   #### Save Cleaned, Keyed df to CSV for Geocoding in ArcGIS
+  #TODO: Switch this to use an open source pipeline like ORS, Valhalla, OSRM so I don't have to use Arc (stinky)
   tar_target(
     write_arc_geocode_df,
     write_csv(
@@ -384,7 +393,7 @@ list(
     )
   ),
   #### Assign Clinics the most common location across years for their clinic ID
-  ##### where there is minor geocoding difference (<80m)
+  ##### where there is minor geocoding difference (<60m)
   tar_target(
     clinics_linked,
     mode_coords_clinics(clinic_pairs = clinic_pairs_linked, projcrs)
@@ -474,7 +483,7 @@ list(
   tar_target(
     all_layer_map,
     {
-      pal_points <- c4a("brewer.set1", n = 3)
+      pal_points <- c4a("carto.vivid", n = 3)
 
       # # centroids
       # cenpop_sf <- st_filter(
@@ -499,7 +508,10 @@ list(
       ) +
         tm_polygons(
           fill = "ice",
-          fill.scale = tm_scale_continuous(values = "-hiroshige"),
+          fill.scale = tm_scale_continuous(
+            values = "-hiroshige",
+            midpoint = NA
+          ),
           fill.legend = tm_legend("ICE Score", group_id = "top"),
           lwd = 0
         ) +
@@ -598,7 +610,7 @@ list(
     crime_by_city,
     {
       # crime_geo here is a list of sf objects (one per city, from the dynamic branches)
-      # We turn it into a named list keyed by standardized city name.
+      # We turn it into a named list keyed by city name.
       purrr::set_names(
         crime_geo,
         purrr::map_chr(
@@ -632,8 +644,7 @@ list(
         }
       )
 
-      # Flatten across cities into a single list of chunk objects:
-      # list(chunk1, chunk2, chunk3, ...)
+      # Flatten across cities into a single list of chunks to process:
       unlist(per_city_chunks, recursive = FALSE)
     },
     iteration = "list"
@@ -666,7 +677,7 @@ list(
       # 4. filter crimes by the above search area
       nearby <- sf::st_filter(crimes_city, bbox_poly)
 
-      # 5. perform distance calculations using this nearby subset
+      # 5. perform distance calculations using only this nearby subset
       process_clinic_distances(
         clinic_chunk = clinic_chunks$clinic_chunk,
         nearby_crimes = nearby,
@@ -678,6 +689,7 @@ list(
     pattern = map(clinic_chunks),
     iteration = "list"
   ),
+  #TODO: Find a way to automate the inclusion/exclusion of cities by whether the model can converge! I don't want to feel like I'm having to manually decide my sample. Icky.
   tar_target(
     included_cities,
     c(
@@ -709,7 +721,8 @@ list(
       filter(
         city %in%
           included_cities
-      )
+      ) %>%
+      st_join(bg_acs_sample, join = st_intersects) # Bring in ACS and block group variables for adjustment
   ),
 
   # ####################### SECTION 5: DIFF-IN-DIFF PREP #########################
@@ -721,7 +734,16 @@ list(
         ((MHSAF | SA | MH.SA | SACA | SAE | SAF | SSA) == 1) & Score >= 95
       ) %>% # Consited keeping only clinics which provide substance abuse treatment, and which were geocoded with >=95% accuracy
       filter(year <= last_open) %>% # Censor clinics after we stop observing them as "open", and they cannot then be re-treated as control units
-      mutate(group = as.numeric(group), change = first_open) %>% # Making a "change" column so we can be agnostic to first vs last when mapping across open vs closure
+      mutate(
+        group = as.numeric(group),
+        change = first_open,
+        direction = "Opening",
+        period = factor(
+          period,
+          levels = c(0, 1),
+          labels = c("Pre-Opening", "Post-Opening")
+        )
+      ) %>% # Making a "change" column so we can be agnostic to first vs last when mapping across open vs closure
       select(-c(counts, distances))
   ),
   tar_target(
@@ -732,7 +754,16 @@ list(
         ((MHSAF | SA | MH.SA | SACA | SAE | SAF | SSA) == 1) & Score >= 95
       ) %>% # Consited keeping only clinics which provide substance abuse treatment, and which were geocoded with >=95% accuracy
       filter(year >= first_open) %>% # Censor clinics after we stop observing them as "open", and they cannot then be re-treated as control units
-      mutate(group = as.numeric(group), change = last_open) %>% # Making a "change" column so we can be agnostic to first vs last when mapping across open vs closure
+      mutate(
+        group = as.numeric(group),
+        change = last_open,
+        direction = "Closure",
+        period = factor(
+          period_closure,
+          levels = c(0, 1),
+          labels = c("Pre-Closure", "Post-Closure")
+        )
+      ) %>% # Making a "change" column so we can be agnostic to first vs last when mapping across open vs closure
       select(-c(counts, distances))
   ),
   tar_target(
@@ -746,6 +777,219 @@ list(
   tar_target(
     selected_buffer, # Given that most crimes occurs within 550m buffer, we will use the 548.64m buffer as the "representative" buffer
     command = set_units(548.64, m)
+  ),
+
+  ####################### DESCRIPTIVE / UNIVARIATE ANALYSES #########################
+
+  tar_target(
+    fig_clinic_year_overall,
+    command = clinic_year_summary$counts_compare %>%
+      as.data.frame() %>%
+      pivot_longer(
+        cols = c(n, official_count),
+        names_to = "Count",
+        values_to = "value"
+      ) %>%
+      mutate(
+        Count = factor(
+          Count,
+          levels = c("n", "official_count"),
+          labels = c("Respondent Facilities", "Official Count")
+        )
+      ) %>%
+      rename(Year = year) %>%
+      ggplot(aes(x = Year, y = value, group = Count, color = Count)) +
+      geom_point() +
+      geom_line() +
+      # annotate(
+      #   "rect",
+      #   xmin = 2021,
+      #   xmax = 2025,
+      #   ymin = 0,
+      #   ymax = 19000,
+      #   alpha = .2
+      # ) +
+      ylim(0, 19000) +
+      theme_minimal() +
+      scale_color_brewer(palette = "Dark2") +
+      labs(
+        x = "Year",
+        y = "Clinics (n)",
+        title = "Count of Clinics by Year\nSAMSHA Certified vs NSSATS Respondents"
+      )
+  ),
+
+  tar_target(
+    fig_all_crime_density_prepost,
+    command = {
+      plt_df <- clinic_change_dfs %>%
+        as.data.frame() %>%
+        st_drop_geometry() %>%
+        filter(city %in% included_cities) %>%
+        pivot_longer(
+          cols = c(
+            violent_median_distance,
+            person_median_distance,
+            property_median_distance
+          ),
+          names_to = "measure",
+          values_to = "value"
+        ) %>%
+        mutate(
+          measure_text = case_when(
+            measure == "violent_median_distance" ~ "All Violent Crimes",
+            measure == "person_median_distance" ~ "Crimes Against Persons",
+            measure == "property_median_distance" ~ "Crimes Against Property"
+          )
+        ) %>%
+        filter(measure == dist_outcome_categories)
+
+      ggplot(plt_df, aes(x = value, group = period, fill = period)) +
+        geom_density(alpha = .8) +
+        scale_fill_brewer(palette = 10) +
+        theme_minimal() +
+        labs(
+          x = "Median Distance to Crime",
+          y = "Density",
+          title = paste0(
+            "Median Distance: DTC to ",
+            unique(plt_df$measure_text)
+          )
+        )
+    },
+    pattern = cross(dist_outcome_categories, clinic_change_dfs),
+    iteration = "list"
+  ),
+
+  tar_target(
+    tbl_city_crime_density_prepost,
+    command = {
+      plt_df <- clinic_change_dfs %>%
+        as.data.frame() %>%
+        st_drop_geometry() %>%
+        filter(city == included_cities) %>%
+        pivot_longer(
+          cols = c(
+            violent_median_distance,
+            person_median_distance,
+            property_median_distance
+          ),
+          names_to = "measure",
+          values_to = "value"
+        ) %>%
+        mutate(
+          measure_text = case_when(
+            measure == "violent_median_distance" ~ "All Violent Crimes",
+            measure == "person_median_distance" ~ "Crimes Against Persons",
+            measure == "property_median_distance" ~ "Crimes Against Property"
+          )
+        ) %>%
+        filter(measure == dist_outcome_categories) %>%
+        filter(!is.na(value)) %>%
+        group_by(measure) %>%
+        group_modify(
+          ~ {
+            d <- stats::density(.x$value, n = 100) # Calculating densities here for efficiency's sake, using 100 sample
+            tibble::tibble(x = d$x, y = d$y)
+          }
+        )
+    },
+    pattern = cross(
+      included_cities,
+      dist_outcome_categories,
+      clinic_change_dfs
+    ),
+    iteration = "list"
+  ),
+
+  tar_target(
+    fig_city_crime_density_prepost,
+    command = {
+      plt <- ggplot(
+        tbl_city_crime_density_prepost,
+        aes(
+          x = x,
+          y = y
+        )
+      ) +
+        geom_area(alpha = 0.5, position = "identity") +
+        scale_fill_brewer(palette = 10) +
+        theme_minimal() +
+        labs(
+          x = "Median Distance to Crime",
+          y = "Density",
+          title = paste0(
+            "Median Distance: DTC to ",
+            unique(tbl_city_crime_density_prepost$measure_text)
+          )
+        )
+      return(plt)
+    },
+    pattern = map(tbl_city_crime_density_prepost),
+    iteration = "list"
+  ),
+
+  # tar_target(
+  #   fig_buffer_density_overall,
+  #   command = {
+  #     clinics_open %>%
+  #       filter(time_point %in% seq(-3, 3)) %>%
+  #       st_drop_geometry() %>%
+  #       ggplot(aes(
+  #         x = buffer,
+  #         y = log(units::drop_units(violent_count / area)),
+  #         group = buffer,
+  #         color = buffer
+  #       )) +
+  #       geom_boxplot() +
+  #       theme_clean() +
+  #       labels(
+  #         x = "Buffer Size",
+  #         y = "Log(Crime Density) [count / sq-km])",
+  #         title = paste0(
+  #           "Crime Density by Distance Buffer from DTC - Over-All\n ",
+  #           measure_text
+  #         )
+  #       )
+  #   }
+  # ),
+
+  tar_target(
+    tab_density_diff_open,
+    command = {
+      clinic_change_dfs %>%
+        as.data.frame() %>%
+        st_drop_geometry() %>%
+        filter(city == included_cities) %>%
+        pivot_longer(
+          cols = c(
+            violent_count,
+            person_count,
+            property_count
+          ),
+          names_to = "measure",
+          values_to = "value"
+        ) %>%
+        mutate(
+          measure_text = case_when(
+            measure == "violent_count" ~ "All Violent Crimes",
+            measure == "person_count" ~ "Crimes Against Persons",
+            measure == "property_count" ~ "Crimes Against Property"
+          )
+        ) %>%
+        filter(measure == count_outcome_categories) %>%
+        filter(time_point %in% seq(-3, 3)) %>%
+        group_by(group, buffer) %>%
+        summarize(
+          diff = mean(measure[period == 0], na.rm = T) -
+            mean(measure[period == 1], na.rm = T),
+          area = area,
+          diff_density = diff / area,
+          log_diff = log(drop_units(diff_density))
+        )
+    },
+    pattern = cross(count_outcome_categories, clinic_change_dfs),
+    iteration = "list"
   ),
 
   ####################### SECTION 6: DIFF-IN-DIFF #########################
@@ -920,6 +1164,8 @@ list(
       ylab("Estimated Change") +
       coord_flip()
   ),
+  ######################### OLS ###################################
+
   ######################### MANUSCRIPT / PROJECT REPORTS ###################################
   tar_quarto(
     report,
