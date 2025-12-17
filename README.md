@@ -1,19 +1,7 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for the final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+This repository contains the code and output from my BMIN5030 final project. In this project, I use the targets pipeline structure. The over-all flow of the analysis is contained within the "_targets.R" file, and sub-functions called from within this file are located within the "code" folder. 
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+In this analysis, I explore the relationship between Drug Treatment Center operation and neighborhood crime in large U.S. cities over two decades, using geospatial methods, difference in difference models, and event study GLMMs. 
 
-
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
-
-DUE DATE FOR FINAL VERSION: 12/13/24 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
-
-
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
-
+In aggregate, I did not find evidence to suggest that there is a harmful or strongly protective effect of DTC operation on neighborhood violent crime rates, despite significant expansion of these facilities during the observation period.
